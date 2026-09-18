@@ -31,3 +31,7 @@ Thumbs.db
 
 # SSH
 known_hosts
+
+# Local sync script with credentials
+sync-db.bat
+backups/
