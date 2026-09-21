@@ -25,14 +25,18 @@ export default defineConfig({
       },
 
       manifest: {
+        id: '/',
         name: 'PeakHunter',
         short_name: 'PeakHunter',
+        description: 'Социалка походников Прибайкалья: поиск попутчиков, анонсы походов, дневники.',
         start_url: '/',
         scope: '/',
         display: 'standalone',
+        orientation: 'portrait',
         theme_color: '#0b3d91',
         background_color: '#ffffff',
         lang: 'ru',
+        categories: ['travel', 'sports', 'social'],
         icons: [
           {
             src: 'icons/icon-192.png',
