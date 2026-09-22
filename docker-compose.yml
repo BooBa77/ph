@@ -23,6 +23,10 @@ services:
     environment:
       - NODE_ENV=development
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/ph
+      - JWT_ACCESS_SECRET=dev-secret-do-not-use-in-prod
+      - JWT_ACCESS_EXPIRES_IN=30m
+      - REFRESH_EXPIRES_DAYS=180
+      - COOKIE_SECURE=false
     depends_on:
       - postgres
     restart: unless-stopped
