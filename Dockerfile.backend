@@ -1,6 +1,8 @@
 # Этап сборки
 FROM node:22-alpine AS builder
 WORKDIR /app
+# build-deps для нативных модулей (argon2)
+RUN apk add --no-cache python3 make g++
 COPY backend/package*.json ./
 RUN npm ci
 COPY backend/ .
@@ -11,7 +13,10 @@ FROM node:22-alpine
 WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
-RUN npm ci --omit=dev
+# build-deps нужны для компиляции argon2, после установки удаляем
+RUN apk add --no-cache --virtual .build-deps python3 make g++ \
+ && npm ci --omit=dev \
+ && apk del .build-deps
 USER node
 EXPOSE 3000
 CMD ["node", "dist/main"]
