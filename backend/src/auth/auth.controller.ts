@@ -9,12 +9,14 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
+import { Public } from './decorators/public.decorator';
 import { AuthService } from './auth.service';
 import { RequestCodeDto } from './dto/request-code.dto';
 import { VerifyCodeDto } from './dto/verify-code.dto';
 
 const REFRESH_COOKIE = 'refresh_token';
 
+@Public()
 @Controller('auth')
 export class AuthController {
   constructor(
