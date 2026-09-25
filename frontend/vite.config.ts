@@ -82,5 +82,16 @@ export default defineConfig({
       usePolling: true,
       interval: 300,
     },
+    proxy: {
+      // В dev фронт на :5173 не может напрямую дёргать бэк на :3000:
+      // cookie с другого origin не полетит (sameSite=lax), плюс CORS.
+      // Прокси перенаправляет /api/* на бэк, и для браузера всё выглядит
+      // как один origin — :5173. Cookie ходят свободно.
+      '/api': {
+        target: 'http://backend:3000',
+        changeOrigin: true,
+        // rewrite не нужен: бэк сам слушает /api/*, префикс совпадает
+      },
+    },    
   },
 })
