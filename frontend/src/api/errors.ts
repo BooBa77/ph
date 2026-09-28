@@ -1,5 +1,3 @@
-// frontend/src/api/errors.ts
-
 /**
  * Ошибка ответа API: сервер ответил статусом 4xx или 5xx.
  *
@@ -36,4 +34,37 @@ export class ApiError extends Error {
     // С ES2022 это не нужно, но оставить — дешёвая страховка.
     Object.setPrototypeOf(this, ApiError.prototype)
   }
+}
+
+/**
+ * Best-effort разбор тела ответа с ошибкой.
+ * Тело может быть не-JSON: HTML от nginx, пустая строка, что угодно.
+ * Не кидаем — возвращаем null, если не получилось.
+ */
+export async function parseErrorBody(res: Response): Promise<unknown> {
+  try {
+    const contentType = res.headers.get('Content-Type') ?? ''
+    if (contentType.includes('application/json')) {
+      return await res.json()
+    }
+    return await res.text()
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Достать человекочитаемое сообщение из тела ошибки.
+ * Ожидаем { message: string } от NestJS, но не полагаемся на это.
+ */
+export function extractMessage(body: unknown, status: number): string {
+  if (
+    typeof body === 'object' &&
+    body !== null &&
+    'message' in body &&
+    typeof (body as { message: unknown }).message === 'string'
+  ) {
+    return (body as { message: string }).message
+  }
+  return `HTTP ${status}`
 }
