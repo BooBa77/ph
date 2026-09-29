@@ -101,15 +101,20 @@ export class UsersService {
     const repo = manager ? manager.getRepository(User) : this.usersRepository;
     await repo.update({ id }, { deletedAt: new Date() });
   }
-    
+
   /**
    * Снять soft delete (реанимация пользователя).
+   *
+   * Используем repo.update(), а не save() — один UPDATE без SELECT.
+   * Но @UpdateDateColumn не срабатывает на update(), поэтому
+   * updated_at проставляем руками. Иначе после реанимации
+   * дата «последнего изменения» осталась бы со времён удаления.
    */
   async clearDeletedAt(
     id: string,
     manager?: EntityManager,
   ): Promise<void> {
     const repo = manager ? manager.getRepository(User) : this.usersRepository;
-    await repo.update({ id }, { deletedAt: null });
-  }  
+    await repo.update({ id }, { deletedAt: null, updatedAt: new Date() });
+  }
 }

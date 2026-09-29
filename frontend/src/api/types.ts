@@ -1,5 +1,6 @@
 /**
- * Пользователь — то, что реально отдаёт бэк в /api/users/me.
+ * Пользователь — то, что отдаёт бэк в /api/users/me, /api/auth/verify-code
+ * и /api/auth/refresh.
  *
  * Описываем только нужные фронту поля. Лишние (deletedAt и прочее)
  * TypeScript структурно игнорирует — можно не перечислять.
@@ -21,13 +22,6 @@ export interface User {
 }
 
 /**
- * Краткая версия пользователя — то, что бэк отдаёт вместе с токенами
- * (verify-code, refresh). Отдельный именованный тип вместо
- * Pick<User, ...> в каждом месте: если бэк расширит brief — правим тут.
- */
-export type UserBrief = Pick<User, 'id' | 'displayName'>
-
-/**
  * POST /api/auth/request-code → 200
  * Ответ на запрос кода. resendAfterSeconds — через сколько секунд
  * можно запросить код повторно (cooldown).
@@ -41,10 +35,12 @@ export interface RequestCodeResponse {
  * POST /api/auth/verify-code → 200
  * Успешный вход. accessToken — JWT на 30 минут, кладётся в память (Pinia).
  * refresh-токен приходит отдельно, в httpOnly cookie — фронт его не видит.
+ *
+ * user — полный профиль (не brief): бэк отдаёт entity целиком.
  */
 export interface AuthResponse {
   accessToken: string
-  user: UserBrief
+  user: User
 }
 
 /**
@@ -58,5 +54,5 @@ export interface AuthResponse {
  * Union заставляет TS проверять accessToken перед обращением к user.
  */
 export type RefreshResponse =
-  | { accessToken: string; user: UserBrief }
+  | { accessToken: string; user: User }
   | { accessToken: null }

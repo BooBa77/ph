@@ -23,24 +23,18 @@ export interface RequestCodeResult {
   resendAfterSeconds: number;
 }
 
-export interface AuthUserPayload {
-  id: string;
-  displayName: string;
-  avatarUrl: string | null;
-}
-
 export interface VerifyCodeResult {
   accessToken: string;
   refreshToken: string;
   refreshExpiresAt: Date;
-  user: AuthUserPayload;
+  user: User;
 }
 
 export interface RefreshResult {
   accessToken: string;
   refreshToken: string;
   refreshExpiresAt: Date;
-  user: AuthUserPayload;
+  user: User;
 }
 
 @Injectable()
@@ -159,11 +153,7 @@ export class AuthService {
       accessToken,
       refreshToken,
       refreshExpiresAt,
-      user: {
-        id: user.id,
-        displayName: user.displayName,
-        avatarUrl: user.avatarUrl,
-      },
+      user,
     };
   }
 
@@ -194,11 +184,7 @@ export class AuthService {
       accessToken,
       refreshToken: newRefreshToken,
       refreshExpiresAt: session.expiresAt,
-      user: {
-        id: session.user.id,
-        displayName: session.user.displayName,
-        avatarUrl: session.user.avatarUrl,
-      },
+      user: session.user,
     };
   }
 
@@ -207,6 +193,7 @@ export class AuthService {
    */
   async logout(rawRefreshToken: string): Promise<void> {
     const hash = this.hashRefreshToken(rawRefreshToken);
+
     const session = await this.sessionRepo.findOne({
       where: { refreshTokenHash: hash },
     });
