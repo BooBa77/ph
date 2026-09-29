@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
-import type { RefreshResponse, User, UserBrief } from '@/api/types'
+import type { RefreshResponse, User } from '@/api/types'
 
 /**
  * Single-flight для refresh.
@@ -65,10 +65,8 @@ export const useAuthStore = defineStore('auth', () => {
 
   // --- actions ---
 
-  function setAuth(nextUser: UserBrief, nextToken: string) {
-    // UserBrief — подмножество User. Присваиваем в user как есть:
-    // остальные поля (nickname, birthDate, ...) подтянутся позже через getMe.
-    user.value = nextUser as User
+  function setAuth(nextUser: User, nextToken: string) {
+    user.value = nextUser
     accessToken.value = nextToken
   }
 
