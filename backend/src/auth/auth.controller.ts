@@ -9,13 +9,17 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { ConfigService } from '@nestjs/config';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { Public } from './decorators/public.decorator';
 import { AuthService } from './auth.service';
 import { RequestCodeDto } from './dto/request-code.dto';
 import { VerifyCodeDto } from './dto/verify-code.dto';
+import { AuthResponseDto } from './dto/auth-response.dto';
+import { UserResponseDto } from '../users/dto/user-response.dto';
 
 const REFRESH_COOKIE = 'refresh_token';
 
+@ApiTags('auth')
 @Public()
 @Controller('auth')
 export class AuthController {
@@ -26,12 +30,15 @@ export class AuthController {
 
   @Post('request-code')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Запросить код подтверждения на email' })
   async requestCode(@Body() dto: RequestCodeDto) {
     return this.authService.requestCode(dto.email);
   }
 
   @Post('verify-code')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Проверить код и войти' })
+  @ApiOkResponse({ type: AuthResponseDto })
   async verifyCode(
     @Body() dto: VerifyCodeDto,
     @Req() req: Request,
@@ -47,12 +54,14 @@ export class AuthController {
 
     return {
       accessToken: result.accessToken,
-      user: result.user,
+      user: UserResponseDto.from(result.user),
     };
   }
 
   @Post('refresh')
   @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Обновить access-токен по refresh-cookie' })
+  @ApiOkResponse({ type: AuthResponseDto })
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -68,12 +77,13 @@ export class AuthController {
 
     return {
       accessToken: result.accessToken,
-      user: result.user,
+      user: UserResponseDto.from(result.user),
     };
   }
 
   @Post('logout')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Выйти (отозвать текущую сессию)' })
   async logout(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
