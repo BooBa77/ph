@@ -19,7 +19,9 @@ const router = createRouter({
       // который скачается только при первом заходе на /auth.
       // Home грузим жадно — это точка входа для залогиненных.
       component: () => import('@/views/AuthView.vue'),
-      meta: { requiresAuth: false },
+      // hideHeader — на /auth шапку не показываем (юзер не залогинен,
+      // «Выйти» и «Личный кабинет» там бессмысленны).
+      meta: { requiresAuth: false, hideHeader: true },
     },
   ],
 })
