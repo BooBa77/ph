@@ -25,31 +25,11 @@ export class UserResponseDto {
   id: string;
 
   @ApiProperty({
-    description: 'Отображаемое имя (заполняется при регистрации из email)',
+    description:
+      'Отображаемое имя (заполняется при регистрации из email, можно менять)',
     example: 'booba',
   })
   displayName: string;
-
-  @ApiProperty({
-    description: 'Никнейм (погоняло), не уникален',
-    example: 'Байкальский волк',
-    nullable: true,
-  })
-  nickname: string | null;
-
-  @ApiProperty({
-    description: 'Имя',
-    example: 'Иван',
-    nullable: true,
-  })
-  firstName: string | null;
-
-  @ApiProperty({
-    description: 'Фамилия',
-    example: 'Петров',
-    nullable: true,
-  })
-  lastName: string | null;
 
   @ApiProperty({
     description: 'Место проживания',
@@ -57,13 +37,6 @@ export class UserResponseDto {
     nullable: true,
   })
   location: string | null;
-
-  @ApiProperty({
-    description: 'День рождения в формате YYYY-MM-DD (год фиктивный високосный)',
-    example: '2000-06-15',
-    nullable: true,
-  })
-  birthDate: string | null;
 
   @ApiProperty({
     description: 'URL аватарки',
@@ -83,11 +56,7 @@ export class UserResponseDto {
     const dto = new UserResponseDto();
     dto.id = user.id;
     dto.displayName = user.displayName;
-    dto.nickname = user.nickname;
-    dto.firstName = user.firstName;
-    dto.lastName = user.lastName;
     dto.location = user.location;
-    dto.birthDate = user.birthDate;
     dto.avatarUrl = user.avatarUrl;
     return dto;
   }

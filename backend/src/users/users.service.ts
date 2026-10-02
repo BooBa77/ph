@@ -1,7 +1,8 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { EntityManager, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
+import { DisplayNameHistory } from './entities/display-name-history.entity';
 
 /**
  * Данные для создания пользователя.
@@ -9,11 +10,7 @@ import { User } from './entities/user.entity';
  */
 export interface CreateUserData {
   displayName: string;
-  nickname?: string | null;
-  firstName?: string | null;
-  lastName?: string | null;
   location?: string | null;
-  birthDate?: string | null;
   avatarUrl?: string | null;
 }
 
@@ -23,11 +20,7 @@ export interface CreateUserData {
  */
 export interface UpdateUserData {
   displayName?: string;
-  nickname?: string | null;
-  firstName?: string | null;
-  lastName?: string | null;
   location?: string | null;
-  birthDate?: string | null;
   avatarUrl?: string | null;
 }
 
@@ -36,6 +29,9 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    @InjectRepository(DisplayNameHistory)
+    private readonly historyRepository: Repository<DisplayNameHistory>,
+    private readonly dataSource: DataSource,
   ) {}
 
   /**
@@ -49,7 +45,8 @@ export class UsersService {
    * Создать пользователя.
    *
    * @param data — данные профиля
-   * @param manager — если передан, работаем в чужой транзакции (например, из AuthService.register).
+   * @param manager — если передан, работаем в чужой транзакции
+   *                  (например, из AuthService.verifyCode).
    *                  Если не передан — работаем через свой репозиторий.
    */
   async create(data: CreateUserData, manager?: EntityManager): Promise<User> {
@@ -57,11 +54,7 @@ export class UsersService {
 
     const user = repo.create({
       displayName: data.displayName,
-      nickname: data.nickname ?? null,
-      firstName: data.firstName ?? null,
-      lastName: data.lastName ?? null,
       location: data.location ?? null,
-      birthDate: data.birthDate ?? null,
       avatarUrl: data.avatarUrl ?? null,
     });
 
@@ -70,28 +63,25 @@ export class UsersService {
 
   /**
    * Обновить профиль пользователя.
-   * Позже понадобится для ЛК.
+   *
+   * Если передан manager — работаем в его транзакции.
+   * Если нет — оборачиваем всё в свою транзакцию.
+   *
+   * Зачем транзакция: изменение displayName пишется в display_name_history.
+   * Нужно, чтобы «UPDATE users» и «INSERT в историю» были атомарны:
+   * либо оба действия прошли, либо ни одного. Иначе получим рассинхрон
+   * (имя изменилось, а в истории записи нет).
    */
   async update(
     id: string,
     data: UpdateUserData,
     manager?: EntityManager,
   ): Promise<User | null> {
-    const repo = manager ? manager.getRepository(User) : this.usersRepository;
+    if (manager) {
+      return this.updateInternal(manager, id, data);
+    }
 
-    const user = await repo.findOne({ where: { id } });
-    if (!user) return null;
-
-    // Обновляем только переданные поля
-    if (data.displayName !== undefined) user.displayName = data.displayName;
-    if (data.nickname !== undefined) user.nickname = data.nickname;
-    if (data.firstName !== undefined) user.firstName = data.firstName;
-    if (data.lastName !== undefined) user.lastName = data.lastName;
-    if (data.location !== undefined) user.location = data.location;
-    if (data.birthDate !== undefined) user.birthDate = data.birthDate;
-    if (data.avatarUrl !== undefined) user.avatarUrl = data.avatarUrl;
-
-    return repo.save(user);
+    return this.dataSource.transaction((m) => this.updateInternal(m, id, data));
   }
 
   /**
@@ -107,14 +97,57 @@ export class UsersService {
    *
    * Используем repo.update(), а не save() — один UPDATE без SELECT.
    * Но @UpdateDateColumn не срабатывает на update(), поэтому
-   * updated_at проставляем руками. Иначе после реанимации
-   * дата «последнего изменения» осталась бы со времён удаления.
+   * updated_at проставляем руками.
    */
-  async clearDeletedAt(
-    id: string,
-    manager?: EntityManager,
-  ): Promise<void> {
+  async clearDeletedAt(id: string, manager?: EntityManager): Promise<void> {
     const repo = manager ? manager.getRepository(User) : this.usersRepository;
     await repo.update({ id }, { deletedAt: null, updatedAt: new Date() });
+  }
+
+  // ─── private ───
+
+  /**
+   * Внутренняя реализация update. Всегда работает через переданный
+   * manager — не решает, в какой транзакции работать. Это решает
+   * публичный update.
+   *
+   * Логика:
+   *   1. Найти пользователя.
+   *   2. Если displayName меняется — записать в историю.
+   *   3. Обновить поля.
+   *   4. Сохранить.
+   */
+  private async updateInternal(
+    manager: EntityManager,
+    id: string,
+    data: UpdateUserData,
+  ): Promise<User | null> {
+    const userRepo = manager.getRepository(User);
+    const historyRepo = manager.getRepository(DisplayNameHistory);
+
+    const user = await userRepo.findOne({ where: { id } });
+    if (!user) return null;
+
+    // Если displayName передан и отличается от текущего — пишем в историю.
+    // Не пишем, если пришло то же значение («booba → booba» замусорит).
+    if (
+      data.displayName !== undefined &&
+      data.displayName !== user.displayName
+    ) {
+      const record = historyRepo.create({
+        userId: user.id,
+        oldName: user.displayName,
+        newName: data.displayName,
+        changedAt: new Date(),
+      });
+      await historyRepo.save(record);
+
+      user.displayName = data.displayName;
+    }
+
+    if (data.location !== undefined) user.location = data.location;
+    if (data.avatarUrl !== undefined) user.avatarUrl = data.avatarUrl;
+
+    return userRepo.save(user);
   }
 }
