@@ -5,6 +5,81 @@
     <link rel="icon" href="/favicon.ico" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>PeakHunter</title>
+
+    <!--
+      Инлайн-скрипт: ставит data-theme ДО отрисовки страницы.
+      Защищает от FOUC (Flash of Unstyled Content) — юзер не увидит
+      долю секунды «дефолтную» тему перед тем, как применится сезонная.
+
+      Логика ДУБЛИРУЕТ useTheme (composable):
+        - читает localStorage.themeOverride;
+        - валидирует (1–4);
+        - если нет — вычисляет сезон по дате.
+
+      Если поменяешь границы сезонов или список — правь В ДВУХ МЕСТАХ:
+      в useTheme.ts и здесь. На голом JS нельзя импортировать из TS.
+
+      Скрипт намеренно короткий: только то, что нужно для data-theme.
+    -->
+    <script>
+      (function () {
+        var SEASONS = [1, 2, 3, 4]
+
+        function detectSeasonByDate() {
+          var now = new Date()
+          var month = now.getMonth()
+          var day = now.getDate()
+
+          // зима: 8 ноября — 7 марта
+          if (
+            (month === 10 && day >= 8) ||
+            month === 11 ||
+            month === 0 ||
+            month === 1 ||
+            (month === 2 && day <= 7)
+          ) {
+            return 1
+          }
+          // весна: 8 марта — 24 мая
+          if (
+            (month === 2 && day >= 8) ||
+            month === 3 ||
+            (month === 4 && day <= 24)
+          ) {
+            return 2
+          }
+          // лето: 25 мая — 31 августа
+          if (
+            (month === 4 && day >= 25) ||
+            month === 5 ||
+            month === 6 ||
+            month === 7
+          ) {
+            return 3
+          }
+          // осень: 1 сентября — 7 ноября
+          return 4
+        }
+
+        function readOverride() {
+          var raw = localStorage.getItem('themeOverride')
+          if (raw === null) return null
+          var num = Number(raw)
+          if (
+            typeof num === 'number' &&
+            Number.isInteger(num) &&
+            SEASONS.indexOf(num) !== -1
+          ) {
+            return num
+          }
+          localStorage.removeItem('themeOverride')
+          return null
+        }
+
+        var theme = readOverride() || detectSeasonByDate()
+        document.documentElement.setAttribute('data-theme', String(theme))
+      })()
+    </script>
   </head>
   <body>
     <div id="app"></div>
