@@ -32,6 +32,13 @@ Thumbs.db
 # SSH
 known_hosts
 
-# Local sync script with credentials
+# Local sync script with credentials.
+# В репозитории лежит только шаблон sync-db.example.bat.
+# ВАЖНО: gitignore НЕ действует на уже отслеживаемые файлы —
+# если файл успел попасть в индекс, нужен `git rm --cached`.
 sync-db.bat
 backups/
+
+# Локальные секреты и мусор (cookie-джар curl, дампы ответов и т.п.)
+cookies.txt
+*.cookies.txt

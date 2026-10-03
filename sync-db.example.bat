@@ -5,7 +5,12 @@ cd /d "%~dp0"
 
 REM ============================================================
 REM  Синхронизация dev-БД ph с прод-БД (через SSH-туннель)
-REM  Файл в .gitignore, содержит пароль.
+REM
+REM  ЭТО ШАБЛОН. Рабочий файл — sync-db.bat, он в .gitignore
+REM  и содержит реальный пароль. Порядок настройки:
+REM    1. copy sync-db.example.bat sync-db.bat
+REM    2. вписать в sync-db.bat настоящий пароль ph_migrator
+REM  Никогда не коммить sync-db.bat: репозиторий публичный.
 REM ============================================================
 
 REM --- НАСТРОЙКИ ---
@@ -13,7 +18,7 @@ set PROD_HOST=host.docker.internal
 set PROD_PORT=5433
 set PROD_DB=ph
 set PROD_USER=ph_migrator
-set PROD_PASSWORD=fqHRrppgo03PlZfgICzHmgSwbgSkaWtp
+set PROD_PASSWORD=CHANGE_ME
 
 set DEV_DB=ph
 set DEV_USER=postgres
@@ -86,7 +91,7 @@ echo [5/6] Восстанавливаю дамп в dev-БД...
 type "%DUMP_FILE%" | docker compose exec -T postgres pg_restore -U %DEV_USER% -d %DEV_DB% --no-owner --no-privileges
 
 if errorlevel 1 (
-    echo [ОШИБКА] Не удалось восстановить дамп.
+    echo [ОШИБКА] Не удалось восстановить дамп в dev-БД.
     pause
     exit /b 1
 )
