@@ -42,3 +42,15 @@ backups/
 # Локальные секреты и мусор (cookie-джар curl, дампы ответов и т.п.)
 cookies.txt
 *.cookies.txt
+*.dump
+*.sql
+*.sql.gz
+*.bak
+
+# Ключи и сертификаты — в репозиторий не попадают никогда
+*.pem
+*.key
+*.pfx
+*.p12
+id_rsa*
+id_ed25519*
