@@ -1,24 +1,17 @@
 /**
- * Пользователь — то, что отдаёт бэк в /api/users/me, /api/auth/verify-code
- * и /api/auth/refresh.
+ * Пользователь — то, что отдаёт бэк в /api/users/me,
+ * /api/auth/verify-code и /api/auth/refresh.
  *
- * Описываем только нужные фронту поля. Лишние (deletedAt и прочее)
- * TypeScript структурно игнорирует — можно не перечислять.
- * Когда на бэке появится UserResponseDto, контракт сузится,
- * и этот интерфейс станет ему точным соответствием.
+ * Контракт синхронизирован с UserResponseDto на бэке:
+ * только эти поля уходят наружу. Служебные (deletedAt, createdAt,
+ * updatedAt) не отдаются. Поля nickname/firstName/lastName/birthDate
+ * удалены из проекта.
  */
 export interface User {
   id: string
   displayName: string
-  nickname: string | null
-  firstName: string | null
-  lastName: string | null
   location: string | null
-  /** 'YYYY-MM-DD', год фиктивный (2000) — на фронте показываем без года */
-  birthDate: string | null
   avatarUrl: string | null
-  createdAt: string
-  updatedAt: string
 }
 
 /**
@@ -56,3 +49,16 @@ export interface AuthResponse {
 export type RefreshResponse =
   | { accessToken: string; user: User }
   | { accessToken: null }
+
+/**
+ * PATCH /api/users/me — тело запроса.
+ *
+ * Все поля опциональны. Переданные — обновляются, непереданные — не трогаются.
+ * null для location/avatarUrl — «очистить».
+ * displayName нельзя очистить (валидация на бэке).
+ */
+export interface UpdateUserRequest {
+  displayName?: string
+  location?: string | null
+  avatarUrl?: string | null
+}

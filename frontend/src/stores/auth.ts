@@ -70,6 +70,14 @@ export const useAuthStore = defineStore('auth', () => {
     accessToken.value = nextToken
   }
 
+  /**
+   * Обновить данные пользователя в store (например, после PATCH /users/me).
+   * Access-токен не трогаем — он остаётся.
+   */
+  function setUser(nextUser: User) {
+    user.value = nextUser
+  }
+    
   function clear() {
     user.value = null
     accessToken.value = null
@@ -126,6 +134,7 @@ export const useAuthStore = defineStore('auth', () => {
     isAuthenticated,
     // actions
     setAuth,
+    setUser,
     clear,
     refreshAccessToken,
     bootstrap,
