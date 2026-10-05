@@ -40,5 +40,3 @@ watch(
   <AppHeader v-if="showHeader" />
   <RouterView />
 </template>
-
-<style scoped></style>
