@@ -30,7 +30,7 @@
 | Документация API | @nestjs/swagger | 12.0.1 |
 | Почта | nodemailer | 10.0.10 |
 | Конфиг | @nestjs/config | 12.0.0 |
-| Среда исполнения | Node.js | 22 |
+| Среда исполнения | Node.js | 24 |
 
 ---
 
@@ -356,7 +356,14 @@ PostgreSQL + PostGIS (:5432 внутри docker-сети)
   лучшая типизация. Vue 2 в 2026 официально EOL.
 - **NestJS 12** — актуальная мажорная версия, всё остальное
   (`@nestjs/jwt`, `@nestjs/passport`, `@nestjs/swagger`) подтянуто под неё.
-- **Node 22** — LTS-версия, требование `@tsconfig/node22` и фронта, и бэка.
+- **Node 24** — LTS-версия. Минимум **24.9** нужен бэкенду: NestJS 12
+  поставляется как ESM (`"type": "module"` у всех пакетов `@nestjs/*`),
+  а jest умеет `require(esm)` только начиная с Node 24.9 — на Node 22
+  `npm test` падает с «Must use import to load ES Module». Именно поэтому
+  бэкенд прописан в `engines` как `>=24.9.0`. Фронт требует больше —
+  `>=24.12.0` в своих `engines`. Dev-контейнеры в `docker-compose.yml` и
+  оба образа используют `node:24-alpine`; конфиг — `@tsconfig/node24`
+  в `tsconfig.node.json`.
 - **PostgreSQL 16 + PostGIS 3.5** — PostGIS под эту мажорную версию PG.
 - **Pinia 4** — setup-синтаксис, работает поверх Vue 3.5.
 - **Tailwind 4, не 3** — конфигурация в CSS (`@theme`), поддержка
