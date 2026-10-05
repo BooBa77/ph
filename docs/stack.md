@@ -44,8 +44,11 @@
   внутри каждого — контроллеры (роуты), сервисы (логика), DTO.
   Платформа — **Express**, не Fastify. Все стандартные middleware
   Express-совместимы.
-- **`reflect-metadata`, `rxjs`** — транзитивные зависимости NestJS,
-  напрямую в коде не используются.
+- **`reflect-metadata`** — полифилл декораторов. Импортируется напрямую
+  в `data-source.ts`: CLI TypeORM работает мимо NestJS, а полифилл
+  подключает именно фреймворк.
+- **`rxjs`** — транзитивная зависимость NestJS,
+  напрямую в коде не используется.
 
 ### 2.2 Работа с БД
 
@@ -55,7 +58,7 @@
   `npm run migration:run`. Подключение к БД описано в
   `src/data-source.ts` и через `TypeOrmModule.forRootAsync()` в `AppModule`.
   Применённые миграции: `Init`, `EnablePostgis`, `InitAuth`,
-  `DropUnusedUserFieldsAndAddDisplayNameHistory`, `FixUserForeignKeyNames`.
+  `DropUnusedUserFieldsAndAddDisplayNameHistory`.
 - **PostgreSQL 16 + PostGIS 3.5** — СУБД. PostGIS даёт геотипы и
   пространственные индексы — понадобится для маршрутов, точек на карте,
   поиска ближайших попутчиков. Пока не используется в логике, но
@@ -187,8 +190,9 @@ Override — через `localStorage.themeOverride` (для dev).
 - **`vite-plugin-pwa`** — генерация service worker и манифеста.
   Стратегия `injectManifest` (свой SW в `src/sw.ts`), `registerType: 'prompt'`
   (без автообновления — рулим вручную). В dev PWA отключена.
-- **`workbox-window`** — обёртка для общения с service worker из
-  основного потока. Используется в `composables/useSwUpdate.ts`.
+- Обновлением управляет `composables/useSwUpdate.ts` — через нативный
+  `navigator.serviceWorker`. Обёртка `workbox-window` не нужна и удалена
+  из зависимостей.
 
 ### 3.5 HTTP-слой
 

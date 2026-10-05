@@ -41,7 +41,11 @@ sync-db.example.bat
 start-work.bat
 end-work.bat
 backups/
-docs/
+# docs/ — локальные материалы, но stack.md часть репозитория.
+# Именно docs/* (а не docs/), иначе исключение ниже не сработает:
+# gitignore не умеет «раз-игнорировать» файл внутри исключённого каталога.
+docs/*
+!docs/stack.md
 
 # Локальные секреты и мусор (cookie-джар curl, дампы ответов и т.п.)
 cookies.txt
