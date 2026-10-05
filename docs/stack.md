@@ -59,7 +59,7 @@
   `npm run migration:run`. Подключение к БД описано в
   `src/data-source.ts` и через `TypeOrmModule.forRootAsync()` в `AppModule`.
   Применённые миграции: `Init`, `EnablePostgis`, `InitAuth`,
-  `DropUnusedUserFieldsAndAddDisplayNameHistory`.
+  `DropUnusedUserFieldsAndAddDisplayNameHistory`, `FixUserForeignKeyNames`.
 - **PostgreSQL 16 + PostGIS 3.5** — СУБД. PostGIS даёт геотипы и
   пространственные индексы — понадобится для маршрутов, точек на карте,
   поиска ближайших попутчиков. Пока не используется в логике, но
