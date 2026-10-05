@@ -29,8 +29,6 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
-    @InjectRepository(DisplayNameHistory)
-    private readonly historyRepository: Repository<DisplayNameHistory>,
     private readonly dataSource: DataSource,
   ) {}
 

@@ -1,6 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class EnablePostgis<timestamp> implements MigrationInterface {
+export class EnablePostgis implements MigrationInterface {
   name = 'EnablePostgis1789720017137';
 
   public async up(queryRunner: QueryRunner): Promise<void> {
