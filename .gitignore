@@ -21,7 +21,11 @@ yarn-error.log*
 coverage/
 
 # Editor
-.vscode/
+# Именно **/.vscode/*, а не .vscode/: шаблон с «/» на конце исключает
+# сам каталог, а тогда исключение !.vscode/extensions.json во
+# frontend/.gitignore перестаёт работать — gitignore не умеет
+# раз-игнорировать файл внутри исключённого каталога.
+**/.vscode/*
 .idea/
 *.swp
 
