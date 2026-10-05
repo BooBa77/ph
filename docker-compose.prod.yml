@@ -1,0 +1,66 @@
+# Прод-стек PeakHunter.
+#
+# Это копия файла, который лежит на сервере:
+#   /home/dl_admin_tsy/ph-prod/docker-compose.yml
+# Имя в репозитории другое (docker-compose.prod.yml), чтобы не путать
+# с dev-стеком в корне. На сервере файл называется docker-compose.yml —
+# так `docker compose` находит его без флага -f.
+#
+# СЕКРЕТОВ ЗДЕСЬ НЕТ: значения приходят из .env, который лежит рядом на
+# сервере и в репозиторий не попадает (он в .gitignore). Переменные,
+# которые .env должен определять:
+#   POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB,
+#   DATABASE_URL, MIGRATION_DATABASE_URL,
+#   JWT_ACCESS_SECRET, JWT_ACCESS_EXPIRES_IN, REFRESH_EXPIRES_DAYS,
+#   COOKIE_SECURE,
+#   EMAIL_SMTP_USER, EMAIL_SMTP_PASSWORD, EMAIL_SMTP_FROM
+#
+# Деплой (на сервере):
+#   cd /home/dl_admin_tsy/ph-prod
+#   docker compose pull && docker compose up -d
+# ВАЖНО: pull только скачивает образ, но не пересоздаёт контейнеры.
+# Без up -d прод продолжит работать на старом образе.
+#
+# Все порты слушают только 127.0.0.1: наружу смотрит хостовый nginx
+# (см. nginx.host.conf), он же терминирует TLS.
+#
+# При изменении этого файла скопируйте его на сервер, иначе копии
+# разъедутся — ровно так прод однажды остался без авторизации.
+
+services:
+  frontend:
+    image: ghcr.io/booba77/ph-frontend:latest
+    ports:
+      - "127.0.0.1:8081:80"
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  backend:
+    image: ghcr.io/booba77/ph-backend:latest
+    env_file:
+      - .env
+    ports:
+      - "127.0.0.1:3001:3000"
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=${DATABASE_URL}
+      - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL}
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgis/postgis:16-3.5-alpine
+    ports:
+      - "127.0.0.1:5433:5432"
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - ph_postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  ph_postgres_data:
