@@ -11,13 +11,9 @@
     "experimentalDecorators": true,
     "allowSyntheticDefaultImports": true,
     "target": "ES2023",
-    "types": ["node", "jest"],
+    "types": ["node"],
     "sourceMap": true,
     "outDir": "./dist",
-    // Явный rootDir обязателен для TypeScript 6: без него ts-jest падает
-    // с TS5011 («common source directory is './src'»), и тесты не запускаются.
-    // Сборка использует tsconfig.build.json, где rootDir сужен до ./src.
-    "rootDir": ".",
     "incremental": true,
     "skipLibCheck": true,
     "strict": true,
