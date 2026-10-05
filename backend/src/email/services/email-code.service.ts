@@ -88,6 +88,28 @@ export class EmailCodeService {
   }
 
   /**
+   * Отменить созданный код вместе с его cooldown.
+   *
+   * Нужен, когда код уже создан, но письмо отправить не удалось: без
+   * отмены пользователь остался бы и без письма, и с активным cooldown,
+   * то есть не смог бы повторить запрос целую минуту.
+   *
+   * Код сверяется: если за время отправки успел появиться более новый
+   * код (отправка провисела дольше cooldown), чужой код не трогаем.
+   */
+  cancelCode(email: string, code: string): void {
+    const normalizedEmail = this.normalize(email);
+    const data = this.codes.get(normalizedEmail);
+
+    if (!data || data.code !== code) return;
+
+    this.codes.delete(normalizedEmail);
+    this.logger.warn(
+      `Код для ${normalizedEmail} отменён: письмо не отправлено`,
+    );
+  }
+
+  /**
    * Проверить код для email.
    * При успехе код удаляется.
    * При неверном коде — увеличивает счётчик попыток.

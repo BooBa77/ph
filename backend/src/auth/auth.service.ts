@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Injectable,
   Logger,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -57,6 +58,11 @@ export class AuthService {
   /**
    * Шаг 1: запросить код на email.
    * БД не проверяем вообще — защита от энумерации email.
+   *
+   * Порядок важен: код создаётся до отправки и сразу занимает cooldown,
+   * иначе параллельные запросы успели бы отправить несколько писем.
+   * Но если письмо не ушло — код отменяется, чтобы пользователь не
+   * остался заблокирован на минуту, так и не получив письма.
    */
   async requestCode(rawEmail: string): Promise<RequestCodeResult> {
     const email = this.normalizeEmail(rawEmail);
@@ -68,15 +74,25 @@ export class AuthService {
       throw new BadRequestException((err as Error).message);
     }
 
-    await this.smtpService.sendEmail(
-      email,
-      'Код подтверждения PeakHunter',
-      `Ваш код подтверждения: ${code}\n\nКод действует 5 минут.`,
-    );
+    try {
+      await this.smtpService.sendEmail(
+        email,
+        'Код подтверждения PeakHunter',
+        `Ваш код подтверждения: ${code}\n\nКод действует 5 минут.`,
+      );
+    } catch (err) {
+      this.emailCodeService.cancelCode(email, code);
+      this.logger.error(
+        `Не удалось отправить код на ${email}: ${(err as Error).message}`,
+      );
+      throw new ServiceUnavailableException(
+        'Не удалось отправить письмо. Попробуйте позже',
+      );
+    }
 
     return {
       message: 'Код отправлен на указанный email',
-      resendAfterSeconds: 60,
+      resendAfterSeconds: this.emailCodeService.getResendCooldownSeconds(email),
     };
   }
 
