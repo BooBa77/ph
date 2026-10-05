@@ -38,6 +38,7 @@ known_hosts
 # если файл успел попасть в индекс, нужен `git rm --cached`.
 sync-db.bat
 backups/
+docs/
 
 # Локальные секреты и мусор (cookie-джар curl, дампы ответов и т.п.)
 cookies.txt
