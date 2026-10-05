@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
+import { nextTick, onUnmounted, ref } from 'vue'
+import { useAppStore } from '@/stores/app'
 
 const props = withDefaults(
   defineProps<{
@@ -27,6 +28,13 @@ const emit = defineEmits<{
   save: [value: string]
 }>()
 
+/**
+ * Счётчик занятости. Пока он больше нуля, PWA не применяет обновление:
+ * перезагрузка страницы посреди правки стёрла бы введённое.
+ * Разбор — в stores/app.ts и composables/useSwUpdate.ts.
+ */
+const appStore = useAppStore()
+
 /** Находимся ли в режиме редактирования. */
 const isEditing = ref(false)
 
@@ -45,6 +53,7 @@ async function startEdit() {
   if (!props.editable) return
   draftValue.value = props.modelValue
   isEditing.value = true
+  appStore.setBusy(true)
 
   // nextTick — ждём, пока Vue отрисует input (он появляется через v-if).
   // Без nextTick inputRef будет null.
@@ -60,6 +69,7 @@ async function startEdit() {
 function cancelEdit() {
   isEditing.value = false
   draftValue.value = ''
+  appStore.setBusy(false)
 }
 
 /**
@@ -98,7 +108,19 @@ function saveEdit() {
 
   emit('save', trimmed)
   isEditing.value = false
+  appStore.setBusy(false)
 }
+
+/**
+ * Страховка от «залипшего» счётчика.
+ *
+ * Если компонент размонтируют прямо во время правки (например, ушли
+ * на другой роут), освободить занятость больше некому — а пока счётчик
+ * больше нуля, PWA-обновление не применится никогда.
+ */
+onUnmounted(() => {
+  if (isEditing.value) appStore.setBusy(false)
+})
 
 /** Enter — сохранить, Escape — отменить. */
 function onKeydown(e: KeyboardEvent) {

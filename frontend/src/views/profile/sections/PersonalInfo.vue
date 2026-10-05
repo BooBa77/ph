@@ -4,9 +4,11 @@ import { computed, ref } from 'vue'
 import { updateMe } from '@/api/users'
 import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
+import { useAppStore } from '@/stores/app'
 import EditableField from '@/components/ui/EditableField.vue'
 
 const auth = useAuthStore()
+const appStore = useAppStore()
 
 /** Ошибка последнего сохранения (для отображения под полем). */
 const error = ref<string | null>(null)
@@ -14,6 +16,24 @@ const error = ref<string | null>(null)
 const displayName = computed(() => auth.user?.displayName ?? '')
 const location = computed(() => auth.user?.location ?? '')
 const SUGGESTED_CITIES = ['Иркутск', 'Ангарск', 'Усолье-Сибирское']
+
+/**
+ * Выполнить запрос, удерживая счётчик занятости.
+ *
+ * Без этого остаётся дыра: правку пользователь закончил, EditableField
+ * освободил счётчик, а запрос на сохранение ещё летит — и PWA-обновление
+ * может перезагрузить страницу прямо посреди него, потеряв изменение.
+ * Кнопки с городами вообще сохраняют без редактирования, поэтому им
+ * счётчик нужен не меньше.
+ */
+async function whileBusy<T>(action: () => Promise<T>): Promise<T> {
+  appStore.setBusy(true)
+  try {
+    return await action()
+  } finally {
+    appStore.setBusy(false)
+  }
+}
 
 /**
  * Сохранение displayName.
@@ -25,7 +45,7 @@ const SUGGESTED_CITIES = ['Иркутск', 'Ангарск', 'Усолье-Си
 async function saveDisplayName(value: string) {
   error.value = null
   try {
-    const updated = await updateMe({ displayName: value })
+    const updated = await whileBusy(() => updateMe({ displayName: value }))
     auth.setUser(updated)
   } catch (e) {
     if (e instanceof ApiError) {
@@ -41,7 +61,7 @@ async function saveLocation(value: string) {
   error.value = null
   try {
     const newValue = value === '' ? null : value
-    const updated = await updateMe({ location: newValue })
+    const updated = await whileBusy(() => updateMe({ location: newValue }))
     auth.setUser(updated)
   } catch (e) {
     if (e instanceof ApiError) {
