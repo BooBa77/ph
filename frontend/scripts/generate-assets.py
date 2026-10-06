@@ -181,25 +181,31 @@ def draw_avatar(size: int) -> Image.Image:
 
     # ─── ждун ───
     # Масштаб от размера картинки, поэтому силуэт читается и на 96 px.
+    #
+    # Размер подобран так, чтобы фигура занимала примерно половину
+    # высоты: в кружке 32 px мелкая фигурка превращается в еле заметное
+    # пятно. При этом важно не вылезти за вписанную окружность — аватарка
+    # круглая, и углы картинки обрезаются: фигура шириной 0.36 стороны
+    # помещается в круг с запасом даже с учётом панамы и рюкзака.
     scale = big / 512
     cx = big * 0.45
-    ground = big * 0.86  # опорная линия — «земля» под фигурой
+    ground = big * 0.87  # опорная линия — «земля» под фигурой
 
-    body_w = 104 * scale
-    body_h = 112 * scale
+    body_w = 200 * scale
+    body_h = 150 * scale
     body_top = ground - body_h
 
     # Рюкзак за спиной — рисуем первым, чтобы тело его перекрыло.
-    pack_w = 42 * scale
-    pack_h = 64 * scale
+    pack_w = 66 * scale
+    pack_h = 96 * scale
     d.rounded_rectangle(
         (
-            cx + body_w / 2 - 6 * scale,
-            body_top + body_h * 0.20,
+            cx + body_w / 2 - 10 * scale,
+            body_top + body_h * 0.18,
             cx + body_w / 2 + pack_w,
-            body_top + body_h * 0.20 + pack_h,
+            body_top + body_h * 0.18 + pack_h,
         ),
-        radius=int(13 * scale),
+        radius=int(20 * scale),
         fill=PACK,
     )
 
@@ -211,23 +217,23 @@ def draw_avatar(size: int) -> Image.Image:
     )
 
     # Руки: короткие, свисают по бокам.
-    arm_w = 19 * scale
+    arm_w = 30 * scale
     for side in (-1, 1):
         d.rounded_rectangle(
             (
-                cx + side * (body_w / 2 + arm_w * 0.65) - arm_w / 2,
-                body_top + body_h * 0.24,
-                cx + side * (body_w / 2 + arm_w * 0.65) + arm_w / 2,
-                body_top + body_h * 0.80,
+                cx + side * (body_w / 2 + arm_w * 0.62) - arm_w / 2,
+                body_top + body_h * 0.22,
+                cx + side * (body_w / 2 + arm_w * 0.62) + arm_w / 2,
+                body_top + body_h * 0.82,
             ),
             radius=int(arm_w * 0.5),
             fill=ZHDU_N_SHADE,
         )
 
     # Голова: сверху, чуть уже тела.
-    head_w = 84 * scale
-    head_h = 58 * scale
-    head_bottom = body_top + 8 * scale
+    head_w = 150 * scale
+    head_h = 92 * scale
+    head_bottom = body_top + 12 * scale
     d.rounded_rectangle(
         (cx - head_w / 2, head_bottom - head_h, cx + head_w / 2, head_bottom),
         radius=int(head_h * 0.46),
@@ -235,20 +241,20 @@ def draw_avatar(size: int) -> Image.Image:
     )
 
     # Хобот: от низа головы вниз, поверх тела.
-    trunk_w = 17 * scale
+    trunk_w = 28 * scale
     d.rounded_rectangle(
         (
             cx - trunk_w / 2,
             head_bottom - head_h * 0.45,
             cx + trunk_w / 2,
-            head_bottom + head_h * 0.65,
+            head_bottom + head_h * 0.72,
         ),
         radius=int(trunk_w * 0.5),
         fill=ZHDU_N_SHADE,
     )
 
     # Глаза по бокам головы.
-    eye_r = 7.5 * scale
+    eye_r = 12 * scale
     eye_y = head_bottom - head_h * 0.64
     for eye_x in (cx - head_w * 0.29, cx + head_w * 0.29):
         d.ellipse(
@@ -262,24 +268,24 @@ def draw_avatar(size: int) -> Image.Image:
         )
 
     # Панама: поля и тулья с лентой.
-    brim_w = head_w * 1.55
-    brim_y = head_bottom - head_h - 3 * scale
+    brim_w = head_w * 1.5
+    brim_y = head_bottom - head_h - 5 * scale
     d.ellipse(
-        (cx - brim_w / 2, brim_y - 9 * scale, cx + brim_w / 2, brim_y + 9 * scale),
+        (cx - brim_w / 2, brim_y - 14 * scale, cx + brim_w / 2, brim_y + 14 * scale),
         fill=PANAMA,
     )
     d.rounded_rectangle(
         (
             cx - head_w * 0.36,
-            brim_y - 24 * scale,
+            brim_y - 38 * scale,
             cx + head_w * 0.36,
-            brim_y + 5 * scale,
+            brim_y + 8 * scale,
         ),
-        radius=int(17 * scale),
+        radius=int(27 * scale),
         fill=PANAMA,
     )
     d.rectangle(
-        (cx - head_w * 0.36, brim_y - 10 * scale, cx + head_w * 0.36, brim_y - 4 * scale),
+        (cx - head_w * 0.36, brim_y - 16 * scale, cx + head_w * 0.36, brim_y - 7 * scale),
         fill=PANAMA_BAND,
     )
 

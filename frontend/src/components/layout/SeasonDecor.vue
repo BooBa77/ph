@@ -159,7 +159,14 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
       class="season-decor__leaf"
       :style="{
         '--left': `${leaf.left}%`,
-        '--top': `${leaf.top}vh`,
+        /*
+          Стартовое положение задаём через bottom, а не через top+calc:
+          так оно не зависит от того, как браузер посчитает calc от
+          переменной. Лист стоит на `top + 8vh` выше верхней кромки
+          (bottom: calc(100% + 8vh) при top: 0), дальше анимация ведёт
+          его на 108vh вниз.
+        */
+        bottom: `calc(100% + 8vh - ${leaf.top}vh)`,
         '--duration': `${leaf.duration}s`,
         '--delay': `${leaf.delay}s`,
         '--size': `${leaf.size}rem`,
@@ -206,13 +213,12 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
 <style>
 .season-decor__leaf {
   /*
-    Стартовое положение — своё у каждого листа, задано в --top.
-    Анимация падения ведёт его на 108vh вниз от этой точки, а
-    отрицательная задержка ставит в середину пути: к первому кадру
-    листья уже разбросаны по всему экрану.
+    Стартовое положение — своё у каждого листа, задано inline через
+    bottom: `top + 8vh` выше верхней кромки. Анимация падения ведёт
+    лист на 108vh вниз, а отрицательная задержка ставит его в середину
+    пути: к первому кадру листья уже разбросаны по всему экрану.
   */
   position: absolute;
-  top: calc(var(--top) - 8vh);
   left: var(--left);
   width: var(--size);
   height: var(--size);

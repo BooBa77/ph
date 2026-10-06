@@ -119,12 +119,12 @@ describe('SeasonDecor', () => {
 
   it('стартовые позиции разные: листья не идут волной', async () => {
     const wrapper = await mountAutumn()
-    const tops = new Set(
+    const bottoms = new Set(
       wrapper
         .findAll('.season-decor__leaf')
-        .map((leaf) => leaf.attributes('style')?.match(/--top:\s*([\d.]+)vh/)?.[1]),
+        .map((leaf) => leaf.attributes('style')?.match(/bottom:\s*([^;]+)/)?.[1]),
     )
 
-    expect(tops.size).toBe(wrapper.findAll('.season-decor__leaf').length)
+    expect(bottoms.size).toBe(wrapper.findAll('.season-decor__leaf').length)
   })
 })
