@@ -2,9 +2,8 @@
 {
   "extends": "@tsconfig/node24/tsconfig.json",
   // Здесь только те конфиги, которые реально есть. Заготовки под
-  // vitest/cypress/playwright из шаблона убраны — этих инструментов
-  // в проекте нет, и include на несуществующие файлы ничего не делает.
-  "include": ["vite.config.*", "eslint.config.*"],
+  // cypress/playwright из шаблона убраны — этих инструментов нет.
+  "include": ["vite.config.*", "vitest.config.*", "eslint.config.*"],
   "compilerOptions": {
     // Most tools use transpilation instead of Node.js's native type-stripping.
     // Bundler mode provides a smoother developer experience.
