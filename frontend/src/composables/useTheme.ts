@@ -6,14 +6,11 @@ import { useAppStore } from '@/stores/app'
 import { isValidSeason, type Season } from '@/types/theme'
 
 /**
- * Ключ в localStorage для ручного override темы.
- * Используется ТОЛЬКО в dev для тестирования:
- *   localStorage.setItem('themeOverride', '3')  → лето
- *   localStorage.removeItem('themeOverride')    → по дате
+ * Ключ в localStorage для выбранного пользователем сезона.
  *
- * В prod ключ никто не выставляет, поэтому тема всегда вычисляется
- * по дате. Если юзер залезет в DevTools и поставит мусор —
- * валидация отвергнет.
+ * Если ключа нет — сезон определяется по дате (см. detectSeasonByDate).
+ * Пользователь выбирает сезон в меню в шапке; «Вернуть по дате» удаляет
+ * ключ и возвращает автоматический режим.
  */
 const OVERRIDE_KEY = 'themeOverride'
 
@@ -91,40 +88,78 @@ function readOverride(): Season | null {
 }
 
 /**
+ * Тема уже инициализирована в этой сессии страницы.
+ *
+ * `useTheme` вызывается в двух местах: один раз в App.vue (инициализация
+ * и watcher) и из переключателя сезона в меню, которому нужны только
+ * функции управления. Второй вызов не должен навешивать второй watcher
+ * и заново читать localStorage.
+ */
+let initialized = false
+
+/**
  * Composable темы. Инициализирует текущую тему и следит за ней.
  *
- * Вызывать ОДИН РАЗ — в App.vue, до первого рендера.
- * Если вызывать в нескольких местах, watcher продублируется.
+ * Вызывать ОДИН РАЗ — в App.vue, до первого рендера: этот вызов делает
+ * всю работу. Повторные вызовы (например, из переключателя сезона)
+ * ничего не навешивают и просто возвращают функции управления.
  *
- * Что делает:
+ * Что делает первый вызов:
  *   1. Определяет начальную тему (override или по дате).
  *   2. Ставит data-theme на <html> — CSS пересчитывается.
  *   3. Watcher: при изменении currentTheme обновляет data-theme.
  *      Если значение невалидное (вписали через DevTools) — откатывает
  *      к теме по дате.
+ *
+ * Возвращает функции выбора сезона — ими пользуется переключатель в меню
+ * шапки. Выбор уходит в data-theme (через store) и в localStorage, чтобы
+ * не слетел при перезагрузке.
  */
 export function useTheme() {
   const appStore = useAppStore()
 
-  // ─── инициализация ───
-  const initial = readOverride() ?? detectSeasonByDate()
-  appStore.setTheme(initial)
+  if (!initialized) {
+    initialized = true
 
-  // ─── watcher ───
-  watch(
-    () => appStore.currentTheme,
-    (next) => {
-      // Защита от мусора, вписанного через DevTools напрямую в state.
-      if (!isValidSeason(next)) {
-        // Откатываем к теме по дате. Это вызовет watcher повторно,
-        // но уже с валидным значением — второй раз ветка не сработает.
-        appStore.setTheme(detectSeasonByDate())
-        return
-      }
+    // ─── инициализация ───
+    const initial = readOverride() ?? detectSeasonByDate()
+    appStore.setTheme(initial)
 
-      // Всё валидно — применяем к <html>.
-      document.documentElement.setAttribute('data-theme', String(next))
-    },
-    { immediate: true },
-  )
+    // ─── watcher ───
+    watch(
+      () => appStore.currentTheme,
+      (next) => {
+        // Защита от мусора, вписанного через DevTools напрямую в state.
+        if (!isValidSeason(next)) {
+          // Откатываем к теме по дате. Это вызовет watcher повторно,
+          // но уже с валидным значением — второй раз ветка не сработает.
+          appStore.setTheme(detectSeasonByDate())
+          return
+        }
+
+        // Всё валидно — применяем к <html>.
+        document.documentElement.setAttribute('data-theme', String(next))
+      },
+      { immediate: true },
+    )
+  }
+
+  /**
+   * Выбрать сезон вручную.
+   *
+   * Сначала пишем в localStorage, потом в store: если запись в хранилище
+   * не удалась (приватный режим, переполнение), состояние приложения
+   * всё равно останется согласованным.
+   *
+   * Обратной операции («вернуть сезон по дате») нет намеренно: в сессию
+   * входа она не нужна, а лишний путь в UI — лишний вопрос «а что будет,
+   * если». Понадобится — это снятие ключа из localStorage плюс
+   * detectSeasonByDate.
+   */
+  function setThemeOverride(season: Season) {
+    localStorage.setItem(OVERRIDE_KEY, String(season))
+    appStore.setTheme(season)
+  }
+
+  return { setThemeOverride }
 }
