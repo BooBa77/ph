@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 
 import AppHeader from '@/components/layout/AppHeader.vue'
+import SeasonDecor from '@/components/layout/SeasonDecor.vue'
 import InstallHintDialog from '@/components/ui/InstallHintDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { useSwUpdate } from '@/composables/useSwUpdate'
@@ -50,13 +51,21 @@ watch(
 </script>
 
 <template>
+  <!--
+    Сезонный декор — первым в разметке и под содержимым (z-index: -1
+    внутри компонента). Позиция fixed, поэтому порядок в DOM на слои
+    не влияет, но так он хотя бы читается в том же порядке, что и
+    рисуется.
+  -->
+  <SeasonDecor />
+
   <AppHeader v-if="showHeader" />
   <RouterView />
 
   <!--
-    Подсказка по установке — на уровне приложения, вне меню: меню
-    закрывается перед её показом, и внутри него диалог исчез бы вместе
-    с меню.
+    Подсказка, как вынести ярлык, — на уровне приложения: кнопка живёт
+    в футере главной, а подсказка понадобится и из других мест, когда
+    предложение переедет в «Сессии».
   -->
   <InstallHintDialog />
 </template>

@@ -37,6 +37,9 @@ export default defineConfig({
         background_color: '#ffffff',
         lang: 'ru',
         categories: ['travel', 'sports', 'social'],
+        // Знак проекта. Иконки совпадают с теми, что генерирует
+        // scripts/generate-assets.py: имена и размеры должны сходиться,
+        // иначе браузер не найдёт файл при установке.
         icons: [
           {
             src: 'icons/icon-192.png',
