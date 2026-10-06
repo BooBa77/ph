@@ -207,8 +207,6 @@ async function removeAvatar() {
             >
               Убрать
             </button>
-
-            <p class="text-xs text-muted">JPEG, PNG или WebP, до 10 МБ</p>
           </div>
         </div>
       </div>

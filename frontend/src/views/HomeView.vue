@@ -6,7 +6,12 @@ const auth = useAuthStore()
 </script>
 
 <template>
-  <main class="mx-auto flex min-h-[70vh] max-w-3xl flex-col px-4 py-12">
+  <!--
+    min-h и flex-col с mt-auto у футера: главная пока почти пустая,
+    и кнопка в футере должна стоять внизу страницы, а не висеть
+    посреди экрана сразу под приветствием.
+  -->
+  <main class="mx-auto flex min-h-[80vh] max-w-3xl flex-col px-4 py-12">
     <h1 class="text-3xl font-bold text-text">PeakHunter</h1>
 
     <p v-if="auth.user" class="mt-4 text-muted">
@@ -14,11 +19,6 @@ const auth = useAuthStore()
       >!
     </p>
 
-    <!--
-      mt-auto прижимает футер к низу страницы: на главной пока нечего
-      показывать, и предложение вынести ярлык не должно висеть посреди
-      пустоты сразу под приветствием.
-    -->
-    <HomeFooter class="mt-auto" />
+    <HomeFooter />
   </main>
 </template>

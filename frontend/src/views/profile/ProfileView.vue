@@ -10,7 +10,11 @@ useRememberProfilePath()
 
 <template>
   <div class="mx-auto max-w-5xl px-4 py-8">
-    <h1 class="mb-6 text-2xl font-bold text-text">Личный кабинет</h1>
+    <!--
+      Заголовка «Личный кабинет» здесь нет намеренно: активный пункт
+      в меню слева уже подсвечен и назван, и дублировать его текстом
+      над содержимым незачем.
+    -->
 
     <!--
       Адаптив:
@@ -23,8 +27,7 @@ useRememberProfilePath()
       Никаких v-if по ширине экрана — всё делает CSS.
 
       items-start, а не stretch: колонка меню не должна растягиваться
-      на всю высоту контента — иначе «Выйти», прижатый к низу колонки,
-      уезжает за контент и его не видно.
+      на всю высоту контента — иначе «Выйти» уезжает под контент.
     -->
     <div class="flex flex-col gap-6 md:flex-row md:items-start md:gap-8">
       <ProfileSidebar class="md:w-56 md:shrink-0" />
