@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 
 import { logout } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
+import { usePreferencesStore } from '@/stores/preferences'
 import SidebarIcon from '@/components/ui/SidebarIcon.vue'
 
 /**
@@ -19,6 +20,7 @@ import SidebarIcon from '@/components/ui/SidebarIcon.vue'
  * аватарка, ни логотип.
  */
 const auth = useAuthStore()
+const preferences = usePreferencesStore()
 
 /** Спрашиваем подтверждение перед выходом. */
 const isConfirmingLogout = ref(false)
@@ -53,9 +55,8 @@ async function confirmLogout() {
     </RouterLink>
 
     <!--
-      Разделов пока нет: ссылки ведут в никуда, поэтому это не RouterLink,
-      а неактивные пункты. Как только разделы появятся — станут ссылками
-      с теми же иконками.
+      Сессии — раздела ещё нет, поэтому неактивный пункт, а не ссылка.
+      Как только появится — станет RouterLink с той же иконкой.
     -->
     <span
       class="flex flex-1 cursor-not-allowed items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted/50 md:flex-none md:justify-start md:rounded-none md:px-4"
@@ -64,12 +65,30 @@ async function confirmLogout() {
       <span class="hidden md:inline">Сессии (скоро)</span>
     </span>
 
-    <span
-      class="flex flex-1 cursor-not-allowed items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted/50 md:flex-none md:justify-start md:rounded-none md:px-4"
+    <!--
+      Настройки. Полноценного раздела пока нет, но одно настройко-образное
+      действие уже есть: сезонные анимации. Держим его здесь, а не в
+      отдельной странице ради одного переключателя.
+    -->
+    <label
+      class="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted transition-colors hover:bg-bg hover:text-text md:flex-none md:justify-start md:rounded-none md:px-4 md:hover:bg-surface"
+      title="Падающие листья и прочее сезонное оформление"
     >
       <span class="h-5 w-5 shrink-0"><SidebarIcon name="settings" /></span>
-      <span class="hidden md:inline">Настройки (скоро)</span>
-    </span>
+      <span class="hidden md:inline">Анимация фона</span>
+      <input
+        type="checkbox"
+        class="ml-auto hidden cursor-pointer md:block"
+        :checked="preferences.seasonAnimations"
+        @change="preferences.toggleSeasonAnimations()"
+      />
+      <!-- На мобиле пункт узкий: чекбокс не влезает, поэтому показываем
+           состояние точкой -->
+      <span
+        class="h-2 w-2 shrink-0 rounded-full md:hidden"
+        :class="preferences.seasonAnimations ? 'bg-primary' : 'bg-border'"
+      ></span>
+    </label>
 
     <!-- Выход: отделён чертой от разделов, на мобиле — в общем ряду -->
     <div class="md:mt-3 md:border-t md:border-border md:pt-3">

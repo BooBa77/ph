@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
 import { useAppStore } from '@/stores/app'
+import { usePreferencesStore } from '@/stores/preferences'
 
 /**
  * Сезонный фон за содержимым страницы.
@@ -27,30 +28,30 @@ import { useAppStore } from '@/stores/app'
  * Разметка пустая до монтирования: случайные значения на сервере и в
  * браузере разошлись бы, а при пустом начальном состоянии расхождению
  * взяться неоткуда.
+ *
+ * Про «меньше движения»: системную настройку `prefers-reduced-motion`
+ * здесь НЕ слушаем. Раньше слушали и прятали слой — на машине, где
+ * анимации выключены в системе (Chrome наследует это из настроек
+ * Windows), сезонного оформления не было вовсе, и выглядело это как
+ * поломка. Отключение теперь своё: переключатель в настройках кабинета
+ * (`usePreferencesStore`), по умолчанию анимация включена.
  */
 
 interface Leaf {
   /** Позиция по горизонтали, % ширины экрана. */
   left: number
+  /**
+   * Стартовое смещение вниз от верхней кромки, vh.
+   *
+   * Нужно вместе с отрицательной задержкой: задержка разбрасывает листья
+   * по высоте, но точка отсчёта у всех одна — над экраном. Без `top`
+   * первые секунды экран пустой, а потом листья идут волной сверху.
+   */
+  top: number
   /** Сколько летит сверху донизу, секунды. */
   duration: number
-  /**
-   * Отрицательная задержка — лист стартует «уже в пути».
-   *
-   * Считается так, чтобы к первому кадру листья были разбросаны по всей
-   * высоте экрана: иначе первые секунды экран пустой и включается «дождь
-   * пошёл», а нужно ощущение, что листопад шёл всегда. Именно поэтому
-   * казалось, что листьев нет: на шестой секунде успевали появиться три
-   * штуки у верхней кромки.
-   *
-   * Стартовое положение задаётся не только задержкой, но и `--top`:
-   * задержка разбрасывает листья по высоте, но точка, откуда начинается
-   * отсчёт, у всех одна — над экраном. Без `--top` на широком мониторе
-   * листья успевают пролететь одинаковые участки и идут «волной».
-   */
+  /** Отрицательная задержка — лист стартует «уже в пути». */
   delay: number
-  /** Стартовое смещение вниз от верхней кромки, vh. */
-  top: number
   /** Размер, rem. */
   size: number
   /** Амплитуда качания, px. */
@@ -93,9 +94,10 @@ function makeLeaves(): Leaf[] {
 
     return {
       left: Math.random() * 100,
-      duration,
-      delay: -Math.random() * duration,
       top: Math.random() * 100,
+      duration,
+      // Разброс по всей высоте: см. комментарий к полю delay.
+      delay: -Math.random() * duration,
       size: isFar ? 0.7 + Math.random() * 0.4 : 1 + Math.random() * 0.8,
       sway: 18 + Math.random() * 42,
       spin: 4 + Math.random() * 6,
@@ -110,47 +112,28 @@ function makeLeaves(): Leaf[] {
 }
 
 const appStore = useAppStore()
+const preferences = usePreferencesStore()
 const leaves = ref<Leaf[]>([])
-
-/**
- * В системе просят меньше движения.
- *
- * Раньше я в этом случае просто прятал слой — и это была ошибка:
- * на машине с включённым «уменьшить движение» сезонное оформление
- * пропадало целиком, что выглядит как «листьев нет», а не как забота
- * о самочувствии. Правильнее оставить оформление, убрав движение:
- * листья висят на месте и медленно проявляются.
- */
-const reduceMotion = ref(false)
-let motionQuery: MediaQueryList | null = null
-
-function applyMotionPreference(event: MediaQueryList | MediaQueryListEvent) {
-  reduceMotion.value = event.matches
-}
 
 onMounted(() => {
   leaves.value = makeLeaves()
-
-  if (typeof window.matchMedia === 'function') {
-    motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
-    applyMotionPreference(motionQuery)
-    motionQuery.addEventListener('change', applyMotionPreference)
-  }
-})
-
-onBeforeUnmount(() => {
-  motionQuery?.removeEventListener('change', applyMotionPreference)
 })
 
 /** Слой показываем только осенью: у зимы, весны и лета свой декор (пока нет). */
 const isAutumn = computed(() => appStore.currentTheme === 4)
+
+/**
+ * Анимация выключена пользователем: листья остаются, но висят на месте
+ * и медленно мерцают. Оформление не исчезает — исчезает движение.
+ */
+const isStatic = computed(() => !preferences.seasonAnimations)
 </script>
 
 <template>
   <div
     v-if="isAutumn"
     class="season-decor pointer-events-none fixed inset-0 -z-10 overflow-hidden"
-    :class="{ 'season-decor--calm': reduceMotion }"
+    :class="{ 'season-decor--static': isStatic }"
     aria-hidden="true"
   >
     <span
@@ -204,8 +187,6 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
   scoped добавляет данным атрибут, а к ключевым кадрам @keyframes — суффикс,
   и ссылка на анимацию в свойстве `animation` ломается: анимация просто
   не запускается, листья остаются висеть за верхней кромкой экрана.
-  Именно на это я и купился в первой версии: тесты проходили (jsdom не
-  считает стили), а в браузере листьев не было видно.
 
   Вместо scoped — префикс `season-decor` во всех селекторах: имена
   уникальные, конфликтов с другими компонентами не будет.
@@ -277,24 +258,18 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
 }
 
 /*
-  Просьба «меньше движения» в системе — уважаем: убираем слой целиком.
-  Анимация фона не стоит того, чтобы провоцировать укачивание.
-*/
-/*
-  Просьба «меньше движения» в системе — уважаем, но оформление оставляем.
-  Раньше слой просто исчезал, и это выглядело как поломка: сезонного
-  декора нет, хотя он должен быть. Теперь листья висят на своих местах
-  и медленно проявляются: движение убрано, сезон остался.
+  Анимация выключена в настройках: листья висят на своих местах
+  и медленно мерцают. Движение убрано, оформление осталось.
 
-  Падение и вращение отключаем совсем, вместо них — мягкое мерцание
+  Падение и вращение отключаем совсем, вместо них — мягкое изменение
   прозрачности. Смещения сюда не добавляем намеренно: любое перемещение
-  и есть то, о чём просили не делать.
+  и есть то, что просили выключить.
 */
-.season-decor--calm .season-decor__leaf {
+.season-decor--static .season-decor__leaf {
   animation: season-leaf-calm 9s ease-in-out var(--delay) infinite alternate;
 }
 
-.season-decor--calm .season-decor__leaf svg {
+.season-decor--static .season-decor__leaf svg {
   animation: none;
 }
 

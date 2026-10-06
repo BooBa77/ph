@@ -1,40 +1,24 @@
 import { mount } from '@vue/test-utils'
 import { createPinia, setActivePinia } from 'pinia'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import { nextTick } from 'vue'
 
 import SeasonDecor from '@/components/layout/SeasonDecor.vue'
 import { useAppStore } from '@/stores/app'
+import { usePreferencesStore } from '@/stores/preferences'
 
 /**
  * Тесты сезонного фона.
  *
  * Сами анимации проверяет браузер, а не jsdom: здесь важно, что слой
  * появляется только в свой сезон, что листьев столько, сколько задумано,
- * что они получают разные параметры и что просьба «меньше движения»
- * не убирает оформление целиком.
+ * что у них разные параметры и что выключение анимации не убирает
+ * оформление целиком.
  *
  * Параметры листьев считаются в onMounted, поэтому после mount нужен
  * nextTick: без него разметка ещё пустая, и тест «проверяет» ничего.
  */
-function stubMatchMedia(reduceMotion: boolean) {
-  vi.stubGlobal(
-    'matchMedia',
-    vi.fn((query: string) => ({
-      matches: reduceMotion && query.includes('prefers-reduced-motion'),
-      media: query,
-      onchange: null,
-      addEventListener: vi.fn(),
-      removeEventListener: vi.fn(),
-      addListener: vi.fn(),
-      removeListener: vi.fn(),
-      dispatchEvent: vi.fn(),
-    })),
-  )
-}
-
-async function mountAutumn(reduceMotion = false) {
-  stubMatchMedia(reduceMotion)
+async function mountAutumn() {
   useAppStore().setTheme(4)
   const wrapper = mount(SeasonDecor)
   await nextTick()
@@ -44,18 +28,14 @@ async function mountAutumn(reduceMotion = false) {
 describe('SeasonDecor', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
-  })
-
-  afterEach(() => {
-    vi.unstubAllGlobals()
+    localStorage.clear()
   })
 
   it('осенью рисует листья', async () => {
     const wrapper = await mountAutumn()
-    const leaves = wrapper.findAll('.season-decor__leaf')
 
     // На широком экране jsdom (1024 px) — 18 штук.
-    expect(leaves.length).toBeGreaterThan(0)
+    expect(wrapper.findAll('.season-decor__leaf').length).toBeGreaterThan(0)
   })
 
   it('слой пустой по содержимому — это украшение, а не текст', async () => {
@@ -65,7 +45,6 @@ describe('SeasonDecor', () => {
   })
 
   it('в другие сезоны слоя нет', () => {
-    stubMatchMedia(false)
     useAppStore().setTheme(1)
 
     const wrapper = mount(SeasonDecor)
@@ -78,6 +57,39 @@ describe('SeasonDecor', () => {
 
     expect(wrapper.classes()).toContain('pointer-events-none')
     expect(wrapper.attributes('aria-hidden')).toBe('true')
+  })
+
+  it('по умолчанию анимация включена', async () => {
+    const wrapper = await mountAutumn()
+
+    expect(wrapper.classes()).not.toContain('season-decor--static')
+    expect(usePreferencesStore().seasonAnimations).toBe(true)
+  })
+
+  it('выключенная анимация оставляет листья, но убирает движение', async () => {
+    // Раньше в этом случае слой исчезал целиком, и это выглядело как
+    // поломка: декора нет вовсе. Правильно — оставить оформление.
+    usePreferencesStore().setSeasonAnimations(false)
+
+    const wrapper = await mountAutumn()
+
+    expect(wrapper.find('.season-decor').exists()).toBe(true)
+    expect(wrapper.classes()).toContain('season-decor--static')
+    expect(wrapper.findAll('.season-decor__leaf').length).toBeGreaterThan(0)
+  })
+
+  it('выключение анимации переживает перезагрузку', async () => {
+    usePreferencesStore().setSeasonAnimations(false)
+
+    expect(localStorage.getItem('ph.seasonAnimations')).toBe('off')
+
+    // Перезагрузка: store создаётся заново и читает хранилище.
+    const { usePreferencesStore: fresh } = await import(
+      '@/stores/preferences'
+    )
+    setActivePinia(createPinia())
+
+    expect(fresh().seasonAnimations).toBe(false)
   })
 
   it('каждому листу достаются свои параметры', async () => {
@@ -98,25 +110,6 @@ describe('SeasonDecor', () => {
     expect(durations.size).toBeGreaterThan(1)
   })
 
-  it('слой показывает листья, если просят меньше движения', async () => {
-    // Раньше в этом случае слой прятался целиком, и это выглядело как
-    // поломка: декора нет вовсе. Правильно — оставить оформление,
-    // убрав движение.
-    const wrapper = await mountAutumn(true)
-
-    expect(wrapper.find('.season-decor').exists()).toBe(true)
-    expect(wrapper.classes()).toContain('season-decor--calm')
-    expect(wrapper.findAll('.season-decor__leaf').length).toBeGreaterThan(0)
-  })
-
-  it('задержка отрицательная — листья видны сразу', async () => {
-    const wrapper = await mountAutumn()
-    const style = wrapper.get('.season-decor__leaf').attributes('style')
-
-    // С положительной задержкой первые секунды экран был бы пустым.
-    expect(style).toMatch(/--delay:\s*-\d/)
-  })
-
   it('стартовые позиции разные: листья не идут волной', async () => {
     const wrapper = await mountAutumn()
     const bottoms = new Set(
@@ -126,5 +119,13 @@ describe('SeasonDecor', () => {
     )
 
     expect(bottoms.size).toBe(wrapper.findAll('.season-decor__leaf').length)
+  })
+
+  it('задержка отрицательная — листья видны сразу', async () => {
+    const wrapper = await mountAutumn()
+    const style = wrapper.get('.season-decor__leaf').attributes('style')
+
+    // С положительной задержкой первые секунды экран был бы пустым.
+    expect(style).toMatch(/--delay:\s*-\d/)
   })
 })

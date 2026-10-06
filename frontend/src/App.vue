@@ -4,6 +4,7 @@ import { RouterView, useRoute } from 'vue-router'
 
 import AppHeader from '@/components/layout/AppHeader.vue'
 import SeasonDecor from '@/components/layout/SeasonDecor.vue'
+import DecorDiagnostics from '@/components/layout/DecorDiagnostics.vue'
 import InstallHintDialog from '@/components/ui/InstallHintDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { useSwUpdate } from '@/composables/useSwUpdate'
@@ -68,4 +69,12 @@ watch(
     предложение переедет в «Сессии».
   -->
   <InstallHintDialog />
+
+  <!--
+    Диагностика сезонного декора: показывается только по `?diag` в адресе.
+    Нужна была, чтобы разобраться, почему у одного человека листья видны,
+    а у другого нет. Оставлена: следующий такой случай снова упрётся
+    в недоступное окружение.
+  -->
+  <DecorDiagnostics />
 </template>
