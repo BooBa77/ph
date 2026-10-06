@@ -2,6 +2,9 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
+import { useTheme } from '@/composables/useTheme'
+import { useAppStore } from '@/stores/app'
+
 /**
  * Фиксируем только дату.
  *
@@ -17,15 +20,10 @@ function freezeDate(year: number, monthIndex: number, day: number) {
 /**
  * Свежие модули для одного теста.
  *
- * `useTheme` инициализирует тему ровно один раз за жизнь приложения —
- * в нём есть модульный флаг `initialized` (нужен, чтобы переключатель
- * сезона в меню не навешивал второй watcher). В тестах этот флаг делал бы
- * все последующие тесты пустышками, поэтому модули перезагружаем.
- *
- * Заодно перезагружаем и store: после `resetModules` composable получил бы
- * свой экземпляр модуля store, а тест — свой, и проверки смотрели бы
- * не туда. Именно на этом я и споткнулся: тема ставилась, а store
- * в тесте оставался прежним.
+ * Модуль перезагружаем, чтобы не тащить состояние предыдущего теста
+ * (становится актуальнее, когда в composable появится подписка или
+ * кэш). Заодно и store: после `resetModules` composable получил бы свой
+ * экземпляр модуля store, а тест — свой, и проверки смотрели бы не туда.
  */
 async function freshModules() {
   vi.resetModules()
@@ -84,9 +82,8 @@ describe('useTheme', () => {
     expect(useAppStore().currentTheme).toBe(4)
   })
 
-  it('override из localStorage важнее даты', async () => {
-    freezeDate(2026, 0, 15)
-    localStorage.setItem('themeOverride', '3')
+  it('25 мая — уже лето', async () => {
+    freezeDate(2026, 4, 25)
 
     const { useTheme, useAppStore } = await freshModules()
     useTheme()
@@ -94,18 +91,7 @@ describe('useTheme', () => {
     expect(useAppStore().currentTheme).toBe(3)
   })
 
-  it('мусор в override удаляется, а тема берётся по дате', async () => {
-    freezeDate(2026, 0, 15)
-    localStorage.setItem('themeOverride', '99')
-
-    const { useTheme, useAppStore } = await freshModules()
-    useTheme()
-
-    expect(localStorage.getItem('themeOverride')).toBeNull()
-    expect(useAppStore().currentTheme).toBe(1)
-  })
-
-  it('невалидную тему в store откатывает к теме по дате', async () => {
+  it('невалидную тему в store откатывает к сезону по дате', async () => {
     freezeDate(2026, 6, 15)
 
     const { useTheme, useAppStore } = await freshModules()
@@ -121,22 +107,18 @@ describe('useTheme', () => {
     expect(store.currentTheme).toBe(3)
   })
 
-  it('setThemeOverride сохраняет выбор и в store, и в localStorage', async () => {
+  it('сезон не выбирается вручную: localStorage ни при чём', async () => {
     freezeDate(2026, 0, 15)
 
-    const first = await freshModules()
-    const { setThemeOverride } = first.useTheme()
-    setThemeOverride(3)
+    // Значение, которое оставила бы прежняя версия с переключателем.
+    // Тема — только автоматическая, поэтому старый ключ игнорируется,
+    // а не «подхватывается как настройка».
+    localStorage.setItem('themeOverride', '3')
 
-    expect(first.useAppStore().currentTheme).toBe(3)
+    const { useTheme, useAppStore } = await freshModules()
+    useTheme()
 
-    // Перезагрузка страницы: тема должна подняться из хранилища,
-    // а не из даты — иначе выбор пользователя слетал бы.
-    const afterReload = await freshModules()
-    afterReload.useTheme()
-
-    expect(localStorage.getItem('themeOverride')).toBe('3')
-    expect(afterReload.useAppStore().currentTheme).toBe(3)
-    expect(document.documentElement.getAttribute('data-theme')).toBe('3')
+    expect(useAppStore().currentTheme).toBe(1)
+    expect(document.documentElement.getAttribute('data-theme')).toBe('1')
   })
 })

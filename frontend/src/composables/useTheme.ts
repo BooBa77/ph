@@ -6,15 +6,6 @@ import { useAppStore } from '@/stores/app'
 import { isValidSeason, type Season } from '@/types/theme'
 
 /**
- * Ключ в localStorage для выбранного пользователем сезона.
- *
- * Если ключа нет — сезон определяется по дате (см. detectSeasonByDate).
- * Пользователь выбирает сезон в меню в шапке; «Вернуть по дате» удаляет
- * ключ и возвращает автоматический режим.
- */
-const OVERRIDE_KEY = 'themeOverride'
-
-/**
  * Определить сезон по текущей дате.
  *
  * Границы (Прибайкалье):
@@ -27,8 +18,12 @@ const OVERRIDE_KEY = 'themeOverride'
  * границы заданы календарными датами, а не номером дня года.
  *
  * Месяцы в JS: 0=янв, 1=фев, ..., 11=дек.
+ *
+ * Логика продублирована инлайн-скриптом в index.html (защита от FOUC:
+ * тему надо поставить до первой отрисовки, а на голом JS из TS не
+ * импортируешь). Меняешь границы — правь в двух местах.
  */
-function detectSeasonByDate(): Season {
+export function detectSeasonByDate(): Season {
   const now = new Date()
   const month = now.getMonth() // 0–11
   const day = now.getDate() // 1–31
@@ -67,99 +62,43 @@ function detectSeasonByDate(): Season {
 }
 
 /**
- * Прочитать override из localStorage.
- * Возвращает Season или null, если override нет/невалиден.
+ * Composable темы. Ставит сезон по календарю и следит за его применением.
  *
- * Побочный эффект: если в localStorage лежит мусор — удаляет ключ.
- * Это правильно: мусор не должен копиться и вводить в заблуждение.
- */
-function readOverride(): Season | null {
-  const raw = localStorage.getItem(OVERRIDE_KEY)
-  if (raw === null) return null
-
-  const num = Number(raw)
-  if (isValidSeason(num)) {
-    return num
-  }
-
-  // Мусор — чистим.
-  localStorage.removeItem(OVERRIDE_KEY)
-  return null
-}
-
-/**
- * Тема уже инициализирована в этой сессии страницы.
+ * Тема — ТОЛЬКО автоматическая. Выбора сезона вручную нет намеренно:
+ * сезон в проекте привязан к календарю Прибайкалья, и «переключить на
+ * лето в декабре» — это не настройка, а поломка замысла. Если однажды
+ * появится дробление по месяцам, менять надо здесь и в themes.css.
  *
- * `useTheme` вызывается в двух местах: один раз в App.vue (инициализация
- * и watcher) и из переключателя сезона в меню, которому нужны только
- * функции управления. Второй вызов не должен навешивать второй watcher
- * и заново читать localStorage.
- */
-let initialized = false
-
-/**
- * Composable темы. Инициализирует текущую тему и следит за ней.
+ * Вызывать ОДИН раз — в App.vue, до первого рендера.
  *
- * Вызывать ОДИН РАЗ — в App.vue, до первого рендера: этот вызов делает
- * всю работу. Повторные вызовы (например, из переключателя сезона)
- * ничего не навешивают и просто возвращают функции управления.
- *
- * Что делает первый вызов:
- *   1. Определяет начальную тему (override или по дате).
+ * Что делает:
+ *   1. Определяет сезон по дате.
  *   2. Ставит data-theme на <html> — CSS пересчитывается.
  *   3. Watcher: при изменении currentTheme обновляет data-theme.
  *      Если значение невалидное (вписали через DevTools) — откатывает
- *      к теме по дате.
- *
- * Возвращает функции выбора сезона — ими пользуется переключатель в меню
- * шапки. Выбор уходит в data-theme (через store) и в localStorage, чтобы
- * не слетел при перезагрузке.
+ *      к сезону по дате.
  */
 export function useTheme() {
   const appStore = useAppStore()
 
-  if (!initialized) {
-    initialized = true
+  // ─── инициализация ───
+  appStore.setTheme(detectSeasonByDate())
 
-    // ─── инициализация ───
-    const initial = readOverride() ?? detectSeasonByDate()
-    appStore.setTheme(initial)
+  // ─── watcher ───
+  watch(
+    () => appStore.currentTheme,
+    (next) => {
+      // Защита от мусора, вписанного через DevTools напрямую в state.
+      if (!isValidSeason(next)) {
+        // Откатываем к сезону по дате. Это вызовет watcher повторно,
+        // но уже с валидным значением — второй раз ветка не сработает.
+        appStore.setTheme(detectSeasonByDate())
+        return
+      }
 
-    // ─── watcher ───
-    watch(
-      () => appStore.currentTheme,
-      (next) => {
-        // Защита от мусора, вписанного через DevTools напрямую в state.
-        if (!isValidSeason(next)) {
-          // Откатываем к теме по дате. Это вызовет watcher повторно,
-          // но уже с валидным значением — второй раз ветка не сработает.
-          appStore.setTheme(detectSeasonByDate())
-          return
-        }
-
-        // Всё валидно — применяем к <html>.
-        document.documentElement.setAttribute('data-theme', String(next))
-      },
-      { immediate: true },
-    )
-  }
-
-  /**
-   * Выбрать сезон вручную.
-   *
-   * Сначала пишем в localStorage, потом в store: если запись в хранилище
-   * не удалась (приватный режим, переполнение), состояние приложения
-   * всё равно останется согласованным.
-   *
-   * Обратной операции («вернуть сезон по дате») нет намеренно: в сессию
-   * входа она не нужна, а лишний путь в UI — лишний вопрос «а что будет,
-   * если». Понадобится — это снятие ключа из localStorage плюс
-   * detectSeasonByDate.
-   */
-  function setThemeOverride(season: Season) {
-    localStorage.setItem(OVERRIDE_KEY, String(season))
-    appStore.setTheme(season)
-  }
-
-  return { setThemeOverride }
+      // Всё валидно — применяем к <html>.
+      document.documentElement.setAttribute('data-theme', String(next))
+    },
+    { immediate: true },
+  )
 }
