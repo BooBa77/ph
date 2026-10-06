@@ -5,17 +5,17 @@
 Интернет для этого не нужен — ни загрузок, ни лицензий.
 
 Что делает:
-  1. frontend/public/logo.svg  — знак проекта (его же просит index.html);
-  2. frontend/public/logo-*.png — тот же знак растром, для писем и
+  1. frontend/public/logo.svg   — знак проекта (его же просит index.html);
+  2. frontend/public/logo-1024.png — тот же знак растром, для писем и
      соцсетей, где SVG не всегда можно;
   3. frontend/public/icons/*.png — иконки PWA: 192, 512 и maskable.
      Размеры и имена заданы в manifest (см. vite.config.ts);
   4. frontend/public/img/avatar-default-{512,192,96}.png — дефолтная
-     аватарка в хайкинг-стиле, три размера под Retina.
+     аватарка: ждун-турист на вершине. Три размера под Retina.
 
 Иконки PWA: 192 и 512 — «any» (браузер рисует поверх свою форму),
 maskable — с запасом по краям, потому что Android обрезает такую иконку
-по своей маске (круг, скруглённый квадрат) и важное должно попасть
+по своей маске (круг, скруглённый квадрат), и важное должно попасть
 в центральные ~80 %.
 
 Запуск: python generate-assets.py <каталог frontend/public>
@@ -36,12 +36,18 @@ BLUE_MID = (47, 111, 176)
 BLUE_LIGHT = (108, 160, 214)
 SUN = (245, 166, 35)
 SNOW = (234, 242, 251)
-WHITE = (255, 255, 255)
 SILHOUETTE = (26, 42, 61)
 
 # Фон дефолтной аватарки: нежно-голубое небо к горизонту.
 SKY_TOP = (214, 233, 247)
 SKY_BOTTOM = (240, 247, 252)
+
+# Ждун и его снаряжение.
+ZHDU_N_BODY = (166, 178, 190)
+ZHDU_N_SHADE = (140, 153, 166)
+PANAMA = (196, 140, 74)
+PANAMA_BAND = (150, 100, 48)
+PACK = (194, 106, 52)
 
 
 def linear_gradient(size: tuple[int, int], top: tuple, bottom: tuple) -> Image.Image:
@@ -62,7 +68,6 @@ def draw_logo(size: int) -> Image.Image:
     img = Image.new("RGBA", (big, big), (0, 0, 0, 0))
     d = ImageDraw.Draw(img)
 
-    # Скруглённый квадрат-подложка.
     d.rounded_rectangle((0, 0, big - 1, big - 1), radius=big * 0.22, fill=BLUE_DARK)
 
     # Солнце.
@@ -77,7 +82,7 @@ def draw_logo(size: int) -> Image.Image:
     )
     d.polygon(
         [(big * 0.30, big * 0.82), (big * 0.60, big * 0.42), (big * 0.97, big * 0.82)],
-        fill=BLUE_DARK if False else (20, 78, 168),
+        fill=(20, 78, 168),
     )
     # Снег на дальней вершине.
     d.polygon(
@@ -101,7 +106,6 @@ def draw_maskable(size: int) -> Image.Image:
     img = Image.new("RGBA", (big, big), BLUE_DARK)
     d = ImageDraw.Draw(img)
 
-    # Солнце и вершины — мельче и ближе к центру, чем в обычном знаке.
     r = big * 0.09
     cx, cy = big * 0.66, big * 0.34
     d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=SUN)
@@ -130,11 +134,15 @@ def draw_maskable(size: int) -> Image.Image:
 
 
 def draw_avatar(size: int) -> Image.Image:
-    """Дефолтная аватарка: хайкер на хребте в горах.
+    """Дефолтная аватарка: ждун-турист на вершине.
 
-    Круглую форму не рисуем — её даёт CSS (`rounded-full`). Поэтому
-    картинка квадратная: если однажды понадобится квадратная аватарка,
-    она уже готова.
+    Ждун — узнаваемый интернет-персонаж: мешковатое тело, короткие руки,
+    глаза по бокам головы и хобот. Здесь он ещё и турист: стоит на
+    вершине, в панаме и с рюкзаком за спиной. Так аватарка остаётся
+    в хайкинг-теме проекта, а не превращается в шутку ради шутки.
+
+    Круглую форму не рисуем — её даёт CSS (`rounded-full`). Картинка
+    квадратная: понадобится квадратная аватарка — она уже готова.
     """
     big = size * 4
     img = linear_gradient((big, big), SKY_TOP, SKY_BOTTOM).convert("RGBA")
@@ -142,108 +150,137 @@ def draw_avatar(size: int) -> Image.Image:
 
     # Солнце.
     r = big * 0.10
-    d.ellipse((big * 0.70 - r, big * 0.20 - r, big * 0.70 + r, big * 0.20 + r), fill=SUN)
+    d.ellipse((big * 0.73 - r, big * 0.16 - r, big * 0.73 + r, big * 0.16 + r), fill=SUN)
 
     # Дальний хребет.
     d.polygon(
         [
-            (0, big * 0.78),
-            (big * 0.22, big * 0.52),
-            (big * 0.40, big * 0.74),
-            (big * 0.56, big * 0.58),
-            (big, big * 0.82),
+            (0, big * 0.70),
+            (big * 0.22, big * 0.48),
+            (big * 0.44, big * 0.68),
+            (big * 0.62, big * 0.52),
+            (big, big * 0.74),
             (big, big),
             (0, big),
         ],
         fill=BLUE_LIGHT,
     )
-    # Ближний хребет — темнее, он на переднем плане.
+    # Ближний хребет, на нём стоит фигура.
     d.polygon(
         [
-            (0, big * 0.86),
-            (big * 0.30, big * 0.66),
-            (big * 0.52, big * 0.84),
-            (big * 0.74, big * 0.70),
-            (big, big * 0.88),
+            (0, big * 0.87),
+            (big * 0.34, big * 0.72),
+            (big * 0.60, big * 0.88),
+            (big * 0.82, big * 0.78),
+            (big, big * 0.92),
             (big, big),
             (0, big),
         ],
         fill=(70, 120, 176),
     )
 
-    # ─── хайкер ───
-    # Идёт по ближнему хребту. Стоит близко к центру: аватарка круглая,
-    # и всё, что ушло к краю, при обрезке уезжает за пределы круга.
-    # Масштаб — от размера картинки, поэтому силуэт читается и на 96 px:
-    # это силуэт, а не деталь.
+    # ─── ждун ───
+    # Масштаб от размера картинки, поэтому силуэт читается и на 96 px.
     scale = big / 512
-    base_x, base_y = big * 0.44, big * 0.86
-    figure_h = 120 * scale
+    cx = big * 0.45
+    ground = big * 0.86  # опорная линия — «земля» под фигурой
 
-    head_r = figure_h * 0.10
-    # Голова.
-    d.ellipse(
-        (
-            base_x - head_r,
-            base_y - figure_h,
-            base_x + head_r,
-            base_y - figure_h + head_r * 2,
-        ),
-        fill=SILHOUETTE,
-    )
-    # Корпус.
-    d.line(
-        [
-            (base_x, base_y - figure_h + head_r * 2),
-            (base_x, base_y - figure_h * 0.42),
-        ],
-        fill=SILHOUETTE,
-        width=max(2, round(10 * scale)),
-    )
-    # Рюкзак — за спиной, слева.
+    body_w = 104 * scale
+    body_h = 112 * scale
+    body_top = ground - body_h
+
+    # Рюкзак за спиной — рисуем первым, чтобы тело его перекрыло.
+    pack_w = 42 * scale
+    pack_h = 64 * scale
     d.rounded_rectangle(
         (
-            base_x - 4 * scale - 17 * scale,
-            base_y - figure_h * 0.87,
-            base_x - 4 * scale,
-            base_y - figure_h * 0.51,
+            cx + body_w / 2 - 6 * scale,
+            body_top + body_h * 0.20,
+            cx + body_w / 2 + pack_w,
+            body_top + body_h * 0.20 + pack_h,
         ),
-        radius=5 * scale,
-        fill=SILHOUETTE,
+        radius=int(13 * scale),
+        fill=PACK,
     )
-    # Ноги: шаг.
-    d.line(
-        [
-            (base_x, base_y - figure_h * 0.42),
-            (base_x - 17 * scale, base_y),
-        ],
-        fill=SILHOUETTE,
-        width=max(2, round(9 * scale)),
+
+    # Туловище: мешок с мягко скруглёнными боками.
+    d.rounded_rectangle(
+        (cx - body_w / 2, body_top, cx + body_w / 2, ground),
+        radius=int(body_w * 0.32),
+        fill=ZHDU_N_BODY,
     )
-    d.line(
-        [
-            (base_x, base_y - figure_h * 0.42),
-            (base_x + 16 * scale, base_y),
-        ],
-        fill=SILHOUETTE,
-        width=max(2, round(9 * scale)),
+
+    # Руки: короткие, свисают по бокам.
+    arm_w = 19 * scale
+    for side in (-1, 1):
+        d.rounded_rectangle(
+            (
+                cx + side * (body_w / 2 + arm_w * 0.65) - arm_w / 2,
+                body_top + body_h * 0.24,
+                cx + side * (body_w / 2 + arm_w * 0.65) + arm_w / 2,
+                body_top + body_h * 0.80,
+            ),
+            radius=int(arm_w * 0.5),
+            fill=ZHDU_N_SHADE,
+        )
+
+    # Голова: сверху, чуть уже тела.
+    head_w = 84 * scale
+    head_h = 58 * scale
+    head_bottom = body_top + 8 * scale
+    d.rounded_rectangle(
+        (cx - head_w / 2, head_bottom - head_h, cx + head_w / 2, head_bottom),
+        radius=int(head_h * 0.46),
+        fill=ZHDU_N_BODY,
     )
-    # Рука с палкой.
-    d.line(
-        [
-            (base_x, base_y - figure_h * 0.70),
-            (base_x + 18 * scale, base_y - figure_h * 0.48),
-        ],
-        fill=SILHOUETTE,
-        width=max(2, round(7 * scale)),
+
+    # Хобот: от низа головы вниз, поверх тела.
+    trunk_w = 17 * scale
+    d.rounded_rectangle(
+        (
+            cx - trunk_w / 2,
+            head_bottom - head_h * 0.45,
+            cx + trunk_w / 2,
+            head_bottom + head_h * 0.65,
+        ),
+        radius=int(trunk_w * 0.5),
+        fill=ZHDU_N_SHADE,
     )
-    d.line(
-        [
-            (base_x + 18 * scale, base_y - figure_h * 0.58),
-            (base_x + 23 * scale, base_y - figure_h * 0.02),
-        ],
-        fill=SILHOUETTE,
-        width=max(2, round(4 * scale)),
+
+    # Глаза по бокам головы.
+    eye_r = 7.5 * scale
+    eye_y = head_bottom - head_h * 0.64
+    for eye_x in (cx - head_w * 0.29, cx + head_w * 0.29):
+        d.ellipse(
+            (eye_x - eye_r, eye_y - eye_r, eye_x + eye_r, eye_y + eye_r),
+            fill=(255, 255, 255, 255),
+        )
+        pupil = eye_r * 0.52
+        d.ellipse(
+            (eye_x - pupil, eye_y - pupil, eye_x + pupil, eye_y + pupil),
+            fill=SILHOUETTE,
+        )
+
+    # Панама: поля и тулья с лентой.
+    brim_w = head_w * 1.55
+    brim_y = head_bottom - head_h - 3 * scale
+    d.ellipse(
+        (cx - brim_w / 2, brim_y - 9 * scale, cx + brim_w / 2, brim_y + 9 * scale),
+        fill=PANAMA,
+    )
+    d.rounded_rectangle(
+        (
+            cx - head_w * 0.36,
+            brim_y - 24 * scale,
+            cx + head_w * 0.36,
+            brim_y + 5 * scale,
+        ),
+        radius=int(17 * scale),
+        fill=PANAMA,
+    )
+    d.rectangle(
+        (cx - head_w * 0.36, brim_y - 10 * scale, cx + head_w * 0.36, brim_y - 4 * scale),
+        fill=PANAMA_BAND,
     )
 
     return img.resize((size, size), Image.LANCZOS)
@@ -278,8 +315,9 @@ def main() -> None:
         public / "icons" / "icon-maskable.png", "PNG", optimize=True
     )
 
-    # Дефолтная аватарка: три размера. 512 — для кабинета (80 px при 3x
-    # это 240), 192 — с запасом для шапки, 96 — для мелких мест.
+    # Дефолтная аватарка: три размера. 512 — для кабинета (400 px при 1.25x
+    # уже требуют больше, чем 400), 192 — с запасом для шапки, 96 — мелкие
+    # места. В srcset браузер выберет сам.
     for size in (512, 192, 96):
         draw_avatar(size).save(
             public / "img" / f"avatar-default-{size}.png", "PNG", optimize=True

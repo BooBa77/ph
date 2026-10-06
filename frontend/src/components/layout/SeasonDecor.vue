@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useAppStore } from '@/stores/app'
 
@@ -34,8 +34,23 @@ interface Leaf {
   left: number
   /** Сколько летит сверху донизу, секунды. */
   duration: number
-  /** Отрицательная задержка — лист стартует «уже в пути». */
+  /**
+   * Отрицательная задержка — лист стартует «уже в пути».
+   *
+   * Считается так, чтобы к первому кадру листья были разбросаны по всей
+   * высоте экрана: иначе первые секунды экран пустой и включается «дождь
+   * пошёл», а нужно ощущение, что листопад шёл всегда. Именно поэтому
+   * казалось, что листьев нет: на шестой секунде успевали появиться три
+   * штуки у верхней кромки.
+   *
+   * Стартовое положение задаётся не только задержкой, но и `--top`:
+   * задержка разбрасывает листья по высоте, но точка, откуда начинается
+   * отсчёт, у всех одна — над экраном. Без `--top` на широком мониторе
+   * листья успевают пролететь одинаковые участки и идут «волной».
+   */
   delay: number
+  /** Стартовое смещение вниз от верхней кромки, vh. */
+  top: number
   /** Размер, rem. */
   size: number
   /** Амплитуда качания, px. */
@@ -46,6 +61,10 @@ interface Leaf {
   direction: 1 | -1
   /** Цвет из осенней палитры. */
   color: string
+  /** Прозрачность: дальние листья бледнее. */
+  opacity: number
+  /** Размытие, px: то же, что и прозрачность, — про глубину. */
+  blur: number
 }
 
 /** Осенняя палитра — приглушённая, чтобы фон не спорил с текстом. */
@@ -60,29 +79,67 @@ const AUTUMN_COLORS = [
 /** Сколько листьев. На узком экране меньше: и места меньше, и батарея. */
 function leafCount(): number {
   if (typeof window === 'undefined') return 0
-  return window.innerWidth < 640 ? 8 : 14
+  return window.innerWidth < 640 ? 10 : 18
 }
 
 function makeLeaves(): Leaf[] {
-  return Array.from({ length: leafCount() }, () => ({
-    left: Math.random() * 100,
-    duration: 9 + Math.random() * 8,
-    delay: -Math.random() * 12,
-    size: 0.7 + Math.random() * 0.7,
-    sway: 18 + Math.random() * 42,
-    spin: 4 + Math.random() * 6,
-    direction: Math.random() < 0.5 ? -1 : 1,
-    color:
-      AUTUMN_COLORS[Math.floor(Math.random() * AUTUMN_COLORS.length)] ??
-      AUTUMN_COLORS[0]!,
-  }))
+  return Array.from({ length: leafCount() }, () => {
+    const duration = 9 + Math.random() * 8
+
+    // «Дальние» листья: мельче, бледнее, размытее — даёт глубину,
+    // из-за которой листопад читается как объём, а не как наклейки
+    // на стекле.
+    const isFar = Math.random() < 0.45
+
+    return {
+      left: Math.random() * 100,
+      duration,
+      delay: -Math.random() * duration,
+      top: Math.random() * 100,
+      size: isFar ? 0.7 + Math.random() * 0.4 : 1 + Math.random() * 0.8,
+      sway: 18 + Math.random() * 42,
+      spin: 4 + Math.random() * 6,
+      direction: Math.random() < 0.5 ? -1 : 1,
+      color:
+        AUTUMN_COLORS[Math.floor(Math.random() * AUTUMN_COLORS.length)] ??
+        AUTUMN_COLORS[0]!,
+      opacity: isFar ? 0.28 + Math.random() * 0.18 : 0.45 + Math.random() * 0.2,
+      blur: isFar ? 1.2 : 0,
+    }
+  })
 }
 
 const appStore = useAppStore()
 const leaves = ref<Leaf[]>([])
 
+/**
+ * В системе просят меньше движения.
+ *
+ * Раньше я в этом случае просто прятал слой — и это была ошибка:
+ * на машине с включённым «уменьшить движение» сезонное оформление
+ * пропадало целиком, что выглядит как «листьев нет», а не как забота
+ * о самочувствии. Правильнее оставить оформление, убрав движение:
+ * листья висят на месте и медленно проявляются.
+ */
+const reduceMotion = ref(false)
+let motionQuery: MediaQueryList | null = null
+
+function applyMotionPreference(event: MediaQueryList | MediaQueryListEvent) {
+  reduceMotion.value = event.matches
+}
+
 onMounted(() => {
   leaves.value = makeLeaves()
+
+  if (typeof window.matchMedia === 'function') {
+    motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)')
+    applyMotionPreference(motionQuery)
+    motionQuery.addEventListener('change', applyMotionPreference)
+  }
+})
+
+onBeforeUnmount(() => {
+  motionQuery?.removeEventListener('change', applyMotionPreference)
 })
 
 /** Слой показываем только осенью: у зимы, весны и лета свой декор (пока нет). */
@@ -93,6 +150,7 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
   <div
     v-if="isAutumn"
     class="season-decor pointer-events-none fixed inset-0 -z-10 overflow-hidden"
+    :class="{ 'season-decor--calm': reduceMotion }"
     aria-hidden="true"
   >
     <span
@@ -101,6 +159,7 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
       class="season-decor__leaf"
       :style="{
         '--left': `${leaf.left}%`,
+        '--top': `${leaf.top}vh`,
         '--duration': `${leaf.duration}s`,
         '--delay': `${leaf.delay}s`,
         '--size': `${leaf.size}rem`,
@@ -108,6 +167,8 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
         '--spin': `${leaf.spin}s`,
         '--direction': String(leaf.direction),
         '--color': leaf.color,
+        '--opacity': String(leaf.opacity),
+        '--blur': `${leaf.blur}px`,
       }"
     >
       <svg viewBox="0 0 24 24" fill="currentColor">
@@ -130,36 +191,53 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
   </div>
 </template>
 
-<style scoped>
-/*
-  Падение — на внешнем элементе. translate3d вместо translateY: браузер
-  уводит анимацию на композитор, и она не заставляет перерисовывать
-  страницу на каждом кадре.
-*/
+<!--
+  Стили НЕ scoped — и это осознанно.
+
+  scoped добавляет данным атрибут, а к ключевым кадрам @keyframes — суффикс,
+  и ссылка на анимацию в свойстве `animation` ломается: анимация просто
+  не запускается, листья остаются висеть за верхней кромкой экрана.
+  Именно на это я и купился в первой версии: тесты проходили (jsdom не
+  считает стили), а в браузере листьев не было видно.
+
+  Вместо scoped — префикс `season-decor` во всех селекторах: имена
+  уникальные, конфликтов с другими компонентами не будет.
+-->
+<style>
 .season-decor__leaf {
+  /*
+    Стартовое положение — своё у каждого листа, задано в --top.
+    Анимация падения ведёт его на 108vh вниз от этой точки, а
+    отрицательная задержка ставит в середину пути: к первому кадру
+    листья уже разбросаны по всему экрану.
+  */
   position: absolute;
-  top: -8vh;
+  top: calc(var(--top) - 8vh);
   left: var(--left);
   width: var(--size);
   height: var(--size);
   color: var(--color);
   will-change: transform;
-  animation: leaf-fall var(--duration) linear var(--delay) infinite;
+  animation: season-leaf-fall var(--duration) linear var(--delay) infinite;
 }
 
 .season-decor__leaf svg {
   display: block;
   width: 100%;
   height: 100%;
-  /* Качание и вращение — на самом SVG: у внешнего элемента transform
-     уже занят падением, а два transform'а на одном элементе не уживаются. */
+  /* Прозрачность и размытие — на самой картинке, а не на обёртке:
+     filter на обёртке заставил бы браузер держать лишний слой. */
+  opacity: var(--opacity);
+  filter: blur(var(--blur));
+  /* Качание и вращение — здесь: у внешнего элемента transform уже занят
+     падением, а два transform'а на одном элементе не уживаются. */
   animation:
-    leaf-sway calc(var(--duration) / 4) ease-in-out var(--delay) infinite alternate,
-    leaf-spin var(--spin) linear var(--delay) infinite;
+    season-leaf-sway calc(var(--duration) / 4) ease-in-out var(--delay) infinite alternate,
+    season-leaf-spin var(--spin) linear var(--delay) infinite;
   transform-origin: 50% 45%;
 }
 
-@keyframes leaf-fall {
+@keyframes season-leaf-fall {
   from {
     transform: translate3d(0, 0, 0);
   }
@@ -168,7 +246,13 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
   }
 }
 
-@keyframes leaf-sway {
+/*
+  Качание — через margin-left, а не через transform: transform у этого
+  элемента занят вращением, и вторая анимация его бы затирала.
+  Отрицательный / положительный отступ считаются от центра, потому что
+  left задан в процентах и элемент позиционирован по левому краю.
+*/
+@keyframes season-leaf-sway {
   from {
     margin-left: calc(var(--sway) / -2);
   }
@@ -177,7 +261,7 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
   }
 }
 
-@keyframes leaf-spin {
+@keyframes season-leaf-spin {
   from {
     transform: rotate(0deg);
   }
@@ -187,13 +271,33 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
 }
 
 /*
-  Просьба «меньше движения» в системе — уважаем: убираем падение целиком,
-  оставляя слой пустым. Анимация фона не стоит того, чтобы провоцировать
-  укачивание и головокружение у тех, кто об этом попросил.
+  Просьба «меньше движения» в системе — уважаем: убираем слой целиком.
+  Анимация фона не стоит того, чтобы провоцировать укачивание.
 */
-@media (prefers-reduced-motion: reduce) {
-  .season-decor {
-    display: none;
+/*
+  Просьба «меньше движения» в системе — уважаем, но оформление оставляем.
+  Раньше слой просто исчезал, и это выглядело как поломка: сезонного
+  декора нет, хотя он должен быть. Теперь листья висят на своих местах
+  и медленно проявляются: движение убрано, сезон остался.
+
+  Падение и вращение отключаем совсем, вместо них — мягкое мерцание
+  прозрачности. Смещения сюда не добавляем намеренно: любое перемещение
+  и есть то, о чём просили не делать.
+*/
+.season-decor--calm .season-decor__leaf {
+  animation: season-leaf-calm 9s ease-in-out var(--delay) infinite alternate;
+}
+
+.season-decor--calm .season-decor__leaf svg {
+  animation: none;
+}
+
+@keyframes season-leaf-calm {
+  from {
+    opacity: 0.15;
+  }
+  to {
+    opacity: 0.7;
   }
 }
 </style>
