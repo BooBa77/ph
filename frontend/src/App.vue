@@ -9,6 +9,7 @@ import InstallHintDialog from '@/components/ui/InstallHintDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { useSwUpdate } from '@/composables/useSwUpdate'
 import { useTheme } from '@/composables/useTheme'
+import { useAuthRedirect } from '@/composables/useAuthRedirect'
 import { registerPwaInstall } from '@/composables/usePwaInstall'
 
 const route = useRoute()
@@ -18,6 +19,13 @@ const { updatePending, applyUpdate } = useSwUpdate()
 // Инициализация темы. Вызывается ОДИН РАЗ за жизнь приложения.
 // Ставит data-theme на <html> и следит за изменениями.
 useTheme()
+
+/**
+ * Уход на страницу входа, как только пользователь перестал быть
+ * авторизованным. Вызывается здесь один раз: следить надо за всем
+ * приложением, а не за одной страницей.
+ */
+useAuthRedirect()
 
 /**
  * Подписка на события установки PWA.

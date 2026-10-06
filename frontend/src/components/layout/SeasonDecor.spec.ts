@@ -92,6 +92,16 @@ describe('SeasonDecor', () => {
     expect(fresh().seasonAnimations).toBe(false)
   })
 
+  it('расстояние падения задаётся переменной, а не vh в keyframes', async () => {
+    const wrapper = await mountAutumn()
+
+    // `vh` внутри @keyframes считаются от содержащего блока, а не от окна:
+    // лист пролетал пятую часть экрана вместо полной высоты. Размер
+    // приходит переменной, которую считает JS.
+    const style = wrapper.attributes('style')
+    expect(style).toMatch(/--fall:\s*\d+px/)
+  })
+
   it('каждому листу достаются свои параметры', async () => {
     const wrapper = await mountAutumn()
     const styles = wrapper

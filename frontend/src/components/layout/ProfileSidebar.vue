@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
-import { RouterLink } from 'vue-router'
+import { RouterLink, useRouter } from 'vue-router'
 
 import { logout } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
@@ -21,11 +21,26 @@ import SidebarIcon from '@/components/ui/SidebarIcon.vue'
  */
 const auth = useAuthStore()
 const preferences = usePreferencesStore()
+const router = useRouter()
 
 /** Спрашиваем подтверждение перед выходом. */
 const isConfirmingLogout = ref(false)
 const isLoggingOut = ref(false)
 
+/**
+ * Выход.
+ *
+ * Порядок: сначала очищаем состояние, потом уходим. Переход делает
+ * `useAuthRedirect` — он следит за `isAuthenticated` на уровне
+ * приложения. Дублируем его вызовом `router.push`, чтобы уход не зависел
+ * от того, успел ли сработать наблюдатель: пользователь не должен
+ * оставаться на странице с пустыми полями.
+ *
+ * Раньше здесь стоял `window.location.assign('/auth')` — полная
+ * перезагрузка. В SPA она лишняя, а между очисткой стора и перезагрузкой
+ * Vue успевал отрисовать пустой профиль: именно это и выглядело как
+ * «редиректа не было».
+ */
 async function confirmLogout() {
   isLoggingOut.value = true
   try {
@@ -36,6 +51,7 @@ async function confirmLogout() {
   } finally {
     auth.clear()
     isLoggingOut.value = false
+    await router.push({ name: 'auth' })
   }
 }
 </script>

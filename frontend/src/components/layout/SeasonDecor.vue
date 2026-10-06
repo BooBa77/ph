@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { useAppStore } from '@/stores/app'
 import { usePreferencesStore } from '@/stores/preferences'
@@ -56,7 +56,13 @@ interface Leaf {
   size: number
   /** Амплитуда качания, px. */
   sway: number
-  /** Скорость вращения вокруг своей оси, секунды на оборот. */
+  /**
+   * Оборотов вокруг своей оси за один прогон.
+   *
+   * В оборотах, а не в секундах на оборот: скорость падения уже задана
+   * переменной `--duration`, и при её изменении вращение не должно
+   * уезжать — иначе лист начинает крутиться как пропеллер.
+   */
   spin: number
   /** Направление вращения: 1 или -1. */
   direction: 1 | -1
@@ -85,7 +91,12 @@ function leafCount(): number {
 
 function makeLeaves(): Leaf[] {
   return Array.from({ length: leafCount() }, () => {
-    const duration = 9 + Math.random() * 8
+    // Скорость: 45–90 секунд на полный прогон. Первая версия летела за
+    // 9–17 секунд — по отзыву «раз в пять быстрее, чем надо»; медленное
+    // падение читается как листопад, быстрое — как помехи на экране.
+    // Считаем внутри цикла: у каждого листа своя скорость, иначе они
+    // летят синхронно и картинка выглядит механической.
+    const duration = 45 + Math.random() * 45
 
     // «Дальние» листья: мельче, бледнее, размытее — даёт глубину,
     // из-за которой листопад читается как объём, а не как наклейки
@@ -100,7 +111,9 @@ function makeLeaves(): Leaf[] {
       delay: -Math.random() * duration,
       size: isFar ? 0.7 + Math.random() * 0.4 : 1 + Math.random() * 0.8,
       sway: 18 + Math.random() * 42,
-      spin: 4 + Math.random() * 6,
+      // Вращение — «в оборотах за прогон», а не в секундах: при смене
+      // скорости падения лист не должен начать крутиться как пропеллер.
+      spin: 0.5 + Math.random() * 1.5,
       direction: Math.random() < 0.5 ? -1 : 1,
       color:
         AUTUMN_COLORS[Math.floor(Math.random() * AUTUMN_COLORS.length)] ??
@@ -115,9 +128,32 @@ const appStore = useAppStore()
 const preferences = usePreferencesStore()
 const leaves = ref<Leaf[]>([])
 
+/**
+ * Высота окна — для расстояния падения.
+ *
+ * В CSS это значение подставляется переменной, а не пишется как `108vh`
+ * в самих ключевых кадрах. Причина: `vh` внутри `@keyframes` считаются
+ * не от окна, а от содержащего блока, и у `position: fixed` это давало
+ * падение всего на пятую часть экрана. Проверено замером: при окне
+ * 924 px лист пролетал 180 px.
+ */
+const fallDistance = ref('100vh')
+
 onMounted(() => {
   leaves.value = makeLeaves()
+  applyFallDistance()
+
+  // Пересчитываем при смене размера: значение в пикселях, а не в vh.
+  window.addEventListener('resize', applyFallDistance)
 })
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', applyFallDistance)
+})
+
+function applyFallDistance() {
+  fallDistance.value = `${window.innerHeight + 160}px`
+}
 
 /** Слой показываем только осенью: у зимы, весны и лета свой декор (пока нет). */
 const isAutumn = computed(() => appStore.currentTheme === 4)
@@ -134,6 +170,7 @@ const isStatic = computed(() => !preferences.seasonAnimations)
     v-if="isAutumn"
     class="season-decor pointer-events-none fixed inset-0 -z-10 overflow-hidden"
     :class="{ 'season-decor--static': isStatic }"
+    :style="{ '--fall': fallDistance }"
     aria-hidden="true"
   >
     <span
@@ -154,7 +191,8 @@ const isStatic = computed(() => !preferences.seasonAnimations)
         '--delay': `${leaf.delay}s`,
         '--size': `${leaf.size}rem`,
         '--sway': `${leaf.sway}px`,
-        '--spin': `${leaf.spin}s`,
+        /* Вращение: время на один оборот — из числа оборотов за прогон. */
+        '--spin-duration': `${leaf.duration / leaf.spin}s`,
         '--direction': String(leaf.direction),
         '--color': leaf.color,
         '--opacity': String(leaf.opacity),
@@ -220,16 +258,22 @@ const isStatic = computed(() => !preferences.seasonAnimations)
      падением, а два transform'а на одном элементе не уживаются. */
   animation:
     season-leaf-sway calc(var(--duration) / 4) ease-in-out var(--delay) infinite alternate,
-    season-leaf-spin var(--spin) linear var(--delay) infinite;
+    season-leaf-spin var(--spin-duration) linear var(--delay) infinite;
   transform-origin: 50% 45%;
 }
 
+/*
+  Расстояние падения приходит переменной `--fall` (её ставит JS по высоте
+  окна). Написать здесь `108vh` нельзя: `vh` внутри @keyframes считаются
+  от содержащего блока, а не от окна, и у position: fixed это давало
+  смещение на пятую часть экрана вместо полной высоты.
+*/
 @keyframes season-leaf-fall {
   from {
     transform: translate3d(0, 0, 0);
   }
   to {
-    transform: translate3d(0, 108vh, 0);
+    transform: translate3d(0, var(--fall), 0);
   }
 }
 
