@@ -8,6 +8,7 @@ import { useAppStore } from '@/stores/app'
 import EditableField from '@/components/ui/EditableField.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import AvatarCropperModal from '@/components/ui/AvatarCropperModal.vue'
+import { canBrowserDecode, looksLikeHeic } from '@/utils/imageDecode'
 
 const auth = useAuthStore()
 const appStore = useAppStore()
@@ -92,12 +93,16 @@ async function saveLocation(value: string) {
 }
 
 /**
- * Пользователь выбрал файл — открываем модалку обрезки.
+ * Пользователь выбрал файл — проверяем и открываем модалку обрезки.
  *
- * Файл никуда не отправляется, пока пользователь не подтвердит кроп:
- * сначала он должен увидеть, что попадёт в аватарку.
+ * Проверок две. Размер — чтобы не гонять по сети то, что бэкенд всё
+ * равно отвергнет. Декодирование — потому что кроппер рисует картинку
+ * средствами браузера: нечитаемый файл даст пустой квадрат без
+ * объяснений. Чаще всего так выглядит HEIC с айфона, открытый
+ * в Chrome или Firefox на компьютере (iOS Safari такой файл
+ * конвертирует сам, и до нас доезжает JPEG).
  */
-function onFileSelected(event: Event) {
+async function onFileSelected(event: Event) {
   error.value = null
 
   const input = event.target as HTMLInputElement
@@ -113,6 +118,13 @@ function onFileSelected(event: Event) {
   if (file.size > MAX_AVATAR_BYTES) {
     const megabytes = Math.round(MAX_AVATAR_BYTES / (1024 * 1024))
     error.value = `Файл больше ${megabytes} МБ. Выберите фото поменьше.`
+    return
+  }
+
+  if (!(await canBrowserDecode(file))) {
+    error.value = looksLikeHeic(file)
+      ? 'Фотографии в формате HEIC этот браузер показать не может. Сохраните фото как JPEG или загрузите его с телефона.'
+      : 'Не удалось прочитать этот файл как изображение. Выберите другое фото.'
     return
   }
 

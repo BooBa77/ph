@@ -54,6 +54,7 @@ watch(
   (file) => {
     if (imageUrl.value) URL.revokeObjectURL(imageUrl.value)
     imageUrl.value = URL.createObjectURL(file)
+    error.value = null
   },
   { immediate: true },
 )
