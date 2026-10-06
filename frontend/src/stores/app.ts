@@ -6,6 +6,36 @@ import { computed, ref } from 'vue'
 import { isValidSeason, type Season } from '@/types/theme'
 
 /**
+ * Ключ в localStorage для последнего открытого раздела личного кабинета.
+ *
+ * Хранится локально, а не на сервере: это про удобство конкретного
+ * браузера, а не про данные пользователя. В базе заводить колонку
+ * «последняя страница ЛК» смысла нет.
+ */
+const LAST_PROFILE_PATH_KEY = 'ph.lastProfilePath'
+
+/** Раздел личного кабинета по умолчанию. */
+export const DEFAULT_PROFILE_PATH = '/profile/personal'
+
+/**
+ * Прочитать сохранённый путь.
+ *
+ * Проверяем, что это действительно раздел ЛК: в localStorage могло
+ * попасть что угодно (ручная правка, старый формат, чужой ключ), а
+ * подставлять это в ссылку «Профиль» нельзя — можно уехать на чужой
+ * адрес.
+ */
+function readLastProfilePath(): string {
+  try {
+    const saved = localStorage.getItem(LAST_PROFILE_PATH_KEY)
+    if (saved && saved.startsWith('/profile/')) return saved
+  } catch {
+    // Приватный режим или отключённое хранилище — не повод падать.
+  }
+  return DEFAULT_PROFILE_PATH
+}
+
+/**
  * Глобальный store приложения.
  *
  * Содержит:
@@ -62,6 +92,32 @@ export const useAppStore = defineStore('app', () => {
     currentTheme.value = theme
   }
 
+  // ─── личный кабинет ───
+
+  /**
+   * Последний открытый раздел ЛК.
+   *
+   * Клик по аватарке в шапке должен вести туда, откуда пользователь
+   * ушёл, а не всегда в «Профиль». Значение переживает перезагрузку:
+   * иначе после F5 память о разделе терялась бы и ссылка снова вела
+   * в первый раздел.
+   */
+  const lastProfilePath = ref(readLastProfilePath())
+
+  /** Запомнить раздел ЛК. Вызывается при переходах внутри кабинета. */
+  function setLastProfilePath(path: string) {
+    if (!path.startsWith('/profile/')) return
+    if (path === lastProfilePath.value) return
+
+    lastProfilePath.value = path
+    try {
+      localStorage.setItem(LAST_PROFILE_PATH_KEY, path)
+    } catch {
+      // Хранилище недоступно — в этой сессии ссылка всё равно работает,
+      // просто не переживёт перезагрузку.
+    }
+  }
+
   return {
     // busy (PWA)
     busyCount,
@@ -72,5 +128,9 @@ export const useAppStore = defineStore('app', () => {
     // theme
     currentTheme,
     setTheme,
+
+    // личный кабинет
+    lastProfilePath,
+    setLastProfilePath,
   }
 })

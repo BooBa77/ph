@@ -8,7 +8,6 @@ import { useAppStore } from '@/stores/app'
 import EditableField from '@/components/ui/EditableField.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import AvatarCropperModal from '@/components/ui/AvatarCropperModal.vue'
-import PwaInstallCard from '@/views/profile/sections/PwaInstallCard.vue'
 
 const auth = useAuthStore()
 const appStore = useAppStore()
@@ -171,8 +170,7 @@ async function removeAvatar() {
 </script>
 
 <template>
-  <section>
-    <h2 class="mb-2 text-xl font-semibold text-text">Профиль</h2>
+  <section>    <h2 class="mb-2 text-xl font-semibold text-text">Профиль</h2>
 
     <div class="divide-y divide-border">
       <!-- Аватарка -->
@@ -262,10 +260,4 @@ async function removeAvatar() {
       @close="pendingFile = null"
     />
   </section>
-
-  <!--
-    Блок установки PWA — отдельная секция, а не часть «Профиля»: это про
-    приложение, а не про аккаунт.
-  -->
-  <PwaInstallCard class="mt-8" />
 </template>
