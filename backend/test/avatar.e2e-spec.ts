@@ -123,12 +123,12 @@ describe('Аватарка (e2e)', () => {
     // угадывать тип по содержимому.
     expect(file.headers['x-content-type-options']).toBe('nosniff');
 
-    // Файл действительно приведён к 150×150 и перекодирован в WebP,
+    // Файл действительно приведён к 400×400 и перекодирован в WebP,
     // а не просто переложен на диск.
     const meta = await sharp(file.body as Buffer).metadata();
     expect(meta.format).toBe('webp');
-    expect(meta.width).toBe(150);
-    expect(meta.height).toBe(150);
+    expect(meta.width).toBe(400);
+    expect(meta.height).toBe(400);
 
     // Вторая загрузка должна убрать первый файл — иначе том растёт
     // с каждой сменой аватарки.
