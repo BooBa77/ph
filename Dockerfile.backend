@@ -12,6 +12,18 @@ WORKDIR /app
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 RUN npm ci --omit=dev
+
+# Каталог для загруженных файлов (аватарки). В прод-стеке сюда монтируется
+# том ph_uploads.
+#
+# Почему обязательно создать его ЗДЕСЬ, а не при старте приложения:
+# named volume Docker инициализирует содержимым образа вместе с владельцем.
+# Если каталога в образе нет, Docker создаст его сам — от root, — а процесс
+# работает под непривилегированным `node` и получит EACCES на первую же
+# запись. Права в образе действуют только в момент создания тома: у уже
+# существующего тома владелец свой, его правит только chown на сервере.
+RUN mkdir -p /app/uploads && chown node:node /app/uploads
+
 USER node
 EXPOSE 3000
 CMD ["node", "dist/main"]

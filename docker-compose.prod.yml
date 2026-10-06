@@ -47,6 +47,21 @@ services:
       - NODE_ENV=production
       - DATABASE_URL=${DATABASE_URL}
       - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL}
+      - UPLOADS_DIR=/app/uploads
+    volumes:
+      # Загруженные пользователями файлы (аватарки).
+      #
+      # Монтируется ТОЛЬКО в бэкенд: фронт (nginx со статикой SPA) файлов
+      # не отдаёт и каталога не видит. Появится второй потребитель — тогда
+      # и решим, куда его подключать.
+      #
+      # Том переживает `docker compose up -d --force-recreate`, но НЕ
+      # переживает `docker compose down -v`. Каталог /app/uploads обязан
+      # существовать в образе и принадлежать пользователю node: Docker
+      # инициализирует новый том содержимым и владельцем из образа
+      # (см. Dockerfile.backend). У уже созданного тома владелец свой —
+      # его правит только chown на сервере.
+      - ph_uploads:/app/uploads
     depends_on:
       - postgres
 
@@ -64,3 +79,4 @@ services:
 
 volumes:
   ph_postgres_data:
+  ph_uploads:

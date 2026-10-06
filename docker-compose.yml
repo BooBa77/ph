@@ -20,6 +20,10 @@ services:
     volumes:
       - ./backend:/app
       - backend_node_modules:/app/node_modules
+      # Загруженные файлы (аватарки). Отдельный том, а не каталог внутри
+      # bind-mount ./backend: иначе файлы пользователей легли бы в рабочую
+      # копию репозитория. Порядок важен — том монтируется поверх /app.
+      - ph_uploads:/app/uploads
     environment:
       - NODE_ENV=development
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/ph
@@ -27,6 +31,9 @@ services:
       - JWT_ACCESS_EXPIRES_IN=30m
       - REFRESH_EXPIRES_DAYS=180
       - COOKIE_SECURE=false
+      # Куда складывать загруженные файлы. Дефолт в коде — тот же,
+      # переменная нужна, чтобы можно было увести каталог в сторону.
+      - UPLOADS_DIR=/app/uploads
     depends_on:
       - postgres
     restart: unless-stopped
@@ -46,5 +53,6 @@ services:
 
 volumes:
   ph_dev_postgres_data:
+  ph_uploads:
   backend_node_modules:
   frontend_node_modules:
