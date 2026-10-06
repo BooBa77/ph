@@ -11,6 +11,12 @@ export interface User {
   id: string
   displayName: string
   location: string | null
+  /**
+   * Путь к аватарке вида `/api/uploads/avatars/<id>/<uuid>.webp`
+   * или null, если аватарки нет. Готов к подстановке в `src` у `<img>`:
+   * префикс `/api/` проксируется на бэкенд и в dev (Vite), и в prod
+   * (хостовый nginx), поэтому склеивать ничего не нужно.
+   */
   avatarUrl: string | null
 }
 
@@ -54,11 +60,15 @@ export type RefreshResponse =
  * PATCH /api/users/me — тело запроса.
  *
  * Все поля опциональны. Переданные — обновляются, непереданные — не трогаются.
- * null для location/avatarUrl — «очистить».
+ * null для location — «очистить».
  * displayName нельзя очистить (валидация на бэке).
+ *
+ * avatarUrl здесь нет намеренно: аватарка — это файл, и меняется она
+ * только эндпоинтами POST/DELETE /api/users/me/avatar. Раньше поле было
+ * и тут, то есть в базу можно было записать произвольную строку; теперь
+ * бэк отвечает на неё 400 (ValidationPipe с forbidNonWhitelisted).
  */
 export interface UpdateUserRequest {
   displayName?: string
   location?: string | null
-  avatarUrl?: string | null
 }

@@ -1,5 +1,6 @@
 import swc from 'unplugin-swc';
 import { defineConfig } from 'vitest/config';
+import { e2eUploads } from './test/e2e-uploads.plugin.mts';
 
 /**
  * Конфиг Vitest для e2e-тестов (test/**\/*.e2e-spec.ts).
@@ -7,6 +8,9 @@ import { defineConfig } from 'vitest/config';
  * Вынесен отдельно от vitest.config.ts, потому что e2e поднимает всё
  * приложение целиком — вместе с подключением к БД. Настройки SWC те же:
  * без метаданных декораторов NestJS не соберёт граф зависимостей.
+ *
+ * Плагин `e2eUploads` уводит каталог загруженных файлов в сторону
+ * от боевого хранилища — подробности в самом плагине.
  */
 const swcPlugin = swc.vite({
   jsc: {
@@ -22,6 +26,9 @@ export default defineConfig({
     root: './',
     environment: 'node',
     include: ['test/**/*.e2e-spec.ts'],
+    // Файлы прогоняются последовательно: тесты идут в одну живую БД
+    // и в один каталог файлов, параллельный запуск дал бы гонки.
+    fileParallelism: false,
   },
-  plugins: [swcPlugin],
+  plugins: [e2eUploads(), swcPlugin],
 });

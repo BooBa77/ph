@@ -11,6 +11,12 @@ import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
  * displayName НЕЛЬЗЯ очистить: если передано — валидация требует
  * 2–50 символов по регулярке. Пустая строка не пройдёт. Отсутствие
  * поля в теле — «не менять», не «очистить».
+ *
+ * avatarUrl здесь намеренно отсутствует: аватарка — это файл, и меняется
+ * она только через POST/DELETE /api/users/me/avatar. Пока поле было тут,
+ * в базу можно было записать произвольную строку — например, чужой URL.
+ * Так как ValidationPipe включён с forbidNonWhitelisted, попытка прислать
+ * avatarUrl сюда теперь честно вернёт 400, а не молча ничего не сделает.
  */
 export class UpdateUserDto {
   @ApiProperty({
@@ -41,16 +47,4 @@ export class UpdateUserDto {
   @IsString()
   @MaxLength(100, { message: 'Город не должен превышать 100 символов' })
   location?: string | null;
-
-  @ApiProperty({
-    description: 'URL аватарки. null — очистить.',
-    example: 'https://example.com/avatar.jpg',
-    maxLength: 255,
-    nullable: true,
-    required: false,
-  })
-  @IsOptional()
-  @IsString()
-  @MaxLength(255, { message: 'URL аватарки не должен превышать 255 символов' })
-  avatarUrl?: string | null;
 }

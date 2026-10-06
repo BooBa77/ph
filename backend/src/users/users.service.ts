@@ -17,11 +17,15 @@ export interface CreateUserData {
 /**
  * Данные для обновления профиля.
  * Все поля опциональны — обновляем только то, что пришло.
+ *
+ * Про avatarUrl здесь намеренно ничего нет: аватарка меняется не через
+ * PATCH /users/me, а эндпоинтами POST/DELETE /users/me/avatar, где файл
+ * обрабатывается и проверяется. Прямая запись строки в поле позволила бы
+ * подставить в него чужой URL, поэтому пути для неё нет.
  */
 export interface UpdateUserData {
   displayName?: string;
   location?: string | null;
-  avatarUrl?: string | null;
 }
 
 @Injectable()
@@ -144,8 +148,23 @@ export class UsersService {
     }
 
     if (data.location !== undefined) user.location = data.location;
-    if (data.avatarUrl !== undefined) user.avatarUrl = data.avatarUrl;
 
     return userRepo.save(user);
+  }
+
+  /**
+   * Записать в профиль новый URL аватарки.
+   *
+   * Отдельный метод, а не update(): тот пишет аудит-запись в историю
+   * имён и оборачивает всё в транзакцию — для одной колонки это лишнее.
+   *
+   * @returns обновлённого пользователя или null, если его нет
+   */
+  async setAvatarUrl(id: string, avatarUrl: string | null): Promise<User | null> {
+    const user = await this.usersRepository.findOne({ where: { id } });
+    if (!user) return null;
+
+    user.avatarUrl = avatarUrl;
+    return this.usersRepository.save(user);
   }
 }
