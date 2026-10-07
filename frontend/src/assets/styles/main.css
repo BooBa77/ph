@@ -49,6 +49,14 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Контент приложения — выше сезонного декора.
+   Декор лежит на z-index: 0, контент — на 1.
+   Без этого декор перекрывает клики и текст. */
+#app {
+  position: relative;
+  z-index: 1;
+}
+
 /* Ссылки по умолчанию — акцентным цветом. */
 a {
   color: var(--color-primary);
