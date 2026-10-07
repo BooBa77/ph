@@ -183,11 +183,18 @@ function backToEmail() {
 </template>
 
 <style scoped>
+/*
+  Здесь единственное место в проекте со своими CSS-классами вместо
+  Tailwind-утилит — страница входа осталась с самого начала. Поэтому
+  цвета берём из тех же переменных темы, что и остальное приложение:
+  иначе страница входа не подхватывает сезонную палитру и выглядит
+  чужой (синяя кнопка на осеннем фоне).
+*/
 .auth {
   max-width: 360px;
   margin: 4rem auto;
   padding: 1.5rem;
-  font-family: system-ui, sans-serif;
+  color: var(--theme-text);
 }
 .auth__form {
   display: flex;
@@ -200,18 +207,36 @@ function backToEmail() {
   flex-direction: column;
   gap: 0.25rem;
   font-size: 0.9rem;
-  color: #444;
+  color: color-mix(in srgb, var(--theme-text) 75%, transparent);
 }
 .auth__input {
   padding: 0.5rem 0.75rem;
   font-size: 1rem;
-  border: 1px solid #ccc;
+  font-family: inherit;
+  border: 1px solid var(--theme-border);
   border-radius: 6px;
+  /*
+    Непрозрачный фон — не косметика. Поле лежало прозрачным поверх
+    сезонного декора, и сквозь него были видны падающие листья:
+    читаемость ввода страдала, а выглядело это как забытый стиль.
+    Берём фон страницы из темы, а не white: на цветных темах
+    (весна, лето, осень) белый прямоугольник выбивался бы.
+  */
+  background-color: var(--theme-bg);
+  color: var(--theme-text);
+}
+.auth__input:focus {
+  outline: 2px solid var(--theme-primary);
+  outline-offset: -1px;
+}
+.auth__input:focus-visible {
+  outline: 2px solid var(--theme-primary);
 }
 .auth__submit {
   padding: 0.6rem 1rem;
   font-size: 1rem;
-  background: #0b3d91;
+  font-family: inherit;
+  background: var(--theme-primary);
   color: #fff;
   border: none;
   border-radius: 6px;
@@ -229,25 +254,28 @@ function backToEmail() {
 .auth__link {
   background: none;
   border: none;
-  color: #0b3d91;
+  color: var(--theme-primary);
   cursor: pointer;
   padding: 0;
+  font-family: inherit;
   font-size: 0.85rem;
   text-decoration: underline;
 }
 .auth__link:disabled {
-  color: #999;
+  color: var(--theme-muted);
   cursor: not-allowed;
   text-decoration: none;
 }
 .auth__hint {
   margin: 0;
   font-size: 0.9rem;
-  color: #444;
+  color: color-mix(in srgb, var(--theme-text) 80%, transparent);
 }
 .auth__error {
   margin-top: 1rem;
   padding: 0.5rem 0.75rem;
+  /* Красный — фиксированный: сигнал об ошибке не должен зависеть
+     от сезона и сливаться с фоном летней или весенней темы. */
   background: #fdecea;
   color: #b3261e;
   border-radius: 6px;
