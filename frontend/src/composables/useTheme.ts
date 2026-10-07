@@ -102,3 +102,28 @@ export function useTheme() {
     { immediate: true },
   )
 }
+
+/**
+ * Поставить сезонную тему на <html> — идемпотентно.
+ *
+ * Отдельная функция, потому что её же вызывает `main.ts` при старте:
+ * тема ставится инлайн-скриптом в index.html (защита от FOUC), а потом
+ * ещё раз отсюда. Повторный вызов ничего не ломает, зато исчезает
+ * зависимость от того, остался ли атрибут на месте после SPA-переходов
+ * и перерисовок.
+ *
+ * Вторая строка — отметка времени для отладки: по ней в панели `?diag`
+ * видно, когда тема ставилась. Если она пустая, значит функция не
+ * выполнялась вовсе, и «наступает зима» объясняется именно этим.
+ */
+export function applySeasonTheme(): void {
+  const season = detectSeasonByDate()
+
+  if (typeof document === 'undefined') return
+
+  document.documentElement.setAttribute('data-theme', String(season))
+  document.documentElement.setAttribute(
+    'data-theme-init',
+    new Date().toISOString(),
+  )
+}

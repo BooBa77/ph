@@ -39,6 +39,16 @@ function collect() {
   facts.value = {
     адрес: location.pathname + location.search,
     сезон: document.documentElement.getAttribute('data-theme'),
+    /**
+     * Когда тема ставилась в последний раз.
+     *
+     * Пустое значение — тема не ставилась вовсе: значит атрибут на <html>
+     * пропал, и браузер показывает дефолтную палитру из themes.css,
+     * а это зима. Ровно этим объяснялась жалоба «после выхода наступает
+     * зима», и эту строку я добавил, чтобы отличать «тема потерялась»
+     * от «тема поставилась, но не та».
+     */
+    'тема поставлена': document.documentElement.getAttribute('data-theme-init') ?? 'НЕ СТАВИЛАСЬ',
     'элемент .season-decor': decor ? 'есть' : 'НЕТ',
     'класс слоя': decor?.className ?? '—',
     'листьев в DOM': leaves.length,

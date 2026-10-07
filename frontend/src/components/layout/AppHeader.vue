@@ -37,7 +37,7 @@ const profilePath = computed(() => appStore.lastProfilePath)
   >
     <RouterLink
       to="/"
-      class="flex items-center gap-2 text-lg font-semibold text-text no-underline"
+      class="flex min-w-0 items-center gap-2 text-lg font-semibold text-text no-underline"
       aria-label="На главную"
     >
       <!--
@@ -50,14 +50,20 @@ const profilePath = computed(() => appStore.lastProfilePath)
         aria-label у ссылки). Дубль имени ссылки скринридер читал бы
         дважды.
       -->
-      <img src="/logo.svg" alt="" width="28" height="28" class="h-7 w-7" />
+      <img
+        src="/logo.svg"
+        alt=""
+        width="28"
+        height="28"
+        class="h-7 w-7 shrink-0"
+      />
       <span class="hidden sm:inline">PeakHunter</span>
     </RouterLink>
 
     <RouterLink
       v-if="auth.user"
       :to="profilePath"
-      class="flex min-w-0 items-center gap-2 rounded-full border border-border bg-bg py-1 pr-1 pl-1 text-sm text-text no-underline transition-colors hover:border-primary sm:pr-3"
+      class="flex min-w-0 shrink items-center gap-2 rounded-full border border-border bg-bg py-1 pr-1 pl-1 text-sm text-text no-underline transition-colors hover:border-primary sm:pr-3"
       aria-label="Личный кабинет"
     >
       <UserAvatar
@@ -65,11 +71,13 @@ const profilePath = computed(() => appStore.lastProfilePath)
         :size="32"
         :alt="auth.user.displayName"
       />
-      <!-- Имя — целиком, без max-w и truncate: переносится не должно,
-           но и резаться на полуслове незачем -->
-      <span class="hidden whitespace-nowrap sm:inline">
-        {{ auth.user.displayName }}
-      </span>
+      <!--
+        Имя показываем на всех экранах, включая узкие. Длинное — режем
+        многоточием, а не прячем: имя в шапке нужно, чтобы понимать,
+        под кем ты вошёл. Место под него освобождает логотип: на узких
+        экранах от него остаётся только знак.
+      -->
+      <span class="mr-1 truncate">{{ auth.user.displayName }}</span>
     </RouterLink>
   </header>
 </template>
