@@ -4,7 +4,6 @@ import { RouterLink, useRouter } from 'vue-router'
 
 import { logout } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
-import { usePreferencesStore } from '@/stores/preferences'
 import SidebarIcon from '@/components/ui/SidebarIcon.vue'
 
 /**
@@ -20,7 +19,6 @@ import SidebarIcon from '@/components/ui/SidebarIcon.vue'
  * аватарка, ни логотип.
  */
 const auth = useAuthStore()
-const preferences = usePreferencesStore()
 const router = useRouter()
 
 /** Спрашиваем подтверждение перед выходом. */
@@ -82,29 +80,16 @@ async function confirmLogout() {
     </span>
 
     <!--
-      Настройки. Полноценного раздела пока нет, но одно настройко-образное
-      действие уже есть: сезонные анимации. Держим его здесь, а не в
-      отдельной странице ради одного переключателя.
+      Настройки — раздела ещё нет, поэтому неактивный пункт, как и
+      «Сессии». Сезонные анимации сюда не выносим: это оформление,
+      а не настройка аккаунта, и отдельного переключателя у них нет.
     -->
-    <label
-      class="flex flex-1 cursor-pointer items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted transition-colors hover:bg-bg hover:text-text md:flex-none md:justify-start md:rounded-none md:px-4 md:hover:bg-surface"
-      title="Падающие листья и прочее сезонное оформление"
+    <span
+      class="flex flex-1 cursor-not-allowed items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted/50 md:flex-none md:justify-start md:rounded-none md:px-4"
     >
       <span class="h-5 w-5 shrink-0"><SidebarIcon name="settings" /></span>
-      <span class="hidden md:inline">Анимация фона</span>
-      <input
-        type="checkbox"
-        class="ml-auto hidden cursor-pointer md:block"
-        :checked="preferences.seasonAnimations"
-        @change="preferences.toggleSeasonAnimations()"
-      />
-      <!-- На мобиле пункт узкий: чекбокс не влезает, поэтому показываем
-           состояние точкой -->
-      <span
-        class="h-2 w-2 shrink-0 rounded-full md:hidden"
-        :class="preferences.seasonAnimations ? 'bg-primary' : 'bg-border'"
-      ></span>
-    </label>
+      <span class="hidden md:inline">Настройки (скоро)</span>
+    </span>
 
     <!-- Выход: отделён чертой от разделов, на мобиле — в общем ряду -->
     <div class="md:mt-3 md:border-t md:border-border md:pt-3">

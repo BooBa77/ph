@@ -2,9 +2,6 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { nextTick } from 'vue'
 
-import { useTheme } from '@/composables/useTheme'
-import { useAppStore } from '@/stores/app'
-
 /**
  * Фиксируем только дату.
  *
@@ -20,19 +17,19 @@ function freezeDate(year: number, monthIndex: number, day: number) {
 /**
  * Свежие модули для одного теста.
  *
- * Модуль перезагружаем, чтобы не тащить состояние предыдущего теста
- * (становится актуальнее, когда в composable появится подписка или
- * кэш). Заодно и store: после `resetModules` composable получил бы свой
- * экземпляр модуля store, а тест — свой, и проверки смотрели бы не туда.
+ * Модуль перезагружаем, чтобы не тащить состояние предыдущего теста:
+ * в composable теперь есть наблюдение за атрибутом, и оно живёт до конца
+ * теста. Заодно и store — после `resetModules` composable получил бы свой
+ * экземпляр модуля store, а тест свой, и проверки смотрели бы не туда.
  */
 async function freshModules() {
   vi.resetModules()
-  const [{ useTheme }, { useAppStore }] = await Promise.all([
+  const [{ useTheme, applySeasonTheme }, { useAppStore }] = await Promise.all([
     import('@/composables/useTheme'),
     import('@/stores/app'),
   ])
   setActivePinia(createPinia())
-  return { useTheme, useAppStore }
+  return { useTheme, applySeasonTheme, useAppStore }
 }
 
 describe('useTheme', () => {
@@ -48,8 +45,9 @@ describe('useTheme', () => {
   it('зимой ставит сезон 1 и атрибут data-theme', async () => {
     freezeDate(2026, 0, 15)
 
-    const { useTheme, useAppStore } = await freshModules()
+    const { useTheme, applySeasonTheme, useAppStore } = await freshModules()
     useTheme()
+    applySeasonTheme()
 
     expect(useAppStore().currentTheme).toBe(1)
     expect(document.documentElement.getAttribute('data-theme')).toBe('1')
@@ -115,10 +113,41 @@ describe('useTheme', () => {
     // а не «подхватывается как настройка».
     localStorage.setItem('themeOverride', '3')
 
-    const { useTheme, useAppStore } = await freshModules()
+    const { useTheme, applySeasonTheme, useAppStore } = await freshModules()
     useTheme()
+    applySeasonTheme()
 
     expect(useAppStore().currentTheme).toBe(1)
     expect(document.documentElement.getAttribute('data-theme')).toBe('1')
+  })
+
+  it('возвращает тему, если атрибут сняли извне', async () => {
+    freezeDate(2026, 9, 20) // осень
+
+    const { useTheme, applySeasonTheme } = await freshModules()
+    useTheme()
+    applySeasonTheme()
+    expect(document.documentElement.getAttribute('data-theme')).toBe('4')
+
+    // Именно так выглядела жалоба «после выхода наступает зима»: атрибут
+    // пропал, и браузер взял палитру из :root в themes.css — а там зима.
+    document.documentElement.removeAttribute('data-theme')
+    await nextTick()
+
+    expect(document.documentElement.getAttribute('data-theme')).toBe('4')
+  })
+
+  it('не мешает осмысленной смене сезона', async () => {
+    freezeDate(2026, 9, 20)
+
+    const { useTheme, applySeasonTheme, useAppStore } = await freshModules()
+    useTheme()
+    applySeasonTheme()
+
+    // Смена на валидный сезон не должна откатываться наблюдением.
+    useAppStore().setTheme(2)
+    await nextTick()
+
+    expect(document.documentElement.getAttribute('data-theme')).toBe('2')
   })
 })

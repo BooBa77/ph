@@ -4,7 +4,6 @@ import { RouterView, useRoute } from 'vue-router'
 
 import AppHeader from '@/components/layout/AppHeader.vue'
 import SeasonDecor from '@/components/layout/SeasonDecor.vue'
-import DecorDiagnostics from '@/components/layout/DecorDiagnostics.vue'
 import InstallHintDialog from '@/components/ui/InstallHintDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { useSwUpdate } from '@/composables/useSwUpdate'
@@ -61,10 +60,11 @@ watch(
 
 <template>
   <!--
-    Сезонный декор — первым в разметке и под содержимым (z-index: -1
-    внутри компонента). Позиция fixed, поэтому порядок в DOM на слои
-    не влияет, но так он хотя бы читается в том же порядке, что и
-    рисуется.
+    Сезонный декор. Позиция fixed и `z-index: 0`, а содержимое страницы
+    лежит выше за счёт `#app { position: relative; z-index: 1 }`
+    в main.css. Именно так, а не отрицательным z-index: с `-10` слой
+    уходил ПОД непрозрачный фон body, и листья были не видны, хотя
+    в DOM жили и координаты у них были правильные.
   -->
   <SeasonDecor />
 
@@ -77,12 +77,4 @@ watch(
     предложение переедет в «Сессии».
   -->
   <InstallHintDialog />
-
-  <!--
-    Диагностика сезонного декора: показывается только по `?diag` в адресе.
-    Нужна была, чтобы разобраться, почему у одного человека листья видны,
-    а у другого нет. Оставлена: следующий такой случай снова упрётся
-    в недоступное окружение.
-  -->
-  <DecorDiagnostics />
 </template>

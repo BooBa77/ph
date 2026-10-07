@@ -62,6 +62,74 @@ export function detectSeasonByDate(): Season {
 }
 
 /**
+ * Поставить сезонную тему на `<html>`.
+ *
+ * Единственная точка записи атрибута: и старт приложения (`main.ts`),
+ * и реакция на смену сезона идут через неё. Так не бывает двух
+ * источников правды об одном атрибуте.
+ *
+ * Функция идемпотентная — повторный вызов ставит тот же сезон.
+ */
+export function applySeasonTheme(): void {
+  if (typeof document === 'undefined') return
+
+  document.documentElement.setAttribute(
+    'data-theme',
+    String(detectSeasonByDate()),
+  )
+}
+
+/**
+ * Следить за тем, чтобы тема оставалась на месте.
+ *
+ * Зачем: была жалоба «после выхода из аккаунта наступает зима». Зима —
+ * это не какая-то ветка логики, а палитра из `:root` в themes.css,
+ * которая применяется, когда атрибута `data-theme` на `<html>` нет
+ * вовсе. Значит его что-то снимает, и я не смог это воспроизвести.
+ *
+ * Наблюдение решает задачу с двух сторон: возвращает атрибут, если он
+ * пропал, и пишет в консоль, что именно это сделало, — по этим записям
+ * причину будет видно, а не придётся угадывать. Заодно это страховка
+ * на будущее: снежинки летом посыпались бы ровно по той же причине.
+ *
+ * Вызывается один раз из App.vue.
+ */
+export function watchSeasonTheme(): void {
+  if (typeof document === 'undefined') return
+
+  let lastValue = document.documentElement.getAttribute('data-theme')
+
+  new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      if (mutation.attributeName !== 'data-theme') continue
+
+      const current = document.documentElement.getAttribute('data-theme')
+
+      // Ничего не изменилось — например, повторная установка того же.
+      if (current === lastValue) continue
+
+      const outsideApply = current === null || !isValidSeason(Number(current))
+      lastValue = current
+
+      if (outsideApply) {
+        // Здесь важно понять, откуда ноги растут. В консоли будет видно,
+        // в какой момент и с каким стеком атрибут пропал.
+        console.warn(
+          '[тема] data-theme изменён извне:',
+          current,
+          new Error('источник изменения').stack,
+        )
+        applySeasonTheme()
+        lastValue = document.documentElement.getAttribute('data-theme')
+      }
+    }
+  }).observe(document.documentElement, {
+    attributes: true,
+    attributeFilter: ['data-theme'],
+  })
+}
+
+/**
  * Composable темы. Ставит сезон по календарю и следит за его применением.
  *
  * Тема — ТОЛЬКО автоматическая. Выбора сезона вручную нет намеренно:
@@ -69,14 +137,9 @@ export function detectSeasonByDate(): Season {
  * лето в декабре» — это не настройка, а поломка замысла. Если однажды
  * появится дробление по месяцам, менять надо здесь и в themes.css.
  *
- * Вызывать ОДИН раз — в App.vue, до первого рендера.
- *
- * Что делает:
- *   1. Определяет сезон по дате.
- *   2. Ставит data-theme на <html> — CSS пересчитывается.
- *   3. Watcher: при изменении currentTheme обновляет data-theme.
- *      Если значение невалидное (вписали через DevTools) — откатывает
- *      к сезону по дате.
+ * Вызывать ОДИН раз — в App.vue, до первого рендера. Сам атрибут ставит
+ * `applySeasonTheme`, а не этот код: так запись в атрибут одна на всё
+ * приложение, и наблюдение за ним не путается с собственными записями.
  */
 export function useTheme() {
   const appStore = useAppStore()
@@ -84,7 +147,7 @@ export function useTheme() {
   // ─── инициализация ───
   appStore.setTheme(detectSeasonByDate())
 
-  // ─── watcher ───
+  // ─── реакция на смену сезона ───
   watch(
     () => appStore.currentTheme,
     (next) => {
@@ -96,34 +159,9 @@ export function useTheme() {
         return
       }
 
-      // Всё валидно — применяем к <html>.
       document.documentElement.setAttribute('data-theme', String(next))
     },
-    { immediate: true },
   )
-}
 
-/**
- * Поставить сезонную тему на <html> — идемпотентно.
- *
- * Отдельная функция, потому что её же вызывает `main.ts` при старте:
- * тема ставится инлайн-скриптом в index.html (защита от FOUC), а потом
- * ещё раз отсюда. Повторный вызов ничего не ломает, зато исчезает
- * зависимость от того, остался ли атрибут на месте после SPA-переходов
- * и перерисовок.
- *
- * Вторая строка — отметка времени для отладки: по ней в панели `?diag`
- * видно, когда тема ставилась. Если она пустая, значит функция не
- * выполнялась вовсе, и «наступает зима» объясняется именно этим.
- */
-export function applySeasonTheme(): void {
-  const season = detectSeasonByDate()
-
-  if (typeof document === 'undefined') return
-
-  document.documentElement.setAttribute('data-theme', String(season))
-  document.documentElement.setAttribute(
-    'data-theme-init',
-    new Date().toISOString(),
-  )
+  watchSeasonTheme()
 }
