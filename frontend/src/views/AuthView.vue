@@ -225,6 +225,34 @@ function backToEmail() {
   background-color: var(--theme-bg);
   color: var(--theme-text);
 }
+
+/*
+  Автозаполнение и подстановка кода из письма.
+
+  Chrome и Safari красят автозаполненное поле своим цветом (у Chrome это
+  голубоватый #e8f0fe) и своим цветом текста — поверх нашей темы. Именно
+  это выглядело как «поле не меняет цвет при вводе»: стоило браузеру
+  подставить код из письма (у поля стоит autocomplete="one-time-code"),
+  и поле становилось чужим.
+
+  Перебить это обычным `background-color` нельзя — у автозаполнения
+  собственный слой. Работает связка из трёх свойств:
+    - `-webkit-text-fill-color` — цвет текста, который браузер ставит
+      поверх нашего `color`;
+    - `box-shadow` с внутренним отступом — перекрывает фон автозаполнения
+      (внешний вид остаётся как у обычного поля);
+    - `transition` с огромной задержкой — не даёт браузеру «мигнуть»
+      своим фоном, пока он его применяет.
+  Селектор с `:-webkit-autofill` есть только у WebKit и Blink; в Firefox
+  правило просто игнорируется, и там поведение обычное.
+*/
+.auth__input:-webkit-autofill,
+.auth__input:-webkit-autofill:hover,
+.auth__input:-webkit-autofill:focus {
+  -webkit-text-fill-color: var(--theme-text);
+  box-shadow: 0 0 0 1000px var(--theme-bg) inset;
+  transition: background-color 100000s ease-in-out 0s;
+}
 .auth__input:focus {
   outline: 2px solid var(--theme-primary);
   outline-offset: -1px;
