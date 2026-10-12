@@ -41,7 +41,23 @@ const router = createRouter({
           component: () =>
             import('@/views/profile/sections/PersonalInfo.vue'),
         },
+        {
+          // Календарь пользователя: пока текущий месяц, дальше — отметки
+          // и события по дням.
+          path: 'calendar',
+          name: 'profile-calendar',
+          component: () =>
+            import('@/views/profile/sections/UserCalendar.vue'),
+        },
       ],
+    },
+    {
+      // Модерация иконок активностей: зародыш админки. Доступ проверяет
+      // бэкенд — список админов захардкожен, чужому тут делать нечего.
+      path: '/admin/activities',
+      name: 'admin-activities',
+      component: () => import('@/views/admin/ActivityModeration.vue'),
+      meta: { requiresAuth: true },
     },
   ],
 })

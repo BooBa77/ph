@@ -13,6 +13,14 @@ COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/package*.json ./
 RUN npm ci --omit=dev
 
+# Шаблоны государственного производственного календаря и команда их заливки.
+# Данные публичные (постановления Правительства РФ), но без них в контейнере
+# нечем залить таблицу calendar_state_production: `npm run seed:calendar`
+# читает seed/calendar/ru-YYYY.json. Скрипт использует только `pg` —
+# зависимость рантайма, поэтому работает и без dev-зависимостей.
+COPY --from=builder /app/seed ./seed
+COPY --from=builder /app/scripts ./scripts
+
 # Каталог для загруженных файлов (аватарки). В прод-стеке сюда монтируется
 # том ph_uploads.
 #

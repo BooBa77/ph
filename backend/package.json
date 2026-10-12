@@ -20,6 +20,8 @@
     "migration:run:prod": "npm run typeorm:prod -- migration:run",
     "migration:revert:prod": "npm run typeorm:prod -- migration:revert",
     "migration:show:prod": "npm run typeorm:prod -- migration:show",
+    "build:state-calendar": "node scripts/build-state-calendar.mjs",
+    "seed:calendar": "node scripts/seed-state-calendar.mjs",
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",

@@ -16,6 +16,7 @@
 defineProps<{
   name:
     | 'profile'
+    | 'calendar'
     | 'sessions'
     | 'settings'
     | 'install'
@@ -39,6 +40,14 @@ defineProps<{
     <template v-if="name === 'profile'">
       <circle cx="12" cy="8" r="4" />
       <path d="M4 20c0-3.3 3.6-6 8-6s8 2.7 8 6" />
+    </template>
+
+    <!-- Календарь: лист с двумя кольцами. Один в один с «Сессиями» его
+         не спутать — там два устройства, здесь рамка с шапкой -->
+    <template v-else-if="name === 'calendar'">
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18" />
+      <path d="M8 3v4M16 3v4" />
     </template>
 
     <!-- Сессии: устройства -->

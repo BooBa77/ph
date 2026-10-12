@@ -69,6 +69,20 @@ async function confirmLogout() {
     </RouterLink>
 
     <!--
+      Календарь — сразу после профиля: это второй по частоте раздел
+      (посмотреть, что за день), и в меню он должен стоять выше
+      служебных.
+    -->
+    <RouterLink
+      to="/profile/calendar"
+      class="flex flex-1 items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted no-underline transition-colors hover:bg-bg hover:text-text md:flex-none md:justify-start md:rounded-none md:px-4 md:hover:bg-surface"
+      active-class="bg-bg font-medium text-primary md:bg-surface"
+    >
+      <span class="h-5 w-5 shrink-0"><SidebarIcon name="calendar" /></span>
+      <span class="hidden md:inline">Календарь</span>
+    </RouterLink>
+
+    <!--
       Сессии — раздела ещё нет, поэтому неактивный пункт, а не ссылка.
       Как только появится — станет RouterLink с той же иконкой.
     -->
