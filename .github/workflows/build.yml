@@ -45,6 +45,14 @@ jobs:
         working-directory: backend
         run: npm run build
 
+      # `nest build` завершается успешно, даже если положил сборку не туда:
+      # без tsconfig.build.json с rootDir каталог вывода становится dist/src,
+      # и контейнер падает с «Cannot find module '/app/dist/main'». Проверяем
+      # ровно тот файл, который запускает CMD в Dockerfile.
+      - name: Проверка артефакта сборки
+        working-directory: backend
+        run: test -f dist/main.js
+
       # Тесты идут с SWC: в конфиге Vitest он отключается только переменной
       # VITEST_NO_SWC, которую ставит локальный скрипт из-за песочницы DSH.
       - name: Тесты бэкенда
