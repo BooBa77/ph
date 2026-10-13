@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { User } from '../entities/user.entity';
+import { SportExperienceResponseDto } from './sport-experience-response.dto';
 
 /**
  * Публичное представление пользователя — то, что уходит наружу по API.
@@ -45,6 +46,27 @@ export class UserResponseDto {
   })
   avatarUrl: string | null;
 
+  @ApiProperty({
+    description: 'Вегетарианство (пищевое ограничение)',
+    example: false,
+  })
+  isVegetarian: boolean;
+
+  @ApiProperty({
+    description: 'Аллергии: свободный текст пользователя',
+    example: 'Орехи, цитрусовые',
+    nullable: true,
+  })
+  allergies: string | null;
+
+  @ApiProperty({
+    description:
+      'Спортивный опыт (альпинизм, скайраннинг, спортивный туризм). null — не заполнен.',
+    type: () => SportExperienceResponseDto,
+    nullable: true,
+  })
+  sportExperience: SportExperienceResponseDto | null;
+
   /**
    * Собрать DTO из entity User.
    *
@@ -58,6 +80,11 @@ export class UserResponseDto {
     dto.displayName = user.displayName;
     dto.location = user.location;
     dto.avatarUrl = user.avatarUrl;
+    dto.isVegetarian = user.isVegetarian;
+    dto.allergies = user.allergies;
+    dto.sportExperience = SportExperienceResponseDto.from(
+      user.sportExperience ?? null,
+    );
     return dto;
   }
 }

@@ -1,5 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsBoolean,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
+
+import { SportExperienceDto } from './sport-experience.dto';
 
 /**
  * Тело PATCH /api/users/me.
@@ -47,4 +57,46 @@ export class UpdateUserDto {
   @IsString()
   @MaxLength(100, { message: 'Город не должен превышать 100 символов' })
   location?: string | null;
+
+  @ApiProperty({
+    description: 'Вегетарианство (пищевое ограничение)',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  isVegetarian?: boolean;
+
+  @ApiProperty({
+    description: 'Аллергии: свободный текст пользователя. null — очистить.',
+    example: 'Орехи, цитрусовые',
+    maxLength: 500,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(500, {
+    message: 'Список аллергий не должен превышать 500 символов',
+  })
+  allergies?: string | null;
+
+  /**
+   * Спортивный опыт. Приходит одним вложенным объектом: так фронт может
+   * прислать сразу и альпинизм, и туризм, а может — одну строку выпадающего
+   * списка, и остальное останется как было.
+   *
+   * `null` — очистить опыт целиком (строка в user_sport_experience удаляется).
+   */
+  @ApiProperty({
+    description:
+      'Спортивный опыт: альпинизм, скайраннинг, спортивный туризм. null — очистить целиком.',
+    type: () => SportExperienceDto,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => SportExperienceDto)
+  sportExperience?: SportExperienceDto | null;
 }

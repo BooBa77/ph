@@ -9,6 +9,9 @@ const updatedUser: User = {
   displayName: 'Тест',
   location: null,
   avatarUrl: '/api/uploads/avatars/u1/3f2504e0-4f89-41d3-9a0c-0305e82c3301.webp',
+  isVegetarian: false,
+  allergies: null,
+  sportExperience: null,
 }
 
 interface Call {

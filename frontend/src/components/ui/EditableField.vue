@@ -4,7 +4,7 @@ import { useAppStore } from '@/stores/app'
 
 const props = withDefaults(
   defineProps<{
-    /** Метка поля («Имя пользователя», «Город»). */
+    /** Метка поля («Отображаемое имя», «Город»). */
     label: string
     /** Текущее значение. Пустая строка — показываем placeholder. */
     modelValue: string

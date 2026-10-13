@@ -3,12 +3,30 @@ import { computed, ref } from 'vue'
 
 import { deleteAvatar, updateMe, uploadAvatar } from '@/api/users'
 import { ApiError } from '@/api/errors'
+import type { UpdateUserRequest } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import EditableField from '@/components/ui/EditableField.vue'
+import SelectField from '@/components/ui/SelectField.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import AvatarCropperModal from '@/components/ui/AvatarCropperModal.vue'
 import { canBrowserDecode, looksLikeHeic } from '@/utils/imageDecode'
+import {
+  ALPINISM_RANKS,
+  MOUNTAIN_CATEGORIES,
+  SPORT_RANKS,
+  TOURISM_CATEGORIES,
+  TOURISM_DISCIPLINES,
+  TOURISM_DISCIPLINE_RESULTS,
+  TOURISM_KINDS,
+  type AlpinismRank,
+  type MountainCategory,
+  type SportRank,
+  type TourismCategory,
+  type TourismDiscipline,
+  type TourismDisciplineResult,
+  type TourismKind,
+} from '@/types/sportExperience'
 
 const auth = useAuthStore()
 const appStore = useAppStore()
@@ -19,6 +37,23 @@ const error = ref<string | null>(null)
 const displayName = computed(() => auth.user?.displayName ?? '')
 const location = computed(() => auth.user?.location ?? '')
 const avatarUrl = computed(() => auth.user?.avatarUrl ?? null)
+const isVegetarian = computed(() => auth.user?.isVegetarian ?? false)
+const allergies = computed(() => auth.user?.allergies ?? '')
+
+/**
+ * Спортивный опыт. null — пользователь ещё ничего не заполнял:
+ * строки в user_sport_experience нет, все списки показывают «не выбрано».
+ */
+const experience = computed(() => auth.user?.sportExperience ?? null)
+const alpinism = computed(() => experience.value?.alpinism ?? null)
+const skyrunning = computed(() => experience.value?.skyrunning ?? null)
+const tourism = computed(() => experience.value?.sportTourism ?? null)
+
+/**
+ * Города-подсказки. Показываются, только пока поле пустое: они нужны,
+ * чтобы заполнить город в один клик, а не чтобы менять уже выбранный —
+ * свой город в списке из трёх всё равно может не оказаться.
+ */
 const SUGGESTED_CITIES = ['Иркутск', 'Ангарск', 'Усолье-Сибирское']
 
 /** Ссылка на скрытый input: открываем системный выбор файла. */
@@ -44,7 +79,8 @@ const MAX_AVATAR_BYTES = 10 * 1024 * 1024
  * освободил счётчик, а запрос на сохранение ещё летит — и PWA-обновление
  * может перезагрузить страницу прямо посреди него, потеряв изменение.
  * Кнопки с городами вообще сохраняют без редактирования, поэтому им
- * счётчик нужен не меньше.
+ * счётчик нужен не меньше. Списки спортивного опыта сохраняются так же —
+ * сразу на выбор значения.
  */
 async function whileBusy<T>(action: () => Promise<T>): Promise<T> {
   appStore.setBusy(true)
@@ -56,6 +92,23 @@ async function whileBusy<T>(action: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Сохранить профиль одним PATCH и обновить стор.
+ *
+ * Общий путь для всех полей: два десятка выпадающих списков повторяли бы
+ * один и тот же try/catch, а расходиться в обработке ошибок им незачем.
+ */
+async function saveProfile(patch: UpdateUserRequest) {
+  error.value = null
+  try {
+    const updated = await whileBusy(() => updateMe(patch))
+    auth.setUser(updated)
+  } catch (e) {
+    error.value =
+      e instanceof ApiError ? e.message : 'Не удалось сохранить. Попробуйте ещё раз.'
+  }
+}
+
+/**
  * Сохранение displayName.
  *
  * Клиентская валидация лёгкая: не пустая строка, 2–50 символов.
@@ -63,33 +116,74 @@ async function whileBusy<T>(action: () => Promise<T>): Promise<T> {
  * покажем сообщение.
  */
 async function saveDisplayName(value: string) {
-  error.value = null
-  try {
-    const updated = await whileBusy(() => updateMe({ displayName: value }))
-    auth.setUser(updated)
-  } catch (e) {
-    if (e instanceof ApiError) {
-      error.value = e.message
-    } else {
-      error.value = 'Не удалось сохранить. Попробуйте ещё раз.'
-    }
-  }
+  await saveProfile({ displayName: value })
 }
 
 /** Сохранение location. Пустая строка → null (очистить). */
 async function saveLocation(value: string) {
-  error.value = null
-  try {
-    const newValue = value === '' ? null : value
-    const updated = await whileBusy(() => updateMe({ location: newValue }))
-    auth.setUser(updated)
-  } catch (e) {
-    if (e instanceof ApiError) {
-      error.value = e.message
-    } else {
-      error.value = 'Не удалось сохранить. Попробуйте ещё раз.'
-    }
-  }
+  await saveProfile({ location: value === '' ? null : value })
+}
+
+/** Галочка «вегетарианство». Снятая галочка — тоже ответ, а не «не знаю». */
+async function saveVegetarian(value: boolean) {
+  await saveProfile({ isVegetarian: value })
+}
+
+async function onVegetarianChange(event: Event) {
+  await saveVegetarian((event.target as HTMLInputElement).checked)
+}
+
+/** Аллергии: свободный текст. Пустая строка → null (очистить). */
+async function saveAllergies(value: string) {
+  await saveProfile({ allergies: value === '' ? null : value })
+}
+
+// ─── Спортивный опыт ───
+//
+// Каждый обработчик шлёт только своё поле: PATCH на бэке частичный, и
+// выбор в одном списке не должен стирать остальные восемнадцать.
+
+async function saveAlpinismRank(value: AlpinismRank | null) {
+  await saveProfile({ sportExperience: { alpinism: { rank: value } } })
+}
+
+async function saveAlpinismParticipation(value: MountainCategory | null) {
+  await saveProfile({
+    sportExperience: { alpinism: { maxParticipation: value } },
+  })
+}
+
+async function saveAlpinismLeadership(value: MountainCategory | null) {
+  await saveProfile({ sportExperience: { alpinism: { maxLeadership: value } } })
+}
+
+async function saveSkyrunningRank(value: SportRank | null) {
+  await saveProfile({ sportExperience: { skyrunning: { rank: value } } })
+}
+
+async function saveTourismRank(value: SportRank | null) {
+  await saveProfile({ sportExperience: { sportTourism: { rank: value } } })
+}
+
+async function saveTourismCategory(kind: TourismKind, value: TourismCategory | null) {
+  // Собираем объект, а не пишем computed-ключ в литерале: так тип
+  // остаётся `Partial<Record<TourismKind, ...>>`, а не «любая строка».
+  const maxCategories: Partial<Record<TourismKind, TourismCategory | null>> = {}
+  maxCategories[kind] = value
+
+  await saveProfile({ sportExperience: { sportTourism: { maxCategories } } })
+}
+
+async function saveTourismDiscipline(
+  discipline: TourismDiscipline,
+  value: TourismDisciplineResult | null,
+) {
+  const disciplines: Partial<
+    Record<TourismDiscipline, TourismDisciplineResult | null>
+  > = {}
+  disciplines[discipline] = value
+
+  await saveProfile({ sportExperience: { sportTourism: { disciplines } } })
 }
 
 /**
@@ -182,7 +276,8 @@ async function removeAvatar() {
 </script>
 
 <template>
-  <section>    <h2 class="mb-2 text-xl font-semibold text-text">Профиль</h2>
+  <section>
+    <h2 class="mb-2 text-xl font-semibold text-text">Профиль</h2>
 
     <div class="divide-y divide-border">
       <!-- Аватарка -->
@@ -224,7 +319,7 @@ async function removeAvatar() {
       </div>
 
       <EditableField
-        label="Имя пользователя"
+        label="Отображаемое имя"
         :model-value="displayName"
         :min-length="2"
         :max-length="50"
@@ -241,7 +336,11 @@ async function removeAvatar() {
           @save="saveLocation"
         />
 
-        <div class="flex flex-wrap gap-2 pb-3 md:pl-56">
+        <!--
+          Подсказки городов — только для пустого поля: они помогают
+          заполнить город, а не переиграть уже выбранный.
+        -->
+        <div v-if="!location" class="flex flex-wrap gap-2 pb-3 md:pl-56">
           <button
             v-for="city in SUGGESTED_CITIES"
             :key="city"
@@ -253,6 +352,131 @@ async function removeAvatar() {
           </button>
         </div>
       </div>
+    </div>
+
+    <h2 class="mt-8 mb-2 text-xl font-semibold text-text">Пищевые ограничения</h2>
+
+    <div class="divide-y divide-border">
+      <div class="flex flex-col gap-1 py-3 md:flex-row md:items-center md:gap-6">
+        <div class="text-sm text-muted md:w-48 md:shrink-0">Вегетарианство</div>
+
+        <label class="flex cursor-pointer items-center gap-2 text-base text-text">
+          <input
+            type="checkbox"
+            class="size-4 cursor-pointer accent-primary"
+            :checked="isVegetarian"
+            @change="onVegetarianChange"
+          />
+          <span>Да, я вегетарианец</span>
+        </label>
+      </div>
+
+      <div>
+        <EditableField
+          label="Мои аллергии"
+          :model-value="allergies"
+          :max-length="500"
+          placeholder="Орехи, цитрусовые…"
+          @save="saveAllergies"
+        />
+
+        <!--
+          Единственное поле профиля с кнопкой очистки: список аллергий
+          со временем меняется, и «стереть совсем» здесь нужно чаще, чем
+          в городе или имени. Пустая строка уходит на бэк как null.
+        -->
+        <div v-if="allergies" class="pb-3 md:pl-56">
+          <button
+            type="button"
+            class="cursor-pointer rounded-lg px-3 py-1 text-sm text-red-600 transition-colors hover:underline"
+            @click="saveAllergies('')"
+          >
+            Убрать
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <h2 class="mt-8 mb-2 text-xl font-semibold text-text">Спортивный опыт</h2>
+
+    <p class="mb-2 text-sm text-muted">
+      Заполняется по разрядным требованиям: отметьте то, что уже выполнено.
+      Пустая строка списка — «не выбрано».
+    </p>
+
+    <h3 class="mt-6 mb-1 text-base font-medium text-text">
+      Альпинизм и скайраннинг
+    </h3>
+
+    <div class="divide-y divide-border">
+      <SelectField
+        label="Разряд или звание"
+        :model-value="alpinism?.rank ?? null"
+        :options="ALPINISM_RANKS"
+        @change="saveAlpinismRank"
+      />
+
+      <SelectField
+        label="Категория: участник"
+        :model-value="alpinism?.maxParticipation ?? null"
+        :options="MOUNTAIN_CATEGORIES"
+        @change="saveAlpinismParticipation"
+      />
+
+      <SelectField
+        label="Категория: руководитель"
+        :model-value="alpinism?.maxLeadership ?? null"
+        :options="MOUNTAIN_CATEGORIES"
+        @change="saveAlpinismLeadership"
+      />
+
+      <SelectField
+        label="Скайраннинг: норматив"
+        :model-value="skyrunning?.rank ?? null"
+        :options="SPORT_RANKS"
+        @change="saveSkyrunningRank"
+      />
+    </div>
+
+    <h3 class="mt-6 mb-1 text-base font-medium text-text">Спортивный туризм</h3>
+
+    <div class="divide-y divide-border">
+      <SelectField
+        label="Разряд или звание"
+        :model-value="tourism?.rank ?? null"
+        :options="SPORT_RANKS"
+        @change="saveTourismRank"
+      />
+    </div>
+
+    <p class="mt-4 mb-1 text-sm text-muted">
+      Максимальные категории сложности пройденных походов по видам туризма:
+    </p>
+
+    <div class="divide-y divide-border">
+      <SelectField
+        v-for="kind in TOURISM_KINDS"
+        :key="kind.key"
+        :label="kind.label"
+        :model-value="tourism?.maxCategories[kind.key] ?? null"
+        :options="TOURISM_CATEGORIES"
+        @change="saveTourismCategory(kind.key, $event)"
+      />
+    </div>
+
+    <p class="mt-4 mb-1 text-sm text-muted">
+      Выполненные нормативы в дисциплинах группы «дистанция»:
+    </p>
+
+    <div class="divide-y divide-border">
+      <SelectField
+        v-for="discipline in TOURISM_DISCIPLINES"
+        :key="discipline.key"
+        :label="discipline.label"
+        :model-value="tourism?.disciplines[discipline.key] ?? null"
+        :options="TOURISM_DISCIPLINE_RESULTS"
+        @change="saveTourismDiscipline(discipline.key, $event)"
+      />
     </div>
 
     <p v-if="error" class="mt-4 text-sm text-red-600">

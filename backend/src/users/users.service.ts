@@ -2,7 +2,9 @@ import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
+import { SportExperience } from './entities/sport-experience.entity';
 import { DisplayNameHistory } from './entities/display-name-history.entity';
+import type { SportExperienceData } from './sport-experience.types';
 
 /**
  * Данные для создания пользователя.
@@ -26,6 +28,10 @@ export interface CreateUserData {
 export interface UpdateUserData {
   displayName?: string;
   location?: string | null;
+  isVegetarian?: boolean;
+  allergies?: string | null;
+  /** undefined — не трогать, null — очистить весь спортивный опыт. */
+  sportExperience?: SportExperienceData | null;
 }
 
 @Injectable()
@@ -148,8 +154,119 @@ export class UsersService {
     }
 
     if (data.location !== undefined) user.location = data.location;
+    if (data.isVegetarian !== undefined) user.isVegetarian = data.isVegetarian;
+    if (data.allergies !== undefined) user.allergies = data.allergies;
 
-    return userRepo.save(user);
+    const saved = await userRepo.save(user);
+
+    // Спортивный опыт живёт в отдельной таблице, поэтому сохраняется
+    // после пользователя — но в той же транзакции: если строка опыта
+    // не запишется, профиль тоже не должен измениться.
+    if (data.sportExperience !== undefined) {
+      await this.saveSportExperience(manager, user.id, data.sportExperience);
+    }
+
+    // Перечитываем: eager-связь подтянет сохранённый опыт, и ответ
+    // будет тем же, что отдаёт GET /users/me.
+    return userRepo.findOne({ where: { id: saved.id } });
+  }
+
+  /**
+   * Сохранить спортивный опыт — частично, как PATCH.
+   *
+   * Логика:
+   *   1. `null` — очистить: строка удаляется целиком.
+   *   2. Пришли отдельные поля — переносим только их; остальные
+   *      колонки остаются как были.
+   *   3. Если после переноса все колонки пусты (пользователь поснимал
+   *      все выпадающие списки) — строку удаляем, а не держим пустышку:
+   *      «опыт не заполнен» и «заполнен, но всё пусто» — одно состояние.
+   */
+  private async saveSportExperience(
+    manager: EntityManager,
+    userId: string,
+    data: SportExperienceData | null,
+  ): Promise<void> {
+    const repo = manager.getRepository(SportExperience);
+    const existing = await repo.findOne({ where: { userId } });
+
+    if (data === null) {
+      if (existing) await repo.delete({ userId });
+      return;
+    }
+
+    const row = existing ?? repo.create({ userId });
+
+    const alpinism = data.alpinism;
+    if (alpinism) {
+      if (alpinism.rank !== undefined) row.alpinismRank = alpinism.rank;
+      if (alpinism.maxParticipation !== undefined) {
+        row.alpinismMaxParticipation = alpinism.maxParticipation;
+      }
+      if (alpinism.maxLeadership !== undefined) {
+        row.alpinismMaxLeadership = alpinism.maxLeadership;
+      }
+    }
+
+    if (data.skyrunning?.rank !== undefined) {
+      row.skyrunningRank = data.skyrunning.rank;
+    }
+
+    const tourism = data.sportTourism;
+    if (tourism) {
+      if (tourism.rank !== undefined) row.tourismRank = tourism.rank;
+
+      const categories = tourism.maxCategories;
+      if (categories) {
+        if (categories.hiking !== undefined)
+          row.tourismMaxHiking = categories.hiking;
+        if (categories.mountain !== undefined) {
+          row.tourismMaxMountain = categories.mountain;
+        }
+        if (categories.ski !== undefined) row.tourismMaxSki = categories.ski;
+        if (categories.water !== undefined)
+          row.tourismMaxWater = categories.water;
+        if (categories.caving !== undefined)
+          row.tourismMaxCaving = categories.caving;
+        if (categories.bicycle !== undefined) {
+          row.tourismMaxBicycle = categories.bicycle;
+        }
+        if (categories.horse !== undefined)
+          row.tourismMaxHorse = categories.horse;
+        if (categories.sailing !== undefined) {
+          row.tourismMaxSailing = categories.sailing;
+        }
+        if (categories.autoMoto !== undefined) {
+          row.tourismMaxAutoMoto = categories.autoMoto;
+        }
+      }
+
+      const disciplines = tourism.disciplines;
+      if (disciplines) {
+        if (disciplines.nordicWalking !== undefined) {
+          row.tourismNormNordicWalking = disciplines.nordicWalking;
+        }
+        if (disciplines.distanceHiking !== undefined) {
+          row.tourismNormDistanceHiking = disciplines.distanceHiking;
+        }
+        if (disciplines.distanceSki !== undefined) {
+          row.tourismNormDistanceSki = disciplines.distanceSki;
+        }
+        if (disciplines.distanceWater !== undefined) {
+          row.tourismNormDistanceWater = disciplines.distanceWater;
+        }
+        if (disciplines.distanceCaving !== undefined) {
+          row.tourismNormDistanceCaving = disciplines.distanceCaving;
+        }
+      }
+    }
+
+    if (isSportExperienceEmpty(row)) {
+      if (existing) await repo.delete({ userId });
+      return;
+    }
+
+    await repo.save(row);
   }
 
   /**
@@ -160,11 +277,47 @@ export class UsersService {
    *
    * @returns обновлённого пользователя или null, если его нет
    */
-  async setAvatarUrl(id: string, avatarUrl: string | null): Promise<User | null> {
+  async setAvatarUrl(
+    id: string,
+    avatarUrl: string | null,
+  ): Promise<User | null> {
     const user = await this.usersRepository.findOne({ where: { id } });
     if (!user) return null;
 
     user.avatarUrl = avatarUrl;
     return this.usersRepository.save(user);
   }
+}
+
+/**
+ * Пуст ли спортивный опыт: все колонки NULL.
+ *
+ * Список колонок перечислен руками намеренно: новую колонку сюда надо
+ * добавить, иначе строка с одним только новым значением будет считаться
+ * пустой и удалится. Это заметно сразу — значение просто не сохранится.
+ */
+function isSportExperienceEmpty(row: SportExperience): boolean {
+  const values: (string | null | undefined)[] = [
+    row.alpinismRank,
+    row.alpinismMaxParticipation,
+    row.alpinismMaxLeadership,
+    row.skyrunningRank,
+    row.tourismRank,
+    row.tourismMaxHiking,
+    row.tourismMaxMountain,
+    row.tourismMaxSki,
+    row.tourismMaxWater,
+    row.tourismMaxCaving,
+    row.tourismMaxBicycle,
+    row.tourismMaxHorse,
+    row.tourismMaxSailing,
+    row.tourismMaxAutoMoto,
+    row.tourismNormNordicWalking,
+    row.tourismNormDistanceHiking,
+    row.tourismNormDistanceSki,
+    row.tourismNormDistanceWater,
+    row.tourismNormDistanceCaving,
+  ];
+
+  return values.every((value) => value === null || value === undefined);
 }

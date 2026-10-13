@@ -1,3 +1,5 @@
+import type { SportExperience, SportExperiencePatch } from '@/types/sportExperience'
+
 /**
  * Пользователь — то, что отдаёт бэк в /api/users/me,
  * /api/auth/verify-code и /api/auth/refresh.
@@ -18,6 +20,12 @@ export interface User {
    * (хостовый nginx), поэтому склеивать ничего не нужно.
    */
   avatarUrl: string | null
+  /** Пищевое ограничение «вегетарианство». false — в том числе «не отвечал». */
+  isVegetarian: boolean
+  /** Аллергии: свободный текст пользователя. */
+  allergies: string | null
+  /** Спортивный опыт. null — пользователь его не заполнял. */
+  sportExperience: SportExperience | null
 }
 
 /**
@@ -60,8 +68,11 @@ export type RefreshResponse =
  * PATCH /api/users/me — тело запроса.
  *
  * Все поля опциональны. Переданные — обновляются, непереданные — не трогаются.
- * null для location — «очистить».
+ * null для location и allergies — «очистить».
  * displayName нельзя очистить (валидация на бэке).
+ *
+ * sportExperience — вложенный объект с той же семантикой на каждом уровне:
+ * шлём только изменившееся поле, остальной опыт остаётся как был.
  *
  * avatarUrl здесь нет намеренно: аватарка — это файл, и меняется она
  * только эндпоинтами POST/DELETE /api/users/me/avatar. Раньше поле было
@@ -71,4 +82,7 @@ export type RefreshResponse =
 export interface UpdateUserRequest {
   displayName?: string
   location?: string | null
+  isVegetarian?: boolean
+  allergies?: string | null
+  sportExperience?: SportExperiencePatch | null
 }

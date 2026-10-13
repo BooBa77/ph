@@ -5,8 +5,10 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Check,
+  OneToOne,
 } from 'typeorm';
 
+import { SportExperience } from './sport-experience.entity';
 import type { CalendarMode } from '../../calendar/calendar.types';
 
 /**
@@ -49,8 +51,45 @@ export class User {
    * значения. Показывать ли кнопку «Производственный календарь» — тоже
    * решается по нему (cycle или study).
    */
-  @Column({ name: 'calendar_mode', type: 'varchar', length: 20, nullable: true })
+  @Column({
+    name: 'calendar_mode',
+    type: 'varchar',
+    length: 20,
+    nullable: true,
+  })
   calendarMode: CalendarMode | null;
+
+  /**
+   * Пищевое ограничение «вегетарианство».
+   *
+   * NOT NULL DEFAULT false: «не вегетарианец» и «ещё не отвечал» здесь
+   * одно и то же, отдельного «не заполнено» не заводим — второго
+   * состояния у галочки всё равно нет.
+   */
+  @Column({ name: 'is_vegetarian', type: 'boolean', default: false })
+  isVegetarian: boolean;
+
+  /**
+   * Аллергии — свободный текст пользователя. Отдельного справочника нет
+   * намеренно: список аллергенов у людей разный и пополняется быстрее,
+   * чем мы успевали бы его править.
+   */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  allergies: string | null;
+
+  /**
+   * Спортивный опыт — отдельная таблица со строкой на пользователя.
+   *
+   * `eager: true` не для красоты: профиль собирается в `UserResponseDto`
+   * из четырёх мест (профиль и три ответа авторизации), и без eager
+   * где-нибудь забыли бы `relations`, а опыт молча стал бы `null`.
+   *
+   * Тип допускает `null` — строки нет, пока пользователь ничего не заполнил.
+   */
+  @OneToOne(() => SportExperience, (experience) => experience.user, {
+    eager: true,
+  })
+  sportExperience: SportExperience | null;
 
   /**
    * Soft delete. NULL — активен. Дата — удалён (не показывается в поиске,
