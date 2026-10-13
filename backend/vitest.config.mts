@@ -1,4 +1,3 @@
-import swc from 'unplugin-swc';
 import { defineConfig } from 'vitest/config';
 
 /**
@@ -8,15 +7,34 @@ import { defineConfig } from 'vitest/config';
  * на emitDecoratorMetadata — по метаданным типов он понимает, что
  * подставлять в конструктор. esbuild эти метаданные не генерирует,
  * и внедрение зависимостей падает, не найдя провайдера. SWC умеет.
+ *
+ * ## Переключатель VITEST_NO_SWC
+ *
+ * Нативный аддон SWC проверяет ACL каталога кэша, и в песочнице DSH проверка не
+ * проходит ни на одном пути — поэтому локальный запуск идёт без SWC (переменную
+ * ставит `fvds/scripts/test-backend.ps1`). Тот же приём сделан в u40ta, чтобы
+ * тесты в обоих проектах запускались одинаково.
+ *
+ * В CI переменная не выставляется, поэтому там подключается SWC и работают в
+ * том числе тесты с внедрением зависимостей.
  */
-const swcPlugin = swc.vite({
-  jsc: {
-    parser: { syntax: 'typescript', decorators: true },
-    transform: { legacyDecorator: true, decoratorMetadata: true },
-    target: 'es2023',
-  },
-  module: { type: 'es6' },
-});
+const useSwc = process.env.VITEST_NO_SWC !== '1';
+
+/** Динамический импорт: статический загрузил бы аддон даже при отключённом SWC. */
+const plugins = useSwc
+  ? [
+      (
+        await import('unplugin-swc')
+      ).default.vite({
+        jsc: {
+          parser: { syntax: 'typescript', decorators: true },
+          transform: { legacyDecorator: true, decoratorMetadata: true },
+          target: 'es2023',
+        },
+        module: { type: 'es6' },
+      }),
+    ]
+  : [];
 
 export default defineConfig({
   test: {
@@ -30,5 +48,5 @@ export default defineConfig({
       exclude: ['src/**/*.spec.ts', 'src/migrations/**'],
     },
   },
-  plugins: [swcPlugin],
+  plugins,
 });

@@ -1,4 +1,3 @@
-import swc from 'unplugin-swc';
 import { defineConfig } from 'vitest/config';
 import { e2eUploads } from './test/e2e-uploads.plugin.mts';
 
@@ -11,15 +10,28 @@ import { e2eUploads } from './test/e2e-uploads.plugin.mts';
  *
  * Плагин `e2eUploads` уводит каталог загруженных файлов в сторону
  * от боевого хранилища — подробности в самом плагине.
+ *
+ * Переключатель `VITEST_NO_SWC` — как в `vitest.config.mts`: он нужен, чтобы
+ * локально в песочнице DSH конфиг вообще загружался (аддон SWC не проходит
+ * проверку ACL). В CI переменная не выставляется и SWC работает.
  */
-const swcPlugin = swc.vite({
-  jsc: {
-    parser: { syntax: 'typescript', decorators: true },
-    transform: { legacyDecorator: true, decoratorMetadata: true },
-    target: 'es2023',
-  },
-  module: { type: 'es6' },
-});
+const useSwc = process.env.VITEST_NO_SWC !== '1';
+
+const plugins = useSwc
+  ? [
+      e2eUploads(),
+      (
+        await import('unplugin-swc')
+      ).default.vite({
+        jsc: {
+          parser: { syntax: 'typescript', decorators: true },
+          transform: { legacyDecorator: true, decoratorMetadata: true },
+          target: 'es2023',
+        },
+        module: { type: 'es6' },
+      }),
+    ]
+  : [e2eUploads()];
 
 export default defineConfig({
   test: {
@@ -30,5 +42,5 @@ export default defineConfig({
     // и в один каталог файлов, параллельный запуск дал бы гонки.
     fileParallelism: false,
   },
-  plugins: [e2eUploads(), swcPlugin],
+  plugins,
 });
