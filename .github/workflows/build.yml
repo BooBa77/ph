@@ -10,7 +10,64 @@ env:
   IMAGE_FRONTEND: booba77/ph-frontend
 
 jobs:
+  # Проверки идут ДО сборки образов: если линтер, сборка или тесты падают,
+  # в реестр не попадает заведомо сломанный образ, а прод не обновляется.
+  # Добавлено 12.10.2026 — раньше workflow пушил образы без проверок
+  # (то же самое сделано в u40ta, чтобы проекты проверялись одинаково).
+  checks:
+    name: Проверки
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            backend/package-lock.json
+            frontend/package-lock.json
+
+      - name: Зависимости бэкенда
+        working-directory: backend
+        run: npm ci
+
+      - name: Линтер бэкенда
+        working-directory: backend
+        run: npm run lint
+
+      - name: Сборка бэкенда
+        working-directory: backend
+        run: npm run build
+
+      # Тесты идут с SWC: в конфиге Vitest он отключается только переменной
+      # VITEST_NO_SWC, которую ставит локальный скрипт из-за песочницы DSH.
+      - name: Тесты бэкенда
+        working-directory: backend
+        run: npm test
+
+      - name: Зависимости фронтенда
+        working-directory: frontend
+        run: npm ci
+
+      # `npm run build` на фронте включает type-check (vue-tsc), поэтому
+      # отдельный шаг для проверки типов не нужен.
+      - name: Сборка фронтенда
+        working-directory: frontend
+        run: npm run build
+
+      - name: Тесты фронтенда
+        working-directory: frontend
+        run: npm test
+
   build:
+    name: Сборка образов
+    needs: checks
     runs-on: ubuntu-latest
     permissions:
       contents: read
