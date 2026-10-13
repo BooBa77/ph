@@ -5,14 +5,16 @@ import { IsIn, IsOptional, ValidateNested } from 'class-validator';
 import {
   ALPINISM_RANKS,
   MOUNTAIN_CATEGORIES,
-  SPORT_RANKS,
+  SKYRUNNING_RANKS,
   TOURISM_CATEGORIES,
   TOURISM_DISCIPLINE_RESULTS,
+  TOURISM_RANKS,
   type AlpinismRank,
   type MountainCategory,
-  type SportRank,
+  type SkyrunningRank,
   type TourismCategory,
   type TourismDisciplineResult,
+  type TourismRank,
 } from '../sport-experience.types';
 
 /**
@@ -66,14 +68,15 @@ export class AlpinismExperienceDto {
 
 export class SkyrunningExperienceDto {
   @ApiProperty({
-    description: 'Выполненный норматив по скайраннингу',
-    enum: SPORT_RANKS,
+    description:
+      'Спортивный разряд или звание по скайраннингу. «Значок» здесь не присваивают',
+    enum: SKYRUNNING_RANKS,
     nullable: true,
     required: false,
   })
   @IsOptional()
-  @IsIn(SPORT_RANKS)
-  rank?: SportRank | null;
+  @IsIn(SKYRUNNING_RANKS)
+  rank?: SkyrunningRank | null;
 }
 
 export class TourismMaxCategoriesDto {
@@ -224,13 +227,13 @@ export class SportTourismExperienceDto {
   @ApiProperty({
     description:
       'Спортивный разряд или звание по виду спорта «спортивный туризм»',
-    enum: SPORT_RANKS,
+    enum: TOURISM_RANKS,
     nullable: true,
     required: false,
   })
   @IsOptional()
-  @IsIn(SPORT_RANKS)
-  rank?: SportRank | null;
+  @IsIn(TOURISM_RANKS)
+  rank?: TourismRank | null;
 
   @ApiProperty({
     description:

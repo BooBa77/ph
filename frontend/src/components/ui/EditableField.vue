@@ -16,10 +16,17 @@ const props = withDefaults(
     minLength?: number
     /** Максимальная длина. */
     maxLength?: number
+    /**
+     * Что показать, когда значение пустое. По умолчанию прочерк «—»;
+     * для полей, где пустота — осмысленный ответ («Мои аллергии»), лучше
+     * словами: «— нет —».
+     */
+    emptyText?: string
   }>(),
   {
     editable: true,
     placeholder: '',
+    emptyText: '—',
   },
 )
 
@@ -150,7 +157,7 @@ function onKeydown(e: KeyboardEvent) {
         @click="startEdit"
       >
         <span v-if="modelValue">{{ modelValue }}</span>
-        <span v-else class="text-muted">—</span>
+        <span v-else class="text-muted">{{ emptyText }}</span>
       </button>
 
       <!-- Режим редактирования -->

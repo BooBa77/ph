@@ -258,6 +258,52 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
     await patchMe({ isVegetarian: 'да' }).expect(400);
   });
 
+  it('«Значок» — допустимое звание в альпинизме и спортивном туризме', async () => {
+    const response = await patchMe({
+      sportExperience: {
+        alpinism: { rank: 'Значок' },
+        sportTourism: { rank: 'Значок' },
+      },
+    }).expect(200);
+
+    expect(response.body.sportExperience.alpinism.rank).toBe('Значок');
+    expect(response.body.sportExperience.sportTourism.rank).toBe('Значок');
+  });
+
+  it('в скайраннинге «Значок» не принимается: у него свой список', async () => {
+    await patchMe({
+      sportExperience: { skyrunning: { rank: 'Значок' } },
+    }).expect(400);
+  });
+
+  it('отсутствие значением не пишется — для этого есть null', async () => {
+    // Варианты «отсутствует», «нет данных» и «не выполнялся» убраны
+    // из словарей 13.10.2026: в форме они дублировали пустую строку.
+    await patchMe({
+      sportExperience: { alpinism: { rank: 'отсутствует' } },
+    }).expect(400);
+    await patchMe({
+      sportExperience: { sportTourism: { rank: 'отсутствует' } },
+    }).expect(400);
+    await patchMe({
+      sportExperience: {
+        sportTourism: { maxCategories: { hiking: 'нет данных' } },
+      },
+    }).expect(400);
+    await patchMe({
+      sportExperience: {
+        sportTourism: { disciplines: { distanceSki: 'не выполнялся' } },
+      },
+    }).expect(400);
+
+    // А null принимается и означает «ничего не выполнено».
+    const response = await patchMe({
+      sportExperience: { alpinism: { rank: null } },
+    }).expect(200);
+
+    expect(response.body.sportExperience.alpinism.rank).toBeNull();
+  });
+
   it('sportExperience: null очищает опыт целиком', async () => {
     const response = await patchMe({ sportExperience: null }).expect(200);
 

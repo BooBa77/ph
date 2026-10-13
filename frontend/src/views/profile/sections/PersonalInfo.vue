@@ -14,18 +14,20 @@ import { canBrowserDecode, looksLikeHeic } from '@/utils/imageDecode'
 import {
   ALPINISM_RANKS,
   MOUNTAIN_CATEGORIES,
-  SPORT_RANKS,
+  SKYRUNNING_RANKS,
   TOURISM_CATEGORIES,
   TOURISM_DISCIPLINES,
   TOURISM_DISCIPLINE_RESULTS,
   TOURISM_KINDS,
+  TOURISM_RANKS,
   type AlpinismRank,
   type MountainCategory,
-  type SportRank,
+  type SkyrunningRank,
   type TourismCategory,
   type TourismDiscipline,
   type TourismDisciplineResult,
   type TourismKind,
+  type TourismRank,
 } from '@/types/sportExperience'
 
 const auth = useAuthStore()
@@ -42,7 +44,7 @@ const allergies = computed(() => auth.user?.allergies ?? '')
 
 /**
  * Спортивный опыт. null — пользователь ещё ничего не заполнял:
- * строки в user_sport_experience нет, все списки показывают «не выбрано».
+ * строки в user_sport_experience нет, все списки показывают «нет».
  */
 const experience = computed(() => auth.user?.sportExperience ?? null)
 const alpinism = computed(() => experience.value?.alpinism ?? null)
@@ -157,11 +159,11 @@ async function saveAlpinismLeadership(value: MountainCategory | null) {
   await saveProfile({ sportExperience: { alpinism: { maxLeadership: value } } })
 }
 
-async function saveSkyrunningRank(value: SportRank | null) {
+async function saveSkyrunningRank(value: SkyrunningRank | null) {
   await saveProfile({ sportExperience: { skyrunning: { rank: value } } })
 }
 
-async function saveTourismRank(value: SportRank | null) {
+async function saveTourismRank(value: TourismRank | null) {
   await saveProfile({ sportExperience: { sportTourism: { rank: value } } })
 }
 
@@ -279,7 +281,14 @@ async function removeAvatar() {
   <section>
     <h2 class="mb-2 text-xl font-semibold text-text">Профиль</h2>
 
-    <div class="divide-y divide-border">
+    <!--
+      Линии отделяют разделы друг от друга, а не строки внутри раздела.
+      Раньше `divide-y` стоял на каждой группе полей, и линия после строки
+      ввода читалась как «здесь что-то кончилось», хотя список продолжается:
+      между девятнадцатью дисциплинами спортивного туризма их было больше
+      всего, а между «Питанием» и «Спортивным опытом» — ни одной.
+    -->
+    <div>
       <!-- Аватарка -->
       <div class="flex flex-col gap-3 py-3 md:flex-row md:items-center md:gap-6">
         <div class="text-sm text-muted md:w-48 md:shrink-0">Аватарка</div>
@@ -354,9 +363,13 @@ async function removeAvatar() {
       </div>
     </div>
 
-    <h2 class="mt-8 mb-2 text-xl font-semibold text-text">Пищевые ограничения</h2>
+    <h2
+      class="mt-8 mb-2 border-t border-border pt-6 text-xl font-semibold text-text"
+    >
+      Пищевые ограничения
+    </h2>
 
-    <div class="divide-y divide-border">
+    <div>
       <div class="flex flex-col gap-1 py-3 md:flex-row md:items-center md:gap-6">
         <div class="text-sm text-muted md:w-48 md:shrink-0">Вегетарианство</div>
 
@@ -377,6 +390,7 @@ async function removeAvatar() {
           :model-value="allergies"
           :max-length="500"
           placeholder="Орехи, цитрусовые…"
+          empty-text="— нет —"
           @save="saveAllergies"
         />
 
@@ -397,18 +411,22 @@ async function removeAvatar() {
       </div>
     </div>
 
-    <h2 class="mt-8 mb-2 text-xl font-semibold text-text">Спортивный опыт</h2>
+    <h2
+      class="mt-8 mb-2 border-t border-border pt-6 text-xl font-semibold text-text"
+    >
+      Спортивный опыт
+    </h2>
 
     <p class="mb-2 text-sm text-muted">
       Заполняется по разрядным требованиям: отметьте то, что уже выполнено.
-      Пустая строка списка — «не выбрано».
+      Пустая строка списка — «нет».
     </p>
 
     <h3 class="mt-6 mb-1 text-base font-medium text-text">
       Альпинизм и скайраннинг
     </h3>
 
-    <div class="divide-y divide-border">
+    <div>
       <SelectField
         label="Разряд или звание"
         :model-value="alpinism?.rank ?? null"
@@ -417,34 +435,34 @@ async function removeAvatar() {
       />
 
       <SelectField
-        label="Категория: участник"
+        label="Наивысшая категория в качестве участника"
         :model-value="alpinism?.maxParticipation ?? null"
         :options="MOUNTAIN_CATEGORIES"
         @change="saveAlpinismParticipation"
       />
 
       <SelectField
-        label="Категория: руководитель"
+        label="Наивысшая категория в качестве руководителя"
         :model-value="alpinism?.maxLeadership ?? null"
         :options="MOUNTAIN_CATEGORIES"
         @change="saveAlpinismLeadership"
       />
 
       <SelectField
-        label="Скайраннинг: норматив"
+        label="Скайраннинг: разряд"
         :model-value="skyrunning?.rank ?? null"
-        :options="SPORT_RANKS"
+        :options="SKYRUNNING_RANKS"
         @change="saveSkyrunningRank"
       />
     </div>
 
     <h3 class="mt-6 mb-1 text-base font-medium text-text">Спортивный туризм</h3>
 
-    <div class="divide-y divide-border">
+    <div>
       <SelectField
         label="Разряд или звание"
         :model-value="tourism?.rank ?? null"
-        :options="SPORT_RANKS"
+        :options="TOURISM_RANKS"
         @change="saveTourismRank"
       />
     </div>
@@ -453,7 +471,7 @@ async function removeAvatar() {
       Максимальные категории сложности пройденных походов по видам туризма:
     </p>
 
-    <div class="divide-y divide-border">
+    <div>
       <SelectField
         v-for="kind in TOURISM_KINDS"
         :key="kind.key"
@@ -468,7 +486,7 @@ async function removeAvatar() {
       Выполненные нормативы в дисциплинах группы «дистанция»:
     </p>
 
-    <div class="divide-y divide-border">
+    <div>
       <SelectField
         v-for="discipline in TOURISM_DISCIPLINES"
         :key="discipline.key"

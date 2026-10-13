@@ -11,15 +11,17 @@ import { User } from './user.entity';
 import {
   ALPINISM_RANKS,
   MOUNTAIN_CATEGORIES,
-  SPORT_RANKS,
+  SKYRUNNING_RANKS,
   TOURISM_CATEGORIES,
   TOURISM_DISCIPLINE_RESULTS,
+  TOURISM_RANKS,
   sqlValues,
   type AlpinismRank,
   type MountainCategory,
-  type SportRank,
+  type SkyrunningRank,
   type TourismCategory,
   type TourismDisciplineResult,
+  type TourismRank,
 } from '../sport-experience.types';
 
 /**
@@ -54,11 +56,11 @@ import {
 )
 @Check(
   'chk_sport_experience_skyrunning_rank',
-  `"skyrunning_rank" IN (${sqlValues(SPORT_RANKS)})`,
+  `"skyrunning_rank" IN (${sqlValues(SKYRUNNING_RANKS)})`,
 )
 @Check(
   'chk_sport_experience_tourism_rank',
-  `"tourism_rank" IN (${sqlValues(SPORT_RANKS)})`,
+  `"tourism_rank" IN (${sqlValues(TOURISM_RANKS)})`,
 )
 @Check(
   'chk_sport_experience_tourism_max_hiking',
@@ -163,12 +165,12 @@ export class SportExperience {
     length: 20,
     nullable: true,
   })
-  skyrunningRank: SportRank | null;
+  skyrunningRank: SkyrunningRank | null;
 
   // ─── Спортивный туризм ───
 
   @Column({ name: 'tourism_rank', type: 'varchar', length: 20, nullable: true })
-  tourismRank: SportRank | null;
+  tourismRank: TourismRank | null;
 
   @Column({
     name: 'tourism_max_hiking',

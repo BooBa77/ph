@@ -11,13 +11,20 @@
  * («Пешеходный», «Дистанция лыжная») живут на клиенте. Меняешь список —
  * правь в обоих файлах, иначе интерфейс предложит вариант, который база
  * отвергнет.
+ *
+ * **Отсутствия в списках нет.** Варианты вроде «отсутствует», «нет данных»
+ * и «не выполнялся» убраны 13.10.2026 по замечанию владельца: в форме они
+ * дублировали пустую строку — сверху «— нет —», снизу «отсутствует».
+ * «Ничего не выполнено» пишется как `NULL`.
  */
 
 /**
- * Разряды и звания по альпинизму. МСМК здесь есть, а в остальных списках
- * его нет: по скайраннингу и спортивному туризму это звание не присваивают.
+ * Разряды и звания по альпинизму. «Значок» — массовый знак «Альпинист
+ * России», он ниже юношеского разряда и стоит первым. МСМК есть только
+ * здесь: по скайраннингу и спортивному туризму это звание не присваивают.
  */
 export const ALPINISM_RANKS = [
+  'Значок',
   'МСМК',
   'МС',
   'КМС',
@@ -25,7 +32,6 @@ export const ALPINISM_RANKS = [
   'II',
   'III',
   'юношеский',
-  'отсутствует',
 ] as const;
 
 export type AlpinismRank = (typeof ALPINISM_RANKS)[number];
@@ -46,37 +52,46 @@ export const MOUNTAIN_CATEGORIES = [
   '2Б',
   '2А',
   '1Б',
-  'нет данных',
 ] as const;
 
 export type MountainCategory = (typeof MOUNTAIN_CATEGORIES)[number];
 
-/** Разряды и звания по скайраннингу и по спортивному туризму. */
-export const SPORT_RANKS = [
+/**
+ * Разряды и звания по скайраннингу.
+ *
+ * Отдельный список, а не общий со спортивным туризмом: «Значок» здесь
+ * не присваивают — это знак за маршруты и походы, а не за дистанцию.
+ * МСМК по скайраннингу тоже нет.
+ */
+export const SKYRUNNING_RANKS = [
   'МС',
   'КМС',
   'I',
   'II',
   'III',
   'юношеский',
-  'отсутствует',
 ] as const;
 
-export type SportRank = (typeof SPORT_RANKS)[number];
+export type SkyrunningRank = (typeof SKYRUNNING_RANKS)[number];
+
+/** Разряды и звания по спортивному туризму: «Значок» — знак «Турист России». */
+export const TOURISM_RANKS = [
+  'Значок',
+  'МС',
+  'КМС',
+  'I',
+  'II',
+  'III',
+  'юношеский',
+] as const;
+
+export type TourismRank = (typeof TOURISM_RANKS)[number];
 
 /**
  * Максимальная категория сложности похода в спортивном туризме: одной
  * цифрой, без буквы — буквы есть только у альпинистских маршрутов.
  */
-export const TOURISM_CATEGORIES = [
-  '6',
-  '5',
-  '4',
-  '3',
-  '2',
-  '1',
-  'нет данных',
-] as const;
+export const TOURISM_CATEGORIES = ['6', '5', '4', '3', '2', '1'] as const;
 
 export type TourismCategory = (typeof TOURISM_CATEGORIES)[number];
 
@@ -86,7 +101,6 @@ export const TOURISM_DISCIPLINE_RESULTS = [
   'II разряд',
   'III разряд',
   'юношеский',
-  'не выполнялся',
 ] as const;
 
 export type TourismDisciplineResult =
@@ -135,10 +149,10 @@ export interface SportExperienceData {
     maxLeadership?: MountainCategory | null;
   };
   skyrunning?: {
-    rank?: SportRank | null;
+    rank?: SkyrunningRank | null;
   };
   sportTourism?: {
-    rank?: SportRank | null;
+    rank?: TourismRank | null;
     maxCategories?: Partial<Record<TourismKind, TourismCategory | null>>;
     disciplines?: Partial<
       Record<TourismDiscipline, TourismDisciplineResult | null>

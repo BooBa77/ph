@@ -5,10 +5,18 @@
  * намеренно: бэкенд отдаёт наружу только значения, а подписи и разбивка
  * по группам — дело интерфейса. Меняешь варианты — правь в обоих файлах,
  * иначе фронт предложит значение, которое база отвергнет CHECK-ом.
+ *
+ * **Отсутствия в списках нет.** «Отсутствует», «нет данных» и «не выполнялся»
+ * убраны: в форме они дублировали пустую строку «— нет —». Ничего не выбрано —
+ * это `null`, и в базу он и уходит.
  */
 
-/** Разряды и звания по альпинизму. МСМК есть только здесь: по скайраннингу и туризму его не дают. */
+/**
+ * Разряды и звания по альпинизму. «Значок» — массовый знак «Альпинист
+ * России», он ниже юношеского разряда и поэтому стоит первым.
+ */
 export const ALPINISM_RANKS = [
+  'Значок',
   'МСМК',
   'МС',
   'КМС',
@@ -16,7 +24,6 @@ export const ALPINISM_RANKS = [
   'II',
   'III',
   'юношеский',
-  'отсутствует',
 ] as const
 
 export type AlpinismRank = (typeof ALPINISM_RANKS)[number]
@@ -34,34 +41,40 @@ export const MOUNTAIN_CATEGORIES = [
   '2Б',
   '2А',
   '1Б',
-  'нет данных',
 ] as const
 
 export type MountainCategory = (typeof MOUNTAIN_CATEGORIES)[number]
 
-/** Разряды и звания по скайраннингу и спортивному туризму. */
-export const SPORT_RANKS = [
+/**
+ * Разряды и звания по скайраннингу. Свой список, а не общий со спортивным
+ * туризмом: «Значок» за дистанцию не дают, МСМК здесь тоже нет.
+ */
+export const SKYRUNNING_RANKS = [
   'МС',
   'КМС',
   'I',
   'II',
   'III',
   'юношеский',
-  'отсутствует',
 ] as const
 
-export type SportRank = (typeof SPORT_RANKS)[number]
+export type SkyrunningRank = (typeof SKYRUNNING_RANKS)[number]
+
+/** Разряды и звания по спортивному туризму: «Значок» — знак «Турист России». */
+export const TOURISM_RANKS = [
+  'Значок',
+  'МС',
+  'КМС',
+  'I',
+  'II',
+  'III',
+  'юношеский',
+] as const
+
+export type TourismRank = (typeof TOURISM_RANKS)[number]
 
 /** Максимальная категория сложности похода в спортивном туризме — одной цифрой. */
-export const TOURISM_CATEGORIES = [
-  '6',
-  '5',
-  '4',
-  '3',
-  '2',
-  '1',
-  'нет данных',
-] as const
+export const TOURISM_CATEGORIES = ['6', '5', '4', '3', '2', '1'] as const
 
 export type TourismCategory = (typeof TOURISM_CATEGORIES)[number]
 
@@ -71,7 +84,6 @@ export const TOURISM_DISCIPLINE_RESULTS = [
   'II разряд',
   'III разряд',
   'юношеский',
-  'не выполнялся',
 ] as const
 
 export type TourismDisciplineResult = (typeof TOURISM_DISCIPLINE_RESULTS)[number]
@@ -126,11 +138,11 @@ export interface AlpinismExperience {
 }
 
 export interface SkyrunningExperience {
-  rank: SportRank | null
+  rank: SkyrunningRank | null
 }
 
 export interface SportTourismExperience {
-  rank: SportRank | null
+  rank: TourismRank | null
   maxCategories: Record<TourismKind, TourismCategory | null>
   disciplines: Record<TourismDiscipline, TourismDisciplineResult | null>
 }
@@ -150,14 +162,15 @@ export interface SportExperience {
 /**
  * Частичная правка спортивного опыта: PATCH присылает только изменённое.
  *
- * Отсутствие поля — «не трогать», `null` — очистить поле. Так одна смена
- * выпадающего списка не затирает остальные восемнадцать значений.
+ * Отсутствие поля — «не трогать», `null` — очистить поле (вернуть «— нет —»).
+ * Так одна смена выпадающего списка не затирает остальные восемнадцать
+ * значений.
  */
 export interface SportExperiencePatch {
   alpinism?: Partial<AlpinismExperience>
   skyrunning?: Partial<SkyrunningExperience>
   sportTourism?: {
-    rank?: SportRank | null
+    rank?: TourismRank | null
     maxCategories?: Partial<Record<TourismKind, TourismCategory | null>>
     disciplines?: Partial<Record<TourismDiscipline, TourismDisciplineResult | null>>
   }

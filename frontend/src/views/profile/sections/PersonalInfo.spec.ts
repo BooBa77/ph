@@ -61,9 +61,12 @@ async function mountSection(user: User = makeUser()) {
  * Ищем через `<label for>` и `id`, а не через props компонента:
  * `SelectField` объявлен generic (варианты типизированы), и типы props
  * у него при поиске по компонентам не выводятся.
+ *
+ * `index` нужен потому, что подпись «Разряд или звание» есть и у альпинизма,
+ * и у спортивного туризма — списки разные, подписи одинаковые.
  */
-function selectByLabel(wrapper: VueWrapper, label: string) {
-  const target = wrapper.findAll('select').find((select) => {
+function selectByLabel(wrapper: VueWrapper, label: string, index = 0) {
+  const matches = wrapper.findAll('select').filter((select) => {
     const id = select.attributes('id')
     const labelEl = wrapper
       .findAll('label')
@@ -71,8 +74,16 @@ function selectByLabel(wrapper: VueWrapper, label: string) {
     return labelEl?.text() === label
   })
 
-  if (!target) throw new Error(`Нет выпадающего списка «${label}»`)
+  const target = matches[index]
+  if (!target) throw new Error(`Нет выпадающего списка «${label}» №${index + 1}`)
   return target
+}
+
+/** Подписи вариантов списка, включая пустой первый вариант. */
+function optionsOf(wrapper: VueWrapper, label: string, index = 0): string[] {
+  return selectByLabel(wrapper, label, index)
+    .findAll('option')
+    .map((option) => option.text())
 }
 
 /** Поле ввода по подписи, как его видит пользователь. */
@@ -226,8 +237,11 @@ describe('PersonalInfo', () => {
     )
 
     expect(selectByLabel(wrapper, 'Разряд или звание').element.value).toBe('КМС')
-    expect(selectByLabel(wrapper, 'Категория: участник').element.value).toBe('4Б')
-    expect(selectByLabel(wrapper, 'Скайраннинг: норматив').element.value).toBe('I')
+    expect(
+      selectByLabel(wrapper, 'Наивысшая категория в качестве участника').element
+        .value,
+    ).toBe('4Б')
+    expect(selectByLabel(wrapper, 'Скайраннинг: разряд').element.value).toBe('I')
     expect(selectByLabel(wrapper, 'Водный').element.value).toBe('5')
     expect(selectByLabel(wrapper, 'Северная ходьба').element.value).toBe('II разряд')
   })
@@ -235,7 +249,10 @@ describe('PersonalInfo', () => {
   it('сохраняет только выбранное поле, не трогая остальной опыт', async () => {
     const wrapper = await mountSection()
 
-    await selectByLabel(wrapper, 'Категория: руководитель').setValue('5А')
+    await selectByLabel(
+      wrapper,
+      'Наивысшая категория в качестве руководителя',
+    ).setValue('5А')
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({
@@ -316,5 +333,36 @@ describe('PersonalInfo', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('Имя: 2–50 символов')
+  })
+
+  it('ставит «Значок» первым в альпинизме и спортивном туризме', async () => {
+    const wrapper = await mountSection()
+
+    // Нулевой вариант в каждом списке — пустой («— нет —»),
+    // «Значок» идёт сразу за ним.
+    expect(optionsOf(wrapper, 'Разряд или звание', 0)[1]).toBe('Значок')
+    expect(optionsOf(wrapper, 'Разряд или звание', 1)[1]).toBe('Значок')
+  })
+
+  it('не предлагает «Значок» в скайраннинге', async () => {
+    const wrapper = await mountSection()
+
+    // За дистанцию знак не дают: у скайраннинга свой список (см. журнал
+    // 13.10.2026). Если это не так — правится список, а не этот тест.
+    expect(optionsOf(wrapper, 'Скайраннинг: разряд')).not.toContain('Значок')
+  })
+
+  it('не дублирует пустую строку вариантами «отсутствует» и «нет данных»', async () => {
+    const wrapper = await mountSection()
+
+    expect(optionsOf(wrapper, 'Разряд или звание', 0)).not.toContain('отсутствует')
+    expect(optionsOf(wrapper, 'Пешеходный')).not.toContain('нет данных')
+    expect(optionsOf(wrapper, 'Северная ходьба')).not.toContain('не выполнялся')
+  })
+
+  it('пустые аллергии показывает словами, а не прочерком', async () => {
+    const wrapper = await mountSection()
+
+    expect(editableFieldByLabel(wrapper, 'Мои аллергии').text()).toContain('— нет —')
   })
 })

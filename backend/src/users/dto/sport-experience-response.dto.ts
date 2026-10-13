@@ -4,14 +4,16 @@ import { SportExperience } from '../entities/sport-experience.entity';
 import {
   ALPINISM_RANKS,
   MOUNTAIN_CATEGORIES,
-  SPORT_RANKS,
+  SKYRUNNING_RANKS,
   TOURISM_CATEGORIES,
   TOURISM_DISCIPLINE_RESULTS,
+  TOURISM_RANKS,
   type AlpinismRank,
   type MountainCategory,
-  type SportRank,
+  type SkyrunningRank,
   type TourismCategory,
   type TourismDisciplineResult,
+  type TourismRank,
 } from '../sport-experience.types';
 
 /**
@@ -34,8 +36,8 @@ export class AlpinismExperienceResponseDto {
 }
 
 export class SkyrunningExperienceResponseDto {
-  @ApiProperty({ enum: SPORT_RANKS, nullable: true })
-  rank: SportRank | null;
+  @ApiProperty({ enum: SKYRUNNING_RANKS, nullable: true })
+  rank: SkyrunningRank | null;
 }
 
 export class TourismMaxCategoriesResponseDto {
@@ -85,8 +87,8 @@ export class TourismDisciplinesResponseDto {
 }
 
 export class SportTourismExperienceResponseDto {
-  @ApiProperty({ enum: SPORT_RANKS, nullable: true })
-  rank: SportRank | null;
+  @ApiProperty({ enum: TOURISM_RANKS, nullable: true })
+  rank: TourismRank | null;
 
   @ApiProperty({ type: () => TourismMaxCategoriesResponseDto })
   maxCategories: TourismMaxCategoriesResponseDto;
