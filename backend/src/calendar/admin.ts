@@ -18,6 +18,17 @@ const ADMIN_USER_IDS = new Set<string>([
   '6aa83135-d887-451e-9897-e1ead6b3d280',
 ]);
 
+/**
+ * Список админов наружу — только для тестов.
+ *
+ * Тест модерации подписывает токен этим UUID: `JwtStrategy` проверяет
+ * подпись и в базу не ходит, а `isAdminUser` смотрит только на этот
+ * список. Заводить живую учётку в базе для теста не нужно.
+ */
+export function adminUserIds(): readonly string[] {
+  return [...ADMIN_USER_IDS];
+}
+
 export function isAdminUser(userId: string): boolean {
   return ADMIN_USER_IDS.has(userId);
 }
