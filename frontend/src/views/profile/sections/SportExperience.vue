@@ -2,10 +2,13 @@
 import { computed } from 'vue'
 
 import SelectField from '@/components/ui/SelectField.vue'
+import EditableField from '@/components/ui/EditableField.vue'
 import { useProfilePatch } from '@/composables/useProfilePatch'
 import { useAuthStore } from '@/stores/auth'
 import {
   ALPINISM_RANKS,
+  INSTRUCTOR_GUIDE_RANKS,
+  INSTRUCTOR_METHODIST_RANKS,
   MOUNTAIN_CATEGORIES,
   SKYRUNNING_RANKS,
   TOURISM_CATEGORIES,
@@ -14,6 +17,8 @@ import {
   TOURISM_KINDS,
   TOURISM_RANKS,
   type AlpinismRank,
+  type InstructorGuideRank,
+  type InstructorMethodistRank,
   type MountainCategory,
   type SkyrunningRank,
   type TourismCategory,
@@ -69,6 +74,57 @@ async function saveRescueToken(value: boolean) {
 
 async function onRescueTokenChange(event: Event) {
   await saveRescueToken((event.target as HTMLInputElement).checked)
+}
+
+/** Инструктор-методист по альпинизму (ФАР). */
+async function saveInstructorMethodist(value: InstructorMethodistRank | null) {
+  await saveProfile({
+    sportExperience: { alpinism: { instructorMethodist: value } },
+  })
+}
+
+/** Инструктор-проводник: категория госаттестации. */
+async function saveInstructorGuide(value: InstructorGuideRank | null) {
+  await saveProfile({
+    sportExperience: { alpinism: { instructorGuide: value } },
+  })
+}
+
+/**
+ * Ссылка на лицензию госаттестации. Пустая строка → null.
+ *
+ * Поле живёт в форме только при выбранной категории инструктора-проводника,
+ * но в базе не зачищается вместе с ней: если категорию вернут, ссылка
+ * окажется на месте.
+ */
+async function saveInstructorGuideLicense(value: string) {
+  await saveProfile({
+    sportExperience: {
+      alpinism: { instructorGuideLicense: value === '' ? null : value },
+    },
+  })
+}
+
+/** Организатор детско-юношеского туризма. */
+async function saveYouthOrganizer(value: boolean) {
+  await saveProfile({
+    sportExperience: { alpinism: { youthTourismOrganizer: value } },
+  })
+}
+
+async function onYouthOrganizerChange(event: Event) {
+  await saveYouthOrganizer((event.target as HTMLInputElement).checked)
+}
+
+/** Инструктор детско-юношеского туризма. */
+async function saveYouthInstructor(value: boolean) {
+  await saveProfile({
+    sportExperience: { alpinism: { youthTourismInstructor: value } },
+  })
+}
+
+async function onYouthInstructorChange(event: Event) {
+  await saveYouthInstructor((event.target as HTMLInputElement).checked)
 }
 
 async function saveSkyrunningRank(value: SkyrunningRank | null) {
@@ -143,14 +199,10 @@ async function saveTourismDiscipline(
 
       <!--
         Жетон — галочка, а не список: «Спасение в горах» либо есть, либо нет.
-        Отдельного варианта «нет» в списках не заводим, поэтому здесь
-        снятая галочка и есть «нет».
+        Подпись стоит прямо у галочки: отдельная колонка с тем же текстом
+        слева дублировала его, а галочка выглядела подписью к чему-то ещё.
       -->
-      <div class="flex flex-col gap-1 py-3 md:flex-row md:items-center md:gap-6">
-        <div class="text-sm text-muted md:w-48 md:shrink-0">
-          Жетон «Спасение в горах»
-        </div>
-
+      <div class="py-3">
         <label class="flex cursor-pointer items-center gap-2 text-base text-text">
           <input
             type="checkbox"
@@ -158,7 +210,66 @@ async function saveTourismDiscipline(
             :checked="alpinism?.rescueToken ?? false"
             @change="onRescueTokenChange"
           />
-          <span>Участвовал в спасательных работах</span>
+          <span>Жетон «Спасение в горах»</span>
+        </label>
+      </div>
+
+      <SelectField
+        label="Инструктор-методист по альпинизму (ФАР)"
+        :model-value="alpinism?.instructorMethodist ?? null"
+        :options="INSTRUCTOR_METHODIST_RANKS"
+        @change="saveInstructorMethodist"
+      />
+
+      <SelectField
+        label="Инструктор-проводник"
+        :model-value="alpinism?.instructorGuide ?? null"
+        :options="INSTRUCTOR_GUIDE_RANKS"
+        @change="saveInstructorGuide"
+      />
+
+      <!--
+        Ссылка на лицензию нужна только вместе с категорией
+        инструктора-проводника: без неё это ссылка в никуда. Показываем
+        поле ровно тогда, когда категория выбрана.
+      -->
+      <EditableField
+        v-if="alpinism?.instructorGuide"
+        label="Лицензия госаттестации"
+        :model-value="alpinism.instructorGuideLicense ?? ''"
+        :max-length="500"
+        allow-empty
+        placeholder="https://knd.gov.ru/license?id=…"
+        @save="saveInstructorGuideLicense"
+      />
+
+      <div class="py-3">
+        <label class="flex cursor-pointer items-center gap-2 text-base text-text">
+          <input
+            type="checkbox"
+            class="size-4 cursor-pointer accent-primary"
+            :checked="alpinism?.youthTourismOrganizer ?? false"
+            @change="onYouthOrganizerChange"
+          />
+          <span>
+            Организатор детско-юношеского туризма (дополнительная
+            профессиональная программа подготовки)
+          </span>
+        </label>
+      </div>
+
+      <div class="py-3">
+        <label class="flex cursor-pointer items-center gap-2 text-base text-text">
+          <input
+            type="checkbox"
+            class="size-4 cursor-pointer accent-primary"
+            :checked="alpinism?.youthTourismInstructor ?? false"
+            @change="onYouthInstructorChange"
+          />
+          <span>
+            Инструктор детско-юношеского туризма (дополнительное
+            профессиональное образование)
+          </span>
         </label>
       </div>
 

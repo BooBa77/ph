@@ -209,6 +209,25 @@ export class UsersService {
       if (alpinism.rescueToken !== undefined) {
         row.alpinismRescueToken = alpinism.rescueToken;
       }
+      if (alpinism.instructorMethodist !== undefined) {
+        row.alpinismInstructorMethodist = alpinism.instructorMethodist;
+      }
+      if (alpinism.instructorGuide !== undefined) {
+        row.alpinismInstructorGuide = alpinism.instructorGuide;
+      }
+      // Ссылку на лицензию не сбрасываем вместе с категорией: форма
+      // показывает её только при выбранной категории, а если человек
+      // вернёт категорию, ссылка окажется на месте. Строка при этом
+      // не пустеет — ссылка считается значением.
+      if (alpinism.instructorGuideLicense !== undefined) {
+        row.alpinismInstructorGuideLicense = alpinism.instructorGuideLicense;
+      }
+      if (alpinism.youthTourismOrganizer !== undefined) {
+        row.alpinismYouthTourismOrganizer = alpinism.youthTourismOrganizer;
+      }
+      if (alpinism.youthTourismInstructor !== undefined) {
+        row.alpinismYouthTourismInstructor = alpinism.youthTourismInstructor;
+      }
     }
 
     if (data.skyrunning?.rank !== undefined) {
@@ -307,6 +326,11 @@ function isSportExperienceEmpty(row: SportExperience): boolean {
     // Снятая галочка — пустое значение: строка с одной только снятой
     // галочкой не должна оставаться в базе.
     row.alpinismRescueToken ? true : null,
+    row.alpinismInstructorMethodist,
+    row.alpinismInstructorGuide,
+    row.alpinismInstructorGuideLicense,
+    row.alpinismYouthTourismOrganizer ? true : null,
+    row.alpinismYouthTourismInstructor ? true : null,
     row.skyrunningRank,
     row.tourismRank,
     row.tourismMaxHiking,

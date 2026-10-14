@@ -137,11 +137,15 @@ describe('PersonalInfo', () => {
 
   it('возвращает подсказки городов после очистки города', async () => {
     // Раньше город нельзя было стереть вообще: EditableField не отправлял
-    // пустое значение, и подсказки не возвращались.
+    // пустое значение, и подсказки не возвращались. Кнопки «Убрать» у города
+    // нет — чистим прямо в поле.
     mocked.updateMe.mockResolvedValue(makeUser({ location: null }))
     const wrapper = await mountSection(makeUser({ location: 'Иркутск' }))
+    const field = editableFieldByLabel(wrapper, 'Город')
 
-    await buttonByText(wrapper, 'Убрать').trigger('click')
+    await field.get('button').trigger('click')
+    await field.get('input').setValue('')
+    await field.get('input').trigger('keydown', { key: 'Enter' })
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({ location: null })

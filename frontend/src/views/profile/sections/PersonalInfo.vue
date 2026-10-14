@@ -244,8 +244,9 @@ async function removeAvatar() {
 
         <!--
           Подсказки городов — только для пустого поля: они помогают
-          заполнить город, а не переиграть уже выбранный. Убрать город
-          можно кнопкой ниже — тогда подсказки возвращаются.
+          заполнить город, а не переиграть уже выбранный. Стереть город
+          можно прямо в поле (`allow-empty`), отдельной кнопки для этого
+          нет — она только загромождала строку.
         -->
         <div v-if="!location" class="flex flex-wrap gap-2 pb-3 md:pl-56">
           <button
@@ -256,16 +257,6 @@ async function removeAvatar() {
             @click="saveLocation(city)"
           >
             {{ city }}
-          </button>
-        </div>
-
-        <div v-else class="pb-3 md:pl-56">
-          <button
-            type="button"
-            class="cursor-pointer rounded-lg px-3 py-1 text-sm text-red-600 transition-colors hover:underline"
-            @click="saveLocation('')"
-          >
-            Убрать
           </button>
         </div>
       </div>

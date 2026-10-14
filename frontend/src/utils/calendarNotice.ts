@@ -1,5 +1,5 @@
 import type { CalendarDay } from '@/api/calendar'
-import { capitalize, toIsoDate } from '@/utils/calendar'
+import { capitalize, shortDate, toIsoDate } from '@/utils/calendar'
 
 /**
  * Подпись под заголовком календаря: что интересного впереди.
@@ -62,7 +62,11 @@ function whenPhrase(offset: number, date: Date): string {
   if (offset === 0) return 'Сегодня'
   if (offset === 1) return 'Завтра'
   if (offset === 2) return 'Послезавтра'
-  return capitalize(WEEKDAY_IN[date.getDay()] ?? '')
+
+  // Дальше одного дня недели мало: сегодня тоже может быть четверг, и
+  // «В четверг выходной» читается как «завтра», хотя выходной через
+  // неделю. Поэтому добавляем число — эту путаницу владелец и заметил.
+  return `${capitalize(WEEKDAY_IN[date.getDay()] ?? '')}, ${shortDate(date)}`
 }
 
 /**
@@ -98,10 +102,12 @@ export function upcomingNotice(
       // Подначиваем только про ближайшие дни: «в субботу выходной, ты уже
       // всё спланировал?» звучит уже навязчиво.
       const tail = offset <= 2 ? ', ты уже всё спланировал?' : ''
+      // С датой фразу отделяем запятой: «В четверг, 22 октября, выходной».
+      const joiner = offset >= 3 ? ', ' : ' '
 
       return holiday
-        ? `${when} ${holiday} — выходной${tail}`
-        : `${when} выходной${tail}`
+        ? `${when}${joiner}${holiday} — выходной${tail}`
+        : `${when}${joiner}выходной${tail}`
     }
 
     if (day.dayType === 'short_workday') {

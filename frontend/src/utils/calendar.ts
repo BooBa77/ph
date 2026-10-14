@@ -124,6 +124,16 @@ export function monthName(index: number): string {
 export const MONTH_NAMES = Array.from({ length: 12 }, (_, index) => monthName(index))
 
 /**
+ * «22 октября» — дата без года.
+ *
+ * Нужна подписям внутри ближайших недель: «в четверг» без числа читается
+ * как «завтра», даже когда выходной через неделю.
+ */
+export function shortDate(date: Date): string {
+  return DAY_MONTH_LONG.format(date)
+}
+
+/**
  * «7 октября 2026» — дата словами.
  *
  * Год приписываем руками: с `year: 'numeric'` Intl отдаёт «7 октября

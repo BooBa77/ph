@@ -3,12 +3,16 @@ import { ApiProperty } from '@nestjs/swagger';
 import { SportExperience } from '../entities/sport-experience.entity';
 import {
   ALPINISM_RANKS,
+  INSTRUCTOR_GUIDE_RANKS,
+  INSTRUCTOR_METHODIST_RANKS,
   MOUNTAIN_CATEGORIES,
   SKYRUNNING_RANKS,
   TOURISM_CATEGORIES,
   TOURISM_DISCIPLINE_RESULTS,
   TOURISM_RANKS,
   type AlpinismRank,
+  type InstructorGuideRank,
+  type InstructorMethodistRank,
   type MountainCategory,
   type SkyrunningRank,
   type TourismCategory,
@@ -39,6 +43,25 @@ export class AlpinismExperienceResponseDto {
     example: false,
   })
   rescueToken: boolean;
+
+  @ApiProperty({ enum: INSTRUCTOR_METHODIST_RANKS, nullable: true })
+  instructorMethodist: InstructorMethodistRank | null;
+
+  @ApiProperty({ enum: INSTRUCTOR_GUIDE_RANKS, nullable: true })
+  instructorGuide: InstructorGuideRank | null;
+
+  @ApiProperty({
+    description: 'Ссылка на лицензию госаттестации инструктора-проводника',
+    nullable: true,
+    example: 'https://knd.gov.ru/license?id=6683a3cad2b513840f64a890',
+  })
+  instructorGuideLicense: string | null;
+
+  @ApiProperty({ description: 'Организатор детско-юношеского туризма' })
+  youthTourismOrganizer: boolean;
+
+  @ApiProperty({ description: 'Инструктор детско-юношеского туризма' })
+  youthTourismInstructor: boolean;
 }
 
 export class SkyrunningExperienceResponseDto {
@@ -131,6 +154,11 @@ export class SportExperienceResponseDto {
     alpinism.maxParticipation = entity.alpinismMaxParticipation;
     alpinism.maxLeadership = entity.alpinismMaxLeadership;
     alpinism.rescueToken = entity.alpinismRescueToken;
+    alpinism.instructorMethodist = entity.alpinismInstructorMethodist;
+    alpinism.instructorGuide = entity.alpinismInstructorGuide;
+    alpinism.instructorGuideLicense = entity.alpinismInstructorGuideLicense;
+    alpinism.youthTourismOrganizer = entity.alpinismYouthTourismOrganizer;
+    alpinism.youthTourismInstructor = entity.alpinismYouthTourismInstructor;
 
     const skyrunning = new SkyrunningExperienceResponseDto();
     skyrunning.rank = entity.skyrunningRank;

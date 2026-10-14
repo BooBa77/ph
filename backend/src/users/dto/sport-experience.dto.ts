@@ -1,15 +1,26 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsBoolean, IsIn, IsOptional, ValidateNested } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsOptional,
+  IsUrl,
+  MaxLength,
+  ValidateNested,
+} from 'class-validator';
 
 import {
   ALPINISM_RANKS,
+  INSTRUCTOR_GUIDE_RANKS,
+  INSTRUCTOR_METHODIST_RANKS,
   MOUNTAIN_CATEGORIES,
   SKYRUNNING_RANKS,
   TOURISM_CATEGORIES,
   TOURISM_DISCIPLINE_RESULTS,
   TOURISM_RANKS,
   type AlpinismRank,
+  type InstructorGuideRank,
+  type InstructorMethodistRank,
   type MountainCategory,
   type SkyrunningRank,
   type TourismCategory,
@@ -73,6 +84,63 @@ export class AlpinismExperienceDto {
   @IsOptional()
   @IsBoolean()
   rescueToken?: boolean;
+
+  @ApiProperty({
+    description: 'Инструктор-методист по альпинизму (ФАР)',
+    enum: INSTRUCTOR_METHODIST_RANKS,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(INSTRUCTOR_METHODIST_RANKS)
+  instructorMethodist?: InstructorMethodistRank | null;
+
+  @ApiProperty({
+    description: 'Инструктор-проводник: категория государственной аттестации',
+    enum: INSTRUCTOR_GUIDE_RANKS,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(INSTRUCTOR_GUIDE_RANKS)
+  instructorGuide?: InstructorGuideRank | null;
+
+  @ApiProperty({
+    description:
+      'Публичная ссылка на лицензию госаттестации инструктора-проводника. null — очистить.',
+    example:
+      'https://knd.gov.ru/license?id=6683a3cad2b513840f64a890&registryType=ATTIncructorProvodnik',
+    maxLength: 500,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsUrl(
+    { require_protocol: true, protocols: ['http', 'https'] },
+    { message: 'Ссылка на лицензию должна начинаться с http:// или https://' },
+  )
+  @MaxLength(500, { message: 'Ссылка не должна превышать 500 символов' })
+  instructorGuideLicense?: string | null;
+
+  @ApiProperty({
+    description:
+      'Организатор детско-юношеского туризма: дополнительная профессиональная программа подготовки',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  youthTourismOrganizer?: boolean;
+
+  @ApiProperty({
+    description:
+      'Инструктор детско-юношеского туризма: дополнительное профессиональное образование',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  youthTourismInstructor?: boolean;
 }
 
 export class SkyrunningExperienceDto {

@@ -367,7 +367,14 @@ function dayLabel(day: CalendarDay): string {
     <h2 class="mb-2 text-xl font-semibold text-text">Календарь</h2>
 
     <p class="mb-3 text-sm text-muted">
-      Сегодня — {{ todayLabel }}.<template v-if="notice"> {{ notice }}</template>
+      <!--
+        Пробел перед подписью — внутри интерполяции, а не в разметке:
+        Vue сжимает пустое место в шаблоне, и строки склеивались
+        в «2026.В четверг выходной».
+      -->
+      Сегодня — {{ todayLabel }}.<template v-if="notice">{{
+        ' ' + notice
+      }}</template>
     </p>
 
     <button

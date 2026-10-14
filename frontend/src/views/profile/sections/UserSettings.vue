@@ -149,7 +149,7 @@ onMounted(load)
           :checked="appStore.isSeasonAnimationEnabled"
           @change="onAnimationChange"
         />
-        <span>Показывать сезонную анимацию (осенью — листья)</span>
+        <span>Показывать сезонную анимацию (осенние листья)</span>
       </label>
     </div>
 

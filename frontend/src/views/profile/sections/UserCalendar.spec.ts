@@ -168,7 +168,7 @@ describe('UserCalendar', () => {
 
     // 7 октября 2026 — среда, ближайший выходной — суббота 10-го.
     expect(wrapper.text()).toContain('Сегодня — 7 октября 2026.')
-    expect(wrapper.text()).toContain('В субботу выходной')
+    expect(wrapper.text()).toContain('В субботу, 10 октября, выходной')
     // Легенды про цвета больше нет: смысл цветов объяснять не нужно.
     expect(wrapper.text()).not.toContain('Красным отмечены выходные')
   })

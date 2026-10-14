@@ -10,6 +10,8 @@ import {
 import { User } from './user.entity';
 import {
   ALPINISM_RANKS,
+  INSTRUCTOR_GUIDE_RANKS,
+  INSTRUCTOR_METHODIST_RANKS,
   MOUNTAIN_CATEGORIES,
   SKYRUNNING_RANKS,
   TOURISM_CATEGORIES,
@@ -17,6 +19,8 @@ import {
   TOURISM_RANKS,
   sqlValues,
   type AlpinismRank,
+  type InstructorGuideRank,
+  type InstructorMethodistRank,
   type MountainCategory,
   type SkyrunningRank,
   type TourismCategory,
@@ -53,6 +57,14 @@ import {
 @Check(
   'chk_sport_experience_alpinism_max_leadership',
   `"alpinism_max_leadership" IN (${sqlValues(MOUNTAIN_CATEGORIES)})`,
+)
+@Check(
+  'chk_sport_experience_instructor_methodist',
+  `"alpinism_instructor_methodist" IN (${sqlValues(INSTRUCTOR_METHODIST_RANKS)})`,
+)
+@Check(
+  'chk_sport_experience_instructor_guide',
+  `"alpinism_instructor_guide" IN (${sqlValues(INSTRUCTOR_GUIDE_RANKS)})`,
 )
 @Check(
   'chk_sport_experience_skyrunning_rank',
@@ -167,6 +179,54 @@ export class SportExperience {
    */
   @Column({ name: 'alpinism_rescue_token', type: 'boolean', default: false })
   alpinismRescueToken: boolean;
+
+  /** Инструктор-методист по альпинизму (ФАР). */
+  @Column({
+    name: 'alpinism_instructor_methodist',
+    type: 'varchar',
+    length: 30,
+    nullable: true,
+  })
+  alpinismInstructorMethodist: InstructorMethodistRank | null;
+
+  /** Инструктор-проводник: категория государственной аттестации. */
+  @Column({
+    name: 'alpinism_instructor_guide',
+    type: 'varchar',
+    length: 40,
+    nullable: true,
+  })
+  alpinismInstructorGuide: InstructorGuideRank | null;
+
+  /**
+   * Публичная ссылка на лицензию госаттестации инструктора-проводника.
+   *
+   * Свободный текст, а не отдельная таблица: лицензия одна на человека,
+   * и её номер живёт в реестре knd.gov.ru — нам достаточно ссылки.
+   */
+  @Column({
+    name: 'alpinism_instructor_guide_license',
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+  })
+  alpinismInstructorGuideLicense: string | null;
+
+  /** Организатор детско-юношеского туризма: программа подготовки. */
+  @Column({
+    name: 'alpinism_youth_tourism_organizer',
+    type: 'boolean',
+    default: false,
+  })
+  alpinismYouthTourismOrganizer: boolean;
+
+  /** Инструктор детско-юношеского туризма: дополнительное образование. */
+  @Column({
+    name: 'alpinism_youth_tourism_instructor',
+    type: 'boolean',
+    default: false,
+  })
+  alpinismYouthTourismInstructor: boolean;
 
   // ─── Скайраннинг ───
 

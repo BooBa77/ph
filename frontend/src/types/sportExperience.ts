@@ -9,21 +9,24 @@
  * **Отсутствия в списках нет.** «Отсутствует», «нет данных» и «не выполнялся»
  * убраны: в форме они дублировали пустую строку «— нет —». Ничего не выбрано —
  * это `null`, и в базу он и уходит.
+ *
+ * **Порядок — от слабого к сильному** («Значок → МС»): в списке, который
+ * начинается с МСМК, свой разряд приходится искать через все чужие.
  */
 
 /**
- * Разряды и звания по альпинизму. «Значок» — массовый знак «Альпинист
- * России», он ниже юношеского разряда и поэтому стоит первым.
+ * Разряды и звания по альпинизму: от массового знака к МСМК.
+ * «Значок» — массовый знак «Альпинист России», он ниже юношеского разряда.
  */
 export const ALPINISM_RANKS = [
   'Значок',
-  'МСМК',
-  'МС',
-  'КМС',
-  'I',
-  'II',
-  'III',
   'юношеский',
+  'III',
+  'II',
+  'I',
+  'КМС',
+  'МС',
+  'МСМК',
 ] as const
 
 export type AlpinismRank = (typeof ALPINISM_RANKS)[number]
@@ -50,12 +53,12 @@ export type MountainCategory = (typeof MOUNTAIN_CATEGORIES)[number]
  * туризмом: «Значок» за дистанцию не дают, МСМК здесь тоже нет.
  */
 export const SKYRUNNING_RANKS = [
-  'МС',
-  'КМС',
-  'I',
-  'II',
-  'III',
   'юношеский',
+  'III',
+  'II',
+  'I',
+  'КМС',
+  'МС',
 ] as const
 
 export type SkyrunningRank = (typeof SKYRUNNING_RANKS)[number]
@@ -63,15 +66,42 @@ export type SkyrunningRank = (typeof SKYRUNNING_RANKS)[number]
 /** Разряды и звания по спортивному туризму: «Значок» — знак «Турист России». */
 export const TOURISM_RANKS = [
   'Значок',
-  'МС',
-  'КМС',
-  'I',
-  'II',
-  'III',
   'юношеский',
+  'III',
+  'II',
+  'I',
+  'КМС',
+  'МС',
 ] as const
 
 export type TourismRank = (typeof TOURISM_RANKS)[number]
+
+/**
+ * Инструктор-методист по альпинизму (ФАР): от ИНП к первой категории.
+ * ФАР — Федерация альпинизма России, она и присваивает категории.
+ */
+export const INSTRUCTOR_METHODIST_RANKS = [
+  'ИНП',
+  '3 категория',
+  '2 категория',
+  '1 категория',
+] as const
+
+export type InstructorMethodistRank =
+  (typeof INSTRUCTOR_METHODIST_RANKS)[number]
+
+/** Инструктор-проводник: от работы без категории к международному классу. */
+export const INSTRUCTOR_GUIDE_RANKS = [
+  'Без категории (ИПбк)',
+  '1 категория',
+  '2 категория',
+  '3 категория',
+  '4 категория',
+  '5 категория',
+  'Международного класса',
+] as const
+
+export type InstructorGuideRank = (typeof INSTRUCTOR_GUIDE_RANKS)[number]
 
 /** Максимальная категория сложности похода в спортивном туризме — одной цифрой. */
 export const TOURISM_CATEGORIES = ['6', '5', '4', '3', '2', '1'] as const
@@ -140,6 +170,19 @@ export interface AlpinismExperience {
    * Галочка, а не значение словаря: жетон либо есть, либо нет.
    */
   rescueToken: boolean
+  /** Инструктор-методист по альпинизму (ФАР). */
+  instructorMethodist: InstructorMethodistRank | null
+  /** Инструктор-проводник: категория государственной аттестации. */
+  instructorGuide: InstructorGuideRank | null
+  /**
+   * Публичная ссылка на лицензию госаттестации инструктора-проводника.
+   * Показывается только при выбранной категории; в базе хранится и без неё.
+   */
+  instructorGuideLicense: string | null
+  /** Организатор детско-юношеского туризма (программа подготовки). */
+  youthTourismOrganizer: boolean
+  /** Инструктор детско-юношеского туризма (дополнительное образование). */
+  youthTourismInstructor: boolean
 }
 
 export interface SkyrunningExperience {
@@ -168,8 +211,7 @@ export interface SportExperience {
  * Частичная правка спортивного опыта: PATCH присылает только изменённое.
  *
  * Отсутствие поля — «не трогать», `null` — очистить поле (вернуть «— нет —»).
- * Так одна смена выпадающего списка не затирает остальные восемнадцать
- * значений.
+ * Так одна смена выпадающего списка не затирает остальные значения.
  */
 export interface SportExperiencePatch {
   alpinism?: Partial<AlpinismExperience>

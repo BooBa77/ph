@@ -184,9 +184,14 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
         rank: 'КМС',
         maxParticipation: '4Б',
         maxLeadership: '3А',
-        // Жетон не присылали — значит, снят: «нет» и «не отвечал» здесь
-        // одно состояние.
+        // Жетон и инструкторские галочки не присылали — значит, сняты:
+        // «нет» и «не отвечал» здесь одно состояние.
         rescueToken: false,
+        instructorMethodist: null,
+        instructorGuide: null,
+        instructorGuideLicense: null,
+        youthTourismOrganizer: false,
+        youthTourismInstructor: false,
       },
       skyrunning: { rank: 'I' },
       sportTourism: {
@@ -225,6 +230,11 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
       maxParticipation: '4Б',
       maxLeadership: '5А',
       rescueToken: false,
+      instructorMethodist: null,
+      instructorGuide: null,
+      instructorGuideLicense: null,
+      youthTourismOrganizer: false,
+      youthTourismInstructor: false,
     });
     expect(
       response.body.sportExperience.sportTourism.maxCategories.hiking,
@@ -360,6 +370,62 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
     // заполнен» и «заполнен пустым» — одно состояние.
     expect(response.body.sportExperience).toBeNull();
     expect(await experienceRows()).toBe(0);
+  });
+
+  it('сохраняет инструкторские допущения и ссылку на лицензию', async () => {
+    const license =
+      'https://knd.gov.ru/license?id=6683a3cad2b513840f64a890&registryType=ATTIncructorProvodnik';
+
+    const response = await patchMe({
+      sportExperience: {
+        alpinism: {
+          instructorMethodist: '2 категория',
+          instructorGuide: 'Без категории (ИПбк)',
+          instructorGuideLicense: license,
+          youthTourismOrganizer: true,
+          youthTourismInstructor: true,
+        },
+      },
+    }).expect(200);
+
+    expect(response.body.sportExperience.alpinism).toMatchObject({
+      instructorMethodist: '2 категория',
+      instructorGuide: 'Без категории (ИПбк)',
+      instructorGuideLicense: license,
+      youthTourismOrganizer: true,
+      youthTourismInstructor: true,
+    });
+    expect(await experienceRows()).toBe(1);
+  });
+
+  it('категории инструкторов проверяются по словарю', async () => {
+    await patchMe({
+      sportExperience: { alpinism: { instructorMethodist: 'инструктор' } },
+    }).expect(400);
+
+    await patchMe({
+      sportExperience: { alpinism: { instructorGuide: '6 категория' } },
+    }).expect(400);
+  });
+
+  it('ссылка на лицензию обязана быть ссылкой', async () => {
+    await patchMe({
+      sportExperience: { alpinism: { instructorGuideLicense: 'knd.gov.ru' } },
+    }).expect(400);
+
+    await patchMe({
+      sportExperience: { alpinism: { instructorGuideLicense: 'javascript:alert(1)' } },
+    }).expect(400);
+
+    // null принимается: поле очищается, категория остаётся.
+    const response = await patchMe({
+      sportExperience: { alpinism: { instructorGuideLicense: null } },
+    }).expect(200);
+
+    expect(response.body.sportExperience.alpinism.instructorGuideLicense).toBeNull();
+    expect(response.body.sportExperience.alpinism.instructorGuide).toBe(
+      'Без категории (ИПбк)',
+    );
   });
 
   it('чужие поля профиля остались нетронутыми', async () => {

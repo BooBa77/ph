@@ -9,16 +9,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api/errors'
 import type { User } from '@/api/types'
+import EditableField from '@/components/ui/EditableField.vue'
 import { useAuthStore } from '@/stores/auth'
 import SportExperience from '@/views/profile/sections/SportExperience.vue'
 
 /**
  * Тесты вкладки «Спорт».
  *
- * Раздел переехал из «Профиля» отдельной страницей, тесты переехали
- * вместе с ним: проверяем словари (что предлагается и чего в них нет),
- * частичное сохранение (одно поле не затирает остальные) и жетон
- * «Спасение в горах».
+ * Проверяем словари (что предлагается, в каком порядке и чего в них нет),
+ * частичное сохранение (одно поле не затирает остальные) и инструкторские
+ * галочки с ссылкой на лицензию.
  */
 vi.mock('@/api/users', () => ({
   getMe: vi.fn(),
@@ -53,6 +53,12 @@ function fullExperience() {
       maxParticipation: '4Б' as const,
       maxLeadership: '2А' as const,
       rescueToken: true,
+      instructorMethodist: '2 категория' as const,
+      instructorGuide: '3 категория' as const,
+      instructorGuideLicense:
+        'https://knd.gov.ru/license?id=6683a3cad2b513840f64a890' as string | null,
+      youthTourismOrganizer: true,
+      youthTourismInstructor: false,
     },
     skyrunning: { rank: 'I' as const },
     sportTourism: {
@@ -121,6 +127,31 @@ function optionsOf(wrapper: VueWrapper, label: string, index = 0): string[] {
     .map((option) => option.text())
 }
 
+/**
+ * Галочка по её подписи.
+ *
+ * Галочек в разделе несколько (жетон и детско-юношеский туризм), и
+ * порядок в разметке — не то, на что стоит опираться в тесте.
+ */
+function checkboxByText(wrapper: VueWrapper, text: string) {
+  const label = wrapper
+    .findAll('label')
+    .find((item) => item.text().includes(text))
+
+  if (!label) throw new Error(`Нет галочки «${text}»`)
+  return label.find<HTMLInputElement>('input[type="checkbox"]')
+}
+
+/** Поле ввода по подписи слева. */
+function editableFieldByLabel(wrapper: VueWrapper, label: string) {
+  const field = wrapper
+    .findAllComponents(EditableField)
+    .find((item) => item.props('label') === label)
+
+  if (!field) throw new Error(`Нет поля «${label}»`)
+  return field
+}
+
 describe('SportExperience', () => {
   enableAutoUnmount(afterEach)
 
@@ -129,15 +160,16 @@ describe('SportExperience', () => {
     vi.clearAllMocks()
   })
 
-  it('показывает девятнадцать списков спортивного опыта', async () => {
+  it('показывает двадцать один список спортивного опыта', async () => {
     const wrapper = await mountSection()
 
-    // 3 альпинизм + 1 скайраннинг + 1 разряд по туризму
-    // + 9 видов туризма + 5 дисциплин группы «дистанция».
-    expect(wrapper.findAll('select')).toHaveLength(19)
+    // Альпинизм: разряд, две категории, инструктор-методист,
+    // инструктор-проводник — 5; скайраннинг — 1; спортивный туризм:
+    // разряд, девять видов, пять дисциплин — 15.
+    expect(wrapper.findAll('select')).toHaveLength(21)
   })
 
-  it('показывает сохранённый спортивный опыт в списках', async () => {
+  it('показывает сохранённый спортивный опыт', async () => {
     const wrapper = await mountSection(
       makeUser({ sportExperience: fullExperience() }),
     )
@@ -147,6 +179,13 @@ describe('SportExperience', () => {
       selectByLabel(wrapper, 'Наивысшая категория в качестве участника').element
         .value,
     ).toBe('4Б')
+    expect(
+      selectByLabel(wrapper, 'Инструктор-методист по альпинизму (ФАР)').element
+        .value,
+    ).toBe('2 категория')
+    expect(
+      selectByLabel(wrapper, 'Инструктор-проводник').element.value,
+    ).toBe('3 категория')
     expect(selectByLabel(wrapper, 'Скайраннинг: разряд').element.value).toBe('I')
     expect(selectByLabel(wrapper, 'Водный').element.value).toBe('5')
     expect(selectByLabel(wrapper, 'Северная ходьба').element.value).toBe(
@@ -160,11 +199,11 @@ describe('SportExperience', () => {
     await selectByLabel(
       wrapper,
       'Наивысшая категория в качестве руководителя',
-    ).setValue('5А')
+    ).setValue('1Б')
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({
-      sportExperience: { alpinism: { maxLeadership: '5А' } },
+      sportExperience: { alpinism: { maxLeadership: '1Б' } },
     })
   })
 
@@ -205,13 +244,18 @@ describe('SportExperience', () => {
     })
   })
 
-  it('ставит «Значок» первым в альпинизме и спортивном туризме', async () => {
+  it('идёт от «Значка» к МСМК, а не наоборот', async () => {
     const wrapper = await mountSection()
 
-    // Нулевой вариант в каждом списке — пустой («— нет —»),
-    // «Значок» идёт сразу за ним.
-    expect(optionsOf(wrapper, 'Разряд или звание', 0)[1]).toBe('Значок')
-    expect(optionsOf(wrapper, 'Разряд или звание', 1)[1]).toBe('Значок')
+    // Нулевой вариант — пустой («— нет —»), дальше разряды по возрастанию:
+    // свой разряд ищут снизу вверх, а не через весь список чужих.
+    const ranks = optionsOf(wrapper, 'Разряд или звание', 0)
+    expect(ranks[1]).toBe('Значок')
+    expect(ranks[ranks.length - 1]).toBe('МСМК')
+
+    const tourism = optionsOf(wrapper, 'Разряд или звание', 1)
+    expect(tourism[1]).toBe('Значок')
+    expect(tourism[tourism.length - 1]).toBe('МС')
   })
 
   it('не предлагает «Значок» в скайраннинге', async () => {
@@ -235,8 +279,15 @@ describe('SportExperience', () => {
     const wrapper = await mountSection()
 
     expect(
-      wrapper.get<HTMLInputElement>('input[type="checkbox"]').element.checked,
+      checkboxByText(wrapper, 'Жетон «Спасение в горах»').element.checked,
     ).toBe(false)
+  })
+
+  it('подписывает галочку жетона, не дублируя текст слева', async () => {
+    const wrapper = await mountSection()
+
+    expect(wrapper.text()).toContain('Жетон «Спасение в горах»')
+    expect(wrapper.text()).not.toContain('Участвовал в спасательных работах')
   })
 
   it('показывает установленный жетон', async () => {
@@ -245,14 +296,14 @@ describe('SportExperience', () => {
     )
 
     expect(
-      wrapper.get<HTMLInputElement>('input[type="checkbox"]').element.checked,
+      checkboxByText(wrapper, 'Жетон «Спасение в горах»').element.checked,
     ).toBe(true)
   })
 
   it('сохраняет жетон отдельным полем', async () => {
     const wrapper = await mountSection()
 
-    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await checkboxByText(wrapper, 'Жетон «Спасение в горах»').setValue(true)
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({
@@ -260,15 +311,102 @@ describe('SportExperience', () => {
     })
   })
 
+  it('сохраняет инструктора-методиста', async () => {
+    const wrapper = await mountSection()
+
+    await selectByLabel(wrapper, 'Инструктор-методист по альпинизму (ФАР)').setValue(
+      'ИНП',
+    )
+    await flushPromises()
+
+    expect(mocked.updateMe).toHaveBeenCalledWith({
+      sportExperience: { alpinism: { instructorMethodist: 'ИНП' } },
+    })
+  })
+
+  it('сохраняет инструктора-проводника', async () => {
+    const wrapper = await mountSection()
+
+    await selectByLabel(wrapper, 'Инструктор-проводник').setValue(
+      'Международного класса',
+    )
+    await flushPromises()
+
+    expect(mocked.updateMe).toHaveBeenCalledWith({
+      sportExperience: { alpinism: { instructorGuide: 'Международного класса' } },
+    })
+  })
+
+  it('показывает ссылку на лицензию только при выбранной категории', async () => {
+    const without = await mountSection()
+    expect(
+      without
+        .findAllComponents(EditableField)
+        .some((item) => item.props('label') === 'Лицензия госаттестации'),
+    ).toBe(false)
+
+    const withGuide = await mountSection(
+      makeUser({ sportExperience: fullExperience() }),
+    )
+    expect(
+      editableFieldByLabel(withGuide, 'Лицензия госаттестации').props('modelValue'),
+    ).toBe('https://knd.gov.ru/license?id=6683a3cad2b513840f64a890')
+  })
+
+  it('сохраняет ссылку на лицензию', async () => {
+    const wrapper = await mountSection(
+      makeUser({ sportExperience: fullExperience() }),
+    )
+    const field = editableFieldByLabel(wrapper, 'Лицензия госаттестации')
+
+    await field.get('button').trigger('click')
+    await field
+      .get('input')
+      .setValue('https://knd.gov.ru/license?id=abc&registryType=ATT')
+    await field.get('input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(mocked.updateMe).toHaveBeenCalledWith({
+      sportExperience: {
+        alpinism: {
+          instructorGuideLicense:
+            'https://knd.gov.ru/license?id=abc&registryType=ATT',
+        },
+      },
+    })
+  })
+
+  it('сохраняет галочки детско-юношеского туризма', async () => {
+    const wrapper = await mountSection()
+
+    await checkboxByText(wrapper, 'Организатор детско-юношеского туризма').setValue(
+      true,
+    )
+    await flushPromises()
+
+    expect(mocked.updateMe).toHaveBeenCalledWith({
+      sportExperience: { alpinism: { youthTourismOrganizer: true } },
+    })
+
+    await checkboxByText(wrapper, 'Инструктор детско-юношеского туризма').setValue(
+      true,
+    )
+    await flushPromises()
+
+    expect(mocked.updateMe).toHaveBeenCalledWith({
+      sportExperience: { alpinism: { youthTourismInstructor: true } },
+    })
+  })
+
   it('показывает сообщение бэкенда, если сохранить не удалось', async () => {
     const wrapper = await mountSection()
     mocked.updateMe.mockRejectedValue(
-      new ApiError(400, 'rank must be one of the following values'),
+      new ApiError(400, 'Ссылка на лицензию должна начинаться с http://'),
     )
 
-    await wrapper.get('input[type="checkbox"]').setValue(true)
+    await checkboxByText(wrapper, 'Жетон «Спасение в горах»').setValue(true)
     await flushPromises()
 
-    expect(wrapper.text()).toContain('rank must be one of the following values')
+    expect(wrapper.text()).toContain('Ссылка на лицензию должна начинаться')
   })
 })
