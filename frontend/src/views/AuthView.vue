@@ -250,10 +250,11 @@ function backToEmail() {
     Непрозрачный фон — не косметика. Поле лежало прозрачным поверх
     сезонного декора, и сквозь него были видны падающие листья:
     читаемость ввода страдала, а выглядело это как забытый стиль.
-    Берём фон страницы из темы, а не white: на цветных темах
-    (весна, лето, осень) белый прямоугольник выбивался бы.
+    Цвет берём из токена полей (`--theme-field`), а не из фона страницы:
+    на осенней теме фон страницы кремовый, и поле с ним сливалось —
+    оставалась одна рамка, и было не понять, что здесь можно писать.
   */
-  background-color: var(--theme-bg);
+  background-color: var(--theme-field);
   color: var(--theme-text);
 }
 
@@ -281,7 +282,7 @@ function backToEmail() {
 .auth__input:-webkit-autofill:hover,
 .auth__input:-webkit-autofill:focus {
   -webkit-text-fill-color: var(--theme-text);
-  box-shadow: 0 0 0 1000px var(--theme-bg) inset;
+  box-shadow: 0 0 0 1000px var(--theme-field) inset;
   transition: background-color 100000s ease-in-out 0s;
 }
 .auth__input:focus {

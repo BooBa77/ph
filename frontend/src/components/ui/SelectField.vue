@@ -65,7 +65,7 @@ const value = computed({
     <select
       :id="id"
       v-model="value"
-      class="w-full cursor-pointer rounded-xl border border-border bg-bg px-3 py-2 text-base text-text transition-colors hover:border-primary focus:border-primary focus:outline-none md:max-w-sm"
+      class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors hover:border-primary focus:border-primary focus:outline-none md:max-w-sm"
     >
       <option value="">{{ emptyLabel }}</option>
       <option v-for="option in options" :key="option" :value="option">

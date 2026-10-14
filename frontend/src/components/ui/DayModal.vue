@@ -311,7 +311,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           type="text"
           maxlength="100"
           aria-label="Метка дня"
-          class="w-full rounded border border-primary bg-bg px-2 py-1 text-lg text-text outline-none"
+          class="w-full rounded border border-primary bg-field px-2 py-1 text-lg text-text outline-none"
           @keydown.enter="saveLabel"
         />
         <h2
@@ -443,7 +443,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
               type="text"
               maxlength="100"
               placeholder="например, диван"
-              class="rounded border border-border bg-bg px-2 py-1 text-sm text-text"
+              class="rounded border border-border bg-field px-2 py-1 text-sm text-text"
               @keydown.enter="sendRequest"
             />
           </label>
@@ -484,7 +484,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             v-model="notePersonalDraft"
             rows="2"
             maxlength="2000"
-            class="rounded border border-border bg-bg px-2 py-1 text-sm text-text"
+            class="rounded border border-border bg-field px-2 py-1 text-sm text-text"
           />
         </label>
         <label class="mt-2 flex flex-col gap-1 text-xs text-muted">
@@ -494,7 +494,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             v-model="notePublicDraft"
             rows="2"
             maxlength="2000"
-            class="rounded border border-border bg-bg px-2 py-1 text-sm text-text"
+            class="rounded border border-border bg-field px-2 py-1 text-sm text-text"
           />
         </label>
         <div class="mt-2 flex items-center justify-end gap-2">

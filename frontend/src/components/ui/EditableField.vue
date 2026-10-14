@@ -162,7 +162,7 @@ function onKeydown(e: KeyboardEvent) {
         v-if="!isEditing"
         type="button"
         :disabled="!editable"
-        class="w-full cursor-pointer rounded-xl border border-border bg-bg px-3 py-2 text-left text-base text-text transition-colors hover:border-primary disabled:cursor-default disabled:hover:border-border"
+        class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-left text-base text-text transition-colors hover:border-primary disabled:cursor-default disabled:hover:border-border"
         @click="startEdit"
       >
         <span v-if="modelValue">{{ modelValue }}</span>
@@ -177,7 +177,7 @@ function onKeydown(e: KeyboardEvent) {
         type="text"
         :placeholder="placeholder"
         :maxlength="maxLength"
-        class="w-full rounded border border-primary bg-surface px-3 py-2 text-base text-text outline-none"
+        class="w-full rounded border border-primary bg-field px-3 py-2 text-base text-text outline-none"
         @keydown="onKeydown"
         @blur="saveEdit"
       />

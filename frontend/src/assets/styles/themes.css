@@ -10,10 +10,17 @@
  * Как это работает:
  *   - Здесь лежат «сырые» значения (--theme-*) для каждой темы.
  *   - В main.css эти значения маппятся в Tailwind-токены (--color-*).
- *   - Tailwind генерирует утилиты: bg-bg, bg-surface, text-text,
+ *   - Tailwind генерирует утилиты: bg-bg, bg-surface, bg-field, text-text,
  *     text-muted, border-border, text-primary / bg-primary.
  *   - Переключение темы = смена атрибута data-theme на <html>.
  *     Весь CSS пересчитывается, Vue не перерисовывается.
+ *
+ * Отдельный токен --theme-field — фон полей ввода. Раньше поле брало фон
+ * страницы, и на осенней теме его было не отличить от страницы (оставалась
+ * только рамка), а в режиме редактирования оно брало фон карточки и темнело.
+ * Теперь у полей свой цвет: они светлее страницы, и видно, что сюда можно
+ * писать. В зимней теме страница тоже белая, поэтому там поле выделяет
+ * рамка — это осознанно, а не недосмотр.
  *
  * Список сезонов должен совпадать с SEASONS в types/theme.ts (код).
  * Если добавляешь сезон — правь и тут, и там.
@@ -27,6 +34,7 @@
 :root {
   --theme-bg: #ffffff;      /* фон страницы */
   --theme-surface: #f4f6f8; /* фон карточек, шапки, панелей */
+  --theme-field: #ffffff;   /* фон полей ввода */
   --theme-text: #1a1a1a;    /* основной текст */
   --theme-muted: #6b7280;   /* второстепенный текст */
   --theme-border: #d1d5db;  /* границы, разделители */
@@ -39,6 +47,7 @@
 [data-theme='1'] {
   --theme-bg: #ffffff;
   --theme-surface: #f4f6f8;
+  --theme-field: #ffffff;
   --theme-text: #1a1a1a;
   --theme-muted: #6b7280;
   --theme-border: #d1d5db;
@@ -51,6 +60,7 @@
 [data-theme='2'] {
   --theme-bg: #f6fbf7;
   --theme-surface: #e8f5ec;
+  --theme-field: #ffffff;
   --theme-text: #1a3d2a;
   --theme-muted: #5a7d68;
   --theme-border: #b8dcc4;
@@ -63,6 +73,7 @@
 [data-theme='3'] {
   --theme-bg: #fafcf5;
   --theme-surface: #eef5dd;
+  --theme-field: #ffffff;
   --theme-text: #2a3d1a;
   --theme-muted: #6b8050;
   --theme-border: #c8d9a8;
@@ -75,8 +86,9 @@
 [data-theme='4'] {
   --theme-bg: #fdf8f3;
   --theme-surface: #f5e6d3;
+  --theme-field: #ffffff;
   --theme-text: #3d1f1a;
   --theme-muted: #8b5a4a;
   --theme-border: #e0b89a;
   --theme-primary: #c4421a;
-}   
+}

@@ -142,7 +142,7 @@ onMounted(load)
             type="text"
             maxlength="500"
             placeholder="комментарий: что поправить"
-            class="mt-2 w-full rounded border border-border bg-bg px-2 py-1 text-sm text-text"
+            class="mt-2 w-full rounded border border-border bg-field px-2 py-1 text-sm text-text"
           />
           <p v-if="request.adminComment" class="mt-1 text-xs text-muted">
             Комментарий: {{ request.adminComment }}

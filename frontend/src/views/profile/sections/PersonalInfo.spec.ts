@@ -214,6 +214,20 @@ describe('PersonalInfo', () => {
     )
   })
 
+  it('рисует поля ввода фоном полей, а не фоном страницы', async () => {
+    const wrapper = await mountSection()
+    const field = editableFieldByLabel(wrapper, 'Город')
+
+    // Фон полей — отдельный токен темы: на осенней теме поле сливалось
+    // со страницей, и было не понять, что сюда можно писать.
+    expect(field.get('button').classes()).toContain('bg-field')
+
+    await field.get('button').trigger('click')
+
+    // В режиме правки поле тоже не темнеет: тот же фон полей.
+    expect(field.get('input').classes()).toContain('bg-field')
+  })
+
   it('показывает сообщение бэкенда, если сохранить не удалось', async () => {
     const wrapper = await mountSection()
     mocked.updateMe.mockRejectedValue(

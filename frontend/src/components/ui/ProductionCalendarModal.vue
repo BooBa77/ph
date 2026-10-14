@@ -226,7 +226,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             type="date"
             :min="yearStart"
             :max="yearEnd"
-            class="rounded border border-border bg-bg px-2 py-1 text-sm text-text"
+            class="rounded border border-border bg-field px-2 py-1 text-sm text-text"
           />
         </label>
         <label class="flex flex-col gap-1 text-xs text-muted">
@@ -236,7 +236,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             type="date"
             :min="yearStart"
             :max="yearEnd"
-            class="rounded border border-border bg-bg px-2 py-1 text-sm text-text"
+            class="rounded border border-border bg-field px-2 py-1 text-sm text-text"
           />
         </label>
         <button
@@ -256,7 +256,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             type="text"
             maxlength="100"
             placeholder="отпуск, каникулы, межвахта"
-            class="rounded border border-border bg-bg px-2 py-1 text-sm text-text"
+            class="rounded border border-border bg-field px-2 py-1 text-sm text-text"
           />
         </label>
       </div>

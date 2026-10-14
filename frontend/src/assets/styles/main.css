@@ -5,8 +5,8 @@
  *   1. @import "tailwindcss" — подключает сам Tailwind и его утилиты.
  *   2. @import "./themes.css" — подключает наши значения --theme-*.
  *   3. @theme inline — маппит --theme-* в --color-*, чтобы Tailwind
- *      сгенерировал утилиты: bg-bg, bg-surface, text-text, text-muted,
- *      border-border, text-primary / bg-primary / border-primary.
+ *      сгенерировал утилиты: bg-bg, bg-surface, bg-field, text-text,
+ *      text-muted, border-border, text-primary / bg-primary / border-primary.
  *
  * Про @theme inline:
  *   Без `inline` Tailwind подставит значение переменной на этапе сборки
@@ -21,6 +21,7 @@
 @theme inline {
   --color-bg: var(--theme-bg);
   --color-surface: var(--theme-surface);
+  --color-field: var(--theme-field);
   --color-text: var(--theme-text);
   --color-muted: var(--theme-muted);
   --color-border: var(--theme-border);
