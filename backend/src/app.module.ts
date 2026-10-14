@@ -12,6 +12,7 @@ import { UsersModule } from './users/users.module';
 import { AuthModule } from './auth/auth.module';
 import { StorageModule } from './storage/storage.module';
 import { CalendarModule } from './calendar/calendar.module';
+import { TripsModule } from './trips/trips.module';
 
 @Module({
   imports: [
@@ -66,6 +67,7 @@ import { CalendarModule } from './calendar/calendar.module';
     UsersModule,
     AuthModule,
     CalendarModule,
+    TripsModule,
   ],
   controllers: [AppController],
     providers: [

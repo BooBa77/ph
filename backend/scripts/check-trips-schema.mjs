@@ -1,0 +1,460 @@
+/**
+ * Проверка инвариантов схемы походов на живой базе.
+ *
+ * Зачем отдельный скрипт, если есть тесты. Проверять здесь нужно не
+ * поведение эндпоинтов (их пока нет), а **схему**: CHECK-и, уникальные
+ * индексы, составные внешние ключи и триггеры. Всё это живёт в базе,
+ * а не в коде, и обычный `vitest` до него не дотягивается. Скрипт идёт
+ * по host-соединению, поэтому работает локально — без Docker и без
+ * `@swc/core`, на котором спотыкаются бэкендовые тесты в песочнице.
+ *
+ * Ценность доказана дважды, и оба раза на ровном месте:
+ *   - CHECK вида `"sport_type" IS NULL OR "sport_kind" = 'tourism'`
+ *     пропускал мусор: в SQL `NULL = 'tourism'` даёт `NULL`, а CHECK
+ *     считает `NULL` выполненным. Дыру нашли здесь, а не на ревью;
+ *   - обход `pg_trigger_depth()` в триггере организатора оказался
+ *     не нужен — каскадное удаление похода триггер не задевает.
+ *
+ * **Скрипт ничего не меняет в базе.** Всё идёт в одной транзакции,
+ * которая в конце откатывается, а каждая проверка обёрнута в SAVEPOINT:
+ * исключения здесь ожидаются, и без savepoint первое же убило бы
+ * транзакцию целиком. Успешная проверка фиксируется (`RELEASE SAVEPOINT`),
+ * неуспешная откатывается — проверки идут цепочкой и строят состояние
+ * друг для друга.
+ *
+ * Запуск (нужна живая dev-база):
+ *   node scripts/check-trips-schema.mjs
+ *   npm run check:trips-schema
+ */
+import pg from 'pg';
+
+const url = process.env.MIGRATION_DATABASE_URL ?? process.env.DATABASE_URL;
+if (!url) {
+  console.error('Нужен MIGRATION_DATABASE_URL или DATABASE_URL');
+  process.exit(2);
+}
+
+/**
+ * Защита от запуска на проде. Транзакция откатывается и данные бы не
+ * пострадали, но блокировки на боевой таблице `users` брать незачем,
+ * а ошибка в скрипте обошлась бы дорого. Прод живёт за `postgres:5432`
+ * внутри docker-сети; локальная разработка — на `127.0.0.1:5434`.
+ */
+const host = new URL(url).hostname;
+if (!['127.0.0.1', 'localhost', '::1', 'postgres'].includes(host)) {
+  console.error(
+    `Отказ: скрипт только для dev-базы, а хост — ${host}. Проверка рассчитана на пустую dev-базу.`,
+  );
+  process.exit(2);
+}
+
+const client = new pg.Client({ connectionString: url });
+await client.connect();
+
+const rows = [];
+let failed = 0;
+
+async function check(name, expectation, sql, params = []) {
+  await client.query('SAVEPOINT sp');
+  try {
+    await client.query(sql, params);
+    await client.query('RELEASE SAVEPOINT sp');
+    if (expectation === 'fail') {
+      failed += 1;
+      rows.push(['ПРОШЛО, а должно упасть', name, '']);
+    } else {
+      rows.push(['ok', name, '']);
+    }
+  } catch (error) {
+    await client.query('ROLLBACK TO SAVEPOINT sp');
+    await client.query('RELEASE SAVEPOINT sp');
+    if (expectation === 'ok') {
+      failed += 1;
+      rows.push(['УПАЛО, а должно пройти', name, error.message.split('\n')[0]]);
+    } else {
+      rows.push(['ok (упало, как ждали)', name, error.message.split('\n')[0]]);
+    }
+  }
+}
+
+await client.query('BEGIN');
+
+const user = await client.query(
+  'SELECT id FROM users ORDER BY created_at LIMIT 1',
+);
+const activityType = await client.query(
+  'SELECT id FROM calendar_activity_types LIMIT 1',
+);
+
+if (user.rowCount === 0 || activityType.rowCount === 0) {
+  console.error(
+    'Нужны хотя бы один пользователь и один тип активности: без них нечего проверять.',
+  );
+  await client.query('ROLLBACK');
+  await client.end();
+  process.exit(2);
+}
+
+const user1 = user.rows[0].id;
+const user2 = (
+  await client.query(
+    `INSERT INTO users (display_name) VALUES ('Тестовый участник') RETURNING id`,
+  )
+).rows[0].id;
+const activityTypeId = activityType.rows[0].id;
+
+const objectId = (
+  await client.query(
+    `INSERT INTO objects (name, type) VALUES ('Тестовая вершина', 'вершина') RETURNING id`,
+  )
+).rows[0].id;
+const parentId = (
+  await client.query(
+    `INSERT INTO objects (name, type) VALUES ('Тестовая система', 'горная система') RETURNING id`,
+  )
+).rows[0].id;
+
+const tripId = (
+  await client.query(
+    `INSERT INTO trips (organizer_user_id, goal_object_id, route_text, activity_type_ids)
+     VALUES ($1, $2, '', $3) RETURNING id`,
+    [user1, objectId, [activityTypeId]],
+  )
+).rows[0].id;
+
+// ─── Справочник объектов ───
+await check(
+  'objects: самоссылка через parent_id запрещена',
+  'fail',
+  `UPDATE objects SET parent_id = id WHERE id = $1`,
+  [objectId],
+);
+await check(
+  'objects: нормальный родитель принимается',
+  'ok',
+  `UPDATE objects SET parent_id = $2 WHERE id = $1`,
+  [objectId, parentId],
+);
+
+// ─── Поход: активности, даты, спорт, коммерция ───
+await check(
+  'trips: несуществующий id активности отклонён триггером',
+  'fail',
+  `UPDATE trips SET activity_type_ids = '{999999}' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: пустой массив активностей принимается',
+  'ok',
+  `UPDATE trips SET activity_type_ids = '{}' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: decided без дат запрещён',
+  'fail',
+  `UPDATE trips SET status = 'decided' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: decided с датами принимается',
+  'ok',
+  `UPDATE trips SET status = 'decided', starts_at = now(), ends_at = now() + interval '5 days' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: конец раньше начала запрещён',
+  'fail',
+  `UPDATE trips SET ends_at = starts_at - interval '1 day' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: коммерческий поход без цены запрещён',
+  'fail',
+  `UPDATE trips SET is_commercial = true WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: коммерческий поход с ценой принимается',
+  'ok',
+  `UPDATE trips SET is_commercial = true, price_rub = 25000 WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: нулевая цена запрещена',
+  'fail',
+  `UPDATE trips SET price_rub = 0 WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: официальный поход без вида спорта запрещён',
+  'fail',
+  `UPDATE trips SET is_official = true WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: официальный туризм без вида туризма запрещён',
+  'fail',
+  `UPDATE trips SET is_official = true, sport_kind = 'tourism', sport_category = '2' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: официальный туризм 2 к.с. пеший принимается',
+  'ok',
+  `UPDATE trips SET is_official = true, sport_kind = 'tourism', sport_type = 'hiking', sport_category = '2' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: категория не из своей шкалы запрещена',
+  'fail',
+  `UPDATE trips SET sport_category = '2Б' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: альпинизм 3Б без вида туризма принимается',
+  'ok',
+  `UPDATE trips SET sport_kind = 'alpinism', sport_type = NULL, sport_category = '3Б' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: скайраннинг без категории принимается',
+  'ok',
+  `UPDATE trips SET sport_kind = 'skyrunning', sport_category = NULL WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: вид туризма у скайраннинга запрещён',
+  'fail',
+  `UPDATE trips SET sport_type = 'hiking' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: снимаем спортивные признаки для проверки NULL-семантики',
+  'ok',
+  `UPDATE trips SET is_official = false, sport_kind = NULL, sport_type = NULL, sport_category = NULL WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: категория без вида спорта запрещена (NULL в CHECK — это не false)',
+  'fail',
+  `UPDATE trips SET sport_category = '3Б' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: вид туризма без вида спорта запрещён (NULL в CHECK — это не false)',
+  'fail',
+  `UPDATE trips SET sport_type = 'hiking' WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'trips: идею нельзя отменить',
+  'fail',
+  `INSERT INTO trips (organizer_user_id, goal_object_id, status, cancelled_at) VALUES ($1, $2, 'idea', now())`,
+  [user1, objectId],
+);
+
+// ─── Варианты дат ───
+await check(
+  'варианты: пустая строка запрещена',
+  'fail',
+  `INSERT INTO trip_date_variants (trip_id) VALUES ($1)`,
+  [tripId],
+);
+await check(
+  'варианты: дельта без продолжительности запрещена',
+  'fail',
+  `INSERT INTO trip_date_variants (trip_id, duration_delta) VALUES ($1, 1)`,
+  [tripId],
+);
+await check(
+  'варианты: «летом на неделю» (месяц и дни) принимается',
+  'ok',
+  `INSERT INTO trip_date_variants (trip_id, month, duration_days, duration_delta) VALUES ($1, 6, 7, 0)`,
+  [tripId],
+);
+await check(
+  'варианты: день без месяца запрещён',
+  'fail',
+  `INSERT INTO trip_date_variants (trip_id, day) VALUES ($1, 5)`,
+  [tripId],
+);
+await check(
+  'варианты: год вне диапазона запрещён',
+  'fail',
+  `INSERT INTO trip_date_variants (trip_id, year) VALUES ($1, 1900)`,
+  [tripId],
+);
+
+// ─── Участники и роли ───
+await client.query(
+  `INSERT INTO trip_participants (trip_id, user_id, status) VALUES ($1, $2, 'going')`,
+  [tripId, user1],
+);
+await client.query(
+  `INSERT INTO trip_participants (trip_id, user_id, status) VALUES ($1, $2, 'maybe')`,
+  [tripId, user2],
+);
+await check(
+  'участники: дубликат пары (поход, человек) запрещён',
+  'fail',
+  `INSERT INTO trip_participants (trip_id, user_id) VALUES ($1, $2)`,
+  [tripId, user2],
+);
+await check(
+  'участники: статус вне словаря запрещён',
+  'fail',
+  `UPDATE trip_participants SET status = 'thinking' WHERE trip_id = $1 AND user_id = $2`,
+  [tripId, user2],
+);
+await check(
+  'участники: организатора удалить нельзя (триггер)',
+  'fail',
+  `DELETE FROM trip_participants WHERE trip_id = $1 AND user_id = $2`,
+  [tripId, user1],
+);
+await check(
+  'участники: обычного участника удалить можно',
+  'ok',
+  `DELETE FROM trip_participants WHERE trip_id = $1 AND user_id = $2`,
+  [tripId, user2],
+);
+
+const roleId = (
+  await client.query(
+    `INSERT INTO roles (code, name) VALUES ('leader', 'Руководитель') RETURNING id`,
+  )
+).rows[0].id;
+await client.query(
+  `INSERT INTO trip_participant_roles (trip_id, user_id, role_id) VALUES ($1, $2, $3)`,
+  [tripId, user1, roleId],
+);
+await check(
+  'роли: роль человеку не из похода запрещена (составной FK)',
+  'fail',
+  `INSERT INTO trip_participant_roles (trip_id, user_id, role_id) VALUES ($1, $2, $3)`,
+  [tripId, user2, roleId],
+);
+await check(
+  'роли: дубликат роли запрещён',
+  'fail',
+  `INSERT INTO trip_participant_roles (trip_id, user_id, role_id) VALUES ($1, $2, $3)`,
+  [tripId, user1, roleId],
+);
+
+// ─── Заявки и приглашения ───
+await check(
+  'заявки: заявка принимается',
+  'ok',
+  `INSERT INTO trip_membership_requests (trip_id, user_id, direction) VALUES ($1, $2, 'apply')`,
+  [tripId, user2],
+);
+await check(
+  'заявки: приглашение поверх заявки запрещено',
+  'fail',
+  `INSERT INTO trip_membership_requests (trip_id, user_id, direction) VALUES ($1, $2, 'invite')`,
+  [tripId, user2],
+);
+await check(
+  'заявки: направление вне словаря запрещено',
+  'fail',
+  `INSERT INTO trip_membership_requests (trip_id, user_id, direction) VALUES ($1, $2, 'demand')`,
+  [tripId, user1],
+);
+
+// ─── Чаты и сообщения ───
+const chatId = (
+  await client.query(
+    `INSERT INTO chats (kind, trip_id) VALUES ('trip_guest', $1) RETURNING id`,
+    [tripId],
+  )
+).rows[0].id;
+await client.query(
+  `INSERT INTO chats (kind, trip_id) VALUES ('trip_members', $1)`,
+  [tripId],
+);
+await check(
+  'чаты: второй чат того же вида на поход запрещён',
+  'fail',
+  `INSERT INTO chats (kind, trip_id) VALUES ('trip_guest', $1)`,
+  [tripId],
+);
+await client.query(
+  `INSERT INTO group_messages (chat_id, sender_id, body) VALUES ($1, $2, 'привет')`,
+  [chatId, user1],
+);
+await client.query(
+  `INSERT INTO group_messages (chat_id, sender_id, body) VALUES ($1, NULL, 'Иван подал заявку')`,
+  [chatId],
+);
+
+// ─── Триггер на объект в тексте маршрута ───
+await client.query(`UPDATE trips SET route_text = $2 WHERE id = $1`, [
+  tripId,
+  `Идём на [[object:${objectId}]] через перевал`,
+]);
+await check(
+  'объект: удаление упомянутого в route_text запрещено (триггер)',
+  'fail',
+  `DELETE FROM objects WHERE id = $1`,
+  [objectId],
+);
+await check(
+  'объект: удаление родителя с детьми запрещено (RESTRICT)',
+  'fail',
+  `DELETE FROM objects WHERE id = $1`,
+  [parentId],
+);
+
+// ─── Каскад при удалении похода ───
+/**
+ * Две проверки — пара, и смысл у них общий: триггер организатора не
+ * должен мешать каскадному удалению похода. Здесь раньше стоял обход
+ * через `pg_trigger_depth()`, но проверка показала, что каскад триггер
+ * не задевает вовсе (RI-триггер идёт со снимком, в котором удаляемый
+ * поход уже не виден), и обход из схемы убран как лишний. Если кто-то
+ * вернёт его «на всякий случай», эти две строки объяснят, почему не надо.
+ */
+const counts = `
+  SELECT (SELECT count(*) FROM trip_participants WHERE trip_id = $1)::int AS participants,
+         (SELECT count(*) FROM chats WHERE trip_id = $1)::int AS chats,
+         (SELECT count(*) FROM group_messages WHERE chat_id = $2)::int AS messages,
+         (SELECT count(*) FROM trip_date_variants WHERE trip_id = $1)::int AS variants,
+         (SELECT count(*) FROM trip_participant_roles WHERE trip_id = $1)::int AS roles
+`;
+const before = (await client.query(counts, [tripId, chatId])).rows[0];
+await check(
+  'поход: удаление проходит, несмотря на триггер организатора',
+  'ok',
+  `DELETE FROM trips WHERE id = $1`,
+  [tripId],
+);
+const after = (await client.query(counts, [tripId, chatId])).rows[0];
+
+const cascadeClean =
+  after.participants === 0 &&
+  after.chats === 0 &&
+  after.messages === 0 &&
+  after.variants === 0 &&
+  after.roles === 0;
+if (!cascadeClean) failed += 1;
+rows.push([
+  cascadeClean ? 'ok' : 'ОСТАЛСЯ МУСОР',
+  `каскад убрал за походом (было: участников ${before.participants}, чатов ${before.chats}, сообщений ${before.messages}, вариантов ${before.variants}, ролей ${before.roles})`,
+  '',
+]);
+
+await check(
+  'объект: после удаления похода ссылок нет — объект удаляется',
+  'ok',
+  `DELETE FROM objects WHERE id = $1`,
+  [objectId],
+);
+
+await client.query('ROLLBACK');
+await client.end();
+
+for (const [status, name, detail] of rows) {
+  console.log(`${status.padEnd(32)} ${name}${detail ? `  ← ${detail}` : ''}`);
+}
+console.log('');
+console.log(failed === 0 ? 'ВСЕ ПРОВЕРКИ ПРОШЛИ' : `ПРОВАЛЕНО: ${failed}`);
+process.exit(failed === 0 ? 0 : 1);
