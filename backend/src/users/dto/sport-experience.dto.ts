@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
-import { IsIn, IsOptional, ValidateNested } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional, ValidateNested } from 'class-validator';
 
 import {
   ALPINISM_RANKS,
@@ -64,6 +64,15 @@ export class AlpinismExperienceDto {
   @IsOptional()
   @IsIn(MOUNTAIN_CATEGORIES)
   maxLeadership?: MountainCategory | null;
+
+  @ApiProperty({
+    description: 'Жетон «Спасение в горах»: участие в спасательных работах',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  rescueToken?: boolean;
 }
 
 export class SkyrunningExperienceDto {

@@ -33,6 +33,12 @@ export class AlpinismExperienceResponseDto {
 
   @ApiProperty({ enum: MOUNTAIN_CATEGORIES, nullable: true })
   maxLeadership: MountainCategory | null;
+
+  @ApiProperty({
+    description: 'Жетон «Спасение в горах»',
+    example: false,
+  })
+  rescueToken: boolean;
 }
 
 export class SkyrunningExperienceResponseDto {
@@ -124,6 +130,7 @@ export class SportExperienceResponseDto {
     alpinism.rank = entity.alpinismRank;
     alpinism.maxParticipation = entity.alpinismMaxParticipation;
     alpinism.maxLeadership = entity.alpinismMaxLeadership;
+    alpinism.rescueToken = entity.alpinismRescueToken;
 
     const skyrunning = new SkyrunningExperienceResponseDto();
     skyrunning.rank = entity.skyrunningRank;

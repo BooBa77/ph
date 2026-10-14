@@ -206,6 +206,9 @@ export class UsersService {
       if (alpinism.maxLeadership !== undefined) {
         row.alpinismMaxLeadership = alpinism.maxLeadership;
       }
+      if (alpinism.rescueToken !== undefined) {
+        row.alpinismRescueToken = alpinism.rescueToken;
+      }
     }
 
     if (data.skyrunning?.rank !== undefined) {
@@ -290,17 +293,20 @@ export class UsersService {
 }
 
 /**
- * Пуст ли спортивный опыт: все колонки NULL.
+ * Пуст ли спортивный опыт: все колонки NULL, а галочка-жетон снята.
  *
  * Список колонок перечислен руками намеренно: новую колонку сюда надо
  * добавить, иначе строка с одним только новым значением будет считаться
  * пустой и удалится. Это заметно сразу — значение просто не сохранится.
  */
 function isSportExperienceEmpty(row: SportExperience): boolean {
-  const values: (string | null | undefined)[] = [
+  const values: (string | boolean | null | undefined)[] = [
     row.alpinismRank,
     row.alpinismMaxParticipation,
     row.alpinismMaxLeadership,
+    // Снятая галочка — пустое значение: строка с одной только снятой
+    // галочкой не должна оставаться в базе.
+    row.alpinismRescueToken ? true : null,
     row.skyrunningRank,
     row.tourismRank,
     row.tourismMaxHiking,

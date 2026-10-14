@@ -76,6 +76,43 @@ describe('useAppStore', () => {
     })
   })
 
+  describe('сезонная анимация', () => {
+    it('по умолчанию включена', () => {
+      expect(useAppStore().isSeasonAnimationEnabled).toBe(true)
+    })
+
+    it('выключается и переживает перезагрузку', async () => {
+      const first = await freshStore()
+      first.useAppStore().setSeasonAnimation(false)
+
+      expect(localStorage.getItem('ph.seasonAnimation')).toBe('off')
+
+      // Перезагрузка страницы: store создаётся заново и читает хранилище.
+      const second = await freshStore()
+
+      expect(second.useAppStore().isSeasonAnimationEnabled).toBe(false)
+    })
+
+    it('включается обратно', () => {
+      const store = useAppStore()
+
+      store.setSeasonAnimation(false)
+      store.setSeasonAnimation(true)
+
+      expect(store.isSeasonAnimationEnabled).toBe(true)
+      expect(localStorage.getItem('ph.seasonAnimation')).toBe('on')
+    })
+
+    it('не верит произвольному значению в хранилище', async () => {
+      localStorage.setItem('ph.seasonAnimation', 'может быть')
+
+      const { useAppStore: store } = await freshStore()
+
+      // Храним именно «выключено»: всё, что не 'off', — включено.
+      expect(store().isSeasonAnimationEnabled).toBe(true)
+    })
+  })
+
   describe('последний раздел личного кабинета', () => {
     it('по умолчанию ведёт в «Профиль»', () => {
       const store = useAppStore()

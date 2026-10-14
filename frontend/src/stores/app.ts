@@ -18,6 +18,27 @@ const LAST_PROFILE_PATH_KEY = 'ph.lastProfilePath'
 export const DEFAULT_PROFILE_PATH = '/profile/personal'
 
 /**
+ * Ключ в localStorage: выключена ли сезонная анимация.
+ *
+ * Как и «последний раздел ЛК», это настройка конкретного браузера,
+ * а не данные пользователя: на телефоне декор может мешать, на большом
+ * экране — нравиться. Поэтому localStorage, а не колонка в профиле.
+ * Храним именно «выключено»: отсутствие ключа — это включённая анимация
+ * по умолчанию, и старые браузеры без ключа ведут себя как раньше.
+ */
+const SEASON_ANIMATION_KEY = 'ph.seasonAnimation'
+
+/** Читать настройку анимации: по умолчанию включена. */
+function readSeasonAnimation(): boolean {
+  try {
+    return localStorage.getItem(SEASON_ANIMATION_KEY) !== 'off'
+  } catch {
+    // Приватный режим или отключённое хранилище — не повод падать.
+    return true
+  }
+}
+
+/**
  * Прочитать сохранённый путь.
  *
  * Проверяем, что это действительно раздел ЛК: в localStorage могло
@@ -95,6 +116,25 @@ export const useAppStore = defineStore('app', () => {
   // ─── личный кабинет ───
 
   /**
+   * Показывать ли сезонный декор (осенью — падающие листья).
+   *
+   * Значение читается один раз при создании стора и переживает
+   * перезагрузку; `SeasonDecor` смотрит на него и при `false` не рендерит
+   * слой вовсе — не «прячет» его, а именно не создаёт.
+   */
+  const isSeasonAnimationEnabled = ref(readSeasonAnimation())
+
+  /** Включить или выключить сезонную анимацию. */
+  function setSeasonAnimation(enabled: boolean) {
+    isSeasonAnimationEnabled.value = enabled
+    try {
+      localStorage.setItem(SEASON_ANIMATION_KEY, enabled ? 'on' : 'off')
+    } catch {
+      // Хранилище недоступно — в этой сессии настройка всё равно работает.
+    }
+  }
+
+  /**
    * Последний открытый раздел ЛК.
    *
    * Клик по аватарке в шапке должен вести туда, откуда пользователь
@@ -132,5 +172,9 @@ export const useAppStore = defineStore('app', () => {
     // личный кабинет
     lastProfilePath,
     setLastProfilePath,
+
+    // оформление
+    isSeasonAnimationEnabled,
+    setSeasonAnimation,
   }
 })

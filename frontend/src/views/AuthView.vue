@@ -100,6 +100,20 @@ function backToEmail() {
 
 <template>
   <main class="auth">
+    <!--
+      Иллюстрация проекта: двое у горы. Единственное место, где она
+      уместна целиком — страница входа: до логина у человека нет ни
+      шапки, ни кабинета, и это первое, что он видит. В шапке остаётся
+      простой знак (`logo.svg`): в 28 px детали рисунка не читаются.
+    -->
+    <img
+      src="/img/site-logo.webp"
+      alt=""
+      width="320"
+      height="320"
+      class="auth__logo"
+    />
+
     <h1>PeakHunter</h1>
 
     <form
@@ -195,6 +209,22 @@ function backToEmail() {
   margin: 4rem auto;
   padding: 1.5rem;
   color: var(--theme-text);
+}
+/*
+  Иллюстрация: 240 px по ширине, по центру. Высоту не фиксируем —
+  картинка квадратная, и `height: auto` держит пропорции на узких
+  экранах, где 240 px не влезают.
+*/
+.auth__logo {
+  display: block;
+  width: min(240px, 72%);
+  height: auto;
+  margin: 0 auto 0.75rem;
+}
+.auth h1 {
+  /* Заголовок под картинкой по центру: иначе он «прилипал» бы влево
+     под центрированной иллюстрацией. */
+  text-align: center;
 }
 .auth__form {
   display: flex;

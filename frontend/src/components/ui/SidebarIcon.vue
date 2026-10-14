@@ -14,14 +14,7 @@
  * опечатка в имени станет ошибкой типов, а не пустым местом в меню.
  */
 defineProps<{
-  name:
-    | 'profile'
-    | 'calendar'
-    | 'sessions'
-    | 'settings'
-    | 'install'
-    | 'logout'
-    | 'home'
+  name: 'profile' | 'sport' | 'calendar' | 'settings' | 'install' | 'logout' | 'home'
 }>()
 </script>
 
@@ -31,7 +24,7 @@ defineProps<{
     viewBox="0 0 24 24"
     fill="none"
     stroke="currentColor"
-    stroke-width="1.8"
+    stroke-width="2.4"
     stroke-linecap="round"
     stroke-linejoin="round"
     aria-hidden="true"
@@ -50,11 +43,11 @@ defineProps<{
       <path d="M8 3v4M16 3v4" />
     </template>
 
-    <!-- Сессии: устройства -->
-    <template v-else-if="name === 'sessions'">
-      <rect x="2" y="4" width="14" height="10" rx="1.5" />
-      <path d="M2 17h14" />
-      <rect x="17" y="9" width="5" height="11" rx="1.5" />
+    <!-- Спортивный опыт: вершина с флажком на пути -->
+    <template v-else-if="name === 'sport'">
+      <path d="M3 20h18" />
+      <path d="M5 20l6-12 4 8" />
+      <path d="M15 20l3-4 3 4" />
     </template>
 
     <!-- Настройки: ползунки. Шестерёнка на 20 px превращается в кашу,

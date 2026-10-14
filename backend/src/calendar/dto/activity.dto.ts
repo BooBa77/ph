@@ -1,5 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 import type { ActivityRequestStatus } from '../entities/activity-type-request.entity';
 
@@ -54,7 +62,10 @@ export class ActivityGroupDto {
   @ApiProperty({ example: 'Спорт' })
   label: string;
 
-  @ApiProperty({ example: '#1d6fb8', description: 'Цвет обводки иконок группы' })
+  @ApiProperty({
+    example: '#1d6fb8',
+    description: 'Цвет обводки иконок группы',
+  })
   color: string;
 
   @ApiProperty({ type: [ActivityTypeDto] })
@@ -114,11 +125,15 @@ export class ActivityDictionaryDto {
   @ApiProperty({ type: [Number], example: [1, 3, 7] })
   favorites: number[];
 
-  @ApiProperty({ type: [ActivityRequestDto], description: 'Запросы самого пользователя' })
+  @ApiProperty({
+    type: [ActivityRequestDto],
+    description: 'Запросы самого пользователя',
+  })
   requests: ActivityRequestDto[];
 
   @ApiProperty({
-    description: 'Админ ли запросивший: по этому флагу фронт показывает модерацию',
+    description:
+      'Админ ли запросивший: по этому флагу фронт показывает модерацию',
     example: false,
   })
   isAdmin: boolean;
@@ -192,16 +207,28 @@ export class DecideActivityRequestDto {
   })
   status: Exclude<ActivityRequestStatus, 'pending'>;
 
-  @ApiProperty({ required: false, maxLength: 500, example: 'фигурка слишком мелкая' })
+  @ApiProperty({
+    required: false,
+    maxLength: 500,
+    example: 'фигурка слишком мелкая',
+  })
   @IsOptional()
   @IsString()
   @MaxLength(500, { message: 'Комментарий не должен превышать 500 символов' })
   comment?: string | null;
 }
 
-/** Решение админа по типу: включить (одобрить вариант иконки) или погасить. */
+/**
+ * Решение админа по типу: включить (одобрить вариант иконки) или погасить.
+ *
+ * `@IsBoolean` здесь обязателен, а не для красоты: ValidationPipe включён
+ * с `whitelist` и `forbidNonWhitelisted`, поэтому поле без валидационного
+ * декоратора считается лишним и запрос падает с 400 «property isActive
+ * should not exist». Именно так клик по иконке в модерации и ломался.
+ */
 export class SetTypeActiveDto {
   @ApiProperty({ example: true })
+  @IsBoolean({ message: 'isActive должен быть true или false' })
   isActive: boolean;
 }
 
@@ -213,7 +240,10 @@ export class ModerationItemDto {
   @ApiProperty({ example: 'борда' })
   label: string;
 
-  @ApiProperty({ example: 'board', description: 'Ключ иконки: по нему фронт рисует вариант' })
+  @ApiProperty({
+    example: 'board',
+    description: 'Ключ иконки: по нему фронт рисует вариант',
+  })
   icon: string;
 
   @ApiProperty({ example: 'sport' })

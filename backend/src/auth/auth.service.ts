@@ -6,7 +6,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, IsNull, MoreThan, Repository } from 'typeorm';
 import { createHash, randomBytes } from 'crypto';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
@@ -14,6 +14,7 @@ import { UAParser } from 'ua-parser-js';
 
 import { AuthIdentity } from './entities/auth-identity.entity';
 import { Session } from './entities/session.entity';
+import { SessionDto } from './dto/session.dto';
 import { UsersService } from '../users/users.service';
 import { User } from '../users/entities/user.entity';
 import { EmailCodeService } from '../email/services/email-code.service';
@@ -194,7 +195,9 @@ export class AuthService {
     session.expiresAt = this.getRefreshExpiry();
     await this.sessionRepo.save(session);
 
-    const accessToken = await this.jwtService.signAsync({ sub: session.userId });
+    const accessToken = await this.jwtService.signAsync({
+      sub: session.userId,
+    });
 
     return {
       accessToken,
@@ -218,6 +221,64 @@ export class AuthService {
 
     session.revokedAt = new Date();
     await this.sessionRepo.save(session);
+  }
+
+  /**
+   * Активные сессии пользователя — для раздела «Настройки → Сессии».
+   *
+   * Показываем только живые: отозванные и истёкшие в списке устройств
+   * смысла не имеют — отозвать их повторно нельзя, а «когда-то было»
+   * в списке текущих устройств только путает.
+   */
+  async listSessions(
+    userId: string,
+    rawRefreshToken?: string,
+  ): Promise<SessionDto[]> {
+    const currentHash = rawRefreshToken
+      ? this.hashRefreshToken(rawRefreshToken)
+      : null;
+
+    const sessions = await this.sessionRepo.find({
+      where: {
+        userId,
+        revokedAt: IsNull(),
+        expiresAt: MoreThan(new Date()),
+      },
+      order: { createdAt: 'DESC' },
+    });
+
+    return sessions.map((session) => {
+      const dto = new SessionDto();
+      dto.id = session.id;
+      dto.deviceLabel = session.deviceLabel;
+      dto.createdAt = session.createdAt;
+      dto.expiresAt = session.expiresAt;
+      dto.isCurrent =
+        currentHash !== null && session.refreshTokenHash === currentHash;
+      return dto;
+    });
+  }
+
+  /**
+   * Отозвать сессию устройства.
+   *
+   * @returns false, если сессии нет или она чужая — контроллер отвечает
+   *          на это 404. Условие `userId` в запросе и есть защита: зная
+   *          чужой uuid сессии, выкинуть человека нельзя.
+   */
+  async revokeSession(userId: string, sessionId: string): Promise<boolean> {
+    const session = await this.sessionRepo.findOne({
+      where: { id: sessionId, userId },
+    });
+
+    if (!session) return false;
+
+    if (!session.revokedAt) {
+      session.revokedAt = new Date();
+      await this.sessionRepo.save(session);
+    }
+
+    return true;
   }
 
   // ─── helpers ───

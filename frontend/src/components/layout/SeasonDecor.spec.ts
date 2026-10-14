@@ -27,6 +27,9 @@ async function mountAutumn() {
 describe('SeasonDecor', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    // Настройка анимации живёт в localStorage, а store читает её при
+    // создании: без очистки тест, выключивший анимацию, сломал бы соседний.
+    localStorage.clear()
   })
 
   it('осенью рисует листья', async () => {
@@ -89,5 +92,30 @@ describe('SeasonDecor', () => {
       expect(duration).toBeGreaterThanOrEqual(45)
       expect(duration).toBeLessThanOrEqual(90)
     }
+  })
+
+  it('выключенная анимация убирает слой вместе с листьями', async () => {
+    useAppStore().setTheme(4)
+    useAppStore().setSeasonAnimation(false)
+
+    const wrapper = mount(SeasonDecor)
+    await nextTick()
+
+    // Слой не создаётся вовсе: скрывать его стилями значило бы гонять
+    // анимации вхолостую и держать перехват кликов.
+    expect(wrapper.find('.leaves').exists()).toBe(false)
+    expect(wrapper.findAll('.leaf')).toHaveLength(0)
+  })
+
+  it('включённая анимация возвращает слой', async () => {
+    useAppStore().setSeasonAnimation(false)
+    useAppStore().setTheme(4)
+    expect(mount(SeasonDecor).find('.leaves').exists()).toBe(false)
+
+    useAppStore().setSeasonAnimation(true)
+    const wrapper = mount(SeasonDecor)
+    await nextTick()
+
+    expect(wrapper.find('.leaves').exists()).toBe(true)
   })
 })

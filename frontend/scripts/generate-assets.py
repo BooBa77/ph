@@ -1,22 +1,28 @@
 """Генерация графики PeakHunter.
 
-Рисуем кодом, а не держим бинарники «из редактора»: источник картинки
-остаётся в репозитории, любую можно поправить и перегенерировать.
-Интернет для этого не нужен — ни загрузок, ни лицензий.
+Источники — в `scripts/assets/`:
+
+  * `logo.png`   — иллюстрация проекта (двое у горы), от неё идут все
+    крупные растровые версии: иконки PWA, логотип для писем и картинка
+    на странице входа;
+  * `zhdun.png`  — рисунок для дефолтной аватарки.
+
+Мелочь (знак в шапке `logo.svg` и `favicon.ico`) по-прежнему рисуется
+кодом: в 16–28 px иллюстрация превращается в пятно, а простой знак
+читается. Поэтому в проекте две сущности, и это не расхождение:
+иллюстрация — для крупного, знак — для мелкого.
 
 Что делает:
-  1. frontend/public/logo.svg   — знак проекта (его же просит index.html);
-  2. frontend/public/logo-1024.png — тот же знак растром, для писем и
-     соцсетей, где SVG не всегда можно;
+  1. frontend/public/logo.svg   — знак проекта для шапки;
+  2. frontend/public/logo-1024.png — иллюстрация растром: письма,
+     соцсети, превью, где SVG не всегда можно;
   3. frontend/public/icons/*.png — иконки PWA: 192, 512 и maskable.
      Размеры и имена заданы в manifest (см. vite.config.ts);
-  4. frontend/public/img/avatar-default-{512,192,96}.png — дефолтная
-     аватарка: ждун-турист на вершине. Три размера под Retina.
-
-Иконки PWA: 192 и 512 — «any» (браузер рисует поверх свою форму),
-maskable — с запасом по краям, потому что Android обрезает такую иконку
-по своей маске (круг, скруглённый квадрат), и важное должно попасть
-в центральные ~80 %.
+  4. frontend/public/img/site-logo.webp — иллюстрация для страницы входа
+     (WebP: 692 px в PNG весят 800 КБ, а на странице нужен ~240 px);
+  5. frontend/public/img/avatar-default-{512,192,96}.png — дефолтная
+     аватарка из `zhdun.png`. Три размера под Retina;
+  6. frontend/public/favicon.ico — знак, 16–64 px.
 
 Запуск: python generate-assets.py <каталог frontend/public>
 """
@@ -28,7 +34,7 @@ from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-# ─── палитра ───
+# ─── палитра знака ───
 # Фиксированная, а не из сезонных тем: логотип не должен менять цвет
 # при смене сезона, иначе перестаёт быть логотипом.
 BLUE_DARK = (11, 61, 145)
@@ -38,28 +44,26 @@ SUN = (245, 166, 35)
 SNOW = (234, 242, 251)
 SILHOUETTE = (26, 42, 61)
 
-# Фон дефолтной аватарки: нежно-голубое небо к горизонту.
-SKY_TOP = (214, 233, 247)
-SKY_BOTTOM = (240, 247, 252)
+# Бумажный фон иллюстрации — подложка для maskable-иконки.
+PAPER = (250, 249, 243)
 
-# Ждун и его снаряжение.
-ZHDU_N_BODY = (166, 178, 190)
-ZHDU_N_SHADE = (140, 153, 166)
-PANAMA = (196, 140, 74)
-PANAMA_BAND = (150, 100, 48)
-PACK = (194, 106, 52)
+# Исходники графики: рядом со скриптом, а не в public/. В public/ едет
+# только то, что нужно браузеру, — иначе исходник на 800 КБ качался бы
+# пользователями как есть.
+ASSETS = Path(__file__).parent / "assets"
 
 
-def linear_gradient(size: tuple[int, int], top: tuple, bottom: tuple) -> Image.Image:
-    """Вертикальный градиент. Pillow такого не умеет — рисуем построчно."""
-    width, height = size
-    img = Image.new("RGB", size)
-    draw = ImageDraw.Draw(img)
-    for y in range(height):
-        k = y / max(height - 1, 1)
-        color = tuple(round(top[i] + (bottom[i] - top[i]) * k) for i in range(3))
-        draw.line([(0, y), (width, y)], fill=color)
-    return img
+def load_source(name: str) -> Image.Image:
+    """Открыть исходник из `scripts/assets`."""
+    path = ASSETS / name
+    if not path.exists():
+        raise SystemExit(f"Нет исходника графики: {path}")
+    return Image.open(path).convert("RGBA")
+
+
+def resized(image: Image.Image, size: int) -> Image.Image:
+    """Квадрат нужного размера: LANCZOS, иначе края рвутся."""
+    return image.resize((size, size), Image.LANCZOS)
 
 
 def draw_logo(size: int) -> Image.Image:
@@ -100,196 +104,18 @@ def draw_logo(size: int) -> Image.Image:
     return img.resize((size, size), Image.LANCZOS)
 
 
-def draw_maskable(size: int) -> Image.Image:
-    """Иконка под маску Android: важное — в центральных 80 %."""
-    big = size * 4
-    img = Image.new("RGBA", (big, big), BLUE_DARK)
-    d = ImageDraw.Draw(img)
-
-    r = big * 0.09
-    cx, cy = big * 0.66, big * 0.34
-    d.ellipse((cx - r, cy - r, cx + r, cy + r), fill=SUN)
-
-    d.polygon(
-        [(big * 0.14, big * 0.76), (big * 0.38, big * 0.36), (big * 0.62, big * 0.76)],
-        fill=BLUE_MID,
-    )
-    d.polygon(
-        [(big * 0.36, big * 0.76), (big * 0.58, big * 0.46), (big * 0.86, big * 0.76)],
-        fill=(20, 78, 168),
-    )
-    d.polygon(
-        [
-            (big * 0.38, big * 0.36),
-            (big * 0.44, big * 0.47),
-            (big * 0.40, big * 0.48),
-            (big * 0.38, big * 0.45),
-            (big * 0.35, big * 0.48),
-            (big * 0.31, big * 0.47),
-        ],
-        fill=SNOW,
-    )
-
-    return img.resize((size, size), Image.LANCZOS)
-
-
 def draw_avatar(size: int) -> Image.Image:
-    """Дефолтная аватарка: ждун-турист на вершине.
+    """Дефолтная аватарка: рисунок из `assets/zhdun.png`.
 
-    Ждун — узнаваемый интернет-персонаж: мешковатое тело, короткие руки,
-    глаза по бокам головы и хобот. Здесь он ещё и турист: стоит на
-    вершине, в панаме и с рюкзаком за спиной. Так аватарка остаётся
-    в хайкинг-теме проекта, а не превращается в шутку ради шутки.
+    Раньше персонажа рисовали кодом — мешковатое тело, короткие руки,
+    хобот, панама и рюкзак на фоне хребта. Теперь исходник прислан
+    рисунком, и повторять его примитивами незачем: детали вроде штриховки
+    всё равно не воспроизвести, а расхождение с оригиналом заметно.
 
-    Круглую форму не рисуем — её даёт CSS (`rounded-full`). Картинка
-    квадратная: понадобится квадратная аватарка — она уже готова.
+    Круглую форму по-прежнему даёт CSS (`rounded-full`), картинка
+    квадратная.
     """
-    big = size * 4
-    img = linear_gradient((big, big), SKY_TOP, SKY_BOTTOM).convert("RGBA")
-    d = ImageDraw.Draw(img)
-
-    # Солнце.
-    r = big * 0.10
-    d.ellipse((big * 0.73 - r, big * 0.16 - r, big * 0.73 + r, big * 0.16 + r), fill=SUN)
-
-    # Дальний хребет.
-    d.polygon(
-        [
-            (0, big * 0.70),
-            (big * 0.22, big * 0.48),
-            (big * 0.44, big * 0.68),
-            (big * 0.62, big * 0.52),
-            (big, big * 0.74),
-            (big, big),
-            (0, big),
-        ],
-        fill=BLUE_LIGHT,
-    )
-    # Ближний хребет, на нём стоит фигура.
-    d.polygon(
-        [
-            (0, big * 0.87),
-            (big * 0.34, big * 0.72),
-            (big * 0.60, big * 0.88),
-            (big * 0.82, big * 0.78),
-            (big, big * 0.92),
-            (big, big),
-            (0, big),
-        ],
-        fill=(70, 120, 176),
-    )
-
-    # ─── ждун ───
-    # Масштаб от размера картинки, поэтому силуэт читается и на 96 px.
-    #
-    # Размер подобран так, чтобы фигура занимала примерно половину
-    # высоты: в кружке 32 px мелкая фигурка превращается в еле заметное
-    # пятно. При этом важно не вылезти за вписанную окружность — аватарка
-    # круглая, и углы картинки обрезаются: фигура шириной 0.36 стороны
-    # помещается в круг с запасом даже с учётом панамы и рюкзака.
-    scale = big / 512
-    cx = big * 0.45
-    ground = big * 0.87  # опорная линия — «земля» под фигурой
-
-    body_w = 200 * scale
-    body_h = 150 * scale
-    body_top = ground - body_h
-
-    # Рюкзак за спиной — рисуем первым, чтобы тело его перекрыло.
-    pack_w = 66 * scale
-    pack_h = 96 * scale
-    d.rounded_rectangle(
-        (
-            cx + body_w / 2 - 10 * scale,
-            body_top + body_h * 0.18,
-            cx + body_w / 2 + pack_w,
-            body_top + body_h * 0.18 + pack_h,
-        ),
-        radius=int(20 * scale),
-        fill=PACK,
-    )
-
-    # Туловище: мешок с мягко скруглёнными боками.
-    d.rounded_rectangle(
-        (cx - body_w / 2, body_top, cx + body_w / 2, ground),
-        radius=int(body_w * 0.32),
-        fill=ZHDU_N_BODY,
-    )
-
-    # Руки: короткие, свисают по бокам.
-    arm_w = 30 * scale
-    for side in (-1, 1):
-        d.rounded_rectangle(
-            (
-                cx + side * (body_w / 2 + arm_w * 0.62) - arm_w / 2,
-                body_top + body_h * 0.22,
-                cx + side * (body_w / 2 + arm_w * 0.62) + arm_w / 2,
-                body_top + body_h * 0.82,
-            ),
-            radius=int(arm_w * 0.5),
-            fill=ZHDU_N_SHADE,
-        )
-
-    # Голова: сверху, чуть уже тела.
-    head_w = 150 * scale
-    head_h = 92 * scale
-    head_bottom = body_top + 12 * scale
-    d.rounded_rectangle(
-        (cx - head_w / 2, head_bottom - head_h, cx + head_w / 2, head_bottom),
-        radius=int(head_h * 0.46),
-        fill=ZHDU_N_BODY,
-    )
-
-    # Хобот: от низа головы вниз, поверх тела.
-    trunk_w = 28 * scale
-    d.rounded_rectangle(
-        (
-            cx - trunk_w / 2,
-            head_bottom - head_h * 0.45,
-            cx + trunk_w / 2,
-            head_bottom + head_h * 0.72,
-        ),
-        radius=int(trunk_w * 0.5),
-        fill=ZHDU_N_SHADE,
-    )
-
-    # Глаза по бокам головы.
-    eye_r = 12 * scale
-    eye_y = head_bottom - head_h * 0.64
-    for eye_x in (cx - head_w * 0.29, cx + head_w * 0.29):
-        d.ellipse(
-            (eye_x - eye_r, eye_y - eye_r, eye_x + eye_r, eye_y + eye_r),
-            fill=(255, 255, 255, 255),
-        )
-        pupil = eye_r * 0.52
-        d.ellipse(
-            (eye_x - pupil, eye_y - pupil, eye_x + pupil, eye_y + pupil),
-            fill=SILHOUETTE,
-        )
-
-    # Панама: поля и тулья с лентой.
-    brim_w = head_w * 1.5
-    brim_y = head_bottom - head_h - 5 * scale
-    d.ellipse(
-        (cx - brim_w / 2, brim_y - 14 * scale, cx + brim_w / 2, brim_y + 14 * scale),
-        fill=PANAMA,
-    )
-    d.rounded_rectangle(
-        (
-            cx - head_w * 0.36,
-            brim_y - 38 * scale,
-            cx + head_w * 0.36,
-            brim_y + 8 * scale,
-        ),
-        radius=int(27 * scale),
-        fill=PANAMA,
-    )
-    d.rectangle(
-        (cx - head_w * 0.36, brim_y - 16 * scale, cx + head_w * 0.36, brim_y - 7 * scale),
-        fill=PANAMA_BAND,
-    )
-
-    return img.resize((size, size), Image.LANCZOS)
+    return resized(load_source("zhdun.png"), size)
 
 
 def logo_svg() -> str:
@@ -310,15 +136,32 @@ def main() -> None:
     (public / "icons").mkdir(parents=True, exist_ok=True)
     (public / "img").mkdir(parents=True, exist_ok=True)
 
-    # Логотип: SVG плюс растр на 1024 (писем и превью хватает с запасом).
-    (public / "logo.svg").write_text(logo_svg(), encoding="utf-8")
-    draw_logo(1024).save(public / "logo-1024.png", "PNG", optimize=True)
+    logo = load_source("logo.png")
 
-    # Иконки PWA: имена и размеры обязаны совпадать с manifest.
-    draw_logo(192).save(public / "icons" / "icon-192.png", "PNG", optimize=True)
-    draw_logo(512).save(public / "icons" / "icon-512.png", "PNG", optimize=True)
-    draw_maskable(512).save(
-        public / "icons" / "icon-maskable.png", "PNG", optimize=True
+    # Мелкое — из знака: в шапке 28 px и в favicon 16 px иллюстрация
+    # превращается в пятно, а простой знак читается.
+    (public / "logo.svg").write_text(logo_svg(), encoding="utf-8")
+    draw_logo(64).save(public / "favicon.ico", sizes=[(16, 16), (32, 32), (64, 64)])
+
+    # Крупное — из иллюстрации: письма и соцсети (1024), иконки PWA
+    # (192 и 512), картинка на странице входа.
+    resized(logo, 1024).save(public / "logo-1024.png", "PNG", optimize=True)
+    resized(logo, 192).save(public / "icons" / "icon-192.png", "PNG", optimize=True)
+    resized(logo, 512).save(public / "icons" / "icon-512.png", "PNG", optimize=True)
+
+    # Maskable: Android обрезает такую иконку своей маской, поэтому важное
+    # должно попасть в центральные ~80 %. Иллюстрация — круглая виньетка
+    # на прозрачном фоне, поэтому кладём её на бумажный фон рисунка с
+    # запасом по краям: под любой маской останется целая картинка.
+    maskable = Image.new("RGBA", (512, 512), PAPER)
+    inner = resized(logo, 430)
+    maskable.alpha_composite(inner, ((512 - 430) // 2, (512 - 430) // 2))
+    maskable.save(public / "icons" / "icon-maskable.png", "PNG", optimize=True)
+
+    # Страница входа: WebP, потому что исходник в PNG весит 800 КБ,
+    # а на странице картинка показывается около 240 px.
+    resized(logo, 320).save(
+        public / "img" / "site-logo.webp", "WEBP", quality=88, method=6
     )
 
     # Дефолтная аватарка: три размера. 512 — для кабинета (400 px при 1.25x
@@ -328,9 +171,6 @@ def main() -> None:
         draw_avatar(size).save(
             public / "img" / f"avatar-default-{size}.png", "PNG", optimize=True
         )
-
-    # Favicon: из знака, 64 px достаточно (браузер сам масштабирует).
-    draw_logo(64).save(public / "favicon.ico", sizes=[(16, 16), (32, 32), (64, 64)])
 
     for path in sorted(public.rglob("*")):
         if path.is_file():

@@ -184,6 +184,9 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
         rank: 'КМС',
         maxParticipation: '4Б',
         maxLeadership: '3А',
+        // Жетон не присылали — значит, снят: «нет» и «не отвечал» здесь
+        // одно состояние.
+        rescueToken: false,
       },
       skyrunning: { rank: 'I' },
       sportTourism: {
@@ -221,6 +224,7 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
       rank: 'КМС',
       maxParticipation: '4Б',
       maxLeadership: '5А',
+      rescueToken: false,
     });
     expect(
       response.body.sportExperience.sportTourism.maxCategories.hiking,
@@ -332,6 +336,28 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
       },
     }).expect(200);
 
+    expect(response.body.sportExperience).toBeNull();
+    expect(await experienceRows()).toBe(0);
+  });
+
+  it('жетон «Спасение в горах» сохраняется отдельным полем', async () => {
+    const response = await patchMe({
+      sportExperience: { alpinism: { rescueToken: true } },
+    }).expect(200);
+
+    expect(response.body.sportExperience.alpinism.rescueToken).toBe(true);
+    // Остальные поля жетон не трогает: строка появилась только из-за него.
+    expect(response.body.sportExperience.alpinism.rank).toBeNull();
+    expect(await experienceRows()).toBe(1);
+  });
+
+  it('снятый жетон без остальных значений не оставляет строку', async () => {
+    const response = await patchMe({
+      sportExperience: { alpinism: { rescueToken: false } },
+    }).expect(200);
+
+    // Пустая строка (все NULL и снятая галочка) удаляется: «опыт не
+    // заполнен» и «заполнен пустым» — одно состояние.
     expect(response.body.sportExperience).toBeNull();
     expect(await experienceRows()).toBe(0);
   });

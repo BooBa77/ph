@@ -157,6 +157,17 @@ export class SportExperience {
   })
   alpinismMaxLeadership: MountainCategory | null;
 
+  /**
+   * Жетон «Спасение в горах» — участие в спасательных работах.
+   *
+   * Галочка, а не значение словаря: жетон либо есть, либо нет. NOT NULL
+   * DEFAULT false — «нет» и «не отвечал» здесь одно состояние, как
+   * у вегетарианства. При подсчёте «строка пуста» false считается пустым
+   * значением, поэтому строка с одной снятой галочкой не сохраняется.
+   */
+  @Column({ name: 'alpinism_rescue_token', type: 'boolean', default: false })
+  alpinismRescueToken: boolean;
+
   // ─── Скайраннинг ───
 
   @Column({

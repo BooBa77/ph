@@ -83,27 +83,32 @@ async function confirmLogout() {
     </RouterLink>
 
     <!--
-      Сессии — раздела ещё нет, поэтому неактивный пункт, а не ссылка.
-      Как только появится — станет RouterLink с той же иконкой.
+      Спортивный опыт — отдельным пунктом: это девятнадцать списков,
+      и в «Профиле» они растягивали страницу так, что до еды приходилось
+      листать.
     -->
-    <span
-      class="flex flex-1 cursor-not-allowed items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted/50 md:flex-none md:justify-start md:rounded-none md:px-4"
+    <RouterLink
+      to="/profile/sport"
+      class="flex flex-1 items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted no-underline transition-colors hover:bg-bg hover:text-text md:flex-none md:justify-start md:rounded-none md:px-4 md:hover:bg-surface"
+      active-class="bg-bg font-medium text-primary md:bg-surface"
     >
-      <span class="h-5 w-5 shrink-0"><SidebarIcon name="sessions" /></span>
-      <span class="hidden md:inline">Сессии (скоро)</span>
-    </span>
+      <span class="h-5 w-5 shrink-0"><SidebarIcon name="sport" /></span>
+      <span class="hidden md:inline">Спорт</span>
+    </RouterLink>
 
     <!--
-      Настройки — раздела ещё нет, поэтому неактивный пункт, как и
-      «Сессии». Сезонные анимации сюда не выносим: это оформление,
-      а не настройка аккаунта, и отдельного переключателя у них нет.
+      Настройки: сессии устройств и сезонная анимация. Раньше «Сессии»
+      стояли отдельным неактивным пунктом, хотя это настройка аккаунта —
+      теперь оба живут здесь.
     -->
-    <span
-      class="flex flex-1 cursor-not-allowed items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted/50 md:flex-none md:justify-start md:rounded-none md:px-4"
+    <RouterLink
+      to="/profile/settings"
+      class="flex flex-1 items-center justify-center gap-2 rounded px-3 py-2 text-sm text-muted no-underline transition-colors hover:bg-bg hover:text-text md:flex-none md:justify-start md:rounded-none md:px-4 md:hover:bg-surface"
+      active-class="bg-bg font-medium text-primary md:bg-surface"
     >
       <span class="h-5 w-5 shrink-0"><SidebarIcon name="settings" /></span>
-      <span class="hidden md:inline">Настройки (скоро)</span>
-    </span>
+      <span class="hidden md:inline">Настройки</span>
+    </RouterLink>
 
     <!-- Выход: отделён чертой от разделов, на мобиле — в общем ряду -->
     <div class="md:mt-3 md:border-t md:border-border md:pt-3">

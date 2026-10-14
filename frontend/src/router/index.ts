@@ -49,6 +49,20 @@ const router = createRouter({
           component: () =>
             import('@/views/profile/sections/UserCalendar.vue'),
         },
+        {
+          // Спортивный опыт: альпинизм, скайраннинг, спортивный туризм.
+          // Отдельной вкладкой, потому что это девятнадцать списков.
+          path: 'sport',
+          name: 'profile-sport',
+          component: () =>
+            import('@/views/profile/sections/SportExperience.vue'),
+        },
+        {
+          // Настройки: сессии устройств и сезонная анимация.
+          path: 'settings',
+          name: 'profile-settings',
+          component: () => import('@/views/profile/sections/UserSettings.vue'),
+        },
       ],
     },
     {

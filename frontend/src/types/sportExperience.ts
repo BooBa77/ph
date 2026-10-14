@@ -135,6 +135,11 @@ export interface AlpinismExperience {
   rank: AlpinismRank | null
   maxParticipation: MountainCategory | null
   maxLeadership: MountainCategory | null
+  /**
+   * Жетон «Спасение в горах» — участие в спасательных работах.
+   * Галочка, а не значение словаря: жетон либо есть, либо нет.
+   */
+  rescueToken: boolean
 }
 
 export interface SkyrunningExperience {

@@ -23,6 +23,18 @@ const leaves = ref<Leaf[]>([])
 
 const isAutumn = computed(() => appStore.currentTheme === 4)
 
+/**
+ * Показывать ли декор вообще.
+ *
+ * Настройка из «Настроек» (`isSeasonAnimationEnabled`): выключенная
+ * анимация означает, что слой не создаётся совсем — ни листьев в DOM,
+ * ни анимаций в композиторе. Скрывать его стилями было бы хуже: работа
+ * всё равно шла бы, а листья ловили бы клики.
+ */
+const isDecorVisible = computed(
+  () => isAutumn.value && appStore.isSeasonAnimationEnabled,
+)
+
 function makeLeaves(): Leaf[] {
   const count = window.innerWidth < 640 ? 10 : 18
 
@@ -53,7 +65,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div v-if="isAutumn" class="leaves" aria-hidden="true">
+  <div v-if="isDecorVisible" class="leaves" aria-hidden="true">
     <span
       v-for="(leaf, index) in leaves"
       :key="index"

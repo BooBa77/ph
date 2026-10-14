@@ -147,6 +147,8 @@ export interface SportExperienceData {
     rank?: AlpinismRank | null;
     maxParticipation?: MountainCategory | null;
     maxLeadership?: MountainCategory | null;
+    /** Жетон «Спасение в горах»: участие в спасательных работах. */
+    rescueToken?: boolean;
   };
   skyrunning?: {
     rank?: SkyrunningRank | null;
