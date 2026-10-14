@@ -12,6 +12,8 @@
  *
  * **Порядок — от слабого к сильному** («Значок → МС»): в списке, который
  * начинается с МСМК, свой разряд приходится искать через все чужие.
+ * Так же развёрнуты категории маршрутов (1Б → 6Б), категории походов
+ * (1 → 6) и нормативы в дисциплинах (юношеский → I разряд).
  */
 
 /**
@@ -31,19 +33,19 @@ export const ALPINISM_RANKS = [
 
 export type AlpinismRank = (typeof ALPINISM_RANKS)[number]
 
-/** Категории сложности альпинистских маршрутов — от 6Б к 1Б. */
+/** Категории сложности альпинистских маршрутов — от 1Б к 6Б. */
 export const MOUNTAIN_CATEGORIES = [
-  '6Б',
-  '6А',
-  '5Б',
-  '5А',
-  '4Б',
-  '4А',
-  '3Б',
-  '3А',
-  '2Б',
-  '2А',
   '1Б',
+  '2А',
+  '2Б',
+  '3А',
+  '3Б',
+  '4А',
+  '4Б',
+  '5А',
+  '5Б',
+  '6А',
+  '6Б',
 ] as const
 
 export type MountainCategory = (typeof MOUNTAIN_CATEGORIES)[number]
@@ -103,17 +105,17 @@ export const INSTRUCTOR_GUIDE_RANKS = [
 
 export type InstructorGuideRank = (typeof INSTRUCTOR_GUIDE_RANKS)[number]
 
-/** Максимальная категория сложности похода в спортивном туризме — одной цифрой. */
-export const TOURISM_CATEGORIES = ['6', '5', '4', '3', '2', '1'] as const
+/** Максимальная категория сложности похода в спортивном туризме — от 1 к 6. */
+export const TOURISM_CATEGORIES = ['1', '2', '3', '4', '5', '6'] as const
 
 export type TourismCategory = (typeof TOURISM_CATEGORIES)[number]
 
-/** Выполненный норматив в дисциплинах группы «дистанция». */
+/** Выполненный норматив в дисциплинах группы «дистанция» — по возрастанию. */
 export const TOURISM_DISCIPLINE_RESULTS = [
-  'I разряд',
-  'II разряд',
-  'III разряд',
   'юношеский',
+  'III разряд',
+  'II разряд',
+  'I разряд',
 ] as const
 
 export type TourismDisciplineResult = (typeof TOURISM_DISCIPLINE_RESULTS)[number]

@@ -82,7 +82,8 @@ onMounted(load)
 </script>
 
 <template>
-  <main class="mx-auto max-w-4xl px-4 py-8">
+  <!-- Внешний контейнер даёт общий каркас приложения (App.vue) -->
+  <main>
     <h1 class="text-2xl font-bold text-text">Модерация иконок</h1>
 
     <p class="mt-2 text-sm text-muted">

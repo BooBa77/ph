@@ -4,6 +4,7 @@ import { RouterView, useRoute } from 'vue-router'
 
 import AppHeader from '@/components/layout/AppHeader.vue'
 import SeasonDecor from '@/components/layout/SeasonDecor.vue'
+import SiteSidebar from '@/components/layout/SiteSidebar.vue'
 import InstallHintDialog from '@/components/ui/InstallHintDialog.vue'
 import { useAppStore } from '@/stores/app'
 import { useSwUpdate } from '@/composables/useSwUpdate'
@@ -69,7 +70,31 @@ watch(
   <SeasonDecor />
 
   <AppHeader v-if="showHeader" />
-  <RouterView />
+
+  <!--
+    Общий каркас страниц: меню слева (на мобиле — полоса ярлыков сверху)
+    и содержимое. Меню одно на всё приложение: раньше разделы жили только
+    внутри личного кабинета, и на главной меню не было вовсе, а второе
+    меню рядом с первым путало бы.
+
+    Классы каркаса включаются только вместе с шапкой: на странице входа
+    (`hideHeader`) остаётся голая обёртка, а сама форма центрируется своими
+    стилями. RouterView один: два экземпляра в разных ветках — лишний риск
+    разъехаться.
+  -->
+  <div
+    :class="
+      showHeader
+        ? 'mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 md:flex-row md:items-start md:gap-8 md:py-8'
+        : ''
+    "
+  >
+    <SiteSidebar v-if="showHeader" class="md:w-56 md:shrink-0" />
+
+    <div class="min-w-0 flex-1">
+      <RouterView />
+    </div>
+  </div>
 
   <!--
     Подсказка, как вынести ярлык, — на уровне приложения: кнопка живёт

@@ -14,7 +14,16 @@
  * опечатка в имени станет ошибкой типов, а не пустым местом в меню.
  */
 defineProps<{
-  name: 'profile' | 'sport' | 'calendar' | 'settings' | 'install' | 'logout' | 'home'
+  name:
+    | 'profile'
+    | 'sport'
+    | 'calendar'
+    | 'settings'
+    | 'install'
+    | 'logout'
+    | 'home'
+    | 'menu'
+    | 'close'
 }>()
 </script>
 
@@ -70,6 +79,19 @@ defineProps<{
       <path d="M15 4h3a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-3" />
       <path d="M10 17l-5-5 5-5" />
       <path d="M5 12h10" />
+    </template>
+
+    <!-- Гамбургер: остальные разделы на мобиле -->
+    <template v-else-if="name === 'menu'">
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h16" />
+    </template>
+
+    <!-- Крестик: закрыть панель меню -->
+    <template v-else-if="name === 'close'">
+      <path d="M6 6l12 12" />
+      <path d="M18 6L6 18" />
     </template>
 
     <!-- Дом: домик -->

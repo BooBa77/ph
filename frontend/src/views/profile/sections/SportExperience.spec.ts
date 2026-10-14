@@ -265,6 +265,28 @@ describe('SportExperience', () => {
     expect(optionsOf(wrapper, 'Скайраннинг: разряд')).not.toContain('Значок')
   })
 
+  it('разворачивает категории и нормативы по возрастанию', async () => {
+    const wrapper = await mountSection()
+
+    // Категории маршрутов: 1Б → 6Б.
+    const mountain = optionsOf(
+      wrapper,
+      'Наивысшая категория в качестве участника',
+    )
+    expect(mountain[1]).toBe('1Б')
+    expect(mountain[mountain.length - 1]).toBe('6Б')
+
+    // Категории походов: 1 → 6.
+    const tourism = optionsOf(wrapper, 'Пешеходный')
+    expect(tourism[1]).toBe('1')
+    expect(tourism[tourism.length - 1]).toBe('6')
+
+    // Нормативы в дисциплинах: юношеский → I разряд.
+    const norms = optionsOf(wrapper, 'Северная ходьба')
+    expect(norms[1]).toBe('юношеский')
+    expect(norms[norms.length - 1]).toBe('I разряд')
+  })
+
   it('не дублирует пустую строку вариантами «отсутствует» и «нет данных»', async () => {
     const wrapper = await mountSection()
 

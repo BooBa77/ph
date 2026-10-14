@@ -7,11 +7,11 @@ const auth = useAuthStore()
 
 <template>
   <!--
-    min-h и flex-col с mt-auto у футера: главная пока почти пустая,
-    и кнопка в футере должна стоять внизу страницы, а не висеть
-    посреди экрана сразу под приветствием.
+    Внешний контейнер (ширина, отступы) даёт общий каркас приложения:
+    здесь только содержимое главной. min-h и mt-auto у футера — чтобы
+    кнопка установки стояла внизу, а не висела посреди пустой страницы.
   -->
-  <main class="mx-auto flex min-h-[80vh] max-w-3xl flex-col px-4 py-12">
+  <main class="flex min-h-[70vh] flex-col">
     <h1 class="text-3xl font-bold text-text">PeakHunter</h1>
 
     <p v-if="auth.user" class="mt-4 text-muted">
