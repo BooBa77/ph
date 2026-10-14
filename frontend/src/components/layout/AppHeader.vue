@@ -7,6 +7,7 @@ import { RouterLink } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useAppStore } from '@/stores/app'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import logoUrl from '@/assets/logo.svg'
 
 /**
  * Шапка приложения.
@@ -41,18 +42,24 @@ const profilePath = computed(() => appStore.lastProfilePath)
       aria-label="На главную"
     >
       <!--
-        Логотип временно убран (14.10.2026): знак ещё выбирается, и в шапке
-        он висел старым. Вернём, когда вариант устоится, — файл
-        `public/logo.svg` никуда не делся.
+        Знак подключаем импортом из `src/assets`, а не ссылкой на
+        `public/logo.svg`: Vite добавит к имени хэш содержимого, и после
+        обновления знака браузер скачает новый файл. Ссылка на public
+        ломалась дважды: файл в проде отдавался с кэшем на 30 дней,
+        и старый знак жил в браузере даже после деплоя.
 
-        Пока знака нет, название показываем на всех экранах: раньше на
-        мобиле от логотипа оставался только знак, и текст был скрыт —
-        без картинки ссылка «домой» осталась бы пустой.
-
-        alt пустой, а не «PeakHunter»: рядом стоит текстовая подпись,
-        и дубль имени ссылки скринридер читал бы дважды.
+        alt пустой, а не «PeakHunter»: рядом стоит текстовая подпись
+        (на мобиле скрыта, но остаётся в дереве доступности из-за
+        aria-label у ссылки). Дубль имени ссылки скринридер читал бы дважды.
       -->
-      <span>PeakHunter</span>
+      <img
+        :src="logoUrl"
+        alt=""
+        width="28"
+        height="28"
+        class="h-7 w-7 shrink-0"
+      />
+      <span class="hidden sm:inline">PeakHunter</span>
     </RouterLink>
 
     <RouterLink
