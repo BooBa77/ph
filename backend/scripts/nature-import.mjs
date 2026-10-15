@@ -35,6 +35,7 @@
  */
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const SITE = 'https://nature.baikal.ru';
 const OUTPUT = 'scripts/data/nature/objects.json';
@@ -384,7 +385,20 @@ async function main() {
   console.log(`Всего объектов: ${store.objects.length} — ${args.out}`);
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+/**
+ * Запуск сбора — только при прямом вызове скрипта.
+ *
+ * Файл экспортирует разбор (`parseRegions`, `parseObjects`), и импорт
+ * из другого скрипта не должен начинать качать сайт: сбор — это сеть,
+ * троттлинг и минуты ожидания, а не побочный эффект импорта.
+ */
+const isDirectRun =
+  process.argv[1] !== undefined &&
+  import.meta.url === pathToFileURL(process.argv[1]).href;
+
+if (isDirectRun) {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
