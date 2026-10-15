@@ -1,0 +1,466 @@
+[
+  {
+    "slug": "108120",
+    "region": "olha",
+    "name": "Пищеблок",
+    "aliases": []
+  },
+  {
+    "slug": "123376",
+    "region": "olha",
+    "name": "Годзилла",
+    "aliases": []
+  },
+  {
+    "slug": "12344",
+    "region": "olha",
+    "name": "Надежда",
+    "aliases": []
+  },
+  {
+    "slug": "5234",
+    "region": "olha",
+    "name": "у остановки 5234 км",
+    "aliases": []
+  },
+  {
+    "slug": "angarskii",
+    "region": "olha",
+    "name": "Ангарский",
+    "aliases": []
+  },
+  {
+    "slug": "arka_sk",
+    "region": "olha",
+    "name": "Арка",
+    "aliases": []
+  },
+  {
+    "slug": "belaycerkov",
+    "region": "olha",
+    "name": "Белая Церковь",
+    "aliases": []
+  },
+  {
+    "slug": "big_olha",
+    "region": "olha",
+    "name": "скальники у истоков Большой Олхи",
+    "aliases": [
+      "Кетчуп",
+      "Уксус"
+    ]
+  },
+  {
+    "slug": "biron",
+    "region": "tunki",
+    "name": "скала на Бироне",
+    "aliases": []
+  },
+  {
+    "slug": "bogatyr",
+    "region": "olhon",
+    "name": "Богатырь",
+    "aliases": []
+  },
+  {
+    "slug": "bosanstolby",
+    "region": "hamardaban",
+    "name": "Каменные столбы под Босаном",
+    "aliases": []
+  },
+  {
+    "slug": "buha_noyon",
+    "region": "tunki",
+    "name": "Белый Камень",
+    "aliases": [
+      "Белая Скала",
+      "Буха-Нойон"
+    ]
+  },
+  {
+    "slug": "carevna_lyagushka",
+    "region": "olha",
+    "name": "Царевна Лягушка",
+    "aliases": []
+  },
+  {
+    "slug": "cherepaha",
+    "region": "olha",
+    "name": "Черепаха",
+    "aliases": []
+  },
+  {
+    "slug": "chernayaskala",
+    "region": "olha",
+    "name": "Чёрная Скала",
+    "aliases": []
+  },
+  {
+    "slug": "chertovpalec",
+    "region": "hamardaban",
+    "name": "Чёртов Палец",
+    "aliases": []
+  },
+  {
+    "slug": "deva",
+    "region": "olhon",
+    "name": "Дева",
+    "aliases": []
+  },
+  {
+    "slug": "divan_sk",
+    "region": "olha",
+    "name": "Диван",
+    "aliases": []
+  },
+  {
+    "slug": "dvesestry",
+    "region": "olha",
+    "name": "Две Сестры",
+    "aliases": [
+      "Сёстры"
+    ]
+  },
+  {
+    "slug": "equilibrium",
+    "region": "olha",
+    "name": "Эквилибриум",
+    "aliases": []
+  },
+  {
+    "slug": "faraon",
+    "region": "olha",
+    "name": "Фараон",
+    "aliases": []
+  },
+  {
+    "slug": "faraonsa",
+    "region": "tunki",
+    "name": "Гробница Фараонши",
+    "aliases": []
+  },
+  {
+    "slug": "garnitur_sk",
+    "region": "olha",
+    "name": "Гарнитур",
+    "aliases": []
+  },
+  {
+    "slug": "gat_1964_sk",
+    "region": "olha",
+    "name": "ГАТ 1964",
+    "aliases": []
+  },
+  {
+    "slug": "gorodiche",
+    "region": "olha",
+    "name": "Городище",
+    "aliases": []
+  },
+  {
+    "slug": "idol",
+    "region": "olha",
+    "name": "Идол",
+    "aliases": []
+  },
+  {
+    "slug": "idutschie_k_reke",
+    "region": "olha",
+    "name": "Идущие к реке",
+    "aliases": []
+  },
+  {
+    "slug": "izgnaniya",
+    "region": "olha",
+    "name": "Изгнания",
+    "aliases": []
+  },
+  {
+    "slug": "kaimurastuyskiy",
+    "region": "olha",
+    "name": "Каймурастуйский",
+    "aliases": []
+  },
+  {
+    "slug": "kleopatra_sk",
+    "region": "olha",
+    "name": "Клеопатра",
+    "aliases": []
+  },
+  {
+    "slug": "klinok",
+    "region": "tunki",
+    "name": "Клинок",
+    "aliases": []
+  },
+  {
+    "slug": "krasnyi_kamen",
+    "region": "olha",
+    "name": "Красный Камень",
+    "aliases": []
+  },
+  {
+    "slug": "krepost",
+    "region": "olha",
+    "name": "Крепость",
+    "aliases": []
+  },
+  {
+    "slug": "kudliny_kamni",
+    "region": "olha",
+    "name": "Кудлины Камни",
+    "aliases": []
+  },
+  {
+    "slug": "kulak",
+    "region": "olha",
+    "name": "Кулак",
+    "aliases": []
+  },
+  {
+    "slug": "lapa",
+    "region": "olha",
+    "name": "Лапа",
+    "aliases": []
+  },
+  {
+    "slug": "lev",
+    "region": "olha",
+    "name": "Лев",
+    "aliases": []
+  },
+  {
+    "slug": "lzhebelayacerkov",
+    "region": "olha",
+    "name": "Белая Церковь Ложная",
+    "aliases": []
+  },
+  {
+    "slug": "mariin",
+    "region": "olha",
+    "name": "Марьин",
+    "aliases": []
+  },
+  {
+    "slug": "medvezhata",
+    "region": "olha",
+    "name": "Медвежата",
+    "aliases": []
+  },
+  {
+    "slug": "myunhauzen",
+    "region": "olha",
+    "name": "Мюнхаузен",
+    "aliases": []
+  },
+  {
+    "slug": "old_krepost",
+    "region": "olha",
+    "name": "Старая Крепость",
+    "aliases": []
+  },
+  {
+    "slug": "olhinskie_stolby",
+    "region": "olha",
+    "name": "Олхинские Столбы",
+    "aliases": []
+  },
+  {
+    "slug": "ostrog_sk",
+    "region": "olha",
+    "name": "Острог",
+    "aliases": []
+  },
+  {
+    "slug": "pad_krivaya",
+    "region": "olha",
+    "name": "скальник на склоне пади Кривой",
+    "aliases": []
+  },
+  {
+    "slug": "papka",
+    "region": "olha",
+    "name": "Папка",
+    "aliases": []
+  },
+  {
+    "slug": "politehnicheskii",
+    "region": "olha",
+    "name": "Политехнический",
+    "aliases": []
+  },
+  {
+    "slug": "ptica_barun",
+    "region": "tunki",
+    "name": "Птица на Барун-Хандагае",
+    "aliases": []
+  },
+  {
+    "slug": "shahtai",
+    "region": "olha",
+    "name": "Камень Шахтай",
+    "aliases": []
+  },
+  {
+    "slug": "shahtanskie",
+    "region": "olha",
+    "name": "Камни Шахтанские",
+    "aliases": []
+  },
+  {
+    "slug": "shamanka",
+    "region": "olhon",
+    "name": "Шаманка",
+    "aliases": []
+  },
+  {
+    "slug": "shamanka_irkut",
+    "region": "olha",
+    "name": "скала Шаманка (утёс Шаманский)",
+    "aliases": []
+  },
+  {
+    "slug": "shinihtinskie",
+    "region": "olha",
+    "name": "Камни Шинихтинские",
+    "aliases": []
+  },
+  {
+    "slug": "shirokii",
+    "region": "olha",
+    "name": "Кривыши",
+    "aliases": [
+      "Шелеховские Камни"
+    ]
+  },
+  {
+    "slug": "shulminskie",
+    "region": "olha",
+    "name": "Шульминские Камни",
+    "aliases": []
+  },
+  {
+    "slug": "sibiryak",
+    "region": "olha",
+    "name": "Сибиряк",
+    "aliases": []
+  },
+  {
+    "slug": "sk_kurum",
+    "region": "olha",
+    "name": "Курумный",
+    "aliases": []
+  },
+  {
+    "slug": "sk_murena",
+    "region": "olha",
+    "name": "Мурена",
+    "aliases": []
+  },
+  {
+    "slug": "sk_zakir",
+    "region": "olha",
+    "name": "Закировский",
+    "aliases": []
+  },
+  {
+    "slug": "skala",
+    "region": "olha",
+    "name": "Скала",
+    "aliases": []
+  },
+  {
+    "slug": "skala_1029",
+    "region": "olha",
+    "name": "на горе 1029 м",
+    "aliases": []
+  },
+  {
+    "slug": "slonik",
+    "region": "svyatoinos",
+    "name": "Слоник",
+    "aliases": []
+  },
+  {
+    "slug": "smolenskii",
+    "region": "olha",
+    "name": "Смоленский",
+    "aliases": []
+  },
+  {
+    "slug": "social",
+    "region": "olha",
+    "name": "Малая Старуха",
+    "aliases": []
+  },
+  {
+    "slug": "staruha",
+    "region": "olha",
+    "name": "Старуха",
+    "aliases": []
+  },
+  {
+    "slug": "tanki",
+    "region": "olha",
+    "name": "Танки",
+    "aliases": []
+  },
+  {
+    "slug": "trolly",
+    "region": "olha",
+    "name": "Тролли",
+    "aliases": []
+  },
+  {
+    "slug": "uglovoy",
+    "region": "olha",
+    "name": "Угловой",
+    "aliases": []
+  },
+  {
+    "slug": "verblyud",
+    "region": "olha",
+    "name": "Верблюд",
+    "aliases": []
+  },
+  {
+    "slug": "vityaz",
+    "region": "olha",
+    "name": "Витязь",
+    "aliases": []
+  },
+  {
+    "slug": "vorona",
+    "region": "olha",
+    "name": "Ворона",
+    "aliases": [
+      "Ящер"
+    ]
+  },
+  {
+    "slug": "voroniy_glaz",
+    "region": "olha",
+    "name": "Вороний Глаз",
+    "aliases": [
+      "Обзорный"
+    ]
+  },
+  {
+    "slug": "vorota",
+    "region": "olha",
+    "name": "Ворота",
+    "aliases": []
+  },
+  {
+    "slug": "vvedenskiiutes",
+    "region": "olha",
+    "name": "Введенский",
+    "aliases": []
+  },
+  {
+    "slug": "zerkala",
+    "region": "olha",
+    "name": "Зеркала",
+    "aliases": []
+  }
+]
