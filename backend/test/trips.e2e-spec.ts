@@ -390,4 +390,261 @@ describe('Походы (e2e)', () => {
         .expect(404);
     });
   });
+
+  describe('список', () => {
+    /** Заголовки походов из ответа ленты. */
+    const listTitles = async (
+      query: string,
+      token = accessToken,
+    ): Promise<string[]> => {
+      const response = await request(app.getHttpServer())
+        .get(`/api/trips${query}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return (response.body.trips as Array<{ title: string }>).map(
+        (trip) => trip.title,
+      );
+    };
+
+    it('отдаёт мои походы вместе с целью, чтобы лента не ходила за именем', async () => {
+      await createTrip({ title: 'В ленте' });
+
+      const response = await request(app.getHttpServer())
+        .get('/api/trips?mine=true')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const trip = (
+        response.body.trips as Array<{ title: string; goalObject: unknown }>
+      ).find((item) => item.title === 'В ленте');
+      expect(trip).toBeDefined();
+      expect(trip?.goalObject).toMatchObject({ type: 'вершина' });
+    });
+
+    it('приватный поход не виден постороннему в ленте', async () => {
+      await createTrip({ title: 'Приватный в ленте', visibility: 'private' });
+
+      expect(await listTitles('?limit=50', strangerToken)).not.toContain(
+        'Приватный в ленте',
+      );
+      expect(
+        await listTitles('?mine=true&limit=50', strangerToken),
+      ).not.toContain('Приватный в ленте');
+    });
+
+    it('when=undated не смешивает бездатные походы с предстоящими', async () => {
+      await createTrip({ title: 'Без дат e2e' });
+      await createTrip({
+        title: 'Впереди e2e',
+        startsAt: '2099-06-01T00:00:00.000Z',
+        endsAt: '2099-06-05T00:00:00.000Z',
+      });
+
+      const undated = await listTitles('?mine=true&when=undated');
+      expect(undated).toContain('Без дат e2e');
+      expect(undated).not.toContain('Впереди e2e');
+
+      const upcoming = await listTitles('?mine=true&when=upcoming');
+      expect(upcoming).toContain('Впереди e2e');
+      expect(upcoming).not.toContain('Без дат e2e');
+    });
+
+    it('фильтр по цели и пагинация с полным total', async () => {
+      await createTrip({ title: 'На тестовую вершину' });
+
+      const response = await request(app.getHttpServer())
+        .get(`/api/trips?mine=true&goalObjectId=${goalObjectId}&limit=1`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(response.body.trips).toHaveLength(1);
+      expect(response.body.total).toBeGreaterThan(1);
+    });
+
+    it('мусор в фильтрах — 400, а не молчаливое значение по умолчанию', async () => {
+      for (const query of ['?when=когда-нибудь', '?mine=yes', '?limit=999']) {
+        await request(app.getHttpServer())
+          .get(`/api/trips${query}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(400);
+      }
+    });
+  });
+
+  describe('правка', () => {
+    it('организатор меняет поля, а неприсланные остаются как были', async () => {
+      const created = await createTrip({
+        title: 'До правки',
+        requirementsText: 'Свои кошки',
+      });
+
+      const response = await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ title: 'После правки' })
+        .expect(200);
+
+      expect(response.body.title).toBe('После правки');
+      expect(response.body.requirementsText).toBe('Свои кошки');
+    });
+
+    it('null стирает поле, а пустое тело ничего не меняет', async () => {
+      const created = await createTrip({ requirementsText: 'Что-то' });
+
+      const cleared = await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ requirementsText: null })
+        .expect(200);
+      expect(cleared.body.requirementsText).toBeNull();
+
+      const untouched = await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({})
+        .expect(200);
+      expect(untouched.body.id).toBe(created.body.id);
+    });
+
+    it('маршрут пересобирает индекс упоминаний объектов', async () => {
+      const created = await createTrip({ routeText: '' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          routeText: `Идём на [[object:${goalObjectId}]] и обратно на [[object:${goalObjectId}]]`,
+        })
+        .expect(200);
+
+      const elements = await dataSource.query(
+        'SELECT object_id FROM trip_route_elements WHERE trip_id = $1',
+        [tripId],
+      );
+      expect(elements).toHaveLength(1);
+      expect(elements[0].object_id).toBe(goalObjectId);
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ routeText: '' })
+        .expect(200);
+
+      const afterClear = await dataSource.query(
+        'SELECT object_id FROM trip_route_elements WHERE trip_id = $1',
+        [tripId],
+      );
+      expect(afterClear).toHaveLength(0);
+    });
+
+    it('ссылка на несуществующий объект — 400, и правка не сохраняется', async () => {
+      const created = await createTrip({ routeText: '', title: 'Целый' });
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ routeText: 'Идём на [[object:999999]]' })
+        .expect(400);
+
+      const elements = await dataSource.query(
+        'SELECT object_id FROM trip_route_elements WHERE trip_id = $1',
+        [created.body.id],
+      );
+      expect(elements).toHaveLength(0);
+    });
+
+    it('нельзя снять коммерцию, оставив цену: проверяется итоговое состояние', async () => {
+      const created = await createTrip({
+        isCommercial: true,
+        priceRub: 20000,
+      });
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ isCommercial: false })
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ isCommercial: false, priceRub: null })
+        .expect(200);
+    });
+
+    it('решённый поход нельзя оставить без дат', async () => {
+      const created = await createTrip({
+        status: 'decided',
+        startsAt: '2099-07-01T00:00:00.000Z',
+        endsAt: '2099-07-05T00:00:00.000Z',
+      });
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ startsAt: null, endsAt: null })
+        .expect(400);
+    });
+
+    it('посторонний не может править чужой публичный поход — 403', async () => {
+      const created = await createTrip({ title: 'Не твой' });
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ title: 'Захват' })
+        .expect(403);
+    });
+  });
+
+  describe('отмена', () => {
+    it('идею отменить нельзя: у неё нет договорённостей', async () => {
+      const created = await createTrip({ title: 'Идея' });
+      expect(created.body.status).toBe('idea');
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${created.body.id}/cancel`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(400);
+    });
+
+    it('отмена не затирает статус, убирает поход из ленты и снимается обратно', async () => {
+      const created = await createTrip({
+        title: 'Отменяемый',
+        status: 'planning',
+      });
+      const tripId = created.body.id as string;
+
+      const cancelled = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/cancel`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      expect(cancelled.body.cancelledAt).not.toBeNull();
+      expect(cancelled.body.status).toBe('planning');
+
+      const list = await request(app.getHttpServer())
+        .get('/api/trips?mine=true&limit=50')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      expect(
+        (list.body.trips as Array<{ title: string }>).map((trip) => trip.title),
+      ).not.toContain('Отменяемый');
+
+      const restored = await request(app.getHttpServer())
+        .delete(`/api/trips/${tripId}/cancel`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      expect(restored.body.cancelledAt).toBeNull();
+    });
+
+    it('посторонний не может отменить чужой поход — 403', async () => {
+      const created = await createTrip({ title: 'Чужой', status: 'planning' });
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${created.body.id}/cancel`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(403);
+    });
+  });
 });

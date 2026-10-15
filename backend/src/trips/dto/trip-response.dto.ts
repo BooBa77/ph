@@ -4,6 +4,32 @@ import type { Trip } from '../entities/trip.entity';
 import type { TripStatus, TripVisibility } from '../trip.types';
 
 /**
+ * Цель похода — короткая выжимка из справочника, а не объект целиком.
+ *
+ * Вкладывается в ответ, чтобы лента не устраивала N+1 запросов за именем
+ * цели: карточка похода показывает именно её, когда `title` пуст. Ссылка
+ * на внешнюю страницу (`url`) отдаётся вместе с именем — фронт показывает
+ * её значком у цели, и отдельный запрос за ней был бы тем же N+1.
+ */
+export class TripGoalDto {
+  @ApiProperty({ description: 'Id объекта справочника', example: '10' })
+  id: string;
+
+  @ApiProperty({ description: 'Имя объекта', example: 'Витязь' })
+  name: string;
+
+  @ApiProperty({ description: 'Тип объекта', example: 'скальник' })
+  type: string;
+
+  @ApiProperty({
+    description: 'Ссылка на внешнюю страницу объекта',
+    example: 'https://nature.baikal.ru/obj.shtml?obj=skala&id=vityaz',
+    nullable: true,
+  })
+  url: string | null;
+}
+
+/**
  * Публичное представление похода — то, что уходит наружу по API.
  *
  * Отдаётся в:
@@ -41,6 +67,14 @@ export class TripResponseDto {
     example: '2',
   })
   goalObjectId: string;
+
+  @ApiProperty({
+    description:
+      'Цель похода: имя, тип и ссылка. null — связь не подгружена (в ответах API не встречается)',
+    type: () => TripGoalDto,
+    nullable: true,
+  })
+  goalObject: TripGoalDto | null;
 
   @ApiProperty({
     description: 'Короткое имя похода. null — показывается имя цели',
@@ -153,6 +187,14 @@ export class TripResponseDto {
       id: trip.id,
       organizerUserId: trip.organizerUserId,
       goalObjectId: trip.goalObjectId,
+      goalObject: trip.goalObject
+        ? {
+            id: trip.goalObject.id,
+            name: trip.goalObject.name,
+            type: trip.goalObject.type,
+            url: trip.goalObject.url,
+          }
+        : null,
       title: trip.title,
       routeText: trip.routeText,
       requirementsText: trip.requirementsText,
