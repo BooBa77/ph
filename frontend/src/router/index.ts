@@ -38,30 +38,50 @@ const router = createRouter({
           // его абсолютным (/personal в корне). Так — /profile/personal.
           path: 'personal',
           name: 'profile-personal',
-          component: () =>
-            import('@/views/profile/sections/PersonalInfo.vue'),
+          component: () => import('@/views/profile/sections/PersonalInfo.vue'),
         },
         {
           // Календарь пользователя: пока текущий месяц, дальше — отметки
           // и события по дням.
           path: 'calendar',
           name: 'profile-calendar',
-          component: () =>
-            import('@/views/profile/sections/UserCalendar.vue'),
+          component: () => import('@/views/profile/sections/UserCalendar.vue'),
         },
         {
           // Спортивный опыт: альпинизм, скайраннинг, спортивный туризм.
           // Отдельной вкладкой, потому что это девятнадцать списков.
           path: 'sport',
           name: 'profile-sport',
-          component: () =>
-            import('@/views/profile/sections/SportExperience.vue'),
+          component: () => import('@/views/profile/sections/SportExperience.vue'),
         },
         {
           // Настройки: сессии устройств и сезонная анимация.
           path: 'settings',
           name: 'profile-settings',
           component: () => import('@/views/profile/sections/UserSettings.vue'),
+        },
+      ],
+    },
+    {
+      // Раздел «Походы» — пока временная закладка в меню: две кнопки,
+      // «Анонсы» и «Создать поход». Как это разложится по меню, когда
+      // разделов станет больше, ещё не решено; адреса у разделов уже
+      // отдельные, поэтому переделывать придётся разметку, а не ссылки.
+      path: '/trips',
+      component: () => import('@/views/trips/TripsView.vue'),
+      // Без раздела в адресе показываем «Анонсы», а не пустую страницу.
+      redirect: '/trips/announces',
+      meta: { requiresAuth: true },
+      children: [
+        {
+          path: 'announces',
+          name: 'trips-announces',
+          component: () => import('@/views/trips/TripAnnounces.vue'),
+        },
+        {
+          path: 'new',
+          name: 'trips-create',
+          component: () => import('@/views/trips/CreateTrip.vue'),
         },
       ],
     },

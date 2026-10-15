@@ -24,6 +24,7 @@ const FAVOURITES_LIMIT = 5
 /** Разделы сайта. Порядок = порядок в меню и на мобильной полосе. */
 const SECTIONS = [
   { to: '/', label: 'Главная', icon: 'home' },
+  { to: '/trips/announces', label: 'Походы', icon: 'trips' },
   { to: '/profile/personal', label: 'Профиль', icon: 'profile' },
   { to: '/profile/calendar', label: 'Календарь', icon: 'calendar' },
   { to: '/profile/sport', label: 'Спорт', icon: 'sport' },
@@ -185,10 +186,7 @@ async function confirmLogout() {
       нажатие мимо панели не закрывало бы её, и это читается как поломка.
     -->
     <div v-if="isMenuOpen" class="fixed inset-0 z-40 md:hidden">
-      <div
-        class="absolute inset-0 bg-black/30"
-        @click="closeMenu"
-      />
+      <div class="absolute inset-0 bg-black/30" @click="closeMenu" />
 
       <div
         class="absolute inset-x-0 top-0 rounded-b-2xl border-b border-border bg-surface p-4 shadow-lg"

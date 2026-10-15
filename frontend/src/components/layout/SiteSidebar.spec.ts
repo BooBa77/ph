@@ -29,6 +29,11 @@ function makeRouter(): Router {
       { path: '/', name: 'home', component: { template: '<div />' } },
       { path: '/auth', name: 'auth', component: { template: '<div />' } },
       {
+        path: '/trips/announces',
+        name: 'trips-announces',
+        component: { template: '<div />' },
+      },
+      {
         path: '/profile/personal',
         name: 'profile-personal',
         component: { template: '<div />' },
@@ -86,6 +91,7 @@ describe('SiteSidebar', () => {
 
     expect(labels).toEqual([
       'Главная',
+      'Походы',
       'Профиль',
       'Календарь',
       'Спорт',

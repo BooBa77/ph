@@ -19,6 +19,7 @@ defineProps<{
     | 'sport'
     | 'calendar'
     | 'settings'
+    | 'trips'
     | 'install'
     | 'logout'
     | 'home'
@@ -65,6 +66,14 @@ defineProps<{
       <path d="M4 7h10M18 7h2M4 17h4M12 17h8" />
       <circle cx="16" cy="7" r="2" />
       <circle cx="10" cy="17" r="2" />
+    </template>
+
+    <!-- Походы: рюкзак. Вершина уже занята спортивным опытом, а рюкзак
+         читается в 20 px и не путается с ним -->
+    <template v-else-if="name === 'trips'">
+      <path d="M8 8V6a4 4 0 0 1 8 0v2" />
+      <rect x="5" y="8" width="14" height="12" rx="2" />
+      <path d="M9 13h6" />
     </template>
 
     <!-- Вынести ярлык: стрелка вниз в лоток -->
