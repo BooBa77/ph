@@ -89,7 +89,11 @@ export class CalendarController {
   ): Promise<{ days: CalendarDayDto[]; activities: Record<string, number[]> }> {
     const [days, activities] = await Promise.all([
       this.calendarService.getDays(authUser.id, query.from, query.to),
-      this.calendarService.getActivitiesByDates(authUser.id, query.from, query.to),
+      this.calendarService.getActivitiesByDates(
+        authUser.id,
+        query.from,
+        query.to,
+      ),
     ]);
     return { days, activities };
   }

@@ -1,4 +1,11 @@
-import { Check, Column, Entity, JoinColumn, ManyToOne, PrimaryColumn } from 'typeorm';
+import {
+  Check,
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryColumn,
+} from 'typeorm';
 
 import { User } from '../../users/entities/user.entity';
 import type { CalendarDayType } from '../calendar.types';
@@ -17,7 +24,10 @@ import type { CalendarDayType } from '../calendar.types';
  * из других таблиц мы не собираемся.
  */
 @Entity('calendar_production')
-@Check('chk_calendar_day_type', `"day_type" IN ('workday', 'weekend', 'short_workday')`)
+@Check(
+  'chk_calendar_day_type',
+  `"day_type" IN ('workday', 'weekend', 'short_workday')`,
+)
 export class CalendarDay {
   @PrimaryColumn({ name: 'user_id', type: 'uuid' })
   userId: string;

@@ -28,7 +28,12 @@ export class Session {
   user: User;
 
   /** Человекочитаемое описание устройства: "Chrome on Linux", "Safari on iOS" */
-  @Column({ name: 'device_label', type: 'varchar', length: 100, nullable: true })
+  @Column({
+    name: 'device_label',
+    type: 'varchar',
+    length: 100,
+    nullable: true,
+  })
   deviceLabel: string | null;
 
   /** Хэш refresh-токена (sha256). Уникальный — по нему ищем сессию */

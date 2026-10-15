@@ -30,7 +30,10 @@ export class YearStateDto {
   @ApiProperty({ description: 'Год', example: 2026 })
   year: number;
 
-  @ApiProperty({ description: 'Календарь на этот год уже создан', example: true })
+  @ApiProperty({
+    description: 'Календарь на этот год уже создан',
+    example: true,
+  })
   filled: boolean;
 
   @ApiProperty({

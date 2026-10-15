@@ -7,7 +7,7 @@ import type { TripStatus, TripVisibility } from '../trip.types';
  * Цель похода — короткая выжимка из справочника, а не объект целиком.
  *
  * Вкладывается в ответ, чтобы лента не устраивала N+1 запросов за именем
- * цели: карточка похода показывает именно её, когда `title` пуст. Ссылка
+ * цели: карточка похода показывает именно её, когда `announcement` пуст. Ссылка
  * на внешнюю страницу (`url`) отдаётся вместе с именем — фронт показывает
  * её значком у цели, и отдельный запрос за ней был бы тем же N+1.
  */
@@ -77,11 +77,11 @@ export class TripResponseDto {
   goalObject: TripGoalDto | null;
 
   @ApiProperty({
-    description: 'Короткое имя похода. null — показывается имя цели',
-    example: 'Витязь на майские',
+    description: 'Анонс: короткий текст для ленты. null — анонса нет',
+    example: 'Идём на майские, набор шесть человек',
     nullable: true,
   })
-  title: string | null;
+  announcement: string | null;
 
   @ApiProperty({
     description: 'Маршрут: markdown со ссылками [[object:N]]',
@@ -155,6 +155,13 @@ export class TripResponseDto {
   isCommercial: boolean;
 
   @ApiProperty({
+    description:
+      'Спортивное мероприятие: официальный поход, соревнование, сборы. Детали — в отдельных таблицах',
+    example: false,
+  })
+  isSport: boolean;
+
+  @ApiProperty({
     description: 'Цена участия в рублях. Только у коммерческого похода',
     example: 25000,
     nullable: true,
@@ -195,7 +202,7 @@ export class TripResponseDto {
             url: trip.goalObject.url,
           }
         : null,
-      title: trip.title,
+      announcement: trip.announcement,
       routeText: trip.routeText,
       requirementsText: trip.requirementsText,
       visibility: trip.visibility,
@@ -207,6 +214,7 @@ export class TripResponseDto {
       actualStartedAt: trip.actualStartedAt?.toISOString() ?? null,
       actualFinishedAt: trip.actualFinishedAt?.toISOString() ?? null,
       isCommercial: trip.isCommercial,
+      isSport: trip.isSport,
       priceRub: trip.priceRub,
       priceNote: trip.priceNote,
       cancelledAt: trip.cancelledAt?.toISOString() ?? null,

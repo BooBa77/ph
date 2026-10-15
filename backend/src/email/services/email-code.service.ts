@@ -67,9 +67,7 @@ export class EmailCodeService {
       this.logger.warn(
         `Повторный запрос кода для ${normalizedEmail} через ${remaining}с`,
       );
-      throw new Error(
-        `Код уже отправлен. Повторите через ${remaining} секунд`,
-      );
+      throw new Error(`Код уже отправлен. Повторите через ${remaining} секунд`);
     }
 
     const code = this.generateCode();
@@ -83,7 +81,9 @@ export class EmailCodeService {
       resendAfter,
     });
 
-    this.logger.log(`Создан код для ${normalizedEmail}, истекает через 5 минут`);
+    this.logger.log(
+      `Создан код для ${normalizedEmail}, истекает через 5 минут`,
+    );
     return code;
   }
 
@@ -140,9 +140,7 @@ export class EmailCodeService {
     const remaining = this.MAX_ATTEMPTS - data.attempts;
 
     if (remaining <= 0) {
-      this.logger.warn(
-        `Код для ${normalizedEmail} сгорел: исчерпаны попытки`,
-      );
+      this.logger.warn(`Код для ${normalizedEmail} сгорел: исчерпаны попытки`);
       this.codes.delete(normalizedEmail);
     } else {
       this.logger.warn(

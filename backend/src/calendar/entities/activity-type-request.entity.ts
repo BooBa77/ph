@@ -1,9 +1,17 @@
-import { Check, Column, Entity, JoinColumn, ManyToOne, PrimaryGeneratedColumn } from 'typeorm';
+import {
+  Check,
+  Column,
+  Entity,
+  JoinColumn,
+  ManyToOne,
+  PrimaryGeneratedColumn,
+} from 'typeorm';
 
 import { User } from '../../users/entities/user.entity';
 
 /** Статусы запроса на новую иконку. */
-export type ActivityRequestStatus = 'pending' | 'approved' | 'rejected' | 'revision';
+export type ActivityRequestStatus =
+  'pending' | 'approved' | 'rejected' | 'revision';
 
 /**
  * Запрос пользователя на новую активность с иконкой.
@@ -42,6 +50,11 @@ export class CalendarActivityTypeRequest {
   status: ActivityRequestStatus;
 
   /** Что не так или что поправить: пишет админ. */
-  @Column({ name: 'admin_comment', type: 'varchar', length: 500, nullable: true })
+  @Column({
+    name: 'admin_comment',
+    type: 'varchar',
+    length: 500,
+    nullable: true,
+  })
   adminComment: string | null;
 }

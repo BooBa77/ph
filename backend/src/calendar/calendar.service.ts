@@ -22,7 +22,10 @@ import {
 } from './dto/activity.dto';
 import { CalendarDayDto, UpdateDayDto, UpdateDaysDto } from './dto/day.dto';
 import { YearStateDto } from './dto/year.dto';
-import { educationBreaksForYear, hasEducationCalendar } from './education-breaks';
+import {
+  educationBreaksForYear,
+  hasEducationCalendar,
+} from './education-breaks';
 import { CalendarActivity } from './entities/activity.entity';
 import { CalendarActivityFavorite } from './entities/activity-favorite.entity';
 import { CalendarActivityGroup } from './entities/activity-group.entity';
@@ -341,7 +344,9 @@ export class CalendarService {
       throw new BadRequestException('Некорректная дата');
     }
     if (dto.dayType === undefined && dto.label === undefined) {
-      throw new BadRequestException('Нечего менять: ни статус, ни метка не переданы');
+      throw new BadRequestException(
+        'Нечего менять: ни статус, ни метка не переданы',
+      );
     }
 
     const day = await this.days.findOne({
@@ -374,7 +379,10 @@ export class CalendarService {
     userId: string,
     dto: UpdateDaysDto,
   ): Promise<{ updated: number }> {
-    const byDate = new Map<string, { dayType: CalendarDayType; label: string | null }>();
+    const byDate = new Map<
+      string,
+      { dayType: CalendarDayType; label: string | null }
+    >();
 
     for (const item of dto.days) {
       if (!isRealDate(item.date)) {
@@ -439,14 +447,21 @@ export class CalendarService {
    */
   async getActivityDictionary(userId: string): Promise<ActivityDictionaryDto> {
     const [groups, types, favorites, requests] = await Promise.all([
-      this.activityGroups.find({ where: { isActive: true }, order: { id: 'ASC' } }),
-      this.activityTypes.find({ where: { isActive: true }, order: { id: 'ASC' } }),
+      this.activityGroups.find({
+        where: { isActive: true },
+        order: { id: 'ASC' },
+      }),
+      this.activityTypes.find({
+        where: { isActive: true },
+        order: { id: 'ASC' },
+      }),
       this.favorites.find({
         where: { userId },
         // Второй ключ — идентификатор: при равных счётчиках порядок
         // должен быть предсказуемым, иначе избранное «дышит» между запросами.
         order: { usageCount: 'DESC', activityTypeId: 'ASC' },
-      }),      this.activityRequests.find({ where: { userId }, order: { id: 'DESC' } }),
+      }),
+      this.activityRequests.find({ where: { userId }, order: { id: 'DESC' } }),
     ]);
 
     return {
@@ -683,7 +698,10 @@ export class CalendarService {
   }
 
   /** День должен существовать: иначе отметка повисла бы вне календаря. */
-  private async assertDayExists(userId: string, date: string): Promise<CalendarDay> {
+  private async assertDayExists(
+    userId: string,
+    date: string,
+  ): Promise<CalendarDay> {
     const day = await this.days.findOne({ where: { userId, date } });
     if (!day) {
       throw new ConflictException(

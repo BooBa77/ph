@@ -40,7 +40,8 @@ import { TripsModule } from './trips/trips.module';
             // Уровень логирования: в dev — debug, в prod — info
             level: isDev ? 'debug' : 'info',
             // Автоматически подмешивать requestId в каждый лог
-            genReqId: (req) => req.headers['x-request-id'] || crypto.randomUUID(),
+            genReqId: (req) =>
+              req.headers['x-request-id'] || crypto.randomUUID(),
             // Что логировать в запросе/ответе
             customLogLevel: (req, res, err) => {
               if (res.statusCode >= 500 || err) return 'error';
@@ -70,7 +71,7 @@ import { TripsModule } from './trips/trips.module';
     TripsModule,
   ],
   controllers: [AppController],
-    providers: [
+  providers: [
     AppService,
     {
       provide: APP_GUARD,

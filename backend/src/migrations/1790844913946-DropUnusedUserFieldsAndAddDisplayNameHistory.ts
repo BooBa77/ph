@@ -1,8 +1,6 @@
 import { MigrationInterface, QueryRunner } from 'typeorm';
 
-export class DropUnusedUserFieldsAndAddDisplayNameHistory1790844913946
-  implements MigrationInterface
-{
+export class DropUnusedUserFieldsAndAddDisplayNameHistory1790844913946 implements MigrationInterface {
   name = 'DropUnusedUserFieldsAndAddDisplayNameHistory1790844913946';
 
   public async up(queryRunner: QueryRunner): Promise<void> {

@@ -102,7 +102,11 @@ export class UpdateDayDto {
   @Matches(DATE_PATTERN, { message: DATE_MESSAGE })
   date: string;
 
-  @ApiProperty({ description: 'Новый тип дня', enum: DAY_TYPES, required: false })
+  @ApiProperty({
+    description: 'Новый тип дня',
+    enum: DAY_TYPES,
+    required: false,
+  })
   @IsOptional()
   @IsIn(DAY_TYPES, { message: 'Недопустимый тип дня' })
   dayType?: CalendarDayType;

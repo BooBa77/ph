@@ -28,7 +28,9 @@ export class CalendarProduction1791449069715 implements MigrationInterface {
     );
 
     // NULL — пользователя ещё не спрашивали про режим работы.
-    await queryRunner.query(`ALTER TABLE "users" ADD "calendar_mode" character varying(20)`);
+    await queryRunner.query(
+      `ALTER TABLE "users" ADD "calendar_mode" character varying(20)`,
+    );
     await queryRunner.query(
       `ALTER TABLE "users" ADD CONSTRAINT "chk_users_calendar_mode" CHECK ("calendar_mode" IN ('cycle', 'free', 'study', 'parental', 'retired'))`,
     );
@@ -63,7 +65,9 @@ export class CalendarProduction1791449069715 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "calendar_production" DROP CONSTRAINT "FK_dbb2649dccc39ee69834f2215fd"`,
     );
-    await queryRunner.query(`ALTER TABLE "users" DROP CONSTRAINT "chk_users_calendar_mode"`);
+    await queryRunner.query(
+      `ALTER TABLE "users" DROP CONSTRAINT "chk_users_calendar_mode"`,
+    );
     await queryRunner.query(`ALTER TABLE "users" DROP COLUMN "calendar_mode"`);
     await queryRunner.query(`DROP TABLE "calendar_production"`);
     await queryRunner.query(`DROP TABLE "calendar_state_production"`);

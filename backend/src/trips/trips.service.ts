@@ -163,7 +163,7 @@ export class TripsService {
         manager.create(Trip, {
           organizerUserId,
           goalObjectId: String(dto.goalObjectId),
-          title: dto.title ?? null,
+          announcement: dto.announcement ?? null,
           routeText: dto.routeText ?? '',
           requirementsText: dto.requirementsText ?? null,
           visibility: dto.visibility ?? 'public',
@@ -172,6 +172,7 @@ export class TripsService {
           startsAt,
           endsAt,
           isCommercial,
+          isSport: dto.isSport ?? false,
           priceRub: dto.priceRub ?? null,
           priceNote: dto.priceNote ?? null,
         }),
@@ -621,7 +622,7 @@ export class TripsService {
         trip.goalObject = goal;
       }
 
-      if (dto.title !== undefined) trip.title = dto.title;
+      if (dto.announcement !== undefined) trip.announcement = dto.announcement;
       if (dto.requirementsText !== undefined) {
         trip.requirementsText = dto.requirementsText;
       }
@@ -640,6 +641,7 @@ export class TripsService {
       trip.actualStartedAt = actualStartedAt;
       trip.actualFinishedAt = actualFinishedAt;
       trip.isCommercial = isCommercial;
+      if (dto.isSport !== undefined) trip.isSport = dto.isSport;
       trip.priceRub = priceRub;
       trip.priceNote = priceNote;
 

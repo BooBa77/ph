@@ -229,7 +229,7 @@ describe('Походы (e2e)', () => {
 
     it('полный поход: даты, спорные поля, коммерция и варианты дат', async () => {
       const response = await createTrip({
-        title: 'Витязь на майские',
+        announcement: 'Витязь на майские',
         routeText: 'Заброска и подход',
         requirementsText: 'Свои кошки',
         status: 'decided',
@@ -246,7 +246,7 @@ describe('Походы (e2e)', () => {
       });
 
       expect(response.status).toBe(201);
-      expect(response.body.title).toBe('Витязь на майские');
+      expect(response.body.announcement).toBe('Витязь на майские');
       expect(response.body.status).toBe('decided');
       expect(response.body.priceRub).toBe(25000);
       expect(response.body.activityTypeIds).toEqual([activityTypeId]);
@@ -358,7 +358,7 @@ describe('Походы (e2e)', () => {
 
   describe('чтение', () => {
     it('автор видит свой поход', async () => {
-      const created = await createTrip({ title: 'Читаемый поход' });
+      const created = await createTrip({ announcement: 'Читаемый поход' });
 
       const response = await request(app.getHttpServer())
         .get(`/api/trips/${created.body.id}`)
@@ -366,7 +366,7 @@ describe('Походы (e2e)', () => {
         .expect(200);
 
       expect(response.body.id).toBe(created.body.id);
-      expect(response.body.title).toBe('Читаемый поход');
+      expect(response.body.announcement).toBe('Читаемый поход');
     });
 
     it('несуществующий поход — 404', async () => {
@@ -403,7 +403,7 @@ describe('Походы (e2e)', () => {
 
   describe('список', () => {
     /** Заголовки походов из ответа ленты. */
-    const listTitles = async (
+    const listAnnouncements = async (
       query: string,
       token = accessToken,
     ): Promise<string[]> => {
@@ -411,13 +411,13 @@ describe('Походы (e2e)', () => {
         .get(`/api/trips${query}`)
         .set('Authorization', `Bearer ${token}`)
         .expect(200);
-      return (response.body.trips as Array<{ title: string }>).map(
-        (trip) => trip.title,
+      return (response.body.trips as Array<{ announcement: string }>).map(
+        (trip) => trip.announcement,
       );
     };
 
     it('отдаёт мои походы вместе с целью, чтобы лента не ходила за именем', async () => {
-      await createTrip({ title: 'В ленте' });
+      await createTrip({ announcement: 'В ленте' });
 
       const response = await request(app.getHttpServer())
         .get('/api/trips?mine=true')
@@ -425,42 +425,48 @@ describe('Походы (e2e)', () => {
         .expect(200);
 
       const trip = (
-        response.body.trips as Array<{ title: string; goalObject: unknown }>
-      ).find((item) => item.title === 'В ленте');
+        response.body.trips as Array<{
+          announcement: string;
+          goalObject: unknown;
+        }>
+      ).find((item) => item.announcement === 'В ленте');
       expect(trip).toBeDefined();
       expect(trip?.goalObject).toMatchObject({ type: 'вершина' });
     });
 
     it('приватный поход не виден постороннему в ленте', async () => {
-      await createTrip({ title: 'Приватный в ленте', visibility: 'private' });
+      await createTrip({
+        announcement: 'Приватный в ленте',
+        visibility: 'private',
+      });
 
-      expect(await listTitles('?limit=50', strangerToken)).not.toContain(
+      expect(await listAnnouncements('?limit=50', strangerToken)).not.toContain(
         'Приватный в ленте',
       );
       expect(
-        await listTitles('?mine=true&limit=50', strangerToken),
+        await listAnnouncements('?mine=true&limit=50', strangerToken),
       ).not.toContain('Приватный в ленте');
     });
 
     it('when=undated не смешивает бездатные походы с предстоящими', async () => {
-      await createTrip({ title: 'Без дат e2e' });
+      await createTrip({ announcement: 'Без дат e2e' });
       await createTrip({
-        title: 'Впереди e2e',
+        announcement: 'Впереди e2e',
         startsAt: '2099-06-01T00:00:00.000Z',
         endsAt: '2099-06-05T00:00:00.000Z',
       });
 
-      const undated = await listTitles('?mine=true&when=undated');
+      const undated = await listAnnouncements('?mine=true&when=undated');
       expect(undated).toContain('Без дат e2e');
       expect(undated).not.toContain('Впереди e2e');
 
-      const upcoming = await listTitles('?mine=true&when=upcoming');
+      const upcoming = await listAnnouncements('?mine=true&when=upcoming');
       expect(upcoming).toContain('Впереди e2e');
       expect(upcoming).not.toContain('Без дат e2e');
     });
 
     it('фильтр по цели и пагинация с полным total', async () => {
-      await createTrip({ title: 'На тестовую вершину' });
+      await createTrip({ announcement: 'На тестовую вершину' });
 
       const response = await request(app.getHttpServer())
         .get(`/api/trips?mine=true&goalObjectId=${goalObjectId}&limit=1`)
@@ -484,17 +490,17 @@ describe('Походы (e2e)', () => {
   describe('правка', () => {
     it('организатор меняет поля, а неприсланные остаются как были', async () => {
       const created = await createTrip({
-        title: 'До правки',
+        announcement: 'До правки',
         requirementsText: 'Свои кошки',
       });
 
       const response = await request(app.getHttpServer())
         .patch(`/api/trips/${created.body.id}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ title: 'После правки' })
+        .send({ announcement: 'После правки' })
         .expect(200);
 
-      expect(response.body.title).toBe('После правки');
+      expect(response.body.announcement).toBe('После правки');
       expect(response.body.requirementsText).toBe('Свои кошки');
     });
 
@@ -549,7 +555,10 @@ describe('Походы (e2e)', () => {
     });
 
     it('ссылка на несуществующий объект — 400, и правка не сохраняется', async () => {
-      const created = await createTrip({ routeText: '', title: 'Целый' });
+      const created = await createTrip({
+        routeText: '',
+        announcement: 'Целый',
+      });
 
       await request(app.getHttpServer())
         .patch(`/api/trips/${created.body.id}`)
@@ -598,19 +607,19 @@ describe('Походы (e2e)', () => {
     });
 
     it('посторонний не может править чужой публичный поход — 403', async () => {
-      const created = await createTrip({ title: 'Не твой' });
+      const created = await createTrip({ announcement: 'Не твой' });
 
       await request(app.getHttpServer())
         .patch(`/api/trips/${created.body.id}`)
         .set('Authorization', `Bearer ${strangerToken}`)
-        .send({ title: 'Захват' })
+        .send({ announcement: 'Захват' })
         .expect(403);
     });
   });
 
   describe('отмена', () => {
     it('идею отменить нельзя: у неё нет договорённостей', async () => {
-      const created = await createTrip({ title: 'Идея' });
+      const created = await createTrip({ announcement: 'Идея' });
       expect(created.body.status).toBe('idea');
 
       await request(app.getHttpServer())
@@ -621,7 +630,7 @@ describe('Походы (e2e)', () => {
 
     it('отмена не затирает статус, убирает поход из ленты и снимается обратно', async () => {
       const created = await createTrip({
-        title: 'Отменяемый',
+        announcement: 'Отменяемый',
         status: 'planning',
       });
       const tripId = created.body.id as string;
@@ -638,7 +647,9 @@ describe('Походы (e2e)', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
       expect(
-        (list.body.trips as Array<{ title: string }>).map((trip) => trip.title),
+        (list.body.trips as Array<{ announcement: string }>).map(
+          (trip) => trip.announcement,
+        ),
       ).not.toContain('Отменяемый');
 
       const restored = await request(app.getHttpServer())
@@ -649,7 +660,10 @@ describe('Походы (e2e)', () => {
     });
 
     it('посторонний не может отменить чужой поход — 403', async () => {
-      const created = await createTrip({ title: 'Чужой', status: 'planning' });
+      const created = await createTrip({
+        announcement: 'Чужой',
+        status: 'planning',
+      });
 
       await request(app.getHttpServer())
         .post(`/api/trips/${created.body.id}/cancel`)
@@ -689,7 +703,7 @@ describe('Походы (e2e)', () => {
     };
 
     it('при создании в составе один организатор с ролью и статусом going', async () => {
-      const created = await createTrip({ title: 'Состав по умолчанию' });
+      const created = await createTrip({ announcement: 'Состав по умолчанию' });
       const list = await participants(created.body.id as string);
 
       expect(list).toHaveLength(1);
@@ -702,7 +716,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('приглашение сразу добавляет человека в состав и он видит поход', async () => {
-      const created = await createTrip({ title: 'С приглашением' });
+      const created = await createTrip({ announcement: 'С приглашением' });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -723,7 +737,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('повторное приглашение — 409, приглашение не организатором — 403', async () => {
-      const created = await createTrip({ title: 'Двойное приглашение' });
+      const created = await createTrip({ announcement: 'Двойное приглашение' });
       const tripId = created.body.id as string;
       const invite = { direction: 'invite', userId: applicantId };
 
@@ -747,7 +761,9 @@ describe('Походы (e2e)', () => {
     });
 
     it('приглашённый принимает: статус меняется, тикет закрыт, есть сообщение', async () => {
-      const created = await createTrip({ title: 'Принятие приглашения' });
+      const created = await createTrip({
+        announcement: 'Принятие приглашения',
+      });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -779,7 +795,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('заявку принимает только организатор, а подаёт — только от своего имени', async () => {
-      const created = await createTrip({ title: 'Заявка' });
+      const created = await createTrip({ announcement: 'Заявка' });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -829,7 +845,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('при закрытом наборе заявку не принять — 409', async () => {
-      const created = await createTrip({ title: 'Набор закрыт' });
+      const created = await createTrip({ announcement: 'Набор закрыт' });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -846,7 +862,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('отказ от приглашения убирает из состава и пишет в чат участников', async () => {
-      const created = await createTrip({ title: 'Отказ' });
+      const created = await createTrip({ announcement: 'Отказ' });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -870,7 +886,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('организатор убирает участника, но не себя', async () => {
-      const created = await createTrip({ title: 'Удаление участника' });
+      const created = await createTrip({ announcement: 'Удаление участника' });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -904,7 +920,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('свой статус меняет только участник, и это видно в чате', async () => {
-      const created = await createTrip({ title: 'Свой статус' });
+      const created = await createTrip({ announcement: 'Свой статус' });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -926,7 +942,7 @@ describe('Походы (e2e)', () => {
 
     it('состав приватного похода постороннему не виден — 404', async () => {
       const created = await createTrip({
-        title: 'Приватный состав',
+        announcement: 'Приватный состав',
         visibility: 'private',
       });
 
@@ -965,7 +981,7 @@ describe('Походы (e2e)', () => {
     };
 
     it('организатор видит оба чата, посторонний в публичном — только гостевой', async () => {
-      const created = await createTrip({ title: 'Чаты похода' });
+      const created = await createTrip({ announcement: 'Чаты похода' });
       const tripId = created.body.id as string;
 
       const mine = await request(app.getHttpServer())
@@ -989,7 +1005,7 @@ describe('Походы (e2e)', () => {
 
     it('чаты приватного похода постороннему не видны — 404', async () => {
       const created = await createTrip({
-        title: 'Приватные чаты',
+        announcement: 'Приватные чаты',
         visibility: 'private',
       });
 
@@ -1000,7 +1016,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('сообщение сохраняется обрезанным, с автором и признаком «не системное»', async () => {
-      const created = await createTrip({ title: 'Отправка' });
+      const created = await createTrip({ announcement: 'Отправка' });
       const tripId = created.body.id as string;
 
       const sent = await send(
@@ -1017,7 +1033,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('чат участников закрыт для постороннего, гостевой открыт', async () => {
-      const created = await createTrip({ title: 'Доступ к чатам' });
+      const created = await createTrip({ announcement: 'Доступ к чатам' });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -1036,7 +1052,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('приглашённый получает чат участников, ещё не ответив', async () => {
-      const created = await createTrip({ title: 'Чат приглашённого' });
+      const created = await createTrip({ announcement: 'Чат приглашённого' });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -1057,7 +1073,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('системные сообщения видны в чате без автора', async () => {
-      const created = await createTrip({ title: 'Системные в чате' });
+      const created = await createTrip({ announcement: 'Системные в чате' });
       const tripId = created.body.id as string;
 
       await request(app.getHttpServer())
@@ -1072,7 +1088,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('страницы листаются курсором от новых к старым', async () => {
-      const created = await createTrip({ title: 'Страницы' });
+      const created = await createTrip({ announcement: 'Страницы' });
       const tripId = created.body.id as string;
 
       for (let index = 1; index <= 5; index += 1) {
@@ -1114,7 +1130,7 @@ describe('Походы (e2e)', () => {
     });
 
     it('пустое сообщение, неизвестный чат и мусор в параметрах — 400', async () => {
-      const created = await createTrip({ title: 'Отказы чата' });
+      const created = await createTrip({ announcement: 'Отказы чата' });
       const tripId = created.body.id as string;
 
       await send(tripId, accessToken, 'trip_guest', '').expect(400);

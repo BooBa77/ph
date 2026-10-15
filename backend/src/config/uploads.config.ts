@@ -105,4 +105,3 @@ export const MAX_INPUT_PIXELS = 50_000_000;
  * Дальше путь достраивается как `<userId>/<uuid>.webp`.
  */
 export const AVATAR_URL_PREFIX = `${UPLOADS_URL_PREFIX}/${AVATARS_DIR}`;
-

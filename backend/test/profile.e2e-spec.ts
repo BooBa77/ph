@@ -414,7 +414,9 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
     }).expect(400);
 
     await patchMe({
-      sportExperience: { alpinism: { instructorGuideLicense: 'javascript:alert(1)' } },
+      sportExperience: {
+        alpinism: { instructorGuideLicense: 'javascript:alert(1)' },
+      },
     }).expect(400);
 
     // null принимается: поле очищается, категория остаётся.
@@ -422,7 +424,9 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
       sportExperience: { alpinism: { instructorGuideLicense: null } },
     }).expect(200);
 
-    expect(response.body.sportExperience.alpinism.instructorGuideLicense).toBeNull();
+    expect(
+      response.body.sportExperience.alpinism.instructorGuideLicense,
+    ).toBeNull();
     expect(response.body.sportExperience.alpinism.instructorGuide).toBe(
       'Без категории (ИПбк)',
     );

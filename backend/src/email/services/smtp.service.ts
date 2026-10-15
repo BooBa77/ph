@@ -63,7 +63,9 @@ export class SmtpService {
         subject,
         text,
       });
-      this.logger.log(`Письмо отправлено на ${to}, messageId: ${result.messageId}`);
+      this.logger.log(
+        `Письмо отправлено на ${to}, messageId: ${result.messageId}`,
+      );
     } catch (error) {
       this.logger.error(
         `Ошибка отправки письма на ${to}: ${error instanceof Error ? error.message : error}`,

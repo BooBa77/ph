@@ -60,15 +60,15 @@ export class UpdateTripDto {
   goalObjectId?: number;
 
   @ApiProperty({
-    description: 'Короткое имя похода. null — показывать имя цели',
+    description: 'Анонс: короткий текст для ленты. null — убрать анонс',
     maxLength: 120,
     nullable: true,
     required: false,
   })
   @IsOptional()
-  @IsString({ message: 'Название должно быть строкой' })
-  @MaxLength(120, { message: 'Название не должно превышать 120 символов' })
-  title?: string | null;
+  @IsString({ message: 'Анонс должен быть строкой' })
+  @MaxLength(120, { message: 'Анонс не должен превышать 120 символов' })
+  announcement?: string | null;
 
   @ApiProperty({
     description:
@@ -175,6 +175,17 @@ export class UpdateTripDto {
   @IsOptional()
   @IsBoolean({ message: 'Признак коммерции должен быть true или false' })
   isCommercial?: boolean;
+
+  @ApiProperty({
+    description:
+      'Спортивное мероприятие: официальный поход с зачётом, соревнование, сборы',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({
+    message: 'Признак спортивного мероприятия должен быть true или false',
+  })
+  isSport?: boolean;
 
   @ApiProperty({
     description: 'Цена участия в рублях. null — снять',

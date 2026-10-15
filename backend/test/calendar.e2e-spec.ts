@@ -96,7 +96,8 @@ describe('Календарь (e2e)', () => {
     await app?.close();
   });
 
-  const auth = (req: request.Test) => req.set('Authorization', `Bearer ${accessToken}`);
+  const auth = (req: request.Test) =>
+    req.set('Authorization', `Bearer ${accessToken}`);
 
   it('без токена не пускает', async () => {
     await request(app.getHttpServer())
@@ -157,7 +158,9 @@ describe('Календарь (e2e)', () => {
   });
 
   it('режим «весь год выходными» заполняет год без рабочих дней', async () => {
-    await auth(request(app.getHttpServer()).post('/api/calendar/years/2031/init'))
+    await auth(
+      request(app.getHttpServer()).post('/api/calendar/years/2031/init'),
+    )
       .send({ mode: 'retired' })
       .expect(201);
 
@@ -167,7 +170,11 @@ describe('Календарь (e2e)', () => {
       ),
     ).expect(200);
 
-    const list = days.body.days as { dayType: string; date: string; label: string }[];
+    const list = days.body.days as {
+      dayType: string;
+      date: string;
+      label: string;
+    }[];
     expect(list).toHaveLength(365);
     expect(list.every((day) => day.dayType === 'weekend')).toBe(true);
     // Праздник из шаблона всё равно подписан: 8 марта 2031 — суббота.
@@ -177,7 +184,9 @@ describe('Календарь (e2e)', () => {
   });
 
   it('режим «учусь» перекрывает рабочие дни каникулами', async () => {
-    await auth(request(app.getHttpServer()).post('/api/calendar/years/2026/init'))
+    await auth(
+      request(app.getHttpServer()).post('/api/calendar/years/2026/init'),
+    )
       .send({ mode: 'study' })
       .expect(201);
 
@@ -187,7 +196,11 @@ describe('Календарь (e2e)', () => {
       ),
     ).expect(200);
 
-    const list = days.body.days as { date: string; dayType: string; label: string }[];
+    const list = days.body.days as {
+      date: string;
+      dayType: string;
+      label: string;
+    }[];
     // 27 октября 2026 — вторник: по производственному календарю рабочий,
     // но идут осенние каникулы.
     expect(list.find((day) => day.date === '2026-10-27')).toMatchObject({
@@ -202,7 +215,9 @@ describe('Календарь (e2e)', () => {
       request(app.getHttpServer()).get('/api/calendar/years/2030'),
     ).expect(200);
 
-    await auth(request(app.getHttpServer()).post('/api/calendar/years/2030/init'))
+    await auth(
+      request(app.getHttpServer()).post('/api/calendar/years/2030/init'),
+    )
       .send({ mode: 'free' })
       .expect(409);
 
@@ -217,7 +232,9 @@ describe('Календарь (e2e)', () => {
   it('заполнение прошлого года не перебивает текущий режим', async () => {
     // К этому моменту заполнены 2026 (учусь), 2030 (пятидневка) и 2031
     // (пенсия). Заполнение 2029 — это шаг назад по времени.
-    await auth(request(app.getHttpServer()).post('/api/calendar/years/2029/init'))
+    await auth(
+      request(app.getHttpServer()).post('/api/calendar/years/2029/init'),
+    )
       .send({ mode: 'cycle' })
       .expect(201);
 
@@ -231,7 +248,9 @@ describe('Календарь (e2e)', () => {
   });
 
   it('правит один день: и статус, и метку', async () => {
-    const patched = await auth(request(app.getHttpServer()).patch('/api/calendar/days'))
+    const patched = await auth(
+      request(app.getHttpServer()).patch('/api/calendar/days'),
+    )
       .send({ date: '2030-01-07', dayType: 'weekend', label: 'ДР Любы' })
       .expect(200);
 
@@ -255,7 +274,9 @@ describe('Календарь (e2e)', () => {
   });
 
   it('правит пачку дней, последняя запись по дате выигрывает', async () => {
-    const updated = await auth(request(app.getHttpServer()).put('/api/calendar/days'))
+    const updated = await auth(
+      request(app.getHttpServer()).put('/api/calendar/days'),
+    )
       .send({
         days: [
           { date: '2030-06-03', dayType: 'weekend', label: 'Отпуск' },
@@ -273,7 +294,11 @@ describe('Календарь (e2e)', () => {
       ),
     ).expect(200);
 
-    const list = days.body.days as { date: string; dayType: string; label: string }[];
+    const list = days.body.days as {
+      date: string;
+      dayType: string;
+      label: string;
+    }[];
     expect(list.find((day) => day.date === '2030-06-03')).toMatchObject({
       dayType: 'weekend',
       label: 'Отпуск',
@@ -311,13 +336,19 @@ describe('Календарь (e2e)', () => {
       ),
     ).expect(200);
 
-    const list = days.body.days as { date: string; dayType: string; label: string }[];
+    const list = days.body.days as {
+      date: string;
+      dayType: string;
+      label: string;
+    }[];
     expect(list[0]).toMatchObject({ dayType: 'workday', label: 'Понедельник' });
   });
 
   it('отсекает мусор в параметрах', async () => {
     await auth(
-      request(app.getHttpServer()).get('/api/calendar/days?from=2030-02-30&to=2030-03-01'),
+      request(app.getHttpServer()).get(
+        '/api/calendar/days?from=2030-02-30&to=2030-03-01',
+      ),
     ).expect(400);
 
     await auth(
@@ -326,11 +357,13 @@ describe('Календарь (e2e)', () => {
       ),
     ).expect(400);
 
-    await auth(request(app.getHttpServer()).get('/api/calendar/years/1800')).expect(
-      400,
-    );
+    await auth(
+      request(app.getHttpServer()).get('/api/calendar/years/1800'),
+    ).expect(400);
 
-    await auth(request(app.getHttpServer()).post('/api/calendar/years/2029/init'))
+    await auth(
+      request(app.getHttpServer()).post('/api/calendar/years/2029/init'),
+    )
       .send({ mode: 'вахта' })
       .expect(400);
   });

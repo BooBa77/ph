@@ -15,11 +15,7 @@
 
 /** Вид каникул. Метка для пользователя собирается из него. */
 export type EducationBreakKind =
-  | 'autumn'
-  | 'winter'
-  | 'spring'
-  | 'summer'
-  | 'extra';
+  'autumn' | 'winter' | 'spring' | 'summer' | 'extra';
 
 export interface EducationBreak {
   /** Учебный год: он пересекает календарный, поэтому и хранится так. */
@@ -87,7 +83,10 @@ const parseIso = (value: string): Date => {
 
 /** Попадает ли каникулярный отрезок в календарный год. */
 function overlapsYear(item: EducationBreak, year: number): boolean {
-  return parseIso(item.from).getFullYear() <= year && parseIso(item.to).getFullYear() >= year;
+  return (
+    parseIso(item.from).getFullYear() <= year &&
+    parseIso(item.to).getFullYear() >= year
+  );
 }
 
 /** Есть ли учебный календарь, покрывающий этот календарный год. */
@@ -110,8 +109,12 @@ export function educationBreaksForYear(year: number): Map<string, string> {
 
     const from = parseIso(item.from);
     const to = parseIso(item.to);
-    const cursor = new Date(Math.max(from.getTime(), new Date(year, 0, 1).getTime()));
-    const last = new Date(Math.min(to.getTime(), new Date(year, 11, 31).getTime()));
+    const cursor = new Date(
+      Math.max(from.getTime(), new Date(year, 0, 1).getTime()),
+    );
+    const last = new Date(
+      Math.min(to.getTime(), new Date(year, 11, 31).getTime()),
+    );
 
     while (cursor.getTime() <= last.getTime()) {
       result.set(iso(cursor), item.label);

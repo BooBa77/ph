@@ -91,7 +91,9 @@ describe('Аватарка (e2e)', () => {
 
   it('без токена не пускает', async () => {
     await request(app.getHttpServer()).post('/api/users/me/avatar').expect(401);
-    await request(app.getHttpServer()).delete('/api/users/me/avatar').expect(401);
+    await request(app.getHttpServer())
+      .delete('/api/users/me/avatar')
+      .expect(401);
   });
 
   it('загружает аватарку, отдаёт её по URL и убирает прежний файл', async () => {
@@ -111,9 +113,7 @@ describe('Аватарка (e2e)', () => {
     // Путь прямого вида и с нашим префиксом: фронт подставляет его в <img>
     // без обработки, а nginx и Vite проксируют этот префикс на бэкенд.
     expect(firstUrl).toMatch(
-      new RegExp(
-        `^/api/uploads/avatars/${userId}/[0-9a-f-]{36}\\.webp$`,
-      ),
+      new RegExp(`^/api/uploads/avatars/${userId}/[0-9a-f-]{36}\\.webp$`),
     );
 
     const file = await request(app.getHttpServer()).get(firstUrl).expect(200);

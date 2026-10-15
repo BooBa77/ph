@@ -121,16 +121,17 @@ export class CreateTripDto {
   goalObjectId: number;
 
   @ApiProperty({
-    description: 'Короткое имя похода. Пусто — показывается имя цели',
-    example: 'Витязь на майские',
+    description:
+      'Анонс: короткий текст для ленты. Имя похода — это цель, а не он',
+    example: 'Идём на майские, набор шесть человек',
     maxLength: 120,
     required: false,
     nullable: true,
   })
   @IsOptional()
-  @IsString({ message: 'Название должно быть строкой' })
-  @MaxLength(120, { message: 'Название не должно превышать 120 символов' })
-  title?: string | null;
+  @IsString({ message: 'Анонс должен быть строкой' })
+  @MaxLength(120, { message: 'Анонс не должен превышать 120 символов' })
+  announcement?: string | null;
 
   @ApiProperty({
     description: 'Маршрут: markdown со ссылками [[object:N]]',
@@ -220,6 +221,18 @@ export class CreateTripDto {
     message: 'Признак коммерческого похода должен быть true или false',
   })
   isCommercial?: boolean;
+
+  @ApiProperty({
+    description:
+      'Спортивное мероприятие: официальный поход с зачётом, соревнование, сборы',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({
+    message: 'Признак спортивного мероприятия должен быть true или false',
+  })
+  isSport?: boolean;
 
   @ApiProperty({
     description:

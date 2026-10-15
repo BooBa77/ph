@@ -75,10 +75,7 @@ describe('StorageService', () => {
       'абсолютный URL на чужой хост',
       `https://evil.example.com/avatars/${USER_ID}/3f2504e0-4f89-41d3-9a0c-0305e82c3301.webp`,
     ],
-    [
-      'выход из каталога',
-      `${avatarUrlPrefix}/${USER_ID}/../../../etc/passwd`,
-    ],
+    ['выход из каталога', `${avatarUrlPrefix}/${USER_ID}/../../../etc/passwd`],
     [
       'чужое расширение',
       `${avatarUrlPrefix}/${USER_ID}/3f2504e0-4f89-41d3-9a0c-0305e82c3301.png`,

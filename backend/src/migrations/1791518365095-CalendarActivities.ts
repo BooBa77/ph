@@ -39,8 +39,12 @@ export class CalendarActivities1791518365095 implements MigrationInterface {
       `CREATE TABLE "calendar_activity_favorites" ("user_id" uuid NOT NULL, "activity_type_id" integer NOT NULL, "usage_count" integer NOT NULL DEFAULT '0', CONSTRAINT "PK_66a8bb2f431c20f8b8af9e31035" PRIMARY KEY ("user_id", "activity_type_id"))`,
     );
 
-    await queryRunner.query(`ALTER TABLE "calendar_production" ADD "note_public" text`);
-    await queryRunner.query(`ALTER TABLE "calendar_production" ADD "note_personal" text`);
+    await queryRunner.query(
+      `ALTER TABLE "calendar_production" ADD "note_public" text`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "calendar_production" ADD "note_personal" text`,
+    );
 
     await queryRunner.query(
       `ALTER TABLE "calendar_activity_types" ADD CONSTRAINT "FK_977703e25aaccba7ec842084e5a" FOREIGN KEY ("group_id") REFERENCES "calendar_activity_groups"("id") ON DELETE RESTRICT ON UPDATE NO ACTION`,
@@ -110,8 +114,12 @@ export class CalendarActivities1791518365095 implements MigrationInterface {
     await queryRunner.query(
       `ALTER TABLE "calendar_activity_types" DROP CONSTRAINT "FK_977703e25aaccba7ec842084e5a"`,
     );
-    await queryRunner.query(`ALTER TABLE "calendar_production" DROP COLUMN "note_personal"`);
-    await queryRunner.query(`ALTER TABLE "calendar_production" DROP COLUMN "note_public"`);
+    await queryRunner.query(
+      `ALTER TABLE "calendar_production" DROP COLUMN "note_personal"`,
+    );
+    await queryRunner.query(
+      `ALTER TABLE "calendar_production" DROP COLUMN "note_public"`,
+    );
     await queryRunner.query(`DROP TABLE "calendar_activity_favorites"`);
     await queryRunner.query(`DROP TABLE "calendar_activities"`);
     await queryRunner.query(`DROP TABLE "calendar_activity_type_requests"`);

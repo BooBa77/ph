@@ -131,9 +131,7 @@ export class StorageService {
    * проверка нужна в двух местах: при удалении старого файла и при
    * сбросе аватарки.
    */
-  parseAvatarUrl(
-    url: string,
-  ): { userId: string; fileName: string } | null {
+  parseAvatarUrl(url: string): { userId: string; fileName: string } | null {
     const prefix = `${AVATAR_URL_PREFIX}/`;
     if (!url.startsWith(prefix)) return null;
 

@@ -14,7 +14,10 @@ import type { CalendarDayType } from '../calendar.types';
  * Ключ — сама дата: страна у нас одна, шестидневка не наш случай.
  */
 @Entity('calendar_state_production')
-@Check('chk_state_day_type', `"day_type" IN ('workday', 'weekend', 'short_workday')`)
+@Check(
+  'chk_state_day_type',
+  `"day_type" IN ('workday', 'weekend', 'short_workday')`,
+)
 export class CalendarStateDay {
   @PrimaryColumn({ type: 'date' })
   date: string;
