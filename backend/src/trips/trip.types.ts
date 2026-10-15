@@ -57,6 +57,17 @@ export const PARTICIPANT_STATUSES = [
 export type ParticipantStatus = (typeof PARTICIPANT_STATUSES)[number];
 
 /**
+ * Чем можно ответить на приглашение или заявку: «иду» или «пока не решил».
+ *
+ * `declined` сюда не входит намеренно — отказ не ответ, а удаление: он
+ * убирает человека из состава и тикет, и в интерфейсе это отдельная кнопка
+ * («не пойду»), а не третий вариант в том же списке.
+ */
+export const PARTICIPANT_DECISIONS = ['going', 'maybe'] as const;
+
+export type ParticipantDecision = (typeof PARTICIPANT_DECISIONS)[number];
+
+/**
  * Направление тикета: приглашение (организатор → человек) или заявка
  * (человек → организатор). Обе живут в одной таблице — поля те же,
  * разница только в том, кто начал.

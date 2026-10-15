@@ -13,6 +13,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiCreatedResponse,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -21,6 +22,17 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import { CreateTripDto } from './dto/create-trip.dto';
+import {
+  AcceptRequestDto,
+  ParticipantListDto,
+  TripParticipantDto,
+  UpdateMyStatusDto,
+} from './dto/participant.dto';
+import {
+  CreateRequestDto,
+  TripRequestDto,
+  TripRequestListDto,
+} from './dto/request.dto';
 import { TripListQueryDto } from './dto/trip-list-query.dto';
 import { TripListResponseDto } from './dto/trip-list-response.dto';
 import { TripResponseDto } from './dto/trip-response.dto';
@@ -131,5 +143,115 @@ export class TripsController {
     @Param('id', ParseIntPipe) id: number,
   ): Promise<TripResponseDto> {
     return this.tripsService.restore(authUser.id, id);
+  }
+
+  // ───────────────────────────── состав ─────────────────────────────
+
+  /** Состав похода с ролями и статусами. Виден всем, кому виден поход. */
+  @Get(':id/participants')
+  @ApiOperation({ summary: 'Состав похода' })
+  @ApiOkResponse({ type: ParticipantListDto })
+  async listParticipants(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ParticipantListDto> {
+    return this.tripsService.listParticipants(authUser.id, id);
+  }
+
+  /**
+   * Свой статус участия: «иду», «пока не решил», «не иду». Организатору
+   * тоже доступно — «организую, но сам не иду» законно.
+   */
+  @Patch(':id/participants/me')
+  @ApiOperation({ summary: 'Сменить свой статус участия' })
+  @ApiOkResponse({ type: TripParticipantDto })
+  async updateMyStatus(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateMyStatusDto,
+  ): Promise<TripParticipantDto> {
+    return this.tripsService.updateMyStatus(authUser.id, id, dto.status);
+  }
+
+  /** Убрать человека из состава. Только организатор, и только не себя. */
+  @Delete(':id/participants/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Убрать участника из похода' })
+  @ApiNoContentResponse({ description: 'Участник убран' })
+  async removeParticipant(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('userId') targetUserId: string,
+  ): Promise<void> {
+    return this.tripsService.removeParticipant(authUser.id, id, targetUserId);
+  }
+
+  // ─────────────────────── приглашения и заявки ───────────────────────
+
+  /**
+   * Тикеты похода: организатор видит все, остальные — только свои.
+   */
+  @Get(':id/requests')
+  @ApiOperation({ summary: 'Приглашения и заявки' })
+  @ApiOkResponse({ type: TripRequestListDto })
+  async listRequests(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripRequestListDto> {
+    return this.tripsService.listRequests(authUser.id, id);
+  }
+
+  /**
+   * Пригласить (`invite`, только организатор) или подать заявку (`apply`).
+   * Приглашение сразу добавляет человека в состав со статусом `invited`.
+   */
+  @Post(':id/requests')
+  @ApiOperation({ summary: 'Пригласить или подать заявку' })
+  @ApiCreatedResponse({ type: TripRequestDto })
+  async createRequest(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateRequestDto,
+  ): Promise<TripRequestDto> {
+    return this.tripsService.createRequest(authUser.id, id, dto);
+  }
+
+  /**
+   * Принять: приглашённый отвечает «иду» или «пока не решил», организатор
+   * одобряет заявку. Тикет при этом закрывается.
+   */
+  @Post(':id/requests/:userId/accept')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Принять приглашение или одобрить заявку' })
+  @ApiOkResponse({ type: TripParticipantDto })
+  async acceptRequest(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('userId') targetUserId: string,
+    @Body() dto: AcceptRequestDto,
+  ): Promise<TripParticipantDto> {
+    return this.tripsService.acceptRequest(
+      authUser.id,
+      id,
+      targetUserId,
+      dto.status,
+    );
+  }
+
+  /**
+   * Закрыть тикет: отказаться от приглашения, отозвать приглашение,
+   * отклонить заявку или отозвать свою. Разница — в том, кто делает,
+   * и в том, куда уходит системное сообщение.
+   */
+  @Delete(':id/requests/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Отказаться, отозвать или отклонить' })
+  @ApiNoContentResponse({ description: 'Тикет закрыт' })
+  async deleteRequest(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('userId') targetUserId: string,
+  ): Promise<void> {
+    return this.tripsService.deleteRequest(authUser.id, id, targetUserId);
   }
 }

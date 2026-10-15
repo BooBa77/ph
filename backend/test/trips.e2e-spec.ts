@@ -35,6 +35,8 @@ describe('Походы (e2e)', () => {
   let userId: string;
   let strangerToken: string;
   let strangerId: string;
+  let applicantToken: string;
+  let applicantId: string;
   let goalObjectId: string;
   let activityGroupId: number;
   let activityTypeId: number;
@@ -42,6 +44,7 @@ describe('Походы (e2e)', () => {
 
   const email = `trips-e2e-${Date.now()}@example.com`;
   const strangerEmail = `trips-e2e-viewer-${Date.now()}@example.com`;
+  const applicantEmail = `trips-e2e-applicant-${Date.now()}@example.com`;
 
   /** Id походов, созданных тестом, — чтобы убрать их за собой. */
   const createdTripIds: string[] = [];
@@ -120,6 +123,10 @@ describe('Походы (e2e)', () => {
     const stranger = await login(strangerEmail);
     strangerToken = stranger.token;
     strangerId = stranger.id;
+
+    const applicant = await login(applicantEmail);
+    applicantToken = applicant.token;
+    applicantId = applicant.id;
   });
 
   afterAll(async () => {
@@ -128,7 +135,7 @@ describe('Походы (e2e)', () => {
       // и вариантами дат.
       await dataSource.query(
         'DELETE FROM trips WHERE organizer_user_id = ANY($1::uuid[])',
-        [[userId, strangerId]],
+        [[userId, strangerId, applicantId]],
       );
       await dataSource.query(
         'DELETE FROM calendar_activity_types WHERE id = $1',
@@ -141,8 +148,11 @@ describe('Походы (e2e)', () => {
       await dataSource.query('DELETE FROM objects WHERE id = $1', [
         goalObjectId,
       ]);
+      // Заявитель и посторонний попадают в состав чужих походов, поэтому
+      // пользователей удаляем после походов: `ON DELETE RESTRICT` не даст
+      // иначе, и это правильно.
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
-        [userId, strangerId],
+        [userId, strangerId, applicantId],
       ]);
     }
     await app?.close();
@@ -645,6 +655,290 @@ describe('Походы (e2e)', () => {
         .post(`/api/trips/${created.body.id}/cancel`)
         .set('Authorization', `Bearer ${strangerToken}`)
         .expect(403);
+    });
+  });
+
+  describe('состав и тикеты', () => {
+    /** Системные сообщения чата похода: у них `sender_id IS NULL`. */
+    const systemMessages = async (
+      tripId: string,
+      kind: string,
+    ): Promise<string[]> => {
+      const rows = await dataSource.query(
+        `SELECT gm.body
+           FROM group_messages gm
+           JOIN chats c ON c.id = gm.chat_id
+          WHERE c.trip_id = $1 AND c.kind = $2 AND gm.sender_id IS NULL
+          ORDER BY gm.id`,
+        [tripId, kind],
+      );
+      return rows.map((row: { body: string }) => row.body);
+    };
+
+    const participants = async (tripId: string, token = accessToken) => {
+      const response = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/participants`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return response.body.participants as Array<{
+        userId: string;
+        status: string;
+        isOrganizer: boolean;
+        roles: Array<{ code: string }>;
+      }>;
+    };
+
+    it('при создании в составе один организатор с ролью и статусом going', async () => {
+      const created = await createTrip({ title: 'Состав по умолчанию' });
+      const list = await participants(created.body.id as string);
+
+      expect(list).toHaveLength(1);
+      expect(list[0].userId).toBe(userId);
+      expect(list[0].isOrganizer).toBe(true);
+      expect(list[0].status).toBe('going');
+      expect(list[0].roles.map((role) => role.code)).toContain(
+        ORGANIZER_ROLE_CODE,
+      );
+    });
+
+    it('приглашение сразу добавляет человека в состав и он видит поход', async () => {
+      const created = await createTrip({ title: 'С приглашением' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: applicantId, message: 'Идёшь?' })
+        .expect(201);
+
+      const list = await participants(tripId);
+      const invited = list.find((item) => item.userId === applicantId);
+      expect(invited?.status).toBe('invited');
+
+      // Приглашённый должен видеть поход, иначе он не решит, идти ли.
+      await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .expect(200);
+    });
+
+    it('повторное приглашение — 409, приглашение не организатором — 403', async () => {
+      const created = await createTrip({ title: 'Двойное приглашение' });
+      const tripId = created.body.id as string;
+      const invite = { direction: 'invite', userId: applicantId };
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send(invite)
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send(invite)
+        .expect(409);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ direction: 'invite', userId: strangerId })
+        .expect(403);
+    });
+
+    it('приглашённый принимает: статус меняется, тикет закрыт, есть сообщение', async () => {
+      const created = await createTrip({ title: 'Принятие приглашения' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: applicantId })
+        .expect(201);
+
+      const accepted = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${applicantId}/accept`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ status: 'maybe' })
+        .expect(200);
+      expect(accepted.body.status).toBe('maybe');
+
+      const tickets = await dataSource.query(
+        'SELECT count(*)::int AS c FROM trip_membership_requests WHERE trip_id = $1',
+        [tripId],
+      );
+      expect(tickets[0].c).toBe(0);
+
+      // Текст сообщения начинается с имени, а имя выводится из адреса
+      // почты — привязываться к нему в тесте незачем, проверяем суть.
+      expect(
+        (await systemMessages(tripId, 'trip_members')).some((body) =>
+          body.endsWith(': пока не решил'),
+        ),
+      ).toBe(true);
+    });
+
+    it('заявку принимает только организатор, а подаёт — только от своего имени', async () => {
+      const created = await createTrip({ title: 'Заявка' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ direction: 'apply', list: 'нет такого поля' })
+        .expect(400);
+
+      const applied = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ direction: 'apply', message: 'Возьмите меня' })
+        .expect(201);
+      expect(applied.body.userId).toBe(applicantId);
+
+      // Заявку видит организатор и сам заявитель, но не посторонний.
+      const asOrganizer = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      expect(asOrganizer.body.requests).toHaveLength(1);
+
+      const asStranger = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(200);
+      expect(asStranger.body.requests).toHaveLength(0);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${applicantId}/accept`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ status: 'going' })
+        .expect(403);
+
+      const approved = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${applicantId}/accept`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'going' })
+        .expect(200);
+      expect(approved.body.status).toBe('going');
+
+      expect(
+        (await systemMessages(tripId, 'trip_guest')).some((body) =>
+          body.startsWith('Заявка на участие от '),
+        ),
+      ).toBe(true);
+    });
+
+    it('при закрытом наборе заявку не принять — 409', async () => {
+      const created = await createTrip({ title: 'Набор закрыт' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ isRecruitmentClosed: true })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ direction: 'apply' })
+        .expect(409);
+    });
+
+    it('отказ от приглашения убирает из состава и пишет в чат участников', async () => {
+      const created = await createTrip({ title: 'Отказ' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: applicantId })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${tripId}/requests/${applicantId}`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .expect(204);
+
+      const list = await participants(tripId);
+      expect(list.some((item) => item.userId === applicantId)).toBe(false);
+      expect(
+        (await systemMessages(tripId, 'trip_members')).some((body) =>
+          body.includes('не идёт в поход'),
+        ),
+      ).toBe(true);
+    });
+
+    it('организатор убирает участника, но не себя', async () => {
+      const created = await createTrip({ title: 'Удаление участника' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: applicantId })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${applicantId}/accept`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ status: 'going' })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${tripId}/participants/${applicantId}`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(403);
+
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${tripId}/participants/${userId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${tripId}/participants/${applicantId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
+
+      const list = await participants(tripId);
+      expect(list.some((item) => item.userId === applicantId)).toBe(false);
+    });
+
+    it('свой статус меняет только участник, и это видно в чате', async () => {
+      const created = await createTrip({ title: 'Свой статус' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/me`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ status: 'going' })
+        .expect(404);
+
+      const changed = await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/me`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'declined' })
+        .expect(200);
+
+      // Организатор тоже может не идти: «организую, но сам не пойду».
+      expect(changed.body.status).toBe('declined');
+      expect(changed.body.isOrganizer).toBe(true);
+    });
+
+    it('состав приватного похода постороннему не виден — 404', async () => {
+      const created = await createTrip({
+        title: 'Приватный состав',
+        visibility: 'private',
+      });
+
+      await request(app.getHttpServer())
+        .get(`/api/trips/${created.body.id}/participants`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .get(`/api/trips/${created.body.id}/participants`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(404);
     });
   });
 });

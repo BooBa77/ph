@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   InternalServerErrorException,
@@ -9,15 +10,28 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
+import { User } from '../users/entities/user.entity';
 import { CreateTripDto } from './dto/create-trip.dto';
+import {
+  ParticipantListDto,
+  TripParticipantDto,
+  TripRoleDto,
+} from './dto/participant.dto';
+import {
+  CreateRequestDto,
+  TripRequestDto,
+  TripRequestListDto,
+} from './dto/request.dto';
 import { TripListQueryDto } from './dto/trip-list-query.dto';
 import { TripListResponseDto } from './dto/trip-list-response.dto';
 import { TripResponseDto } from './dto/trip-response.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
 import { Chat } from './entities/chat.entity';
 import { GeoObject } from './entities/geo-object.entity';
+import { GroupMessage } from './entities/group-message.entity';
 import { Role } from './entities/role.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
+import { TripMembershipRequest } from './entities/trip-membership-request.entity';
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
@@ -25,12 +39,34 @@ import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
 import {
   ORGANIZER_ROLE_CODE,
+  type ChatKind,
+  type ParticipantDecision,
+  type ParticipantStatus,
   type TripStatus,
   type TripWhen,
 } from './trip.types';
 
 /** Размер страницы ленты по умолчанию и потолок — в DTO. */
 const DEFAULT_PAGE_SIZE = 20;
+
+/** Как статус участия читается в системном сообщении чата. */
+function statusText(status: ParticipantStatus): string {
+  switch (status) {
+    case 'going':
+      return 'идёт';
+    case 'maybe':
+      return 'пока не решил';
+    case 'declined':
+      return 'не идёт';
+    case 'invited':
+      return 'приглашён';
+  }
+}
+
+/** Имя для системного сообщения: чужой профиль может быть уже удалён. */
+function displayNameOf(user: User | null | undefined): string {
+  return user?.displayName ?? 'Участник';
+}
 
 /**
  * Походы: создание и чтение.
@@ -672,5 +708,536 @@ export class TripsService {
 
       return TripResponseDto.from(saved);
     });
+  }
+
+  /**
+   * Поход, который этому пользователю вообще видно.
+   *
+   * Приватный поход постороннему не существует — 404, а не 403: 403
+   * подтверждает, что поход есть, и превращает перебор id в способ узнать,
+   * кто и куда собирается. Все операции с составом и тикетами начинаются
+   * отсюда, чтобы правило было ровно одно и в одном месте.
+   */
+  private async findVisibleTrip(
+    manager: EntityManager,
+    userId: string,
+    id: number,
+  ): Promise<Trip> {
+    const trip = await manager.findOne(Trip, { where: { id: String(id) } });
+    if (!trip) {
+      throw new NotFoundException('Поход не найден');
+    }
+
+    if (trip.visibility === 'private') {
+      const isParticipant = await manager.count(TripParticipant, {
+        where: { tripId: trip.id, userId },
+      });
+      if (isParticipant === 0) {
+        throw new NotFoundException('Поход не найден');
+      }
+    }
+
+    return trip;
+  }
+
+  /** Состав похода с ролями — одним запросом на участников, одним на роли. */
+  private async loadParticipants(
+    manager: EntityManager,
+    trip: Trip,
+  ): Promise<TripParticipantDto[]> {
+    const participants = await manager.find(TripParticipant, {
+      where: { tripId: trip.id },
+      relations: { user: true },
+      order: { createdAt: 'ASC' },
+    });
+
+    const roleRows = await manager.find(TripParticipantRole, {
+      where: { tripId: trip.id },
+      relations: { role: true },
+    });
+
+    const rolesByUser = new Map<string, TripRoleDto[]>();
+    for (const row of roleRows) {
+      if (!row.role) continue;
+      const list = rolesByUser.get(row.userId) ?? [];
+      list.push(TripRoleDto.from(row.role));
+      rolesByUser.set(row.userId, list);
+    }
+
+    return participants.map((participant) =>
+      TripParticipantDto.from(
+        participant,
+        rolesByUser.get(participant.userId) ?? [],
+        trip.organizerUserId,
+      ),
+    );
+  }
+
+  private async loadRoles(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+  ): Promise<TripRoleDto[]> {
+    const rows = await manager.find(TripParticipantRole, {
+      where: { tripId, userId },
+      relations: { role: true },
+    });
+
+    return rows
+      .filter((row) => row.role !== null && row.role !== undefined)
+      .map((row) => TripRoleDto.from(row.role));
+  }
+
+  /**
+   * Системное сообщение в чат похода.
+   *
+   * `sender_id = NULL` — так помечены системные сообщения, отдельного флага
+   * для этого нет. Пишутся они здесь и только здесь: история обработки
+   * тикетов живёт в чатах, поэтому у тикета нет статуса.
+   *
+   * Отсутствие чата — не «молча пропустить», а поломка данных: оба чата
+   * создаются в одной транзакции с походом. Проглотить это значило бы
+   * потерять сообщение и не сказать никому.
+   */
+  private async postSystemMessage(
+    manager: EntityManager,
+    tripId: string,
+    kind: ChatKind,
+    body: string,
+  ): Promise<void> {
+    const chat = await manager.findOne(Chat, { where: { tripId, kind } });
+    if (!chat) {
+      throw new InternalServerErrorException(
+        `У похода нет чата «${kind}» — данные похода повреждены`,
+      );
+    }
+
+    await manager.insert(GroupMessage, {
+      chatId: chat.id,
+      senderId: null,
+      body,
+    });
+  }
+
+  /** Состав похода. Виден всем, кому виден сам поход. */
+  async listParticipants(
+    userId: string,
+    id: number,
+  ): Promise<ParticipantListDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.findVisibleTrip(manager, userId, id);
+
+    return { participants: await this.loadParticipants(manager, trip) };
+  }
+
+  /**
+   * Сменить свой статус участия.
+   *
+   * Доступно и организатору: «организую, но сам не иду» — законная
+   * ситуация, ради которой у него и может быть `declined`. Смена статуса
+   * попадает системным сообщением в чат участников: состав — общее дело,
+   * и «пока не решил» через месяц должно быть видно, а не раствориться.
+   */
+  async updateMyStatus(
+    userId: string,
+    id: number,
+    status: ParticipantStatus,
+  ): Promise<TripParticipantDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const trip = await this.findVisibleTrip(manager, userId, id);
+
+      const participant = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId },
+        relations: { user: true },
+      });
+      if (!participant) {
+        throw new NotFoundException('Вы не в составе этого похода');
+      }
+
+      if (participant.status !== status) {
+        participant.status = status;
+        await manager.save(participant);
+        await this.postSystemMessage(
+          manager,
+          trip.id,
+          'trip_members',
+          `${displayNameOf(participant.user)}: ${statusText(status)}`,
+        );
+      }
+
+      return TripParticipantDto.from(
+        participant,
+        await this.loadRoles(manager, trip.id, userId),
+        trip.organizerUserId,
+      );
+    });
+  }
+
+  /**
+   * Убрать человека из состава. Только организатор.
+   *
+   * Организатора убрать нельзя: он автор похода, и даже триггер в базе
+   * это запрещает. Если поход не состоится — его отменяют, а не разбирают
+   * по частям.
+   *
+   * Тикет удаляется вместе с участием: приглашённый в составе **и** имеет
+   * тикет, поэтому «убрать из состава» без удаления тикета оставило бы
+   * висящее приглашение человеку, которого уже убрали.
+   */
+  async removeParticipant(
+    organizerUserId: string,
+    id: number,
+    targetUserId: string,
+  ): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const trip = await this.findOwnedTrip(manager, organizerUserId, id);
+
+      if (targetUserId === trip.organizerUserId) {
+        throw new BadRequestException(
+          'Организатора нельзя убрать из состава: он автор похода. Если поход не состоится — отмените его',
+        );
+      }
+
+      const participant = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: targetUserId },
+        relations: { user: true },
+      });
+      if (!participant) {
+        throw new NotFoundException('Такого участника в походе нет');
+      }
+
+      await manager.delete(TripParticipant, {
+        tripId: trip.id,
+        userId: targetUserId,
+      });
+      await manager.delete(TripMembershipRequest, {
+        tripId: trip.id,
+        userId: targetUserId,
+      });
+
+      await this.postSystemMessage(
+        manager,
+        trip.id,
+        'trip_members',
+        `${displayNameOf(participant.user)} больше не в составе`,
+      );
+    });
+  }
+
+  /**
+   * Тикеты похода.
+   *
+   * Организатор видит все — ему их и обрабатывать. Остальные видят **только
+   * свои**: заявка человека к организатору других не касается, и показывать
+   * её участникам значило бы раскрывать чужие планы.
+   */
+  async listRequests(userId: string, id: number): Promise<TripRequestListDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.findVisibleTrip(manager, userId, id);
+    const isOrganizer = trip.organizerUserId === userId;
+
+    const requests = await manager.find(TripMembershipRequest, {
+      where: isOrganizer ? { tripId: trip.id } : { tripId: trip.id, userId },
+      relations: { user: true },
+      order: { createdAt: 'ASC' },
+    });
+
+    return {
+      requests: requests.map((request) => TripRequestDto.from(request)),
+    };
+  }
+
+  /**
+   * Завести тикет: приглашение или заявку.
+   *
+   * Приглашение создаёт организатор и оно **сразу** добавляет человека
+   * в состав со статусом `invited`: приглашённый должен видеть поход, иначе
+   * он не сможет решить, идти ли. Заявка участия не создаёт — сначала
+   * решение организатора.
+   *
+   * В гостевом чате заявка отмечается системным сообщением: подавший должен
+   * видеть, что она ушла организатору, а не пропала.
+   */
+  async createRequest(
+    userId: string,
+    id: number,
+    dto: CreateRequestDto,
+  ): Promise<TripRequestDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const trip = await this.findVisibleTrip(manager, userId, id);
+      const isOrganizer = trip.organizerUserId === userId;
+
+      if (dto.direction === 'invite') {
+        if (!isOrganizer) {
+          throw new ForbiddenException('Приглашать может только организатор');
+        }
+        if (!dto.userId) {
+          throw new BadRequestException(
+            'Для приглашения нужно указать, кого приглашаем',
+          );
+        }
+        if (dto.userId === trip.organizerUserId) {
+          throw new BadRequestException('Организатор уже в походе');
+        }
+
+        const invited = await manager.findOne(User, {
+          where: { id: dto.userId },
+        });
+        if (!invited) {
+          throw new BadRequestException('Пользователь не найден');
+        }
+
+        await this.assertFreeOfTicketAndParticipation(
+          manager,
+          trip,
+          dto.userId,
+        );
+
+        const request = await manager.save(
+          manager.create(TripMembershipRequest, {
+            tripId: trip.id,
+            userId: dto.userId,
+            direction: 'invite',
+            message: dto.message ?? null,
+          }),
+        );
+        await manager.insert(TripParticipant, {
+          tripId: trip.id,
+          userId: dto.userId,
+          status: 'invited',
+        });
+
+        request.user = invited;
+        return TripRequestDto.from(request);
+      }
+
+      // Заявка. `userId` в ней лишний: её подают от своего имени, и чужой
+      // id здесь означал бы заявку от лица другого человека.
+      if (dto.userId !== undefined) {
+        throw new BadRequestException(
+          'Заявку подают от своего имени: поле userId здесь лишнее',
+        );
+      }
+      if (isOrganizer) {
+        throw new BadRequestException('Организатор уже в походе');
+      }
+      if (trip.isRecruitmentClosed) {
+        throw new ConflictException('Набор в этот поход закрыт');
+      }
+
+      await this.assertFreeOfTicketAndParticipation(manager, trip, userId);
+
+      const request = await manager.save(
+        manager.create(TripMembershipRequest, {
+          tripId: trip.id,
+          userId,
+          direction: 'apply',
+          message: dto.message ?? null,
+        }),
+      );
+
+      const applicant = await manager.findOne(User, { where: { id: userId } });
+      if (!applicant) {
+        throw new NotFoundException('Пользователь не найден');
+      }
+      request.user = applicant;
+
+      await this.postSystemMessage(
+        manager,
+        trip.id,
+        'trip_guest',
+        `Заявка на участие от ${displayNameOf(applicant)}`,
+      );
+
+      return TripRequestDto.from(request);
+    });
+  }
+
+  /**
+   * Принять: приглашённый отвечает «иду» или «пока не решил», организатор
+   * одобряет заявку.
+   *
+   * Кто вправе — зависит от направления тикета, и это единственное место,
+   * где направление определяет права: приглашение принимает тот, кого
+   * позвали, заявку одобряет тот, кого просили.
+   */
+  async acceptRequest(
+    userId: string,
+    id: number,
+    targetUserId: string,
+    status: ParticipantDecision,
+  ): Promise<TripParticipantDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const trip = await manager.findOne(Trip, { where: { id: String(id) } });
+      if (!trip) {
+        throw new NotFoundException('Поход не найден');
+      }
+
+      const request = await manager.findOne(TripMembershipRequest, {
+        where: { tripId: trip.id, userId: targetUserId },
+        relations: { user: true },
+      });
+      if (!request) {
+        throw new NotFoundException('Приглашение или заявка не найдены');
+      }
+
+      const isOrganizer = trip.organizerUserId === userId;
+      const isTarget = targetUserId === userId;
+
+      if (request.direction === 'invite' ? !isTarget : !isOrganizer) {
+        throw new ForbiddenException(
+          request.direction === 'invite'
+            ? 'Принять приглашение может только тот, кого пригласили'
+            : 'Одобрить заявку может только организатор',
+        );
+      }
+
+      const participant = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: targetUserId },
+      });
+      if (participant) {
+        participant.status = status;
+        await manager.save(participant);
+      } else {
+        await manager.insert(TripParticipant, {
+          tripId: trip.id,
+          userId: targetUserId,
+          status,
+        });
+      }
+
+      await manager.delete(TripMembershipRequest, {
+        tripId: trip.id,
+        userId: targetUserId,
+      });
+
+      await this.postSystemMessage(
+        manager,
+        trip.id,
+        'trip_members',
+        `${displayNameOf(request.user)}: ${statusText(status)}`,
+      );
+
+      const saved = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: targetUserId },
+        relations: { user: true },
+      });
+
+      return TripParticipantDto.from(
+        saved!,
+        await this.loadRoles(manager, trip.id, targetUserId),
+        trip.organizerUserId,
+      );
+    });
+  }
+
+  /**
+   * Отказаться, отозвать или отклонить — одним действием «тикет закрыт».
+   *
+   * Четыре случая, и все они означают одно: тикета больше нет. Разница
+   * только в том, кто это сделал и куда смотреть истории:
+   *
+   * | тикет | кто | что происходит |
+   * |---|---|---|
+   * | приглашение | организатор | отозвал: человека убираем из состава |
+   * | приглашение | приглашённый | отказался: то же самое |
+   * | заявка | организатор | отклонил: состав не меняется |
+   * | заявка | заявитель | отозвал: состав не меняется |
+   *
+   * Сообщение идёт туда, где его увидят: про приглашения — в чат
+   * участников, про заявки — в гостевой. Заявка в чате участников была бы
+   * сообщением о человеке, которого в походе нет.
+   */
+  async deleteRequest(
+    userId: string,
+    id: number,
+    targetUserId: string,
+  ): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const trip = await manager.findOne(Trip, { where: { id: String(id) } });
+      if (!trip) {
+        throw new NotFoundException('Поход не найден');
+      }
+
+      const request = await manager.findOne(TripMembershipRequest, {
+        where: { tripId: trip.id, userId: targetUserId },
+        relations: { user: true },
+      });
+      if (!request) {
+        throw new NotFoundException('Приглашение или заявка не найдены');
+      }
+
+      const isOrganizer = trip.organizerUserId === userId;
+      const isTarget = targetUserId === userId;
+      if (!isOrganizer && !isTarget) {
+        throw new ForbiddenException(
+          'Закрыть тикет может организатор или сам человек',
+        );
+      }
+
+      const name = displayNameOf(request.user);
+
+      if (request.direction === 'invite') {
+        await manager.delete(TripParticipant, {
+          tripId: trip.id,
+          userId: targetUserId,
+        });
+        await manager.delete(TripMembershipRequest, {
+          tripId: trip.id,
+          userId: targetUserId,
+        });
+
+        await this.postSystemMessage(
+          manager,
+          trip.id,
+          'trip_members',
+          isOrganizer
+            ? `Приглашение для ${name} отозвано`
+            : `${name} не идёт в поход`,
+        );
+        return;
+      }
+
+      await manager.delete(TripMembershipRequest, {
+        tripId: trip.id,
+        userId: targetUserId,
+      });
+
+      await this.postSystemMessage(
+        manager,
+        trip.id,
+        'trip_guest',
+        isOrganizer ? `Заявка от ${name} отклонена` : `${name} отозвал заявку`,
+      );
+    });
+  }
+
+  /**
+   * Человек не должен одновременно быть в составе или уже иметь тикет.
+   *
+   * Два разных отказа, а не один: «уже в походе» и «уже приглашён» — разные
+   * ситуации для того, кто нажал кнопку. `UNIQUE (trip_id, user_id)` в базе
+   * поймал бы второе, но это 500, а не объяснение.
+   */
+  private async assertFreeOfTicketAndParticipation(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<void> {
+    const inTrip = await manager.count(TripParticipant, {
+      where: { tripId: trip.id, userId },
+    });
+    if (inTrip > 0) {
+      throw new ConflictException('Человек уже в составе похода');
+    }
+
+    const ticket = await manager.count(TripMembershipRequest, {
+      where: { tripId: trip.id, userId },
+    });
+    if (ticket > 0) {
+      throw new ConflictException(
+        'По этому человеку уже есть приглашение или заявка',
+      );
+    }
   }
 }
