@@ -23,6 +23,13 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import { CreateTripDto } from './dto/create-trip.dto';
 import {
+  SendTripMessageDto,
+  TripChatListDto,
+  TripMessageDto,
+  TripMessageListDto,
+  TripMessageQueryDto,
+} from './dto/message.dto';
+import {
   AcceptRequestDto,
   ParticipantListDto,
   TripParticipantDto,
@@ -253,5 +260,48 @@ export class TripsController {
     @Param('userId') targetUserId: string,
   ): Promise<void> {
     return this.tripsService.deleteRequest(authUser.id, id, targetUserId);
+  }
+
+  // ─────────────────────────── переписка ───────────────────────────
+
+  /**
+   * Чаты похода, доступные этому человеку. Гостевой видят все, кому виден
+   * публичный поход; чат участников — только состав.
+   */
+  @Get(':id/chats')
+  @ApiOperation({ summary: 'Чаты похода' })
+  @ApiOkResponse({ type: TripChatListDto })
+  async listChats(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripChatListDto> {
+    return this.tripsService.listChats(authUser.id, id);
+  }
+
+  /**
+   * Сообщения чата: страница в хронологическом порядке. Курсор `before` —
+   * id самого старого сообщения, которое уже есть у клиента.
+   */
+  @Get(':id/messages')
+  @ApiOperation({ summary: 'Сообщения чата' })
+  @ApiOkResponse({ type: TripMessageListDto })
+  async listMessages(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: TripMessageQueryDto,
+  ): Promise<TripMessageListDto> {
+    return this.tripsService.listMessages(authUser.id, id, query);
+  }
+
+  /** Отправить сообщение. Текст — markdown, санитайз при рендере. */
+  @Post(':id/messages')
+  @ApiOperation({ summary: 'Отправить сообщение в чат' })
+  @ApiCreatedResponse({ type: TripMessageDto })
+  async sendMessage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SendTripMessageDto,
+  ): Promise<TripMessageDto> {
+    return this.tripsService.sendMessage(authUser.id, id, dto);
   }
 }

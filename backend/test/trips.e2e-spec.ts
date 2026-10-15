@@ -941,4 +941,200 @@ describe('Походы (e2e)', () => {
         .expect(404);
     });
   });
+
+  describe('переписка', () => {
+    const send = (tripId: string, token: string, kind: string, body: string) =>
+      request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/messages`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ kind, body });
+
+    const read = async (
+      tripId: string,
+      token: string,
+      query: string,
+    ): Promise<{
+      messages: Array<{ body: string; isSystem: boolean }>;
+      hasMore: boolean;
+    }> => {
+      const response = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/messages?${query}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+      return response.body;
+    };
+
+    it('организатор видит оба чата, посторонний в публичном — только гостевой', async () => {
+      const created = await createTrip({ title: 'Чаты похода' });
+      const tripId = created.body.id as string;
+
+      const mine = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/chats`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      expect(mine.body.chats.map((c: { kind: string }) => c.kind)).toEqual([
+        'trip_guest',
+        'trip_members',
+      ]);
+      expect(mine.body.chats[0].lastMessage).toBeNull();
+
+      const theirs = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/chats`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(200);
+      expect(theirs.body.chats.map((c: { kind: string }) => c.kind)).toEqual([
+        'trip_guest',
+      ]);
+    });
+
+    it('чаты приватного похода постороннему не видны — 404', async () => {
+      const created = await createTrip({
+        title: 'Приватные чаты',
+        visibility: 'private',
+      });
+
+      await request(app.getHttpServer())
+        .get(`/api/trips/${created.body.id}/chats`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(404);
+    });
+
+    it('сообщение сохраняется обрезанным, с автором и признаком «не системное»', async () => {
+      const created = await createTrip({ title: 'Отправка' });
+      const tripId = created.body.id as string;
+
+      const sent = await send(
+        tripId,
+        accessToken,
+        'trip_members',
+        '  Беру палатку  ',
+      ).expect(201);
+
+      expect(sent.body.body).toBe('Беру палатку');
+      expect(sent.body.senderId).toBe(userId);
+      expect(sent.body.senderName).toBeTruthy();
+      expect(sent.body.isSystem).toBe(false);
+    });
+
+    it('чат участников закрыт для постороннего, гостевой открыт', async () => {
+      const created = await createTrip({ title: 'Доступ к чатам' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/messages?kind=trip_members`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(403);
+
+      await send(tripId, strangerToken, 'trip_guest', 'А можно с вами?').expect(
+        201,
+      );
+
+      const guest = await read(tripId, accessToken, 'kind=trip_guest');
+      expect(guest.messages.map((message) => message.body)).toContain(
+        'А можно с вами?',
+      );
+    });
+
+    it('приглашённый получает чат участников, ещё не ответив', async () => {
+      const created = await createTrip({ title: 'Чат приглашённого' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: applicantId })
+        .expect(201);
+
+      const chats = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/chats`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .expect(200);
+      expect(chats.body.chats).toHaveLength(2);
+
+      await send(tripId, applicantToken, 'trip_members', 'Я в деле').expect(
+        201,
+      );
+    });
+
+    it('системные сообщения видны в чате без автора', async () => {
+      const created = await createTrip({ title: 'Системные в чате' });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ direction: 'apply' })
+        .expect(201);
+
+      const guest = await read(tripId, accessToken, 'kind=trip_guest');
+      const system = guest.messages.find((message) => message.isSystem);
+      expect(system?.body).toContain('Заявка на участие от');
+    });
+
+    it('страницы листаются курсором от новых к старым', async () => {
+      const created = await createTrip({ title: 'Страницы' });
+      const tripId = created.body.id as string;
+
+      for (let index = 1; index <= 5; index += 1) {
+        await send(
+          tripId,
+          accessToken,
+          'trip_guest',
+          `сообщение ${index}`,
+        ).expect(201);
+      }
+
+      const first = await read(tripId, accessToken, 'kind=trip_guest&limit=2');
+      expect(first.messages.map((message) => message.body)).toEqual([
+        'сообщение 4',
+        'сообщение 5',
+      ]);
+      expect(first.hasMore).toBe(true);
+
+      const second = await read(
+        tripId,
+        accessToken,
+        `kind=trip_guest&limit=2&before=${(first.messages[0] as unknown as { id: string }).id}`,
+      );
+      expect(second.messages.map((message) => message.body)).toEqual([
+        'сообщение 2',
+        'сообщение 3',
+      ]);
+      expect(second.hasMore).toBe(true);
+
+      const third = await read(
+        tripId,
+        accessToken,
+        `kind=trip_guest&limit=2&before=${(second.messages[0] as unknown as { id: string }).id}`,
+      );
+      expect(third.messages.map((message) => message.body)).toEqual([
+        'сообщение 1',
+      ]);
+      expect(third.hasMore).toBe(false);
+    });
+
+    it('пустое сообщение, неизвестный чат и мусор в параметрах — 400', async () => {
+      const created = await createTrip({ title: 'Отказы чата' });
+      const tripId = created.body.id as string;
+
+      await send(tripId, accessToken, 'trip_guest', '').expect(400);
+      await send(tripId, accessToken, 'trip_guest', '     ').expect(400);
+      await send(tripId, accessToken, 'trip_secret', 'привет').expect(400);
+
+      await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/messages`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/messages?kind=trip_guest&limit=101`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(400);
+
+      await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/messages?kind=trip_guest&before=вчера`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(400);
+    });
+  });
 });

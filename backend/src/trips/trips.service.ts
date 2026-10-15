@@ -13,6 +13,14 @@ import { CalendarActivityType } from '../calendar/entities/activity-type.entity'
 import { User } from '../users/entities/user.entity';
 import { CreateTripDto } from './dto/create-trip.dto';
 import {
+  SendTripMessageDto,
+  TripChatDto,
+  TripChatListDto,
+  TripMessageDto,
+  TripMessageListDto,
+  TripMessageQueryDto,
+} from './dto/message.dto';
+import {
   ParticipantListDto,
   TripParticipantDto,
   TripRoleDto,
@@ -38,6 +46,7 @@ import { TripRouteElement } from './entities/trip-route-element.entity';
 import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
 import {
+  CHAT_KINDS,
   ORGANIZER_ROLE_CODE,
   type ChatKind,
   type ParticipantDecision,
@@ -48,6 +57,9 @@ import {
 
 /** Размер страницы ленты по умолчанию и потолок — в DTO. */
 const DEFAULT_PAGE_SIZE = 20;
+
+/** Сколько сообщений чата отдавать за раз, если клиент не попросил иначе. */
+const DEFAULT_MESSAGE_PAGE_SIZE = 50;
 
 /** Как статус участия читается в системном сообщении чата. */
 function statusText(status: ParticipantStatus): string {
@@ -1239,5 +1251,194 @@ export class TripsService {
         'По этому человеку уже есть приглашение или заявка',
       );
     }
+  }
+
+  // ─────────────────────────── переписка ───────────────────────────
+
+  /**
+   * Чат похода и право им пользоваться.
+   *
+   * Правила из `docs/ph/trips.md`, раздел 6, и они разные для двух чатов:
+   * чат участников доступен только составу — **любого статуса, включая
+   * `invited`**, иначе приглашённый не сможет ничего спросить; гостевой —
+   * составу и, у публичного похода, всем зарегистрированным.
+   *
+   * **Читать и писать здесь одно право, а не два.** Разделять их значило бы
+   * отвечать «читай, но не пиши» — правила, которого в требованиях нет,
+   * а проверять его пришлось бы в каждом месте.
+   */
+  private async findChatForUser(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+    kind: ChatKind,
+  ): Promise<Chat> {
+    const isParticipant =
+      (await manager.count(TripParticipant, {
+        where: { tripId: trip.id, userId },
+      })) > 0;
+
+    const allowed =
+      kind === 'trip_members'
+        ? isParticipant
+        : isParticipant || trip.visibility === 'public';
+
+    if (!allowed) {
+      throw new ForbiddenException(
+        kind === 'trip_members'
+          ? 'Чат участников доступен только участникам похода'
+          : 'Этот чат похода вам недоступен',
+      );
+    }
+
+    const chat = await manager.findOne(Chat, {
+      where: { tripId: trip.id, kind },
+    });
+    if (!chat) {
+      throw new InternalServerErrorException(
+        `У похода нет чата «${kind}» — данные похода повреждены`,
+      );
+    }
+
+    return chat;
+  }
+
+  /**
+   * Чаты похода, доступные этому человеку, с последним сообщением.
+   *
+   * Последнее сообщение нужно, чтобы показать в списке, о чём в чате речь,
+   * не открывая его. Чатов у похода два, поэтому запрос на каждый — это два
+   * запроса, а не N+1: усложнять одним `DISTINCT ON` здесь нечего.
+   *
+   * Незнакомый `kind` пропускается: колонка без CHECK, и новый вид чата
+   * может появиться в базе раньше, чем этот код о нём узнает. Показать его
+   * как есть — значит отдать фронту чат, которого он не умеет рисовать.
+   */
+  async listChats(userId: string, id: number): Promise<TripChatListDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.findVisibleTrip(manager, userId, id);
+    const isParticipant =
+      (await manager.count(TripParticipant, {
+        where: { tripId: trip.id, userId },
+      })) > 0;
+
+    const chats = await manager.find(Chat, {
+      where: { tripId: trip.id },
+      order: { id: 'ASC' },
+    });
+
+    const visible: TripChatDto[] = [];
+
+    for (const chat of chats) {
+      const kind = chat.kind as ChatKind;
+      if (!CHAT_KINDS.includes(kind)) continue;
+
+      const allowed =
+        kind === 'trip_members'
+          ? isParticipant
+          : isParticipant || trip.visibility === 'public';
+      if (!allowed) continue;
+
+      const last = await manager.findOne(GroupMessage, {
+        where: { chatId: chat.id },
+        relations: { sender: true },
+        order: { id: 'DESC' },
+      });
+
+      visible.push(
+        TripChatDto.from(
+          { id: chat.id, kind },
+          last ? TripMessageDto.from(last) : null,
+        ),
+      );
+    }
+
+    return { chats: visible };
+  }
+
+  /**
+   * Сообщения чата страницей от старых к новым.
+   *
+   * Запрос идёт **от новых к старым** — так работает курсор `before`:
+   * клиент присылает id самого старого сообщения, которое у него есть,
+   * и получает предыдущую страницу. В ответе порядок разворачивается
+   * в хронологический: чат читают сверху вниз, и переворачивать его
+   * на клиенте — работа, которую незачем делать дважды.
+   *
+   * Листаем по `id`, а не по `created_at`: две записи с одинаковой меткой
+   * времени — обычное дело, и страница либо зациклилась бы, либо теряла
+   * сообщения.
+   */
+  async listMessages(
+    userId: string,
+    id: number,
+    query: TripMessageQueryDto,
+  ): Promise<TripMessageListDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.findVisibleTrip(manager, userId, id);
+    const chat = await this.findChatForUser(manager, trip, userId, query.kind);
+    const limit = query.limit ?? DEFAULT_MESSAGE_PAGE_SIZE;
+
+    const qb = manager
+      .createQueryBuilder(GroupMessage, 'message')
+      .leftJoinAndSelect('message.sender', 'sender')
+      .where('message.chatId = :chatId', { chatId: chat.id })
+      // Имя свойства, а не колонки: при `take` TypeORM пересобирает
+      // ORDER BY и ищет колонку через `findColumnWithPropertyPath`.
+      .orderBy('message.id', 'DESC')
+      // На одно больше запрошенного — так и узнаётся, есть ли ещё страница.
+      .take(limit + 1);
+
+    if (query.before !== undefined) {
+      qb.andWhere('message.id < :before', { before: query.before });
+    }
+
+    const rows = await qb.getMany();
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    page.reverse();
+
+    return {
+      messages: page.map((message) => TripMessageDto.from(message)),
+      hasMore,
+    };
+  }
+
+  /**
+   * Отправить сообщение в чат.
+   *
+   * Текст обрезается по краям и пустым быть не может: сообщение из одних
+   * пробелов неотличимо от пустого, а в ленте выглядит как сбой вёрстки.
+   * В базе остаётся исходник markdown — санитайз делается при рендере.
+   */
+  async sendMessage(
+    userId: string,
+    id: number,
+    dto: SendTripMessageDto,
+  ): Promise<TripMessageDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.findVisibleTrip(manager, userId, id);
+    const chat = await this.findChatForUser(manager, trip, userId, dto.kind);
+
+    const body = dto.body.trim();
+    if (body.length === 0) {
+      throw new BadRequestException('Сообщение не может состоять из пробелов');
+    }
+
+    const sender = await manager.findOne(User, { where: { id: userId } });
+    if (!sender) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    const saved = await manager.save(
+      manager.create(GroupMessage, {
+        chatId: chat.id,
+        senderId: userId,
+        body,
+      }),
+    );
+    saved.sender = sender;
+
+    return TripMessageDto.from(saved);
   }
 }
