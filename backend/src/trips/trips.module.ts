@@ -14,6 +14,8 @@ import { TripRouteElement } from './entities/trip-route-element.entity';
 import { Trip } from './entities/trip.entity';
 import { TripsController } from './trips.controller';
 import { TripsService } from './trips.service';
+import { ObjectsController } from './objects.controller';
+import { ObjectsService } from './objects.service';
 
 /**
  * Домен походов: справочник географических объектов, роли, сами походы,
@@ -41,8 +43,8 @@ import { TripsService } from './trips.service';
       CalendarActivityType,
     ]),
   ],
-  controllers: [TripsController],
-  providers: [TripsService],
-  exports: [TripsService],
+  controllers: [TripsController, ObjectsController],
+  providers: [TripsService, ObjectsService],
+  exports: [TripsService, ObjectsService],
 })
 export class TripsModule {}
