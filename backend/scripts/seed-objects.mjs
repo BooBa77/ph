@@ -12,10 +12,15 @@
  * (имя, тип, родитель), а вставка идёт только если такого нет. Повторный
  * запуск не наплодит дублей.
  *
+ * **Ссылку (`url`) скрипт только заполняет, но не затирает.** Если у
+ * объекта ссылки нет — она появится из списка; если уже стоит — останется
+ * своя. Так сид не спорит с админом и с парсером nature.baikal.ru, который
+ * наполняет справочник отдельно.
+ *
  * **Объекты из списка не удаляются и не переименовываются.** Скрипт умеет
- * только добавлять. Переименование задним числом сломало бы смысл ссылок
- * `[[object:N]]` в текстах маршрутов, а удаление не пропустит внешний ключ,
- * если объект уже упомянут.
+ * добавлять и дописывать пустую ссылку. Переименование задним числом
+ * сломало бы смысл ссылок `[[object:N]]` в текстах маршрутов, а удаление
+ * не пропустит внешний ключ, если объект уже упомянут.
  *
  * `parent_id` — иерархия: «Олхинское плато → скальник Витязь». Вложенность
  * задаётся полем `children`, а не отдельным списком с id: так дерево видно
@@ -38,17 +43,30 @@ if (!url) {
  *
  * `type` — свободный текст, без словаря: типы (вершина, перевал, скальник,
  * плато) растут быстрее, чем мы успевали бы править CHECK, а заполняет
- * справочник админ.
+ * справочник админ. Имя при этом не дублирует тип: «скальник» живёт
+ * в `type`, а в `name` — только «Витязь», потому что имя подставляется
+ * в текст маршрута на место ссылки.
  *
- * «ск. Витязь» назван сокращённо, как его и зовут в обиходе: имя объекта
- * подставляется в текст маршрута на место ссылки, и «скальник скальник
- * Витязь» из полного имени и типа читалось бы хуже.
+ * `url` — страница объекта на «Природе Байкала». **Ссылки не выдумываются.**
+ * Тот адрес, что стоит ниже, проверен вручную: страница открывается и
+ * называется «скальник Витязь», район — Олхинское плато. Остальные
+ * скальники добавлены без ссылок: их слаги на сайте неизвестны, а
+ * выдуманный адрес хуже пустого — по нему уйдёт человек и ничего не найдёт.
+ * Заполнит их парсер nature.baikal.ru.
  */
 const OBJECTS = [
   {
     name: 'Олхинское плато',
     type: 'плато',
-    children: [{ name: 'ск. Витязь', type: 'скальник' }],
+    children: [
+      {
+        name: 'Витязь',
+        type: 'скальник',
+        url: 'https://nature.baikal.ru/obj.shtml?obj=skala&id=vityaz',
+      },
+      { name: 'Идол', type: 'скальник' },
+      { name: 'Старуха', type: 'скальник' },
+    ],
   },
 ];
 
@@ -61,29 +79,43 @@ const OBJECTS = [
  */
 async function upsertObject(client, node, parentId) {
   const found = await client.query(
-    `SELECT id FROM objects
+    `SELECT id, url FROM objects
       WHERE name = $1 AND type = $2 AND parent_id IS NOT DISTINCT FROM $3
       LIMIT 1`,
     [node.name, node.type, parentId],
   );
+
   if (found.rowCount > 0) {
-    return { id: found.rows[0].id, created: false };
+    const id = found.rows[0].id;
+    let urlFilled = false;
+
+    // `AND url IS NULL` — это и есть «заполняем пустое, не затираем чужое».
+    if (node.url && found.rows[0].url === null) {
+      await client.query(
+        `UPDATE objects SET url = $2 WHERE id = $1 AND url IS NULL`,
+        [id, node.url],
+      );
+      urlFilled = true;
+    }
+
+    return { id, created: false, urlFilled };
   }
 
   const inserted = await client.query(
-    `INSERT INTO objects (name, type, parent_id) VALUES ($1, $2, $3) RETURNING id`,
-    [node.name, node.type, parentId],
+    `INSERT INTO objects (name, type, parent_id, url)
+     VALUES ($1, $2, $3, $4) RETURNING id`,
+    [node.name, node.type, parentId, node.url ?? null],
   );
-  return { id: inserted.rows[0].id, created: true };
+  return { id: inserted.rows[0].id, created: true, urlFilled: false };
 }
 
 /** Обойти дерево и вернуть плоский список с результатом по каждому узлу. */
 async function walk(client, nodes, parentId, depth, results) {
   for (const node of nodes) {
-    const { id, created } = await upsertObject(client, node, parentId);
-    results.push({ node, id, created, depth });
+    const outcome = await upsertObject(client, node, parentId);
+    results.push({ node, depth, ...outcome });
     if (node.children?.length) {
-      await walk(client, node.children, id, depth + 1, results);
+      await walk(client, node.children, outcome.id, depth + 1, results);
     }
   }
 }
@@ -103,13 +135,21 @@ try {
 }
 
 console.log('Справочник географических объектов:');
-for (const { node, id, created, depth } of results) {
+for (const { node, id, created, urlFilled, depth } of results) {
+  const marks = [
+    created ? 'создан' : 'уже был',
+    urlFilled ? 'ссылка заполнена' : null,
+  ].filter(Boolean);
   console.log(
-    `  ${'  '.repeat(depth)}${node.name} [${node.type}] — id ${id}${created ? ' (создан)' : ' (уже был)'}`,
+    `  ${'  '.repeat(depth)}${node.name} [${node.type}] — id ${id} (${marks.join(', ')})`,
   );
 }
 
-const total = await client.query('SELECT count(*)::int AS count FROM objects');
+const total = await client.query(
+  `SELECT count(*)::int AS count,
+          count(url)::int AS with_url
+     FROM objects`,
+);
 const roots = await client.query(
   'SELECT count(*)::int AS count FROM objects WHERE parent_id IS NULL',
 );
@@ -119,7 +159,7 @@ console.log(
   `Создано сейчас: ${results.filter((item) => item.created).length} из ${results.length}`,
 );
 console.log(
-  `Всего в справочнике: ${total.rows[0].count} (верхних уровней: ${roots.rows[0].count})`,
+  `Всего в справочнике: ${total.rows[0].count} объектов, из них ссылкой ${total.rows[0].with_url} (верхних уровней: ${roots.rows[0].count})`,
 );
 
 await client.end();
