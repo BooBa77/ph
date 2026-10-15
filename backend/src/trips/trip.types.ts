@@ -75,3 +75,13 @@ export type RequestDirection = (typeof REQUEST_DIRECTIONS)[number];
 export const CHAT_KINDS = ['trip_guest', 'trip_members'] as const;
 
 export type ChatKind = (typeof CHAT_KINDS)[number];
+
+/**
+ * Код роли организатора в справочнике `roles`.
+ *
+ * Организатор получает эту роль автоматически при создании похода, в одной
+ * транзакции с ним. Значение продублировано в `scripts/seed-roles.mjs`:
+ * скрипт — это `.mjs`, он не может импортировать TypeScript, поэтому
+ * договорённость держится на двух местах. Меняешь код роли — правь оба.
+ */
+export const ORGANIZER_ROLE_CODE = 'organizer';
