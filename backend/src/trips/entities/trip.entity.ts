@@ -13,30 +13,13 @@ import {
 import { sqlValues } from '../../users/sport-experience.types';
 import { User } from '../../users/entities/user.entity';
 import {
-  SPORT_CATEGORIES_BY_KIND,
-  SPORT_KINDS,
-  SPORT_TYPES,
   TRIP_STATUSES,
   TRIP_VISIBILITIES,
-  type TripSportKind,
-  type TripSportType,
   type TripStatus,
   type TripVisibility,
 } from '../trip.types';
 import { GeoObject } from './geo-object.entity';
 
-/**
- * Категория сложности проверяется в связке с видом спорта: шкалы разные.
- * Скайраннинга в объекте категорий нет и быть не должно — там разряды
- * за дистанции, а не категории маршрута, поэтому `sport_category` у него
- * остаётся пустым.
- */
-const SPORT_CATEGORY_CHECK = Object.entries(SPORT_CATEGORIES_BY_KIND)
-  .map(
-    ([kind, categories]) =>
-      `("sport_kind" = '${kind}' AND "sport_category" IN (${sqlValues(categories)}))`,
-  )
-  .join(' OR ');
 /**
  * Поход — центральная сущность проекта.
  *
@@ -68,23 +51,32 @@ const SPORT_CATEGORY_CHECK = Object.entries(SPORT_CATEGORIES_BY_KIND)
  * момент, браузер показывает в своём поясе. Регион у проекта один
  * (Прибайкалье), так что расхождение — редкость, а не норма.
  *
- * ## Спорт: официальный поход и категория — разные оси
+ * ## Универсальный поход, без спортивных свойств
  *
- * `sport_category` (к.с. 1–6 у туризма, 1Б–6Б у альпинизма) описывает
- * **маршрут** и осмысленна у любого похода: «идём двойку» говорят и без
- * всякой книжки. `is_official` описывает **оформление**: выпуск МКК
- * или федерации, зачёт участникам и руководителю. Поэтому это два поля,
- * а не одно, и CHECK требует категорию только от официального похода.
+ * Здесь только то, что есть у **любого** похода — от пикника на Олхинском
+ * плато до горной шестёрки: цель, даты, маршрут, участники, видимость,
+ * цена. Вид спорта, категория сложности и официальность (выпуск МКК,
+ * зачёт) — свойства **только спортивных** походов, и описывать их будут
+ * отдельные таблицы. В `trips` их нет намеренно: поле, осмысленное
+ * у меньшинства записей, в общей таблице превращается в набор NULL-ов,
+ * который тащат все запросы ленты.
  *
- * Руководитель официального похода — не организатор: это отдельная роль
- * в `roles` (`leader`), и назначается она участнику.
+ * Руководитель спортивного похода — не организатор, и это тоже отдельная
+ * история: роли участников (`roles`, `trip_participant_roles`) для того
+ * и заведены связкой, чтобы новая роль была строкой, а не колонкой.
  *
  * ## Коммерция
  *
- * `is_commercial` — про то, что организатор зарабатывает. `price_rub` —
- * сколько стоит участие, и он не выводится из флага: у любительского
- * похода тоже бывает взнос «по три тысячи на заброску». Обратное
- * неверно — коммерческий поход без цены не бывает, это CHECK.
+ * `is_commercial` — про то, что организатор зарабатывает. Цена участия
+ * есть **только** у коммерческого похода, и там она обязательна: чтобы
+ * коммерсы не увиливали, а называли прайс сразу. Скидки — потом, поверх
+ * названной цены.
+ *
+ * У некоммерческого похода платы за участие нет вовсе — ни нулевой, ни
+ * символической. Бывают **расходы** (заброска, закупка продуктов), но это
+ * другая сущность: у расходов есть суммы, статьи и вопрос «кто кому
+ * должен», и в одно поле они не помещаются. Поэтому CHECK двусторонний:
+ * коммерческий без цены запрещён, а некоммерческий с ценой — тоже.
  *
  * Цена — **целые рубли**. Копейки в стоимости похода — шум, а `numeric`
  * в Node приезжает строкой («12500.00») и утёк бы в JSON как строка.
@@ -118,40 +110,16 @@ const SPORT_CATEGORY_CHECK = Object.entries(SPORT_CATEGORIES_BY_KIND)
   `"status" <> 'idea' OR "cancelled_at" IS NULL`,
 )
 @Check(
-  'chk_trips_sport_kind',
-  `"sport_kind" IS NULL OR "sport_kind" IN (${sqlValues(SPORT_KINDS)})`,
-)
-@Check(
-  'chk_trips_sport_type',
-  `"sport_type" IS NULL OR "sport_type" IN (${sqlValues(SPORT_TYPES)})`,
-)
-/**
- * Обе проверки ниже намеренно начинаются с `"sport_kind" IS NOT NULL`,
- * и это не многословие. В SQL `NULL = 'tourism'` даёт не `false`, а `NULL`;
- * выражение `"sport_type" IS NULL OR "sport_kind" = 'tourism'` при пустом
- * `sport_kind` становится `NULL`, **а CHECK считает `NULL` выполненным**.
- * То есть вид туризма или категория без указанного вида спорта прошли бы
- * проверку. Поймано тестом `trips-schema-check`, а не глазами.
- */
-@Check(
-  'chk_trips_sport_type_is_tourism',
-  `"sport_type" IS NULL OR ("sport_kind" IS NOT NULL AND "sport_kind" = 'tourism')`,
-)
-@Check(
-  'chk_trips_sport_category',
-  `"sport_category" IS NULL OR ("sport_kind" IS NOT NULL AND (${SPORT_CATEGORY_CHECK}))`,
-)
-@Check(
-  'chk_trips_official_needs_sport',
-  `"is_official" = false OR (
-        "sport_kind" IS NOT NULL
-        AND ("sport_kind" <> 'tourism' OR "sport_type" IS NOT NULL)
-        AND ("sport_kind" = 'skyrunning' OR "sport_category" IS NOT NULL)
-      )`,
-)
-@Check(
   'chk_trips_commercial_needs_price',
   `"is_commercial" = false OR "price_rub" IS NOT NULL`,
+)
+@Check(
+  'chk_trips_price_only_commercial',
+  `"price_rub" IS NULL OR "is_commercial"`,
+)
+@Check(
+  'chk_trips_price_note_only_commercial',
+  `"price_note" IS NULL OR "is_commercial"`,
 )
 @Check('chk_trips_price_positive', `"price_rub" IS NULL OR "price_rub" > 0`)
 export class Trip {
@@ -263,41 +231,19 @@ export class Trip {
   @Column({ name: 'actual_finished_at', type: 'timestamptz', nullable: true })
   actualFinishedAt: Date | null;
 
-  /** Официальный спортивный поход: выпуск МКК или федерации, зачёт. */
-  @Column({ name: 'is_official', type: 'boolean', default: false })
-  isOfficial: boolean;
-
-  @Column({
-    name: 'sport_kind',
-    type: 'varchar',
-    length: 20,
-    nullable: true,
-  })
-  sportKind: TripSportKind | null;
-
-  @Column({
-    name: 'sport_type',
-    type: 'varchar',
-    length: 20,
-    nullable: true,
-  })
-  sportType: TripSportType | null;
-
-  @Column({
-    name: 'sport_category',
-    type: 'varchar',
-    length: 4,
-    nullable: true,
-  })
-  sportCategory: string | null;
-
   @Column({ name: 'is_commercial', type: 'boolean', default: false })
   isCommercial: boolean;
 
+  /**
+   * Цена участия в рублях. Только у коммерческого похода и там обязательна
+   * (`chk_trips_commercial_needs_price`); у некоммерческого её быть не может
+   * (`chk_trips_price_only_commercial`). Расходы некоммерческого похода —
+   * не это поле, см. описание класса.
+   */
   @Column({ name: 'price_rub', type: 'int', nullable: true })
   priceRub: number | null;
 
-  /** Что входит в стоимость: markdown. Без него это уезжает в маршрут. */
+  /** Что входит в стоимость: markdown. Осмысленно только с ценой. */
   @Column({ name: 'price_note', type: 'text', nullable: true })
   priceNote: string | null;
 

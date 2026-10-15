@@ -22,6 +22,7 @@
     "migration:show:prod": "npm run typeorm:prod -- migration:show",
     "build:state-calendar": "node scripts/build-state-calendar.mjs",
     "seed:calendar": "node scripts/seed-state-calendar.mjs",
+    "seed:roles": "node scripts/seed-roles.mjs",
     "check:trips-schema": "node scripts/check-trips-schema.mjs",
     "start": "nest start",
     "start:dev": "nest start --watch",

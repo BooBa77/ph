@@ -11,7 +11,10 @@
  * Ценность доказана дважды, и оба раза на ровном месте:
  *   - CHECK вида `"sport_type" IS NULL OR "sport_kind" = 'tourism'`
  *     пропускал мусор: в SQL `NULL = 'tourism'` даёт `NULL`, а CHECK
- *     считает `NULL` выполненным. Дыру нашли здесь, а не на ревью;
+ *     считает `NULL` выполненным. Дыру нашли здесь, а не на ревью.
+ *     Сами спортивные CHECK-и из схемы с тех пор уехали (поход стал
+ *     универсальным, спорт — отдельные таблицы), но урок остался: любое
+ *     условие с nullable-колонкой надо проверять на NULL-семантику;
  *   - обход `pg_trigger_depth()` в триггере организатора оказался
  *     не нужен — каскадное удаление похода триггер не задевает.
  *
@@ -186,63 +189,21 @@ await check(
   [tripId],
 );
 await check(
-  'trips: официальный поход без вида спорта запрещён',
-  'fail',
-  `UPDATE trips SET is_official = true WHERE id = $1`,
-  [tripId],
-);
-await check(
-  'trips: официальный туризм без вида туризма запрещён',
-  'fail',
-  `UPDATE trips SET is_official = true, sport_kind = 'tourism', sport_category = '2' WHERE id = $1`,
-  [tripId],
-);
-await check(
-  'trips: официальный туризм 2 к.с. пеший принимается',
+  'trips: снимаем коммерцию вместе с ценой',
   'ok',
-  `UPDATE trips SET is_official = true, sport_kind = 'tourism', sport_type = 'hiking', sport_category = '2' WHERE id = $1`,
+  `UPDATE trips SET is_commercial = false, price_rub = NULL, price_note = NULL WHERE id = $1`,
   [tripId],
 );
 await check(
-  'trips: категория не из своей шкалы запрещена',
+  'trips: некоммерческий поход с ценой участия запрещён',
   'fail',
-  `UPDATE trips SET sport_category = '2Б' WHERE id = $1`,
+  `UPDATE trips SET price_rub = 3000 WHERE id = $1`,
   [tripId],
 );
 await check(
-  'trips: альпинизм 3Б без вида туризма принимается',
-  'ok',
-  `UPDATE trips SET sport_kind = 'alpinism', sport_type = NULL, sport_category = '3Б' WHERE id = $1`,
-  [tripId],
-);
-await check(
-  'trips: скайраннинг без категории принимается',
-  'ok',
-  `UPDATE trips SET sport_kind = 'skyrunning', sport_category = NULL WHERE id = $1`,
-  [tripId],
-);
-await check(
-  'trips: вид туризма у скайраннинга запрещён',
+  'trips: некоммерческий поход с заметкой о цене запрещён',
   'fail',
-  `UPDATE trips SET sport_type = 'hiking' WHERE id = $1`,
-  [tripId],
-);
-await check(
-  'trips: снимаем спортивные признаки для проверки NULL-семантики',
-  'ok',
-  `UPDATE trips SET is_official = false, sport_kind = NULL, sport_type = NULL, sport_category = NULL WHERE id = $1`,
-  [tripId],
-);
-await check(
-  'trips: категория без вида спорта запрещена (NULL в CHECK — это не false)',
-  'fail',
-  `UPDATE trips SET sport_category = '3Б' WHERE id = $1`,
-  [tripId],
-);
-await check(
-  'trips: вид туризма без вида спорта запрещён (NULL в CHECK — это не false)',
-  'fail',
-  `UPDATE trips SET sport_type = 'hiking' WHERE id = $1`,
+  `UPDATE trips SET price_note = 'входит питание и заброска' WHERE id = $1`,
   [tripId],
 );
 await check(
