@@ -8,16 +8,36 @@ import { objectToken, userToken } from '@/utils/markdown'
 /**
  * Тесты редактора текста.
  *
- * Главное, что здесь проверяется, — **разметки не видно**. Человек должен
- * видеть жирное слово, а не `**звёздочки**`, и «Витязь», а не
- * `[[object:10]]`. Это не украшение, а требование заказчика: он прямо
- * сказал, что возрастные походники от звёздочек придут в ужас.
+ * Первая версия редактора провалилась на живом человеке: объект падал
+ * в начало текста, список не работал вовсе, кнопка не показывала нажатие.
+ * Поэтому здесь проверяется не «рендерится ли», а именно то, что человек
+ * нашёл руками:
  *
- * Второе — обратимость: то, что редактор отдаёт наружу, должно быть тем
- * markdown-ом, из которого он это показал. Проверяется через
- * `update:modelValue`: именно это значение уедет на сервер.
+ * - **вставка идёт туда, где стоял курсор**, даже если фокус успел уйти
+ *   в поиск объекта — на этом всё и ломалось;
+ * - **список ставит и снимает маркеры** — своя реализация, а не команда
+ *   браузера, поэтому её можно проверить;
+ * - **объекты и даты отделяются пробелами** и не прилипают к словам;
+ * - **дата вставляется сразу** после выбора в календаре.
  *
- * Таймеры поддельные: у поиска объекта задержка.
+ * ## Выделение поддельное, и это не жульничество
+ *
+ * jsdom **не хранит диапазоны в `window.getSelection()`**: после `addRange`
+ * количество диапазонов остаётся нулевым, а `anchorNode` — пустым. То есть
+ * в этой среде выделения не существует как факта, и всё, что с ним связано,
+ * проверялось бы «на слово» — что и случилось: первые тесты проходили,
+ * а у заказчика объект уезжал в начало текста.
+ *
+ * Поэтому в тестах подставляется своя реализация выделения — ровно тот
+ * набор методов, которым пользуется редактор. Компонент от этого не
+ * меняется: он работает с `Selection` через `addRange`, `removeAllRanges`,
+ * `getRangeAt` и `anchorNode`, а кто именно это реализует, ему всё равно.
+ *
+ * Непроверенным остаётся одно допущение, и его надо держать в голове:
+ * в настоящем браузере `blur` приходит, пока выделение ещё живо, — на этом
+ * и держится запоминание места курсора.
+ *
+ * Таймеры тоже поддельные: у поиска объекта задержка.
  */
 const mocks = vi.hoisted(() => ({ listObjects: vi.fn() }))
 
@@ -32,15 +52,76 @@ const VITYAZ = {
   parentName: 'Олхинское плато',
 }
 
+/** Выделение, которое в самом деле помнит диапазоны. */
+class FakeSelection {
+  private ranges: Range[] = []
+
+  get rangeCount(): number {
+    return this.ranges.length
+  }
+
+  get anchorNode(): Node | null {
+    return this.ranges[0]?.startContainer ?? null
+  }
+
+  get anchorOffset(): number {
+    return this.ranges[0]?.startOffset ?? 0
+  }
+
+  addRange(range: Range): void {
+    this.ranges = [range]
+  }
+
+  removeAllRanges(): void {
+    this.ranges = []
+  }
+
+  getRangeAt(index: number): Range {
+    const range = this.ranges[index]
+    if (!range) throw new Error('Диапазона нет')
+    return range
+  }
+}
+
+let selection: FakeSelection
+
+function editor(wrapper: VueWrapper): HTMLElement {
+  return wrapper.find('[data-test="md-editor"]').element as HTMLElement
+}
+
 /** Разметка внутри поля. */
 function html(wrapper: VueWrapper): string {
-  return wrapper.find('[data-test="md-editor"]').element.innerHTML
+  return editor(wrapper).innerHTML
 }
 
 /** Последнее, что редактор отдал наружу. */
 function emitted(wrapper: VueWrapper): string {
   const events = wrapper.emitted('update:modelValue')
   return (events?.[events.length - 1]?.[0] as string) ?? ''
+}
+
+/** Первый текстовый узел внутри поля. */
+function firstText(wrapper: VueWrapper): Node {
+  const block = editor(wrapper).querySelector('div')
+  return block?.firstChild ?? editor(wrapper)
+}
+
+/** Поставить курсор на нужное место — как это делает человек мышкой. */
+function placeCaret(wrapper: VueWrapper, offset: number) {
+  const node = firstText(wrapper)
+  const range = document.createRange()
+  range.setStart(node, Math.min(offset, (node.textContent ?? '').length))
+  range.collapse(true)
+
+  selection.removeAllRanges()
+  selection.addRange(range)
+}
+
+/** Курсор ушёл из редактора в поиск — момент, когда место надо запомнить. */
+async function leaveEditor(wrapper: VueWrapper) {
+  await wrapper.find('[data-test="md-editor"]').trigger('blur')
+  // Настоящий ввод в поле поиска убивает выделение в редакторе.
+  selection.removeAllRanges()
 }
 
 /** Найти и вставить объект через панель. */
@@ -54,12 +135,15 @@ async function insertObject(wrapper: VueWrapper) {
 describe('MarkdownEditor', () => {
   beforeEach(() => {
     vi.useFakeTimers()
+    selection = new FakeSelection()
+    vi.spyOn(window, 'getSelection').mockReturnValue(selection as unknown as Selection)
     mocks.listObjects.mockReset()
     mocks.listObjects.mockResolvedValue([VITYAZ])
   })
 
   afterEach(() => {
     vi.useRealTimers()
+    vi.restoreAllMocks()
   })
 
   it('показывает текст оформленным, без звёздочек', () => {
@@ -101,11 +185,25 @@ describe('MarkdownEditor', () => {
   it('правка отдаёт наружу markdown', async () => {
     const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
 
-    wrapper.find('[data-test="md-editor"]').element.innerHTML =
-      '<div>Привет, <strong>мир</strong></div>'
+    editor(wrapper).innerHTML = '<div>Привет, <strong>мир</strong></div>'
     await wrapper.find('[data-test="md-editor"]').trigger('input')
 
     expect(emitted(wrapper)).toBe('Привет, **мир**')
+  })
+
+  it('список ставит маркеры и снимает их повторным нажатием', async () => {
+    const wrapper = mount(MarkdownEditor, { props: { modelValue: 'Раз' } })
+    placeCaret(wrapper, 3)
+
+    await wrapper.find('[data-test="md-list"]').trigger('click')
+
+    expect(html(wrapper)).toContain('<ul><li>Раз</li></ul>')
+    expect(emitted(wrapper)).toBe('- Раз')
+
+    await wrapper.find('[data-test="md-list"]').trigger('click')
+
+    expect(emitted(wrapper)).toBe('Раз')
+    expect(html(wrapper)).not.toContain('<ul>')
   })
 
   it('вставленный объект уходит токеном, а виден именем', async () => {
@@ -115,6 +213,34 @@ describe('MarkdownEditor', () => {
 
     expect(html(wrapper)).toContain('Витязь')
     expect(emitted(wrapper)).toBe('[[object:10]]')
+  })
+
+  it('объект встаёт туда, где стоял курсор, даже если фокус ушёл в поиск', async () => {
+    const wrapper = mount(MarkdownEditor, {
+      props: { modelValue: 'Пересекаем ручей, обедаем и к часу дня выходим к' },
+    })
+
+    placeCaret(wrapper, 48)
+    await leaveEditor(wrapper)
+
+    await insertObject(wrapper)
+
+    // Именно эта строка сломалась у заказчика: объект уезжал в начало.
+    expect(emitted(wrapper)).toBe('Пересекаем ручей, обедаем и к часу дня выходим к [[object:10]]')
+  })
+
+  it('объект отделяется пробелами с обеих сторон', async () => {
+    const wrapper = mount(MarkdownEditor, {
+      props: { modelValue: 'Старт конец' },
+    })
+
+    placeCaret(wrapper, 5)
+    await leaveEditor(wrapper)
+
+    await insertObject(wrapper)
+
+    // Без пробелов получилось бы «Старт[[object:10]]конец».
+    expect(emitted(wrapper)).toBe('Старт [[object:10]] конец')
   })
 
   it('фильтр объекта показывает родителя, а текст — нет', async () => {
@@ -136,14 +262,34 @@ describe('MarkdownEditor', () => {
     expect(html(wrapper)).not.toContain('Олхинское')
   })
 
-  it('календарь вставляет дату словами', async () => {
+  it('дата вставляется сразу после выбора в календаре', async () => {
+    const wrapper = mount(MarkdownEditor, {
+      props: { modelValue: 'Ночёвка,' },
+    })
+    placeCaret(wrapper, 8)
+
+    await wrapper.find('[data-test="md-date"]').trigger('click')
+
+    // Отдельной кнопки «вставить» нет: выбор даты и есть подтверждение.
+    expect(wrapper.find('[data-test="date-insert"]').exists()).toBe(false)
+
+    // `setValue` на поле даты приводит к `change`: выбор даты и есть
+    // подтверждение, отдельной кнопки нет.
+    await wrapper.find('[data-test="date-input"]').setValue('2027-05-12')
+
+    expect(emitted(wrapper)).toBe('Ночёвка, 12 мая 2027')
+    // Панель закрылась — вставлять второй раз нечего.
+    expect(wrapper.find('[data-test="date-input"]').exists()).toBe(false)
+  })
+
+  it('дату можно не вставлять: «Отмена» закрывает календарь', async () => {
     const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
 
     await wrapper.find('[data-test="md-date"]').trigger('click')
-    await wrapper.find('[data-test="date-input"]').setValue('2027-05-12')
-    await wrapper.find('[data-test="date-insert"]').trigger('click')
+    await wrapper.find('[data-test="date-cancel"]').trigger('click')
 
-    expect(emitted(wrapper)).toBe('12 мая 2027')
+    expect(wrapper.find('[data-test="date-input"]').exists()).toBe(false)
+    expect(emitted(wrapper)).toBe('')
   })
 
   it('ссылка вставляется адресом', async () => {
@@ -188,7 +334,7 @@ describe('MarkdownEditor', () => {
 
     expect(wrapper.text()).toContain('Как идём')
 
-    wrapper.find('[data-test="md-editor"]').element.innerHTML = '<div>Текст</div>'
+    editor(wrapper).innerHTML = '<div>Текст</div>'
     await wrapper.find('[data-test="md-editor"]').trigger('input')
 
     expect(wrapper.text()).not.toContain('Как идём')

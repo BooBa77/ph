@@ -61,8 +61,14 @@ function mentionLabel(kind: string, id: string, names: MentionNames): string {
  * Порядок важен. Сначала экранирование, потом сущности, потом markdown:
  * если поменять местами, пользовательский текст со звёздочками превратится
  * в разметку, а вставленный объект — в кашу.
+ *
+ * Экспортируется отдельно от `markdownToHtml`, потому что **вставка
+ * в середину строки не имеет права быть блочной**. `markdownToHtml` для
+ * каждой строки делает `<div>`, и вставленный посреди фразы объект разрывал
+ * абзац надвое: «Старт [[object:10]]\n конец» вместо «Старт [[object:10]]
+ * конец». Для вставки нужен именно строчный фрагмент.
  */
-function inlineToHtml(text: string, names: MentionNames): string {
+export function inlineMarkdownToHtml(text: string, names: MentionNames = {}): string {
   let html = escapeHtml(text)
 
   html = html.replace(/\[\[(object|user):([^\]]+)\]\]/g, (_match, kind: string, id: string) => {
@@ -115,11 +121,11 @@ export function markdownToHtml(markdown: string, names: MentionNames = {}): stri
     }
 
     if (isItem) {
-      html.push(`<li>${inlineToHtml(line.slice(2), names)}</li>`)
+      html.push(`<li>${inlineMarkdownToHtml(line.slice(2), names)}</li>`)
     } else if (line.trim() === '') {
       html.push('<div><br></div>')
     } else {
-      html.push(`<div>${inlineToHtml(line, names)}</div>`)
+      html.push(`<div>${inlineMarkdownToHtml(line, names)}</div>`)
     }
   }
 
