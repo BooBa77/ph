@@ -54,6 +54,7 @@ import {
   type TripStatus,
   type TripWhen,
 } from './trip.types';
+import { nextWeekendRange } from './weekend';
 
 /** Размер страницы ленты по умолчанию и потолок — в DTO. */
 const DEFAULT_PAGE_SIZE = 20;
@@ -166,6 +167,9 @@ export class TripsService {
           announcement: dto.announcement ?? null,
           routeText: dto.routeText ?? '',
           requirementsText: dto.requirementsText ?? null,
+          meetingPlace: dto.meetingPlace ?? null,
+          meetingAt: dto.meetingAt ? this.toDate(dto.meetingAt) : null,
+          transferText: dto.transferText ?? null,
           visibility: dto.visibility ?? 'public',
           status,
           activityTypeIds,
@@ -468,10 +472,26 @@ export class TripsService {
       )
       .andWhere('trip.cancelled_at IS NULL');
 
-    if (query.goalObjectId !== undefined) {
-      qb.andWhere('trip.goal_object_id = :goalObjectId', {
-        goalObjectId: query.goalObjectId,
-      });
+    /**
+     * Объект — это **цель или упоминание в маршруте**, и это не одно и то же.
+     *
+     * «Хочу на Витязь» — поход с целью Витязь. «Иду на пик, а по дороге
+     * заглянем на Витязь» — цель другая, а Витязь в маршруте. Человеку,
+     * который ищет походы про Витязь, нужны оба, и различать их он не
+     * обязан: фильтр в интерфейсе один, значит и параметр один.
+     *
+     * Индекс упоминаний (`trip_route_elements`) собирается из `[[object:N]]`
+     * в тексте маршрута при каждом сохранении, и по `object_id` у него
+     * отдельный индекс — поэтому `EXISTS` здесь не seq scan.
+     */
+    if (query.objectId !== undefined) {
+      qb.andWhere(
+        `(trip.goal_object_id = :objectId OR EXISTS (
+           SELECT 1 FROM trip_route_elements element
+            WHERE element.trip_id = trip.id AND element.object_id = :objectId
+         ))`,
+        { objectId: query.objectId },
+      );
     }
 
     if (query.activityTypeId !== undefined) {
@@ -520,7 +540,8 @@ export class TripsService {
     }
 
     if (query.when !== undefined) {
-      qb.andWhere(this.whenCondition(query.when));
+      const condition = this.whenCondition(query.when);
+      qb.andWhere(condition.sql, condition.params ?? {});
     }
 
     /**
@@ -549,21 +570,57 @@ export class TripsService {
    * и отметил это, перестаёт быть предстоящим независимо от запланированной
    * даты. Обратное неверно — поход с планом в прошлом и без факта считается
    * прошедшим, потому что отмечать факт никто не обязан.
+   *
+   * Условие возвращается вместе с параметрами: у «выходных» они свои
+   * (границы окна считаются в поясе проекта, а не в SQL — см. `weekend.ts`).
    */
-  private whenCondition(when: TripWhen): string {
+  private whenCondition(when: TripWhen): {
+    sql: string;
+    params?: Record<string, Date>;
+  } {
     switch (when) {
+      case 'weekend': {
+        const { start, end } = nextWeekendRange();
+
+        /**
+         * Поход попадает в выходные, если его отрезок пересекает окно.
+         *
+         * Начало берётся по факту, если он есть. Конец — тоже, а если конца
+         * нет, им считается начало: «поход без известного конца» — это не
+         * повод показать его в любые выходные до скончания века. Из этого
+         * правила следуют два разумных случая: поход, начинающийся
+         * в субботу (конца нет — значит он в этих выходных), и поход
+         * с пятницы по воскресенье (конец заходит в окно).
+         */
+        return {
+          sql: `COALESCE(trip.actual_started_at, trip.starts_at) < :weekendEnd
+            AND COALESCE(
+                  COALESCE(trip.actual_finished_at, trip.ends_at),
+                  COALESCE(trip.actual_started_at, trip.starts_at)
+                ) >= :weekendStart`,
+          params: { weekendStart: start, weekendEnd: end },
+        };
+      }
       case 'upcoming':
-        return 'COALESCE(trip.actual_started_at, trip.starts_at) > now()';
+        return {
+          sql: 'COALESCE(trip.actual_started_at, trip.starts_at) > now()',
+        };
       case 'ongoing':
         // Поход без известного конца, но с прошедшим началом, «идёт»:
         // не знать, когда вернутся, — не то же самое, что уже вернулись.
-        return `COALESCE(trip.actual_started_at, trip.starts_at) <= now()
+        return {
+          sql: `COALESCE(trip.actual_started_at, trip.starts_at) <= now()
             AND (COALESCE(trip.actual_finished_at, trip.ends_at) IS NULL
-                 OR COALESCE(trip.actual_finished_at, trip.ends_at) >= now())`;
+                 OR COALESCE(trip.actual_finished_at, trip.ends_at) >= now())`,
+        };
       case 'past':
-        return 'COALESCE(trip.actual_finished_at, trip.ends_at) < now()';
+        return {
+          sql: 'COALESCE(trip.actual_finished_at, trip.ends_at) < now()',
+        };
       case 'undated':
-        return 'trip.starts_at IS NULL AND trip.actual_started_at IS NULL';
+        return {
+          sql: 'trip.starts_at IS NULL AND trip.actual_started_at IS NULL',
+        };
     }
   }
 
@@ -636,6 +693,13 @@ export class TripsService {
       if (dto.announcement !== undefined) trip.announcement = dto.announcement;
       if (dto.requirementsText !== undefined) {
         trip.requirementsText = dto.requirementsText;
+      }
+      if (dto.meetingPlace !== undefined) trip.meetingPlace = dto.meetingPlace;
+      if (dto.meetingAt !== undefined) {
+        trip.meetingAt = this.toDate(dto.meetingAt);
+      }
+      if (dto.transferText !== undefined) {
+        trip.transferText = dto.transferText;
       }
       if (dto.visibility !== undefined) trip.visibility = dto.visibility;
       if (dto.isRecruitmentClosed !== undefined) {

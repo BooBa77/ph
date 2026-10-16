@@ -103,6 +103,38 @@ export class UpdateTripDto {
   visibility?: TripVisibility;
 
   @ApiProperty({
+    description: 'Где собираются. null — стереть',
+    maxLength: 200,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsString({ message: 'Место сбора должно быть строкой' })
+  @MaxLength(200, { message: 'Место сбора не должно превышать 200 символов' })
+  meetingPlace?: string | null;
+
+  @ApiProperty({
+    description: 'Когда собираются. null — стереть',
+    example: '2027-05-05T00:00:00.000Z',
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsISO8601({}, { message: 'Время сбора должно быть датой в формате ISO 8601' })
+  meetingAt?: string | null;
+
+  @ApiProperty({
+    description: 'Заброска: как добираемся до начала маршрута. null — стереть',
+    maxLength: 5000,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsString({ message: 'Заброска должна быть строкой' })
+  @MaxLength(5000, { message: 'Заброска не должна превышать 5000 символов' })
+  transferText?: string | null;
+
+  @ApiProperty({
     description: 'Стадия подготовки. decided требует обеих дат',
     enum: TRIP_STATUSES,
     required: false,

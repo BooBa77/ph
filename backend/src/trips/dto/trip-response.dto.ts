@@ -96,6 +96,26 @@ export class TripResponseDto {
   requirementsText: string | null;
 
   @ApiProperty({
+    description: 'Где собираются. null — не указано',
+    example: 'Иркутск, автовокзал, у первой платформы',
+    nullable: true,
+  })
+  meetingPlace: string | null;
+
+  @ApiProperty({
+    description: 'Когда собираются. null — не указано',
+    example: '2027-05-05T00:00:00.000Z',
+    nullable: true,
+  })
+  meetingAt: string | null;
+
+  @ApiProperty({
+    description: 'Заброска: как добираемся до начала маршрута. Обычный текст',
+    nullable: true,
+  })
+  transferText: string | null;
+
+  @ApiProperty({
     description: 'Видимость похода',
     enum: ['public', 'private'],
     example: 'public',
@@ -205,6 +225,9 @@ export class TripResponseDto {
       announcement: trip.announcement,
       routeText: trip.routeText,
       requirementsText: trip.requirementsText,
+      meetingPlace: trip.meetingPlace,
+      meetingAt: trip.meetingAt?.toISOString() ?? null,
+      transferText: trip.transferText,
       visibility: trip.visibility,
       isRecruitmentClosed: trip.isRecruitmentClosed,
       activityTypeIds: trip.activityTypeIds,

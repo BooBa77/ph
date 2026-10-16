@@ -158,6 +158,40 @@ export class CreateTripDto {
   requirementsText?: string | null;
 
   @ApiProperty({
+    description: 'Где собираются: «у вокзала, платформа 2»',
+    example: 'Иркутск, автовокзал, у первой платформы',
+    maxLength: 200,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString({ message: 'Место сбора должно быть строкой' })
+  @MaxLength(200, { message: 'Место сбора не должно превышать 200 символов' })
+  meetingPlace?: string | null;
+
+  @ApiProperty({
+    description: 'Когда собираются',
+    example: '2027-05-05T00:00:00.000Z',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsISO8601({}, { message: 'Время сбора должно быть датой в формате ISO 8601' })
+  meetingAt?: string | null;
+
+  @ApiProperty({
+    description: 'Заброска: как добираемся до начала маршрута. Обычный текст',
+    example: 'Электричка 6:40 от вокзала, дальше пешком 4 км',
+    maxLength: 5000,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString({ message: 'Заброска должна быть строкой' })
+  @MaxLength(5000, { message: 'Заброска не должна превышать 5000 символов' })
+  transferText?: string | null;
+
+  @ApiProperty({
     description:
       'Видимость: public — всем зарегистрированным, private — участникам',
     enum: TRIP_VISIBILITIES,

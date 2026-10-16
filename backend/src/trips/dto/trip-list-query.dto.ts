@@ -42,15 +42,16 @@ const queryBoolean = () =>
  */
 export class TripListQueryDto {
   @ApiProperty({
-    description: 'Походы на этот объект справочника',
+    description:
+      'Объект справочника: поход, у которого это цель **или** который упоминает его в маршруте',
     example: 10,
     required: false,
   })
   @IsOptional()
   @Type(() => Number)
-  @IsInt({ message: 'Цель должна быть id из справочника' })
-  @Min(1, { message: 'Цель должна быть id из справочника' })
-  goalObjectId?: number;
+  @IsInt({ message: 'Объект должен быть id из справочника' })
+  @Min(1, { message: 'Объект должен быть id из справочника' })
+  objectId?: number;
 
   @ApiProperty({
     description: 'Походы с этой активностью',
