@@ -38,6 +38,8 @@ describe('Походы (e2e)', () => {
   let applicantToken: string;
   let applicantId: string;
   let goalObjectId: string;
+  /** Второй объект справочника: проверяем фильтр по упоминанию в маршруте. */
+  let routeObjectId: string;
   let activityGroupId: number;
   let activityTypeId: number;
   let lastCode: string | null = null;
@@ -84,6 +86,12 @@ describe('Походы (e2e)', () => {
     goalObjectId = (
       await dataSource.query(
         `INSERT INTO objects (name, type) VALUES ('Тестовая вершина e2e', 'вершина') RETURNING id`,
+      )
+    )[0].id;
+
+    routeObjectId = (
+      await dataSource.query(
+        `INSERT INTO objects (name, type) VALUES ('Тестовый перевал e2e', 'перевал') RETURNING id`,
       )
     )[0].id;
 
@@ -147,6 +155,9 @@ describe('Походы (e2e)', () => {
       );
       await dataSource.query('DELETE FROM objects WHERE id = $1', [
         goalObjectId,
+      ]);
+      await dataSource.query('DELETE FROM objects WHERE id = $1', [
+        routeObjectId,
       ]);
       // Заявитель и посторонний попадают в состав чужих походов, поэтому
       // пользователей удаляем после походов: `ON DELETE RESTRICT` не даст
@@ -270,6 +281,49 @@ describe('Походы (e2e)', () => {
         duration_days: null,
         duration_delta: 0,
       });
+    });
+
+    /**
+     * Место и время сбора плюс заброска: без них в поход не собраться,
+     * а раньше они писались текстом в маршруте и там терялись.
+     */
+    it('место, время сбора и заброска сохраняются', async () => {
+      const response = await createTrip({
+        announcement: 'Со сбором',
+        meetingPlace: 'Иркутск, автовокзал, у первой платформы',
+        meetingAt: '2099-05-05T00:00:00.000Z',
+        transferText: 'Электричка 6:40 от вокзала',
+      });
+
+      expect(response.status).toBe(201);
+      expect(response.body.meetingPlace).toBe(
+        'Иркутск, автовокзал, у первой платформы',
+      );
+      expect(response.body.meetingAt).toBe('2099-05-05T00:00:00.000Z');
+      expect(response.body.transferText).toBe('Электричка 6:40 от вокзала');
+
+      // В базе лежит момент времени, а не строка: иначе напоминания
+      // о сборе считать было бы нечем.
+      const stored = await dataSource.query(
+        'SELECT meeting_place, meeting_at, transfer_text FROM trips WHERE id = $1',
+        [response.body.id],
+      );
+      expect(stored[0].meeting_place).toBe('Иркутск, автовокзал, у первой платформы');
+      expect(stored[0].meeting_at.toISOString()).toBe('2099-05-05T00:00:00.000Z');
+    });
+
+    it('у похода без сбора поля пустые, а не выдуманные', async () => {
+      const response = await createTrip({ announcement: 'Без сбора' });
+
+      expect(response.body.meetingPlace).toBeNull();
+      expect(response.body.meetingAt).toBeNull();
+      expect(response.body.transferText).toBeNull();
+    });
+
+    it('мусор во времени сбора — 400', async () => {
+      const response = await createTrip({ meetingAt: 'завтра утром' });
+
+      expect(response.status).toBe(400);
     });
 
     it('активности-дубликаты схлопываются, а не ломают проверку', async () => {
@@ -492,16 +546,100 @@ describe('Походы (e2e)', () => {
       expect(upcoming).not.toContain('Без дат e2e');
     });
 
-    it('фильтр по цели и пагинация с полным total', async () => {
+    it('фильтр по объекту и пагинация с полным total', async () => {
       await createTrip({ announcement: 'На тестовую вершину' });
 
       const response = await request(app.getHttpServer())
-        .get(`/api/trips?mine=true&goalObjectId=${goalObjectId}&limit=1`)
+        .get(`/api/trips?mine=true&objectId=${goalObjectId}&limit=1`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(200);
 
       expect(response.body.trips).toHaveLength(1);
       expect(response.body.total).toBeGreaterThan(1);
+    });
+
+    /**
+     * Объект в фильтре — это цель **или** упоминание в маршруте, и проверять
+     * надо именно второй случай: по цели фильтр работал и раньше, а индекс
+     * упоминаний (`trip_route_elements`) до этого никто не спрашивал.
+     *
+     * Устройство проверки: поход B идёт на перевал, а вершина у него только
+     * в тексте маршрута. Значит, по вершине он находится, а без индекса
+     * упоминаний не нашёлся бы; поход C (перевал в цели, упоминаний нет)
+     * по вершине не находится — это защита от «фильтр совпал со всем».
+     */
+    it('фильтр по объекту находит и цель, и упоминание в маршруте', async () => {
+      await createTrip({ announcement: 'Цель — тестовая вершина' });
+      await createTrip({
+        goalObjectId: Number(routeObjectId),
+        announcement: 'Вершина упомянута в маршруте',
+        routeText: `Сначала заброска, потом [[object:${goalObjectId}]]`,
+      });
+      await createTrip({
+        goalObjectId: Number(routeObjectId),
+        announcement: 'Перевал без упоминаний',
+      });
+
+      const byGoalObject = await listAnnouncements(
+        `?mine=true&objectId=${goalObjectId}&limit=50`,
+      );
+      expect(byGoalObject).toContain('Цель — тестовая вершина');
+      expect(byGoalObject).toContain('Вершина упомянута в маршруте');
+      expect(byGoalObject).not.toContain('Перевал без упоминаний');
+
+      const byRouteObject = await listAnnouncements(
+        `?mine=true&objectId=${routeObjectId}&limit=50`,
+      );
+      expect(byRouteObject).toContain('Вершина упомянута в маршруте');
+      expect(byRouteObject).toContain('Перевал без упоминаний');
+      expect(byRouteObject).not.toContain('Цель — тестовая вершина');
+    });
+
+    /**
+     * «Следующие выходные» считаются в поясе проекта (Иркутск), а не по UTC,
+     * поэтому дата в тесте строится вручную: сначала местное «сейчас»,
+     * потом ближайшая суббота. Импортировать боевой расчёт сюда нельзя —
+     * тест сравнивал бы функцию сама с собой.
+     */
+    it('when=weekend находит походы, пересекающие следующие выходные', async () => {
+      /** Суббота ближайших выходных, 12:00 по Иркутску (UTC+8 без переходов). */
+      const local = new Date(Date.now() + 8 * 60 * 60 * 1000);
+      let ahead = (6 - local.getUTCDay() + 7) % 7;
+      if (ahead === 0) ahead = 7;
+
+      const saturdayNoon = Date.UTC(
+        local.getUTCFullYear(),
+        local.getUTCMonth(),
+        local.getUTCDate() + ahead,
+        12 - 8,
+      );
+      const iso = (ms: number) => new Date(ms).toISOString();
+
+      await createTrip({
+        announcement: 'Выходные e2e',
+        status: 'decided',
+        startsAt: iso(saturdayNoon),
+        endsAt: iso(saturdayNoon + 26 * 60 * 60 * 1000),
+      });
+      // Пятница вечером — воскресенье: поход выходного дня, который
+      // начинается до субботы. Окно он пересекает, значит попадать должен.
+      await createTrip({
+        announcement: 'С пятницы по воскресенье e2e',
+        status: 'decided',
+        startsAt: iso(saturdayNoon - 14 * 60 * 60 * 1000),
+        endsAt: iso(saturdayNoon + 30 * 60 * 60 * 1000),
+      });
+      await createTrip({
+        announcement: 'Через месяц e2e',
+        status: 'decided',
+        startsAt: iso(saturdayNoon + 30 * 24 * 60 * 60 * 1000),
+        endsAt: iso(saturdayNoon + 30 * 24 * 60 * 60 * 1000 + 26 * 60 * 60 * 1000),
+      });
+
+      const weekend = await listAnnouncements('?mine=true&when=weekend&limit=50');
+      expect(weekend).toContain('Выходные e2e');
+      expect(weekend).toContain('С пятницы по воскресенье e2e');
+      expect(weekend).not.toContain('Через месяц e2e');
     });
 
     /**
@@ -529,6 +667,7 @@ describe('Походы (e2e)', () => {
         '?when=когда-нибудь',
         '?mine=yes',
         '?isSport=yes',
+        '?objectId=abc',
         '?limit=999',
       ]) {
         await request(app.getHttpServer())
@@ -572,6 +711,36 @@ describe('Походы (e2e)', () => {
         .send({})
         .expect(200);
       expect(untouched.body.id).toBe(created.body.id);
+    });
+
+    it('правка меняет и стирает сбор и заброску', async () => {
+      const created = await createTrip({
+        meetingPlace: 'Старое место',
+        meetingAt: '2099-05-05T00:00:00.000Z',
+        transferText: 'Пешком',
+      });
+
+      const changed = await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ meetingPlace: 'Новое место, у моста' })
+        .expect(200);
+
+      // Патч одного поля не трогает соседние: время сбора и заброска
+      // остаются как были.
+      expect(changed.body.meetingPlace).toBe('Новое место, у моста');
+      expect(changed.body.meetingAt).toBe('2099-05-05T00:00:00.000Z');
+      expect(changed.body.transferText).toBe('Пешком');
+
+      const cleared = await request(app.getHttpServer())
+        .patch(`/api/trips/${created.body.id}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ meetingPlace: null, meetingAt: null, transferText: null })
+        .expect(200);
+
+      expect(cleared.body.meetingPlace).toBeNull();
+      expect(cleared.body.meetingAt).toBeNull();
+      expect(cleared.body.transferText).toBeNull();
     });
 
     it('маршрут пересобирает индекс упоминаний объектов', async () => {
@@ -1007,6 +1176,66 @@ describe('Походы (e2e)', () => {
         .get(`/api/trips/${created.body.id}/participants`)
         .set('Authorization', `Bearer ${strangerToken}`)
         .expect(404);
+    });
+  });
+
+  /**
+   * Поиск людей сделан ради приглашения в поход: чтобы позвать человека,
+   * его надо найти. Проверяется и приватность выдачи — наружу уходят
+   * только имя, аватарка и id, — и то, что себя человек в списке не видит.
+   */
+  describe('поиск людей', () => {
+    it('находит по подстроке имени и не показывает себя', async () => {
+      await request(app.getHttpServer())
+        .patch('/api/users/me')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ displayName: 'Поиск e2e организатор' })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .patch('/api/users/me')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ displayName: 'Поиск e2e напарник' })
+        .expect(200);
+
+      const found = await request(app.getHttpServer())
+        .get('/api/users')
+        .query({ search: 'Поиск e2e' })
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const users = found.body.users as Array<Record<string, unknown>>;
+      const names = users.map((user) => user.displayName);
+
+      expect(names).toContain('Поиск e2e напарник');
+      expect(names).not.toContain('Поиск e2e организатор');
+      expect(Object.keys(users[0]).sort()).toEqual([
+        'avatarUrl',
+        'displayName',
+        'id',
+      ]);
+    });
+
+    it('короткий запрос — 400, пустой — пустой список, а не все люди', async () => {
+      await request(app.getHttpServer())
+        .get('/api/users')
+        .query({ search: 'П' })
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(400);
+
+      const empty = await request(app.getHttpServer())
+        .get('/api/users')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(empty.body.users).toEqual([]);
+    });
+
+    it('без токена поиск закрыт', async () => {
+      await request(app.getHttpServer())
+        .get('/api/users')
+        .query({ search: 'Поиск e2e' })
+        .expect(401);
     });
   });
 
