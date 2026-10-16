@@ -1,11 +1,7 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 
-import {
-  ICON_STROKE_WIDTH,
-  ICON_VIEWBOX,
-  activityIconShapes,
-} from '@/assets/activity-icons'
+import { ICON_STROKE_WIDTH, ICON_VIEWBOX, activityIconShapes } from '@/assets/activity-icons'
 
 /**
  * Иконка активности: линии цветом, который задал родитель.

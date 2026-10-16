@@ -107,7 +107,11 @@ onBeforeUnmount(() => {
     aria-labelledby="month-picker-title"
     @click.self="emit('close')"
   >
-    <div ref="card" tabindex="-1" class="w-full max-w-sm rounded-2xl bg-surface p-4 shadow-xl outline-none">
+    <div
+      ref="card"
+      tabindex="-1"
+      class="w-full max-w-sm rounded-2xl bg-surface p-4 shadow-xl outline-none"
+    >
       <h2 id="month-picker-title" class="mb-3 text-lg font-semibold text-text">Выбор месяца</h2>
 
       <div class="mb-3 flex items-center justify-between gap-1">

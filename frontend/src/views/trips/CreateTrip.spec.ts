@@ -78,9 +78,7 @@ describe('CreateTrip', () => {
   it('без цели поход создать нельзя', async () => {
     const wrapper = mount(CreateTrip)
 
-    expect(
-      wrapper.find('[data-test="submit"]').attributes('disabled'),
-    ).toBeDefined()
+    expect(wrapper.find('[data-test="submit"]').attributes('disabled')).toBeDefined()
     expect(wrapper.find('[data-test="hint"]').text()).toContain('Выберите цель')
 
     await submit(wrapper)
@@ -125,34 +123,58 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="status-hint"]').text()).toContain('Решено')
   })
 
-  it('прокликанные месяцы уезжают отдельными вариантами', async () => {
+  it('прокликанные месяцы уезжают отдельными вариантами вместе с годами', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
 
-    await wrapper.find('[data-test="month-6"]').trigger('click')
-    await wrapper.find('[data-test="month-7"]').trigger('click')
+    // Берём ряд следующего года: он всегда из двенадцати месяцев,
+    // а в текущем году месяцев осталось столько, сколько осталось.
+    const nextYear = new Date().getFullYear() + 1
+
+    await wrapper.find(`[data-test="month-${nextYear}-6"]`).trigger('click')
+    await wrapper.find(`[data-test="month-${nextYear}-7"]`).trigger('click')
     await wrapper.find('[data-test="duration-days"]').setValue('5')
     await wrapper.find('[data-test="duration-delta"]').setValue('2')
 
     await submit(wrapper)
 
     expect(lastPayload().dateVariants).toEqual([
-      { month: 6, durationDays: 5, durationDelta: 2 },
-      { month: 7, durationDays: 5, durationDelta: 2 },
+      { year: nextYear, month: 6, durationDays: 5, durationDelta: 2 },
+      { year: nextYear, month: 7, durationDays: 5, durationDelta: 2 },
     ])
     expect(lastPayload().startsAt).toBeNull()
   })
 
-  it('режимы «месяцы» и «точное число» взаимоисключающие', async () => {
+  it('месяцы показаны двумя рядами с годами: остаток текущего и следующий', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
 
-    await wrapper.find('[data-test="month-6"]').trigger('click')
+    const currentYear = new Date().getFullYear()
+    const nextYear = currentYear + 1
+
+    expect(wrapper.find(`[data-test="year-${currentYear}"]`).exists()).toBe(true)
+    expect(wrapper.find(`[data-test="year-${nextYear}"]`).exists()).toBe(true)
+
+    // В текущем году прошедшие месяцы не показываем: поход в марте, когда
+    // на дворе октябрь, — это не прогноз, а ошибка.
+    const passedMonth = new Date().getMonth()
+    if (passedMonth >= 1) {
+      expect(wrapper.find(`[data-test="month-${currentYear}-${passedMonth}"]`).exists()).toBe(false)
+    }
+    expect(wrapper.find(`[data-test="month-${nextYear}-1"]`).exists()).toBe(true)
+  })
+
+  it('режимы «примерный период» и «точное число» взаимоисключающие', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    const nextYear = new Date().getFullYear() + 1
+    await wrapper.find(`[data-test="month-${nextYear}-6"]`).trigger('click')
     await wrapper.find('[data-test="mode-exact"]').trigger('click')
 
     // Переключение режима чистит чужое: иначе в запрос уехало бы и число,
     // и месяцы — а это противоречие.
-    expect(wrapper.find('[data-test="month-6"]').exists()).toBe(false)
+    expect(wrapper.find(`[data-test="month-${nextYear}-6"]`).exists()).toBe(false)
 
     await wrapper.find('[data-test="exact-day"]').setValue('12')
     await wrapper.find('[data-test="exact-month"]').setValue('8')
@@ -169,12 +191,8 @@ describe('CreateTrip', () => {
 
     await wrapper.find('[data-test="duration-delta"]').setValue('2')
 
-    expect(wrapper.find('[data-test="hint"]').text()).toContain(
-      'без продолжительности',
-    )
-    expect(
-      wrapper.find('[data-test="submit"]').attributes('disabled'),
-    ).toBeDefined()
+    expect(wrapper.find('[data-test="hint"]').text()).toContain('без продолжительности')
+    expect(wrapper.find('[data-test="submit"]').attributes('disabled')).toBeDefined()
   })
 
   it('решённый поход без дат не отправляется', async () => {
@@ -188,9 +206,7 @@ describe('CreateTrip', () => {
     await wrapper.find('[data-test="ends-at"]').setValue('2027-05-09T18:00')
     await submit(wrapper)
 
-    expect(lastPayload().startsAt).toBe(
-      new Date('2027-05-05T09:00').toISOString(),
-    )
+    expect(lastPayload().startsAt).toBe(new Date('2027-05-05T09:00').toISOString())
     expect(lastPayload().dateVariants).toEqual([])
   })
 
@@ -226,13 +242,12 @@ describe('CreateTrip', () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
 
-    await wrapper.find('[data-test="insert-object"]').trigger('click')
+    await wrapper.find('[data-test="md-object"]').trigger('click')
     await wrapper.find('[data-test="object-search"]').setValue('Витязь')
     await vi.advanceTimersByTimeAsync(400)
     await wrapper.find('[data-test="object-option"]').trigger('click')
 
-    const route = wrapper.find('[data-test="route"]')
-      .element as HTMLTextAreaElement
+    const route = wrapper.find('[data-test="md-textarea"]').element as HTMLTextAreaElement
     expect(route.value).toBe('[[object:10]]')
   })
 
@@ -241,17 +256,11 @@ describe('CreateTrip', () => {
     await chooseGoal(wrapper)
 
     mocks.createTrip.mockRejectedValue(
-      new ApiError(
-        400,
-        'В маршруте есть ссылки на несуществующие объекты',
-        null,
-      ),
+      new ApiError(400, 'В маршруте есть ссылки на несуществующие объекты', null),
     )
     await submit(wrapper)
 
-    expect(wrapper.find('[data-test="error"]').text()).toContain(
-      'несуществующие объекты',
-    )
+    expect(wrapper.find('[data-test="error"]').text()).toContain('несуществующие объекты')
   })
 
   it('после создания показывается имя цели, а «Создать ещё» возвращает форму', async () => {
@@ -265,8 +274,7 @@ describe('CreateTrip', () => {
     await wrapper.find('[data-test="created"] button').trigger('click')
 
     expect(wrapper.find('[data-test="created"]').exists()).toBe(false)
-    const announcement = wrapper.find('[data-test="announcement"]')
-      .element as HTMLInputElement
+    const announcement = wrapper.find('[data-test="announcement"]').element as HTMLInputElement
     expect(announcement.value).toBe('')
   })
 })

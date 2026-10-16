@@ -68,9 +68,7 @@ const yearEnd = `${props.year}-12-31`
 /** «01.06 — 14.06» — год в подписи не нужен, он один на всю модалку. */
 function formatRange(range: RangeDraft): string {
   const day = (iso: string) => `${iso.slice(8, 10)}.${iso.slice(5, 7)}`
-  return range.from === range.to
-    ? day(range.from)
-    : `${day(range.from)} — ${day(range.to)}`
+  return range.from === range.to ? day(range.from) : `${day(range.from)} — ${day(range.to)}`
 }
 
 const dayTypeWord: Record<CalendarDayType, string> = {
@@ -154,9 +152,7 @@ async function save() {
     emit('close')
   } catch (cause) {
     error.value =
-      cause instanceof ApiError
-        ? cause.message
-        : 'Не удалось сохранить. Попробуйте ещё раз.'
+      cause instanceof ApiError ? cause.message : 'Не удалось сохранить. Попробуйте ещё раз.'
   } finally {
     isSaving.value = false
   }
@@ -246,10 +242,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         >
           Добавить
         </button>
-        <label
-          v-if="tool === 'off'"
-          class="flex min-w-40 flex-1 flex-col gap-1 text-xs text-muted"
-        >
+        <label v-if="tool === 'off'" class="flex min-w-40 flex-1 flex-col gap-1 text-xs text-muted">
           Что это (необязательно)
           <input
             v-model="reason"
@@ -284,8 +277,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </ul>
 
       <p v-else class="mt-3 text-sm text-muted">
-        Пока ничего не добавлено. Можно задать несколько диапазонов и сохранить
-        их разом.
+        Пока ничего не добавлено. Можно задать несколько диапазонов и сохранить их разом.
       </p>
 
       <p v-if="error" class="mt-3 text-sm text-red-600">{{ error }}</p>

@@ -30,9 +30,7 @@ const { showHint } = usePwaInstall()
     @click.self="showHint = false"
   >
     <div class="w-full max-w-md rounded-2xl bg-surface p-4 shadow-xl">
-      <h2 class="mb-2 text-lg font-semibold text-text">
-        Как вынести ярлык
-      </h2>
+      <h2 class="mb-2 text-lg font-semibold text-text">Как вынести ярлык</h2>
 
       <div class="flex flex-col gap-3 text-sm text-text">
         <div>
@@ -44,17 +42,13 @@ const { showHint } = usePwaInstall()
 
         <div>
           <div class="font-medium">Android (Chrome)</div>
-          <p class="text-muted">
-            Меню «⋮» справа сверху → «Установить приложение» →
-            «Установить».
-          </p>
+          <p class="text-muted">Меню «⋮» справа сверху → «Установить приложение» → «Установить».</p>
         </div>
 
         <div>
           <div class="font-medium">Компьютер (Chrome, Edge)</div>
           <p class="text-muted">
-            Значок установки в адресной строке справа, либо меню «⋮» →
-            «Установить PeakHunter».
+            Значок установки в адресной строке справа, либо меню «⋮» → «Установить PeakHunter».
           </p>
         </div>
       </div>

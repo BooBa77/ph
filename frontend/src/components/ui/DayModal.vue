@@ -46,9 +46,7 @@ const isWeekend = computed(() => day.value?.dayType === 'weekend')
 const isShort = computed(() => day.value?.dayType === 'short_workday')
 
 /** Заголовок — метка дня; если её нет, показываем дату. */
-const title = computed(
-  () => day.value?.label ?? capitalize(fullDate(props.date)),
-)
+const title = computed(() => day.value?.label ?? capitalize(fullDate(props.date)))
 
 const isEditingLabel = ref(false)
 const labelDraft = ref('')
@@ -71,9 +69,7 @@ async function run(action: () => Promise<unknown>) {
     await action()
   } catch (cause) {
     error.value =
-      cause instanceof ApiError
-        ? cause.message
-        : 'Не удалось сохранить. Попробуйте ещё раз.'
+      cause instanceof ApiError ? cause.message : 'Не удалось сохранить. Попробуйте ещё раз.'
   } finally {
     isSaving.value = false
   }
@@ -204,13 +200,11 @@ function toggleType(typeId: number) {
  * одного лишнего клика, а показать ошибку больше негде.
  */
 async function closeWithSave() {
-  const personal =
-    notePersonalDraft.value.trim() === '' ? null : notePersonalDraft.value
+  const personal = notePersonalDraft.value.trim() === '' ? null : notePersonalDraft.value
   const shared = notePublicDraft.value.trim() === '' ? null : notePublicDraft.value
 
   const changed =
-    (day.value?.notePersonal ?? null) !== personal ||
-    (day.value?.notePublic ?? null) !== shared
+    (day.value?.notePersonal ?? null) !== personal || (day.value?.notePublic ?? null) !== shared
 
   if (changed) {
     try {
@@ -242,9 +236,7 @@ async function sendRequest() {
     requestSent.value = true
   } catch (cause) {
     error.value =
-      cause instanceof ApiError
-        ? cause.message
-        : 'Не удалось отправить запрос. Попробуйте ещё раз.'
+      cause instanceof ApiError ? cause.message : 'Не удалось отправить запрос. Попробуйте ещё раз.'
   } finally {
     isRequesting.value = false
   }
@@ -394,9 +386,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             type="button"
             class="cursor-pointer rounded px-2 py-1 text-xs transition-colors"
             :class="
-              activeTab === group.id
-                ? 'bg-bg font-medium text-text'
-                : 'text-muted hover:text-text'
+              activeTab === group.id ? 'bg-bg font-medium text-text' : 'text-muted hover:text-text'
             "
             @click="activeTab = group.id"
           >
@@ -488,8 +478,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           />
         </label>
         <label class="mt-2 flex flex-col gap-1 text-xs text-muted">
-          Поделиться (пока видно только вам — покажем другим, когда появятся
-          чужие календари)
+          Поделиться (пока видно только вам — покажем другим, когда появятся чужие календари)
           <textarea
             v-model="notePublicDraft"
             rows="2"
@@ -498,9 +487,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           />
         </label>
         <div class="mt-2 flex items-center justify-end gap-2">
-          <span class="mr-auto text-xs text-muted">
-            Заметки сохранятся при закрытии
-          </span>
+          <span class="mr-auto text-xs text-muted"> Заметки сохранятся при закрытии </span>
         </div>
       </div>
 

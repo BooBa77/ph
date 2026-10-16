@@ -84,8 +84,7 @@ describe('GeoObjectPicker', () => {
 
     expect(wrapper.emitted('select')?.[0]).toEqual([VITYAZ])
 
-    const input = wrapper.find('[data-test="object-search"]')
-      .element as HTMLInputElement
+    const input = wrapper.find('[data-test="object-search"]').element as HTMLInputElement
     expect(input.value).toBe('')
     expect(wrapper.find('[data-test="object-options"]').exists()).toBe(false)
   })

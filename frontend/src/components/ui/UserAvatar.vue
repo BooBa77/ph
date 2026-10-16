@@ -59,9 +59,7 @@ const imageSrc = computed(() => (isDefault.value ? DEFAULT_SRC : props.src!))
 
 const srcset = computed(() =>
   isDefault.value
-    ? DEFAULT_SIZES.map((width) => `/img/avatar-default-${width}.png ${width}w`).join(
-        ', ',
-      )
+    ? DEFAULT_SIZES.map((width) => `/img/avatar-default-${width}.png ${width}w`).join(', ')
     : undefined,
 )
 

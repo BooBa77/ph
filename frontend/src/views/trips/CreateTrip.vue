@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, nextTick, ref } from 'vue'
+import { computed, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
 import { createTrip } from '@/api/trips'
 import GeoObjectPicker from '@/components/ui/GeoObjectPicker.vue'
+import MarkdownEditor from '@/components/ui/MarkdownEditor.vue'
 import TripDateVariants from '@/views/trips/TripDateVariants.vue'
 import {
   TRIP_STATUSES,
@@ -57,8 +58,10 @@ const visibility = ref<TripVisibility>('public')
 /** Пояснение к выбранной готовности: оно же объясняет, почему даты такие. */
 const STATUS_HINTS: Record<TripStatus, string> = {
   idea: 'Мечта: элемент вишлиста. Даты может не быть вовсе — «когда-нибудь». Если знаете месяцы или число, укажите их, а продолжительность важнее даты.',
-  planning: 'Планирую: решение принято, срок ещё плавает — «следующим летом». Отметьте месяцы или точное число; конкретные даты появятся, когда поход станет решённым.',
-  decided: 'Решено: у похода есть начало и конец. По ним считается, идёт он сейчас или уже прошёл, — поэтому обе даты обязательны.',
+  planning:
+    'Планирую: решение принято, срок ещё плавает — «следующим летом». Отметьте месяцы или точное число; конкретные даты появятся, когда поход станет решённым.',
+  decided:
+    'Решено: у похода есть начало и конец. По ним считается, идёт он сейчас или уже прошёл, — поэтому обе даты обязательны.',
 }
 
 // ─── Цель ───
@@ -79,43 +82,12 @@ const variants = ref<DateVariantDraft[]>([emptyVariantDraft(1)])
 const startsAt = ref('')
 const endsAt = ref('')
 
-const isDateForecast = computed(
-  () => status.value === 'idea' || status.value === 'planning',
-)
+const isDateForecast = computed(() => status.value === 'idea' || status.value === 'planning')
 
 // ─── Маршрут и требования ───
 
 const routeText = ref('')
 const requirements = ref('')
-const routeTextarea = ref<HTMLTextAreaElement | null>(null)
-const isInsertingObject = ref(false)
-
-/**
- * Вставить ссылку на объект в текст маршрута.
- *
- * Вставляем в место курсора, а не в конец: маршрут пишут по частям,
- * и дописывание в хвост заставляло бы потом переносить токен руками.
- */
-function insertObject(object: GeoObject) {
-  const token = `[[object:${object.id}]]`
-  const textarea = routeTextarea.value
-
-  if (!textarea) {
-    routeText.value = `${routeText.value}${token}`
-    return
-  }
-
-  const start = textarea.selectionStart ?? routeText.value.length
-  const end = textarea.selectionEnd ?? start
-  routeText.value = `${routeText.value.slice(0, start)}${token}${routeText.value.slice(end)}`
-  isInsertingObject.value = false
-
-  void nextTick(() => {
-    textarea.focus()
-    const cursor = start + token.length
-    textarea.setSelectionRange(cursor, cursor)
-  })
-}
 
 // ─── Коммерция ───
 
@@ -166,9 +138,7 @@ const validationProblem = computed<string | null>(() => {
   return null
 })
 
-const canSubmit = computed(
-  () => validationProblem.value === null && !isSubmitting.value,
-)
+const canSubmit = computed(() => validationProblem.value === null && !isSubmitting.value)
 
 /** Локальное время из `<input type="datetime-local">` в момент времени ISO. */
 function toIso(value: string): string | null {
@@ -182,8 +152,7 @@ function toIso(value: string): string | null {
  * значит «старт в июне или в июле». Полностью пустой вариант не уезжает
  * вовсе — база такого не примет, да и смысла в нём нет: «мечта без даты»
  * это просто отсутствие вариантов.
- */
-function buildVariants(): TripDateVariantInput[] {
+ */ function buildVariants(): TripDateVariantInput[] {
   const result: TripDateVariantInput[] = []
 
   for (const row of variants.value) {
@@ -201,9 +170,15 @@ function buildVariants(): TripDateVariantInput[] {
       continue
     }
 
-    if (row.months.length > 0) {
-      for (const month of row.months) {
-        result.push({ month, durationDays, durationDelta })
+    if (row.periods.length > 0) {
+      for (const period of row.periods) {
+        // Год уезжает вместе с месяцем: без него «июнь» не значит ничего.
+        result.push({
+          year: period.year,
+          month: period.month,
+          durationDays,
+          durationDelta,
+        })
       }
       continue
     }
@@ -259,8 +234,7 @@ async function submit() {
   } catch (error) {
     // Текст ошибки даёт бэкенд: он один знает правила окончательно,
     // и переписывать их здесь своими словами — значит разойтись с ним.
-    submitError.value =
-      error instanceof ApiError ? error.message : 'Не удалось создать поход'
+    submitError.value = error instanceof ApiError ? error.message : 'Не удалось создать поход'
   } finally {
     isSubmitting.value = false
   }
@@ -281,7 +255,6 @@ function startOver() {
   endsAt.value = ''
   routeText.value = ''
   requirements.value = ''
-  isInsertingObject.value = false
   priceRub.value = ''
   priceNote.value = ''
 }
@@ -308,8 +281,7 @@ function startOver() {
       <template v-if="created.isSport"> · спортивное мероприятие</template>
     </p>
     <p class="mt-1 text-xs text-muted">
-      Вы записаны организатором и идёте — статус участия можно поменять
-      в походе.
+      Вы записаны организатором и идёте — статус участия можно поменять в походе.
     </p>
 
     <button
@@ -346,10 +318,8 @@ function startOver() {
           class="h-5 w-5 cursor-pointer accent-[var(--theme-primary)]"
           data-test="sport"
         />
-        <span class="text-sm text-text">Спортивное мероприятие</span>
-        <span class="text-xs text-muted"
-          >официальный поход, соревнование, сборы</span
-        >
+        <span class="text-sm text-text">Спортивный поход</span>
+        <span class="text-xs text-muted">зачётный поход, в основном некатегорийный</span>
       </label>
     </div>
 
@@ -375,11 +345,7 @@ function startOver() {
           class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors hover:border-primary focus:border-primary focus:outline-none"
           data-test="visibility"
         >
-          <option
-            v-for="value in TRIP_VISIBILITIES"
-            :key="value"
-            :value="value"
-          >
+          <option v-for="value in TRIP_VISIBILITIES" :key="value" :value="value">
             {{ TRIP_VISIBILITY_LABELS[value] }}
           </option>
         </select>
@@ -459,32 +425,20 @@ function startOver() {
 
     <!-- Маршрут -->
     <div class="flex flex-col gap-2">
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <span class="text-sm text-muted">Маршрут</span>
-        <button
-          type="button"
-          class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1 text-sm text-text transition-colors hover:border-primary"
-          data-test="insert-object"
-          @click="isInsertingObject = !isInsertingObject"
-        >
-          {{ isInsertingObject ? 'Отменить' : 'Вставить объект' }}
-        </button>
-      </div>
+      <span class="text-sm text-muted">Маршрут</span>
 
-      <GeoObjectPicker
-        v-if="isInsertingObject"
-        placeholder="Найдите объект, который попадёт в маршрут"
-        @select="insertObject"
-      />
-
-      <textarea
-        ref="routeTextarea"
+      <MarkdownEditor
         v-model="routeText"
-        rows="6"
-        placeholder="Как идём, где ночуем, чем забрасываемся. Объекты — кнопкой «Вставить объект»"
-        class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-        data-test="route"
+        :rows="6"
+        placeholder="Как идём, где ночуем, чем забрасываемся. Объекты — кнопкой «Объект»"
+        :objects="true"
+        :emoji="false"
       />
+
+      <span class="text-xs text-muted">
+        В маршрут вставляются только объекты: смайлики и участники здесь ни к чему. В отчёте и
+        дневнике набор будет другим — редактор один.
+      </span>
     </div>
 
     <!-- Требования -->
@@ -530,11 +484,7 @@ function startOver() {
       <p v-if="submitError" class="text-sm text-red-600" data-test="error">
         {{ submitError }}
       </p>
-      <p
-        v-else-if="validationProblem"
-        class="text-sm text-muted"
-        data-test="hint"
-      >
+      <p v-else-if="validationProblem" class="text-sm text-muted" data-test="hint">
         {{ validationProblem }}
       </p>
 

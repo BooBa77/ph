@@ -92,18 +92,31 @@ export interface TripDateVariantInput {
 }
 
 /**
+ * Месяц конкретного года.
+ *
+ * Год здесь не для красоты: «июнь» без года — это и ближайший июнь,
+ * и следующий, и через пять лет, а мечта обычно про «этим летом или
+ * следующим». Поэтому в примерном периоде месяц выбирается вместе
+ * с годом, а не сам по себе.
+ */
+export interface DatePeriod {
+  year: number
+  month: number
+}
+
+/**
  * Черновик варианта дат в форме.
  *
  * Отличается от `TripDateVariantInput` тем, что это то, что человек видит
- * на экране: строки из полей ввода, режим («месяцы» или «точное число»)
- * и прокликанные месяцы. «Прокликать месяцы» — это отдельный вариант
- * на каждый выбранный месяц, поэтому здесь месяцы лежат массивом, а в
- * запрос уезжают отдельными записями.
+ * на экране: строки из полей ввода, режим («примерный период» или «точное
+ * число») и прокликанные месяцы с годами. «Прокликать месяцы» — это
+ * отдельный вариант на каждый выбранный месяц, поэтому здесь они лежат
+ * массивом, а в запрос уезжают отдельными записями.
  */
 export interface DateVariantDraft {
   id: number
-  mode: 'months' | 'exact'
-  months: number[]
+  mode: 'periods' | 'exact'
+  periods: DatePeriod[]
   year: string
   month: string
   day: string
@@ -111,12 +124,12 @@ export interface DateVariantDraft {
   durationDelta: string
 }
 
-/** Пустой вариант: всё не заполнено, режим — месяцы. */
+/** Пустой вариант: всё не заполнено, режим — примерный период. */
 export function emptyVariantDraft(id: number): DateVariantDraft {
   return {
     id,
-    mode: 'months',
-    months: [],
+    mode: 'periods',
+    periods: [],
     year: '',
     month: '',
     day: '',
@@ -125,7 +138,7 @@ export function emptyVariantDraft(id: number): DateVariantDraft {
   }
 }
 
-/** Тело `POST /api/trips`. Организатором становится владелец токена. */export interface CreateTripRequest {
+/** Тело `POST /api/trips`. Организатором становится владелец токена. */ export interface CreateTripRequest {
   goalObjectId: number
   /** Короткий текст-анонс. Имя похода — это цель, а не это поле. */
   announcement?: string | null

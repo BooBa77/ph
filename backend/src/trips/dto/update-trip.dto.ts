@@ -177,13 +177,12 @@ export class UpdateTripDto {
   isCommercial?: boolean;
 
   @ApiProperty({
-    description:
-      'Спортивное мероприятие: официальный поход с зачётом, соревнование, сборы',
+    description: 'Спортивный поход: зачётный поход, в основном некатегорийный',
     required: false,
   })
   @IsOptional()
   @IsBoolean({
-    message: 'Признак спортивного мероприятия должен быть true или false',
+    message: 'Признак спортивного похода должен быть true или false',
   })
   isSport?: boolean;
 

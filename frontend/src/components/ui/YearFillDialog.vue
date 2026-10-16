@@ -136,8 +136,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       <!-- Вопрос -->
       <template v-if="step === 'question'">
         <p v-if="!state.stateAvailable" class="mt-2 text-sm text-muted">
-          Государственный производственный календарь на {{ year }} год ещё не
-          утверждён. Праздники придётся расставить самому.
+          Государственный производственный календарь на {{ year }} год ещё не утверждён. Праздники
+          придётся расставить самому.
         </p>
 
         <p class="mt-3 text-base text-text">{{ question }}</p>
@@ -164,9 +164,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
       <!-- «Нет» — выбираем, чем занят год -->
       <template v-else-if="step === 'reason'">
-        <p class="mt-3 text-sm text-muted">
-          Тогда весь год будет выходными. Что подходит?
-        </p>
+        <p class="mt-3 text-sm text-muted">Тогда весь год будет выходными. Что подходит?</p>
 
         <div class="mt-3 grid grid-cols-2 gap-2">
           <button
