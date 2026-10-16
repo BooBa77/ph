@@ -29,8 +29,8 @@ function makeRouter(): Router {
       { path: '/', name: 'home', component: { template: '<div />' } },
       { path: '/auth', name: 'auth', component: { template: '<div />' } },
       {
-        path: '/trips/announces',
-        name: 'trips-announces',
+        path: '/trips',
+        name: 'trips-mine',
         component: { template: '<div />' },
       },
       {

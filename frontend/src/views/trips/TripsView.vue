@@ -2,17 +2,20 @@
 import { RouterLink, RouterView } from 'vue-router'
 
 /**
- * Раздел «Походы» — пока временная закладка в меню.
+ * Раздел «Походы»: рамка и навигация.
  *
- * Две кнопки вместо придуманной навигации: «Анонсы» (что уже есть) и
- * «Создать поход». Как это разложится по меню, когда разделов станет
- * больше, ещё не решено, и городить структуру заранее — значит переделывать
- * её дважды.
+ * Три раздела и три адреса: `/trips` — мои походы, `/trips/announces` —
+ * анонсы других, `/trips/new` — создание. Раньше здесь было две ссылки
+ * и «/trips» вёл на анонсы; заказчик сказал, что корень раздела должен
+ * показывать **свои** походы, и это правильно: человек приходит сюда
+ * за тем, что уже начал, а не за чужими планами.
  *
- * Это ссылки, а не кнопки: они переключают раздел, то есть меняют адрес.
- * Выглядят кнопками, работают как навигация — назад в браузере тоже
- * работает, чего с кнопкой и локальным состоянием не было бы.
+ * Это ссылки, а не кнопки: они меняют адрес, поэтому работают «назад»
+ * в браузере, переживают перезагрузку и открываются в новой вкладке.
  */
+const LINK_CLASS =
+  'rounded-xl border border-border bg-surface px-4 py-2 text-sm text-text no-underline transition-colors hover:border-primary'
+const ACTIVE_CLASS = 'border-primary font-medium text-primary'
 </script>
 
 <template>
@@ -21,18 +24,18 @@ import { RouterLink, RouterView } from 'vue-router'
 
     <nav class="flex flex-wrap gap-2" aria-label="Разделы походов">
       <RouterLink
-        to="/trips/announces"
-        class="rounded-xl border border-border bg-surface px-4 py-2 text-sm text-text no-underline transition-colors hover:border-primary"
-        active-class="border-primary font-medium text-primary"
+        to="/trips"
+        :class="LINK_CLASS"
+        exact-active-class="border-primary font-medium text-primary"
       >
+        Мои походы
+      </RouterLink>
+
+      <RouterLink to="/trips/announces" :class="LINK_CLASS" :active-class="ACTIVE_CLASS">
         Анонсы
       </RouterLink>
 
-      <RouterLink
-        to="/trips/new"
-        class="rounded-xl border border-border bg-surface px-4 py-2 text-sm text-text no-underline transition-colors hover:border-primary"
-        active-class="border-primary font-medium text-primary"
-      >
+      <RouterLink to="/trips/new" :class="LINK_CLASS" :active-class="ACTIVE_CLASS">
         Создать поход
       </RouterLink>
     </nav>

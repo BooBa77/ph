@@ -24,7 +24,10 @@ const FAVOURITES_LIMIT = 5
 /** Разделы сайта. Порядок = порядок в меню и на мобильной полосе. */
 const SECTIONS = [
   { to: '/', label: 'Главная', icon: 'home' },
-  { to: '/trips/announces', label: 'Походы', icon: 'trips' },
+  // Раздел целиком: корень — «Мои походы», анонсы чужих — отдельной
+  // страницей внутри. Ведём в корень: подсветка пункта работает и на
+  // вложенных страницах раздела.
+  { to: '/trips', label: 'Походы', icon: 'trips' },
   { to: '/profile/personal', label: 'Профиль', icon: 'profile' },
   { to: '/profile/calendar', label: 'Календарь', icon: 'calendar' },
   { to: '/profile/sport', label: 'Спорт', icon: 'sport' },
