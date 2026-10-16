@@ -1,5 +1,16 @@
 import { apiFetch } from '@/api/client'
-import type { CreateTripRequest, Trip, TripListQuery, TripListResponse } from '@/types/trips'
+import type {
+  CreateTripRequest,
+  ParticipantDecision,
+  ParticipantStatus,
+  Trip,
+  TripListQuery,
+  TripListResponse,
+  TripParticipant,
+  TripRequest,
+  RequestDirection,
+  UpdateTripRequest,
+} from '@/types/trips'
 
 /**
  * POST /api/trips
@@ -25,6 +36,20 @@ export async function createTrip(data: CreateTripRequest): Promise<Trip> {
  */
 export async function getTrip(id: string): Promise<Trip> {
   return apiFetch<Trip>(`/trips/${id}`)
+}
+
+/**
+ * PATCH /api/trips/:id
+ *
+ * Правка похода организатором. Присланные поля перезаписываются,
+ * отсутствующие остаются как были, `null` — осознанная очистка: поэтому
+ * сюда уходит не форма целиком, а её разница с походом (`buildTripPatch`).
+ */
+export async function updateTrip(id: string, data: UpdateTripRequest): Promise<Trip> {
+  return apiFetch<Trip>(`/trips/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  })
 }
 
 /**
@@ -59,4 +84,87 @@ export function buildTripListQuery(query: TripListQuery = {}): string {
  */
 export async function listTrips(query: TripListQuery = {}): Promise<TripListResponse> {
   return apiFetch<TripListResponse>(`/trips${buildTripListQuery(query)}`)
+}
+
+// ───────────────────────────── состав ─────────────────────────────
+
+/** GET /api/trips/:id/participants — состав с ролями и статусами. */
+export async function listParticipants(tripId: string): Promise<TripParticipant[]> {
+  const response = await apiFetch<{ participants: TripParticipant[] }>(
+    `/trips/${tripId}/participants`,
+  )
+  return response.participants
+}
+
+/**
+ * PATCH /api/trips/:id/participants/me — свой статус участия.
+ *
+ * `declined` здесь законен и означает «не иду», но человек остаётся
+ * в списке состава: состав — это история похода, а не только те, кто
+ * в итоге пошёл.
+ */
+export async function setMyStatus(
+  tripId: string,
+  status: ParticipantStatus,
+): Promise<TripParticipant> {
+  return apiFetch<TripParticipant>(`/trips/${tripId}/participants/me`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  })
+}
+
+/** DELETE /api/trips/:id/participants/:userId — убрать человека. Только организатор. */
+export async function removeParticipant(tripId: string, userId: string): Promise<void> {
+  await apiFetch<void>(`/trips/${tripId}/participants/${userId}`, { method: 'DELETE' })
+}
+
+// ─────────────────────── приглашения и заявки ───────────────────────
+
+/**
+ * GET /api/trips/:id/requests — тикеты похода.
+ *
+ * Организатор видит все, остальные только свои: заявка человека
+ * к организатору других не касается.
+ */
+export async function listRequests(tripId: string): Promise<TripRequest[]> {
+  const response = await apiFetch<{ requests: TripRequest[] }>(`/trips/${tripId}/requests`)
+  return response.requests
+}
+
+/**
+ * POST /api/trips/:id/requests — пригласить (`invite`) или попроситься
+ * (`apply`). В заявке `userId` не передаётся: им становится владелец токена,
+ * и бэкенд лишнее поле отбивает.
+ */
+export async function createRequest(
+  tripId: string,
+  body: { direction: RequestDirection; userId?: string; message?: string | null },
+): Promise<TripRequest> {
+  return apiFetch<TripRequest>(`/trips/${tripId}/requests`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+/** POST /api/trips/:id/requests/:userId/accept — «иду» или «пока не решил». */
+export async function acceptRequest(
+  tripId: string,
+  userId: string,
+  status: ParticipantDecision,
+): Promise<TripParticipant> {
+  return apiFetch<TripParticipant>(`/trips/${tripId}/requests/${userId}/accept`, {
+    method: 'POST',
+    body: JSON.stringify({ status }),
+  })
+}
+
+/**
+ * DELETE /api/trips/:id/requests/:userId — закрыть тикет.
+ *
+ * Один и тот же вызов для четырёх случаев: отказаться от приглашения,
+ * отозвать приглашение, отклонить заявку или отозвать свою. Разница —
+ * в том, кто это делает, и решает её бэкенд.
+ */
+export async function deleteRequest(tripId: string, userId: string): Promise<void> {
+  await apiFetch<void>(`/trips/${tripId}/requests/${userId}`, { method: 'DELETE' })
 }

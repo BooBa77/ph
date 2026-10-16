@@ -32,15 +32,15 @@ describe('buildTripListQuery', () => {
   it('собирает фильтры анонсов целиком', () => {
     const query = buildTripListQuery({
       mine: false,
-      goalObjectId: 10,
-      when: 'upcoming',
+      objectId: 10,
+      when: 'weekend',
       status: 'decided',
       isCommercial: true,
       isSport: true,
     })
 
-    expect(query).toContain('goalObjectId=10')
-    expect(query).toContain('when=upcoming')
+    expect(query).toContain('objectId=10')
+    expect(query).toContain('when=weekend')
     expect(query).toContain('status=decided')
     expect(query).toContain('isCommercial=true')
     expect(query).toContain('isSport=true')

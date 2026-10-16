@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import type { LocationQueryRaw } from 'vue-router'
 
+import { listObjectsByIds } from '@/api/objects'
 import TripCard from '@/components/trips/TripCard.vue'
 import GeoObjectPicker from '@/components/ui/GeoObjectPicker.vue'
 import { useTripList } from '@/composables/useTripList'
@@ -23,16 +26,72 @@ import {
  * человека искать чужие походы среди своих. Это не уловка интерфейса,
  * а условие запроса — иначе и `total` считался бы вместе с моими.
  *
- * **Фильтры не уезжают в адрес.** Ссылку на «все платные походы на Витязь»
- * пока никто не просил, а состояние в query-параметрах — отдельная работа
- * со своими граблями. Попросят поделиться подборкой — переведём.
+ * **Фильтры живут в адресе.** Человек открывает поход, возвращается назад —
+ * и подборка на месте; ту же ссылку можно отправить товарищу. Состояние
+ * в `ref` этого не даёт: возврат с чужой страницы монтирует компонент
+ * заново, и фильтры обнулялись бы.
+ *
+ * Значение из адреса **проверяется по словарю**: `?when=что-нибудь` — это
+ * не повод показать пустую ленту, это повод не применять фильтр. Бэкенд
+ * на такое ответил бы 400, а ссылка с опечаткой должна просто работать.
  */
-/** Цель выбирается поиском по справочнику: 4213 объекта списком не листаются. */
-const goal = ref<GeoObject | null>(null)
-const when = ref<TripWhen | ''>('')
-const status = ref<TripStatus | ''>('')
-const commercial = ref<'' | 'true' | 'false'>('')
-const sport = ref<'' | 'true' | 'false'>('')
+const route = useRoute()
+const router = useRouter()
+
+/** Значение из адреса, если оно есть в словаре. Иначе — пусто. */
+function queryValue<T extends string>(key: string, allowed: readonly T[]): T | '' {
+  const raw = route.query[key]
+  const value = typeof raw === 'string' ? raw : ''
+  return (allowed as readonly string[]).includes(value) ? (value as T) : ''
+}
+
+/** Булев фильтр из адреса: строки 'true'/'false', всё остальное — «любое». */
+function queryBoolean(key: string): '' | 'true' | 'false' {
+  const raw = route.query[key]
+  return raw === 'true' || raw === 'false' ? raw : ''
+}
+
+function queryObjectId(): number | null {
+  const raw = route.query.objectId
+  const value = Number(typeof raw === 'string' ? raw : NaN)
+  return Number.isSafeInteger(value) && value > 0 ? value : null
+}
+
+/**
+ * Объект фильтра: цель похода **или** упоминание в маршруте.
+ *
+ * В адресе лежит только id, а показывать надо имя — поэтому при заходе
+ * по ссылке объект подтягивается запросом. id и объект хранятся порознь
+ * не для красоты: первый запрос должен уйти сразу, не дожидаясь ответа
+ * справочника, иначе лента ждала бы имя объекта, которого ещё нет.
+ */
+const objectId = ref<number | null>(queryObjectId())
+const object = ref<GeoObject | null>(null)
+
+const when = ref<TripWhen | ''>(queryValue('when', TRIP_WHEN_VALUES))
+const status = ref<TripStatus | ''>(queryValue('status', TRIP_STATUSES))
+const commercial = ref<'' | 'true' | 'false'>(queryBoolean('isCommercial'))
+const sport = ref<'' | 'true' | 'false'>(queryBoolean('isSport'))
+
+/** Имя объекта для подписи фильтра: оно нужно только на экране. */
+async function restoreObject(id: number) {
+  const found = await listObjectsByIds([String(id)])
+  object.value = found[0] ?? null
+}
+
+function chooseObject(picked: GeoObject) {
+  object.value = picked
+  objectId.value = Number(picked.id)
+}
+
+function clearObject() {
+  object.value = null
+  objectId.value = null
+}
+
+if (objectId.value !== null) {
+  void restoreObject(objectId.value)
+}
 
 /**
  * Тело запроса.
@@ -44,7 +103,7 @@ const sport = ref<'' | 'true' | 'false'>('')
 function currentQuery(): TripListQuery {
   return {
     mine: false,
-    goalObjectId: goal.value ? Number(goal.value.id) : undefined,
+    objectId: objectId.value ?? undefined,
     when: when.value || undefined,
     status: status.value || undefined,
     isCommercial: commercial.value === '' ? undefined : commercial.value === 'true',
@@ -57,7 +116,7 @@ const { trips, total, isLoading, isLoadingMore, error, remaining, load, loadMore
 
 const hasFilters = computed(
   () =>
-    goal.value !== null ||
+    objectId.value !== null ||
     when.value !== '' ||
     status.value !== '' ||
     commercial.value !== '' ||
@@ -66,20 +125,44 @@ const hasFilters = computed(
 
 /** Снять всё выбранное: один обработчик вместо пяти одинаковых. */
 function resetFilters() {
-  goal.value = null
+  object.value = null
+  objectId.value = null
   when.value = ''
   status.value = ''
   commercial.value = ''
   sport.value = ''
 }
 
+/** Адрес без пустых фильтров: `?when=weekend`, а не `?when=&status=`. */
+function filterQuery(): LocationQueryRaw {
+  const query: LocationQueryRaw = {}
+
+  if (objectId.value !== null) query.objectId = String(objectId.value)
+  if (when.value) query.when = when.value
+  if (status.value) query.status = status.value
+  if (commercial.value) query.isCommercial = commercial.value
+  if (sport.value) query.isSport = sport.value
+
+  return query
+}
+
 /**
- * Смена любого фильтра перезагружает ленту с первой страницы.
+ * Смена любого фильтра перезагружает ленту с первой страницы и обновляет
+ * адрес. `replace`, а не `push`: фильтр — это не переход, и забивать
+ * историю браузера десятком записей «поменял список» нельзя, иначе кнопка
+ * «назад» перестаёт выводить со страницы.
  *
- * Vue сам собирает изменения одного такта в один вызов: сброс пяти
- * фильтров кнопкой — это один запрос, а не пять.
+ * Vue собирает изменения одного такта в один вызов: сброс пяти фильтров
+ * кнопкой — это один запрос и одна правка адреса, а не пять.
  */
-watch([goal, when, status, commercial, sport], () => void load(), { immediate: true })
+watch(
+  [objectId, when, status, commercial, sport],
+  () => {
+    void router.replace({ query: filterQuery() })
+    void load()
+  },
+  { immediate: true },
+)
 </script>
 
 <template>
@@ -95,15 +178,20 @@ watch([goal, when, status, commercial, sport], () => void load(), { immediate: t
       class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4"
       data-test="filters"
     >
-      <GeoObjectPicker label="Цель" @select="(object) => (goal = object)" />
+      <div class="flex flex-col gap-1">
+        <GeoObjectPicker label="Объект" @select="chooseObject" />
+        <p class="text-xs text-muted">
+          Цель похода или упоминание в маршруте — подойдёт и то, и другое.
+        </p>
+      </div>
 
-      <p v-if="goal" class="flex items-center gap-2 text-sm text-text" data-test="filter-goal">
-        <span>{{ goal.name }}</span>
+      <p v-if="object" class="flex items-center gap-2 text-sm text-text" data-test="filter-goal">
+        <span>{{ object.name }}</span>
         <button
           type="button"
           class="cursor-pointer border-0 bg-transparent p-0 text-xs text-muted underline"
           data-test="filter-goal-clear"
-          @click="goal = null"
+          @click="clearObject"
         >
           убрать
         </button>
@@ -146,8 +234,8 @@ watch([goal, when, status, commercial, sport], () => void load(), { immediate: t
             data-test="filter-commercial"
           >
             <option value="">Любое</option>
-            <option value="false">Бесплатные</option>
-            <option value="true">Платные</option>
+            <option value="false">Некоммерческие</option>
+            <option value="true">Коммерческие</option>
           </select>
         </label>
 
@@ -164,6 +252,12 @@ watch([goal, when, status, commercial, sport], () => void load(), { immediate: t
           </select>
         </label>
       </div>
+
+      <p class="text-xs text-muted" data-test="filters-hint">
+        «Любое» в «Когда» — без фильтра по датам: в ленте будут и предстоящие,
+        и прошедшие, и походы без дат. «Без дат» — только те, у которых даты
+        не выбраны вовсе.
+      </p>
 
       <button
         v-if="hasFilters"

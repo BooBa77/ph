@@ -18,6 +18,27 @@ export async function getMe(): Promise<User> {
   return apiFetch<User>('/users/me')
 }
 
+/** Человек в результатах поиска: только публичная часть профиля. */
+export interface UserSearchResult {
+  id: string
+  displayName: string
+  avatarUrl: string | null
+}
+
+/**
+ * GET /api/users?search=
+ *
+ * Найти людей по имени — для приглашения в поход. Без строки поиска (или
+ * короче двух символов) возвращает пустой список: список выбора не должен
+ * открываться простынёй из всех пользователей. Себя бэкенд из выдачи убирает.
+ */
+export async function searchUsers(search: string): Promise<UserSearchResult[]> {
+  const response = await apiFetch<{ users: UserSearchResult[] }>(
+    `/users?search=${encodeURIComponent(search)}`,
+  )
+  return response.users
+}
+
 /**
  * PATCH /api/users/me
  *

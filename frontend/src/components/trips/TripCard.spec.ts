@@ -15,10 +15,13 @@ const BASE: Trip = {
   id: '1',
   organizerUserId: 'u-1',
   goalObjectId: '10',
-  goalObject: { id: '10', name: 'Витязь', type: 'скала', url: null },
+  goalObject: { id: '10', name: 'Витязь', type: 'скальник', url: null },
   announcement: 'Идём на майские, набор шесть человек',
   routeText: '',
   requirementsText: null,
+  meetingPlace: null,
+  meetingAt: null,
+  transferText: null,
   visibility: 'public',
   isRecruitmentClosed: false,
   activityTypeIds: [],
@@ -50,7 +53,7 @@ describe('TripCard', () => {
     const wrapper = mountCard(trip())
 
     expect(wrapper.find('[data-test="trip-card-goal"]').text()).toContain('Витязь')
-    expect(wrapper.find('[data-test="trip-card-goal"]').text()).toContain('скала')
+    expect(wrapper.find('[data-test="trip-card-goal"]').text()).toContain('скальник')
     expect(wrapper.find('[data-test="trip-card-announcement"]').text()).toContain('майские')
   })
 

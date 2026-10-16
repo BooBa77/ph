@@ -44,11 +44,25 @@ export const TRIP_STATUS_LABELS: Record<TripStatus, string> = {
  * Это не то же самое, что готовность: «Решено» с датой в прошлом — прошедший
  * поход, а «Мечта» без дат — бездатный. Готовность человек выбирает сам,
  * «когда» вычисляется из дат и факта.
+ *
+ * `weekend` — следующие выходные: ближайшие суббота и воскресенье, которые
+ * ещё не начались (в сами выходные — уже следующие за ними). Считается
+ * на бэкенде в поясе Прибайкалья, а не в поясе браузера.
+ *
+ * Порядок здесь — порядок пунктов в списке: «Следующие выходные» первыми,
+ * потому что это самый частый вопрос к ленте анонсов.
  */
-export const TRIP_WHEN_VALUES = ['upcoming', 'ongoing', 'past', 'undated'] as const
+export const TRIP_WHEN_VALUES = [
+  'weekend',
+  'upcoming',
+  'ongoing',
+  'past',
+  'undated',
+] as const
 export type TripWhen = (typeof TRIP_WHEN_VALUES)[number]
 
 export const TRIP_WHEN_LABELS: Record<TripWhen, string> = {
+  weekend: 'Следующие выходные',
   upcoming: 'Впереди',
   ongoing: 'Идёт сейчас',
   past: 'Прошёл',
@@ -161,6 +175,12 @@ export function emptyVariantDraft(id: number): DateVariantDraft {
   announcement?: string | null
   routeText?: string
   requirementsText?: string | null
+  /** Где собираются: «у вокзала, платформа 2». */
+  meetingPlace?: string | null
+  /** Когда собираются. */
+  meetingAt?: string | null
+  /** Заброска: как добираемся до начала маршрута. Обычный текст. */
+  transferText?: string | null
   visibility?: TripVisibility
   status?: TripStatus
   activityTypeIds?: number[]
@@ -170,6 +190,44 @@ export function emptyVariantDraft(id: number): DateVariantDraft {
   isSport?: boolean
   priceRub?: number | null
   priceNote?: string | null
+  dateVariants?: TripDateVariantInput[]
+}
+
+/**
+ * Тело `PATCH /api/trips/:id`.
+ *
+ * Все поля необязательны, и **отсутствие поля — не то же самое, что `null`**:
+ * без поля значение остаётся прежним, а `null` его стирает. Поэтому патч
+ * собирается сравнением с походом (`buildTripPatch`), а не отправкой формы
+ * целиком: полная форма затёрла бы то, чего человек не касался.
+ *
+ * Это не `Partial<CreateTripRequest>`: у правки есть поля, которых нет
+ * при создании, — факт выхода и возвращения (его отмечают после похода)
+ * и «набор закрыт» (его переключают, когда он закрылся).
+ */
+export interface UpdateTripRequest {
+  goalObjectId?: number
+  announcement?: string | null
+  routeText?: string
+  requirementsText?: string | null
+  meetingPlace?: string | null
+  meetingAt?: string | null
+  transferText?: string | null
+  visibility?: TripVisibility
+  status?: TripStatus
+  startsAt?: string | null
+  endsAt?: string | null
+  /** Факт: выход на маршрут. План не затирает — обе правды хранятся рядом. */
+  actualStartedAt?: string | null
+  /** Факт: возвращение с маршрута. */
+  actualFinishedAt?: string | null
+  /** Набор закрыт: заявки не принимаются. */
+  isRecruitmentClosed?: boolean
+  isCommercial?: boolean
+  isSport?: boolean
+  priceRub?: number | null
+  priceNote?: string | null
+  activityTypeIds?: number[]
   dateVariants?: TripDateVariantInput[]
 }
 
@@ -192,6 +250,12 @@ export interface Trip {
   announcement: string | null
   routeText: string
   requirementsText: string | null
+  /** Где собираются. null — не указано. */
+  meetingPlace: string | null
+  /** Когда собираются. null — не указано. */
+  meetingAt: string | null
+  /** Заброска: как добираемся. Обычный текст. */
+  transferText: string | null
   visibility: TripVisibility
   isRecruitmentClosed: boolean
   activityTypeIds: number[]
@@ -224,7 +288,12 @@ export interface Trip {
  * без параметра — все видимые.
  */
 export interface TripListQuery {
-  goalObjectId?: number
+  /**
+   * Объект справочника: поход, у которого это цель **или** который
+   * упоминает его в маршруте. Один параметр, а не два: человеку, который
+   * ищет походы про Витязь, не важно, целью он был или пунктом маршрута.
+   */
+  objectId?: number
   activityTypeId?: number
   status?: TripStatus
   isCommercial?: boolean
@@ -240,4 +309,60 @@ export interface TripListQuery {
 export interface TripListResponse {
   trips: Trip[]
   total: number
+}
+
+/**
+ * Участие в походе.
+ *
+ * `invited` — пригласили и человек ещё не ответил; `declined` — не идёт
+ * по любой причине, включая «организую, но сам не пойду». Отдельного
+ * «удалён из состава» нет: убранного человека в списке просто нет.
+ */
+export const PARTICIPANT_STATUSES = ['invited', 'going', 'maybe', 'declined'] as const
+export type ParticipantStatus = (typeof PARTICIPANT_STATUSES)[number]
+
+export const PARTICIPANT_STATUS_LABELS: Record<ParticipantStatus, string> = {
+  invited: 'Приглашён',
+  going: 'Идёт',
+  maybe: 'Пока не решил',
+  declined: 'Не идёт',
+}
+
+/**
+ * Чем можно ответить на приглашение: «иду» или «пока не решил».
+ * Отказ — не ответ, а закрытие тикета: он убирает человека из состава.
+ */
+export const PARTICIPANT_DECISIONS = ['going', 'maybe'] as const
+export type ParticipantDecision = (typeof PARTICIPANT_DECISIONS)[number]
+
+/** Роль участника: код для логики, название для человека. */
+export interface TripRole {
+  code: string
+  name: string
+}
+
+/** Участник похода: кто, как участвует и какие у него роли. */
+export interface TripParticipant {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  status: ParticipantStatus
+  roles: TripRole[]
+  /** Автор похода: его нельзя убрать из состава. */
+  isOrganizer: boolean
+  createdAt: string
+  updatedAt: string
+}
+
+/** Направление тикета: приглашение (организатор → человек) или заявка. */
+export type RequestDirection = 'invite' | 'apply'
+
+/** Тикет: кого позвали или кто попросился. */
+export interface TripRequest {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  direction: RequestDirection
+  message: string | null
+  createdAt: string
 }
