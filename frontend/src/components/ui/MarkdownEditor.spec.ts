@@ -46,7 +46,7 @@ vi.mock('@/api/objects', () => ({ listObjects: mocks.listObjects }))
 const VITYAZ = {
   id: '10',
   name: 'Витязь',
-  type: 'скала',
+  type: 'скальник',
   url: null,
   parentId: '9',
   parentName: 'Олхинское плато',
