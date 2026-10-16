@@ -1,10 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import {
-  enableAutoUnmount,
-  flushPromises,
-  mount,
-  type VueWrapper,
-} from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api/errors'
@@ -55,8 +50,8 @@ function fullExperience() {
       rescueToken: true,
       instructorMethodist: '2 категория' as const,
       instructorGuide: '3 категория' as const,
-      instructorGuideLicense:
-        'https://knd.gov.ru/license?id=6683a3cad2b513840f64a890' as string | null,
+      instructorGuideLicense: 'https://knd.gov.ru/license?id=6683a3cad2b513840f64a890' as
+        string | null,
       youthTourismOrganizer: true,
       youthTourismInstructor: false,
     },
@@ -109,9 +104,7 @@ async function mountSection(user: User = makeUser()) {
 function selectByLabel(wrapper: VueWrapper, label: string, index = 0) {
   const matches = wrapper.findAll('select').filter((select) => {
     const id = select.attributes('id')
-    const labelEl = wrapper
-      .findAll('label')
-      .find((item) => item.attributes('for') === id)
+    const labelEl = wrapper.findAll('label').find((item) => item.attributes('for') === id)
     return labelEl?.text() === label
   })
 
@@ -134,9 +127,7 @@ function optionsOf(wrapper: VueWrapper, label: string, index = 0): string[] {
  * порядок в разметке — не то, на что стоит опираться в тесте.
  */
 function checkboxByText(wrapper: VueWrapper, text: string) {
-  const label = wrapper
-    .findAll('label')
-    .find((item) => item.text().includes(text))
+  const label = wrapper.findAll('label').find((item) => item.text().includes(text))
 
   if (!label) throw new Error(`Нет галочки «${text}»`)
   return label.find<HTMLInputElement>('input[type="checkbox"]')
@@ -170,36 +161,25 @@ describe('SportExperience', () => {
   })
 
   it('показывает сохранённый спортивный опыт', async () => {
-    const wrapper = await mountSection(
-      makeUser({ sportExperience: fullExperience() }),
-    )
+    const wrapper = await mountSection(makeUser({ sportExperience: fullExperience() }))
 
     expect(selectByLabel(wrapper, 'Разряд или звание').element.value).toBe('КМС')
-    expect(
-      selectByLabel(wrapper, 'Наивысшая категория в качестве участника').element
-        .value,
-    ).toBe('4Б')
-    expect(
-      selectByLabel(wrapper, 'Инструктор-методист по альпинизму (ФАР)').element
-        .value,
-    ).toBe('2 категория')
-    expect(
-      selectByLabel(wrapper, 'Инструктор-проводник').element.value,
-    ).toBe('3 категория')
+    expect(selectByLabel(wrapper, 'Наивысшая категория в качестве участника').element.value).toBe(
+      '4Б',
+    )
+    expect(selectByLabel(wrapper, 'Инструктор-методист по альпинизму (ФАР)').element.value).toBe(
+      '2 категория',
+    )
+    expect(selectByLabel(wrapper, 'Инструктор-проводник').element.value).toBe('3 категория')
     expect(selectByLabel(wrapper, 'Скайраннинг: разряд').element.value).toBe('I')
     expect(selectByLabel(wrapper, 'Водный').element.value).toBe('5')
-    expect(selectByLabel(wrapper, 'Северная ходьба').element.value).toBe(
-      'II разряд',
-    )
+    expect(selectByLabel(wrapper, 'Северная ходьба').element.value).toBe('II разряд')
   })
 
   it('сохраняет только выбранное поле, не трогая остальной опыт', async () => {
     const wrapper = await mountSection()
 
-    await selectByLabel(
-      wrapper,
-      'Наивысшая категория в качестве руководителя',
-    ).setValue('1Б')
+    await selectByLabel(wrapper, 'Наивысшая категория в качестве руководителя').setValue('1Б')
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({
@@ -232,9 +212,7 @@ describe('SportExperience', () => {
   })
 
   it('пустой вариант списка отправляет null, а не пустую строку', async () => {
-    const wrapper = await mountSection(
-      makeUser({ sportExperience: fullExperience() }),
-    )
+    const wrapper = await mountSection(makeUser({ sportExperience: fullExperience() }))
 
     await selectByLabel(wrapper, 'Разряд или звание').setValue('')
     await flushPromises()
@@ -269,10 +247,7 @@ describe('SportExperience', () => {
     const wrapper = await mountSection()
 
     // Категории маршрутов: 1Б → 6Б.
-    const mountain = optionsOf(
-      wrapper,
-      'Наивысшая категория в качестве участника',
-    )
+    const mountain = optionsOf(wrapper, 'Наивысшая категория в качестве участника')
     expect(mountain[1]).toBe('1Б')
     expect(mountain[mountain.length - 1]).toBe('6Б')
 
@@ -290,9 +265,7 @@ describe('SportExperience', () => {
   it('не дублирует пустую строку вариантами «отсутствует» и «нет данных»', async () => {
     const wrapper = await mountSection()
 
-    expect(optionsOf(wrapper, 'Разряд или звание', 0)).not.toContain(
-      'отсутствует',
-    )
+    expect(optionsOf(wrapper, 'Разряд или звание', 0)).not.toContain('отсутствует')
     expect(optionsOf(wrapper, 'Пешеходный')).not.toContain('нет данных')
     expect(optionsOf(wrapper, 'Северная ходьба')).not.toContain('не выполнялся')
   })
@@ -300,9 +273,7 @@ describe('SportExperience', () => {
   it('жетон «Спасение в горах» по умолчанию снят', async () => {
     const wrapper = await mountSection()
 
-    expect(
-      checkboxByText(wrapper, 'Жетон «Спасение в горах»').element.checked,
-    ).toBe(false)
+    expect(checkboxByText(wrapper, 'Жетон «Спасение в горах»').element.checked).toBe(false)
   })
 
   it('подписывает галочку жетона, не дублируя текст слева', async () => {
@@ -313,13 +284,9 @@ describe('SportExperience', () => {
   })
 
   it('показывает установленный жетон', async () => {
-    const wrapper = await mountSection(
-      makeUser({ sportExperience: fullExperience() }),
-    )
+    const wrapper = await mountSection(makeUser({ sportExperience: fullExperience() }))
 
-    expect(
-      checkboxByText(wrapper, 'Жетон «Спасение в горах»').element.checked,
-    ).toBe(true)
+    expect(checkboxByText(wrapper, 'Жетон «Спасение в горах»').element.checked).toBe(true)
   })
 
   it('сохраняет жетон отдельным полем', async () => {
@@ -336,9 +303,7 @@ describe('SportExperience', () => {
   it('сохраняет инструктора-методиста', async () => {
     const wrapper = await mountSection()
 
-    await selectByLabel(wrapper, 'Инструктор-методист по альпинизму (ФАР)').setValue(
-      'ИНП',
-    )
+    await selectByLabel(wrapper, 'Инструктор-методист по альпинизму (ФАР)').setValue('ИНП')
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({
@@ -349,9 +314,7 @@ describe('SportExperience', () => {
   it('сохраняет инструктора-проводника', async () => {
     const wrapper = await mountSection()
 
-    await selectByLabel(wrapper, 'Инструктор-проводник').setValue(
-      'Международного класса',
-    )
+    await selectByLabel(wrapper, 'Инструктор-проводник').setValue('Международного класса')
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({
@@ -367,32 +330,25 @@ describe('SportExperience', () => {
         .some((item) => item.props('label') === 'Лицензия госаттестации'),
     ).toBe(false)
 
-    const withGuide = await mountSection(
-      makeUser({ sportExperience: fullExperience() }),
+    const withGuide = await mountSection(makeUser({ sportExperience: fullExperience() }))
+    expect(editableFieldByLabel(withGuide, 'Лицензия госаттестации').props('modelValue')).toBe(
+      'https://knd.gov.ru/license?id=6683a3cad2b513840f64a890',
     )
-    expect(
-      editableFieldByLabel(withGuide, 'Лицензия госаттестации').props('modelValue'),
-    ).toBe('https://knd.gov.ru/license?id=6683a3cad2b513840f64a890')
   })
 
   it('сохраняет ссылку на лицензию', async () => {
-    const wrapper = await mountSection(
-      makeUser({ sportExperience: fullExperience() }),
-    )
+    const wrapper = await mountSection(makeUser({ sportExperience: fullExperience() }))
     const field = editableFieldByLabel(wrapper, 'Лицензия госаттестации')
 
     await field.get('button').trigger('click')
-    await field
-      .get('input')
-      .setValue('https://knd.gov.ru/license?id=abc&registryType=ATT')
+    await field.get('input').setValue('https://knd.gov.ru/license?id=abc&registryType=ATT')
     await field.get('input').trigger('keydown', { key: 'Enter' })
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({
       sportExperience: {
         alpinism: {
-          instructorGuideLicense:
-            'https://knd.gov.ru/license?id=abc&registryType=ATT',
+          instructorGuideLicense: 'https://knd.gov.ru/license?id=abc&registryType=ATT',
         },
       },
     })
@@ -401,18 +357,14 @@ describe('SportExperience', () => {
   it('сохраняет галочки детско-юношеского туризма', async () => {
     const wrapper = await mountSection()
 
-    await checkboxByText(wrapper, 'Организатор детско-юношеского туризма').setValue(
-      true,
-    )
+    await checkboxByText(wrapper, 'Организатор детско-юношеского туризма').setValue(true)
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({
       sportExperience: { alpinism: { youthTourismOrganizer: true } },
     })
 
-    await checkboxByText(wrapper, 'Инструктор детско-юношеского туризма').setValue(
-      true,
-    )
+    await checkboxByText(wrapper, 'Инструктор детско-юношеского туризма').setValue(true)
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({

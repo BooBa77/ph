@@ -73,9 +73,9 @@ describe('UserSettings', () => {
 
     expect(wrapper.text()).toContain('это устройство')
     // Для своего устройства выход живёт в меню кабинета, а не здесь.
-    expect(
-      wrapper.findAll('button').some((item) => item.text() === 'Выйти на устройстве'),
-    ).toBe(false)
+    expect(wrapper.findAll('button').some((item) => item.text() === 'Выйти на устройстве')).toBe(
+      false,
+    )
   })
 
   it('отзывает чужую сессию и перечитывает список', async () => {
@@ -131,9 +131,7 @@ describe('UserSettings', () => {
     const wrapper = await mountSection()
     const appStore = useAppStore()
 
-    expect(
-      wrapper.get<HTMLInputElement>('input[type="checkbox"]').element.checked,
-    ).toBe(true)
+    expect(wrapper.get<HTMLInputElement>('input[type="checkbox"]').element.checked).toBe(true)
 
     await wrapper.get('input[type="checkbox"]').setValue(false)
 
@@ -146,8 +144,6 @@ describe('UserSettings', () => {
 
     const wrapper = await mountSection()
 
-    expect(
-      wrapper.get<HTMLInputElement>('input[type="checkbox"]').element.checked,
-    ).toBe(false)
+    expect(wrapper.get<HTMLInputElement>('input[type="checkbox"]').element.checked).toBe(false)
   })
 })

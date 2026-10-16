@@ -60,9 +60,7 @@ export interface AuthResponse {
  * с null — чтобы bootstrap не писал шумных ошибок в консоль.
  * Union заставляет TS проверять accessToken перед обращением к user.
  */
-export type RefreshResponse =
-  | { accessToken: string; user: User }
-  | { accessToken: null }
+export type RefreshResponse = { accessToken: string; user: User } | { accessToken: null }
 
 /**
  * PATCH /api/users/me — тело запроса.

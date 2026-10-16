@@ -235,12 +235,8 @@ describe('UserCalendar', () => {
   it('подпись клетки для скринридера — дата, статус и метка дня', async () => {
     const wrapper = await mountPage()
 
-    expect(cell(wrapper, '7').attributes('aria-label')).toBe(
-      '7 октября 2026, сегодня, Среда',
-    )
-    expect(cell(wrapper, '3').attributes('aria-label')).toBe(
-      '3 октября 2026, выходной, Суббота',
-    )
+    expect(cell(wrapper, '7').attributes('aria-label')).toBe('7 октября 2026, сегодня, Среда')
+    expect(cell(wrapper, '3').attributes('aria-label')).toBe('3 октября 2026, выходной, Суббота')
   })
 
   describe('модалка дня', () => {
@@ -433,9 +429,7 @@ describe('UserCalendar', () => {
       await dates[0]?.setValue('2026-06-06')
       await dates[1]?.setValue('2026-06-07')
       // Поле причины для рабочих дней не нужно — и его нет.
-      expect(wrapper.find('input[placeholder="отпуск, каникулы, межвахта"]').exists()).toBe(
-        false,
-      )
+      expect(wrapper.find('input[placeholder="отпуск, каникулы, межвахта"]').exists()).toBe(false)
 
       await button(wrapper, 'Добавить').trigger('click')
       await button(wrapper, 'Сохранить').trigger('click')

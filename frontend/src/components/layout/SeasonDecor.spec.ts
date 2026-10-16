@@ -61,9 +61,7 @@ describe('SeasonDecor', () => {
 
   it('у листьев разные позиции, скорости и задержки', async () => {
     const wrapper = await mountAutumn()
-    const styles = wrapper
-      .findAll('.leaf')
-      .map((leaf) => leaf.attributes('style') ?? '')
+    const styles = wrapper.findAll('.leaf').map((leaf) => leaf.attributes('style') ?? '')
 
     const values = (name: string) =>
       new Set(styles.map((style) => style.match(new RegExp(`${name}:\\s*([^;]+)`))?.[1]))

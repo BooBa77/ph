@@ -42,9 +42,7 @@ describe('canBrowserDecode', () => {
     const close = vi.fn()
     vi.stubGlobal('createImageBitmap', vi.fn().mockResolvedValue({ close }))
 
-    await expect(canBrowserDecode(makeFile('a.jpg', 'image/jpeg'))).resolves.toBe(
-      true,
-    )
+    await expect(canBrowserDecode(makeFile('a.jpg', 'image/jpeg'))).resolves.toBe(true)
     // Освобождаем ресурс: bitmap держит память до close().
     expect(close).toHaveBeenCalled()
   })
@@ -56,9 +54,7 @@ describe('canBrowserDecode', () => {
       vi.fn().mockRejectedValue(new Error('unsupported image format')),
     )
 
-    await expect(
-      canBrowserDecode(makeFile('IMG_1234.HEIC', 'image/heic')),
-    ).resolves.toBe(false)
+    await expect(canBrowserDecode(makeFile('IMG_1234.HEIC', 'image/heic'))).resolves.toBe(false)
   })
 
   it('не блокирует пользователя, если API нет', async () => {
@@ -66,8 +62,6 @@ describe('canBrowserDecode', () => {
     // покажет ошибку сам.
     vi.stubGlobal('createImageBitmap', undefined)
 
-    await expect(canBrowserDecode(makeFile('a.jpg', 'image/jpeg'))).resolves.toBe(
-      true,
-    )
+    await expect(canBrowserDecode(makeFile('a.jpg', 'image/jpeg'))).resolves.toBe(true)
   })
 })

@@ -33,9 +33,7 @@ describe('ApiError', () => {
 
 describe('extractMessage', () => {
   it('берёт message из тела NestJS', () => {
-    expect(
-      extractMessage({ message: 'Неверный код', statusCode: 401 }, 401),
-    ).toBe('Неверный код')
+    expect(extractMessage({ message: 'Неверный код', statusCode: 401 }, 401)).toBe('Неверный код')
   })
 
   it('подставляет HTTP-статус, если message нет', () => {
@@ -55,9 +53,9 @@ describe('extractMessage', () => {
 
 describe('parseErrorBody', () => {
   it('разбирает JSON-тело', async () => {
-    await expect(parseErrorBody(jsonResponse({ message: 'нет' }))).resolves.toEqual(
-      { message: 'нет' },
-    )
+    await expect(parseErrorBody(jsonResponse({ message: 'нет' }))).resolves.toEqual({
+      message: 'нет',
+    })
   })
 
   it('возвращает текст для не-JSON — например, HTML от nginx', async () => {

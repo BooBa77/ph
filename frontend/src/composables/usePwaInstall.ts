@@ -63,8 +63,7 @@ const showHint = ref(false)
 function isStandalone(): boolean {
   if (typeof window === 'undefined') return false
 
-  const iosStandalone = (window.navigator as Navigator & { standalone?: boolean })
-    .standalone
+  const iosStandalone = (window.navigator as Navigator & { standalone?: boolean }).standalone
   if (iosStandalone === true) return true
 
   if (typeof window.matchMedia !== 'function') return false

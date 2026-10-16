@@ -55,7 +55,7 @@ watch(
       applyUpdate()
     }
   },
-  { immediate: true }
+  { immediate: true },
 )
 </script>
 

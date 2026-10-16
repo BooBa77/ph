@@ -1,10 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import {
-  enableAutoUnmount,
-  flushPromises,
-  mount,
-  type VueWrapper,
-} from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount, type VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api/errors'
@@ -171,9 +166,7 @@ describe('PersonalInfo', () => {
   it('показывает галочку вегетарианства снятой, если её не ставили', async () => {
     const wrapper = await mountSection()
 
-    expect(
-      wrapper.get<HTMLInputElement>('input[type="checkbox"]').element.checked,
-    ).toBe(false)
+    expect(wrapper.get<HTMLInputElement>('input[type="checkbox"]').element.checked).toBe(false)
   })
 
   it('ставит галочку вегетарианства и сохраняет её', async () => {
@@ -209,9 +202,7 @@ describe('PersonalInfo', () => {
   it('пустые аллергии показывает словами, а не прочерком', async () => {
     const wrapper = await mountSection()
 
-    expect(editableFieldByLabel(wrapper, 'Мои аллергии').text()).toContain(
-      '— нет —',
-    )
+    expect(editableFieldByLabel(wrapper, 'Мои аллергии').text()).toContain('— нет —')
   })
 
   it('рисует поля ввода фоном полей, а не фоном страницы', async () => {

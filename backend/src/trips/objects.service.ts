@@ -39,6 +39,30 @@ export class ObjectsService {
    * превратился бы в «найди всё», а это не поиск, а его отсутствие.
    */
   async list(query: GeoObjectQueryDto): Promise<GeoObjectListDto> {
+    // Список id важнее поиска: он приходит, когда объекты уже известны,
+    // и подстрока имени тут ни при чём.
+    const ids = (query.ids ?? '')
+      .split(',')
+      .map((id) => Number(id.trim()))
+      .filter((id) => Number.isSafeInteger(id) && id > 0);
+
+    // Если `ids` передан — отвечаем **только** по нему, даже если после
+    // разбора не осталось ни одного id. Иначе запрос с мусором вместо id
+    // вернул бы весь справочник: не ошибка, но сюрприз, на который
+    // вызывающий не рассчитывал.
+    if (query.ids !== undefined) {
+      if (ids.length === 0) return { objects: [] };
+
+      const found = await this.objectsRepository
+        .createQueryBuilder('object')
+        .leftJoinAndSelect('object.parent', 'parent')
+        .where('object.id IN (:...ids)', { ids })
+        .orderBy('object.name', 'ASC')
+        .getMany();
+
+      return { objects: found.map((object) => GeoObjectDto.from(object)) };
+    }
+
     const qb = this.objectsRepository
       .createQueryBuilder('object')
       .leftJoinAndSelect('object.parent', 'parent')

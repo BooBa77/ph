@@ -20,12 +20,7 @@ function sourceOf(days: Record<string, { dayType: CalendarDayType; label?: strin
 }
 
 /** Все дни диапазона одним типом — чтобы не расписывать каждую дату. */
-function week(
-  from: string,
-  count: number,
-  dayType: CalendarDayType,
-  label: string | null = null,
-) {
+function week(from: string, count: number, dayType: CalendarDayType, label: string | null = null) {
   const days: Record<string, { dayType: CalendarDayType; label: string | null }> = {}
   const start = new Date(`${from}T00:00:00`)
   for (let index = 0; index < count; index += 1) {
@@ -81,9 +76,7 @@ describe('upcomingNotice', () => {
       }),
     )
 
-    expect(notice).toBe(
-      'Послезавтра День народного единства — выходной, ты уже всё спланировал?',
-    )
+    expect(notice).toBe('Послезавтра День народного единства — выходной, ты уже всё спланировал?')
   })
 
   it('дальше двух дней называет день недели и число', () => {
@@ -110,9 +103,7 @@ describe('upcomingNotice', () => {
       }),
     )
 
-    expect(notice).toBe(
-      'В среду, 14 октября, День народного единства — выходной',
-    )
+    expect(notice).toBe('В среду, 14 октября, День народного единства — выходной')
   })
 
   it('если впереди две недели рабочих дней — молчит', () => {
@@ -153,10 +144,7 @@ describe('upcomingNotice', () => {
 
   it('праздник вместо имени дня недели узнаёт по метке', () => {
     // «Суббота» — это просто имя дня, праздником её считать нельзя.
-    const notice = upcomingNotice(
-      today,
-      sourceOf(week('2026-10-07', 4, 'workday')),
-    )
+    const notice = upcomingNotice(today, sourceOf(week('2026-10-07', 4, 'workday')))
 
     expect(notice).not.toContain('Суббота')
   })

@@ -16,3 +16,13 @@ export async function createTrip(data: CreateTripRequest): Promise<Trip> {
     body: JSON.stringify(data),
   })
 }
+
+/**
+ * GET /api/trips/:id
+ *
+ * Один поход целиком. Приватный поход чужому отдаёт 404, а не 403 —
+ * существование закрытого похода не должно утекать.
+ */
+export async function getTrip(id: string): Promise<Trip> {
+  return apiFetch<Trip>(`/trips/${id}`)
+}

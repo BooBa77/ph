@@ -54,27 +54,12 @@ export type MountainCategory = (typeof MOUNTAIN_CATEGORIES)[number]
  * Разряды и звания по скайраннингу. Свой список, а не общий со спортивным
  * туризмом: «Значок» за дистанцию не дают, МСМК здесь тоже нет.
  */
-export const SKYRUNNING_RANKS = [
-  'юношеский',
-  'III',
-  'II',
-  'I',
-  'КМС',
-  'МС',
-] as const
+export const SKYRUNNING_RANKS = ['юношеский', 'III', 'II', 'I', 'КМС', 'МС'] as const
 
 export type SkyrunningRank = (typeof SKYRUNNING_RANKS)[number]
 
 /** Разряды и звания по спортивному туризму: «Значок» — знак «Турист России». */
-export const TOURISM_RANKS = [
-  'Значок',
-  'юношеский',
-  'III',
-  'II',
-  'I',
-  'КМС',
-  'МС',
-] as const
+export const TOURISM_RANKS = ['Значок', 'юношеский', 'III', 'II', 'I', 'КМС', 'МС'] as const
 
 export type TourismRank = (typeof TOURISM_RANKS)[number]
 
@@ -89,8 +74,7 @@ export const INSTRUCTOR_METHODIST_RANKS = [
   '1 категория',
 ] as const
 
-export type InstructorMethodistRank =
-  (typeof INSTRUCTOR_METHODIST_RANKS)[number]
+export type InstructorMethodistRank = (typeof INSTRUCTOR_METHODIST_RANKS)[number]
 
 /** Инструктор-проводник: от работы без категории к международному классу. */
 export const INSTRUCTOR_GUIDE_RANKS = [
@@ -122,15 +106,7 @@ export type TourismDisciplineResult = (typeof TOURISM_DISCIPLINE_RESULTS)[number
 
 /** Виды спортивного туризма: у каждого своя максимальная пройденная к.с. */
 export type TourismKind =
-  | 'hiking'
-  | 'mountain'
-  | 'ski'
-  | 'water'
-  | 'caving'
-  | 'bicycle'
-  | 'horse'
-  | 'sailing'
-  | 'autoMoto'
+  'hiking' | 'mountain' | 'ski' | 'water' | 'caving' | 'bicycle' | 'horse' | 'sailing' | 'autoMoto'
 
 export const TOURISM_KINDS: readonly { key: TourismKind; label: string }[] = [
   { key: 'hiking', label: 'Пешеходный' },
@@ -146,11 +122,7 @@ export const TOURISM_KINDS: readonly { key: TourismKind; label: string }[] = [
 
 /** Дисциплины группы «дистанция» в спортивном туризме. */
 export type TourismDiscipline =
-  | 'nordicWalking'
-  | 'distanceHiking'
-  | 'distanceSki'
-  | 'distanceWater'
-  | 'distanceCaving'
+  'nordicWalking' | 'distanceHiking' | 'distanceSki' | 'distanceWater' | 'distanceCaving'
 
 export const TOURISM_DISCIPLINES: readonly {
   key: TourismDiscipline

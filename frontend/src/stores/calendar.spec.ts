@@ -53,7 +53,10 @@ describe('стор календаря', () => {
   })
 
   it('загружает диапазон один раз', async () => {
-    mocked.fetchDays.mockResolvedValue({ days: [day('2026-10-01'), day('2026-10-02')], activities: {} })
+    mocked.fetchDays.mockResolvedValue({
+      days: [day('2026-10-01'), day('2026-10-02')],
+      activities: {},
+    })
     const store = useCalendarStore()
 
     await store.ensureRange('2026-10-01', '2026-10-02')
@@ -76,11 +79,7 @@ describe('стор календаря', () => {
 
   it('хвосты соседних месяцев попадают в тот же кэш', async () => {
     mocked.fetchDays.mockResolvedValue({
-      days: [
-      day('2026-09-28'),
-      day('2026-10-01'),
-      day('2026-11-01', 'weekend'),
-      ],
+      days: [day('2026-09-28'), day('2026-10-01'), day('2026-11-01', 'weekend')],
       activities: {},
     })
     const store = useCalendarStore()
@@ -103,7 +102,10 @@ describe('стор календаря', () => {
   })
 
   it('создание года обновляет состояние и перечитывает загруженное', async () => {
-    mocked.fetchDays.mockResolvedValue({ days: [day('2025-12-29'), day('2026-01-01')], activities: {} })
+    mocked.fetchDays.mockResolvedValue({
+      days: [day('2025-12-29'), day('2026-01-01')],
+      activities: {},
+    })
     mocked.fetchYearState.mockResolvedValue(yearState({ filled: false, mode: null }))
     mocked.createYear.mockResolvedValue(yearState({ mode: 'cycle' }))
 
@@ -142,7 +144,10 @@ describe('стор календаря', () => {
   })
 
   it('пачка правок раскладывается по кэшу, последняя запись выигрывает', async () => {
-    mocked.fetchDays.mockResolvedValue({ days: [day('2026-06-03'), day('2026-06-04')], activities: {} })
+    mocked.fetchDays.mockResolvedValue({
+      days: [day('2026-06-03'), day('2026-06-04')],
+      activities: {},
+    })
     mocked.updateDays.mockResolvedValue({ updated: 2 })
 
     const store = useCalendarStore()

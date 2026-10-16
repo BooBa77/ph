@@ -31,9 +31,7 @@ const isAutumn = computed(() => appStore.currentTheme === 4)
  * ни анимаций в композиторе. Скрывать его стилями было бы хуже: работа
  * всё равно шла бы, а листья ловили бы клики.
  */
-const isDecorVisible = computed(
-  () => isAutumn.value && appStore.isSeasonAnimationEnabled,
-)
+const isDecorVisible = computed(() => isAutumn.value && appStore.isSeasonAnimationEnabled)
 
 function makeLeaves(): Leaf[] {
   const count = window.innerWidth < 640 ? 10 : 18
@@ -48,9 +46,7 @@ function makeLeaves(): Leaf[] {
       delay: -Math.random() * duration,
       size: isFar ? 0.7 + Math.random() * 0.4 : 1 + Math.random() * 0.8,
       sway: 18 + Math.random() * 42,
-      color:
-        AUTUMN_COLORS[Math.floor(Math.random() * AUTUMN_COLORS.length)] ??
-        AUTUMN_COLORS[0]!,
+      color: AUTUMN_COLORS[Math.floor(Math.random() * AUTUMN_COLORS.length)] ?? AUTUMN_COLORS[0]!,
       spin: 0.5 + Math.random() * 1.5,
       direction: Math.random() < 0.5 ? -1 : 1,
       opacity: isFar ? 0.28 + Math.random() * 0.18 : 0.45 + Math.random() * 0.2,
@@ -133,11 +129,19 @@ onMounted(() => {
   }
 }
 @keyframes season-leaf-sway {
-  from { margin-left: calc(var(--sway) / -2); }
-  to   { margin-left: calc(var(--sway) / 2); }
+  from {
+    margin-left: calc(var(--sway) / -2);
+  }
+  to {
+    margin-left: calc(var(--sway) / 2);
+  }
 }
 @keyframes season-leaf-spin {
-  from { transform: rotate(0deg); }
-  to   { transform: rotate(calc(360deg * var(--direction))); }
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(calc(360deg * var(--direction)));
+  }
 }
 </style>

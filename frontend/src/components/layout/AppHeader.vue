@@ -52,13 +52,7 @@ const profilePath = computed(() => appStore.lastProfilePath)
         (на мобиле скрыта, но остаётся в дереве доступности из-за
         aria-label у ссылки). Дубль имени ссылки скринридер читал бы дважды.
       -->
-      <img
-        :src="logoUrl"
-        alt=""
-        width="28"
-        height="28"
-        class="h-7 w-7 shrink-0"
-      />
+      <img :src="logoUrl" alt="" width="28" height="28" class="h-7 w-7 shrink-0" />
       <span class="hidden sm:inline">PeakHunter</span>
     </RouterLink>
 
@@ -68,11 +62,7 @@ const profilePath = computed(() => appStore.lastProfilePath)
       class="flex min-w-0 shrink items-center gap-2 rounded-full border border-border bg-bg py-1 pr-1 pl-1 text-sm text-text no-underline transition-colors hover:border-primary sm:pr-3"
       aria-label="Личный кабинет"
     >
-      <UserAvatar
-        :src="auth.user.avatarUrl"
-        :size="32"
-        :alt="auth.user.displayName"
-      />
+      <UserAvatar :src="auth.user.avatarUrl" :size="32" :alt="auth.user.displayName" />
       <!--
         Имя показываем на всех экранах, включая узкие. Длинное — режем
         многоточием, а не прячем: имя в шапке нужно, чтобы понимать,

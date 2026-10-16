@@ -135,10 +135,7 @@ async function saveTourismRank(value: TourismRank | null) {
   await saveProfile({ sportExperience: { sportTourism: { rank: value } } })
 }
 
-async function saveTourismCategory(
-  kind: TourismKind,
-  value: TourismCategory | null,
-) {
+async function saveTourismCategory(kind: TourismKind, value: TourismCategory | null) {
   // Собираем объект, а не пишем computed-ключ в литерале: так тип
   // остаётся `Partial<Record<TourismKind, ...>>`, а не «любая строка».
   const maxCategories: Partial<Record<TourismKind, TourismCategory | null>> = {}
@@ -151,9 +148,7 @@ async function saveTourismDiscipline(
   discipline: TourismDiscipline,
   value: TourismDisciplineResult | null,
 ) {
-  const disciplines: Partial<
-    Record<TourismDiscipline, TourismDisciplineResult | null>
-  > = {}
+  const disciplines: Partial<Record<TourismDiscipline, TourismDisciplineResult | null>> = {}
   disciplines[discipline] = value
 
   await saveProfile({ sportExperience: { sportTourism: { disciplines } } })
@@ -165,13 +160,11 @@ async function saveTourismDiscipline(
     <h2 class="mb-2 text-xl font-semibold text-text">Спортивный опыт</h2>
 
     <p class="mb-2 text-sm text-muted">
-      Заполняется по разрядным требованиям: отметьте то, что уже выполнено.
-      Пустая строка списка — «нет».
+      Заполняется по разрядным требованиям: отметьте то, что уже выполнено. Пустая строка списка —
+      «нет».
     </p>
 
-    <h3
-      class="mt-8 mb-1 border-t border-border pt-6 text-base font-medium text-text"
-    >
+    <h3 class="mt-8 mb-1 border-t border-border pt-6 text-base font-medium text-text">
       Альпинизм и скайраннинг
     </h3>
 
@@ -252,8 +245,8 @@ async function saveTourismDiscipline(
             @change="onYouthOrganizerChange"
           />
           <span>
-            Организатор детско-юношеского туризма (дополнительная
-            профессиональная программа подготовки)
+            Организатор детско-юношеского туризма (дополнительная профессиональная программа
+            подготовки)
           </span>
         </label>
       </div>
@@ -267,8 +260,7 @@ async function saveTourismDiscipline(
             @change="onYouthInstructorChange"
           />
           <span>
-            Инструктор детско-юношеского туризма (дополнительное
-            профессиональное образование)
+            Инструктор детско-юношеского туризма (дополнительное профессиональное образование)
           </span>
         </label>
       </div>
@@ -281,9 +273,7 @@ async function saveTourismDiscipline(
       />
     </div>
 
-    <h3
-      class="mt-8 mb-1 border-t border-border pt-6 text-base font-medium text-text"
-    >
+    <h3 class="mt-8 mb-1 border-t border-border pt-6 text-base font-medium text-text">
       Спортивный туризм
     </h3>
 

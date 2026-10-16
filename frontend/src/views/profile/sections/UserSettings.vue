@@ -42,10 +42,7 @@ async function load() {
   try {
     sessions.value = await fetchSessions()
   } catch (cause) {
-    error.value =
-      cause instanceof ApiError
-        ? cause.message
-        : 'Не удалось загрузить устройства.'
+    error.value = cause instanceof ApiError ? cause.message : 'Не удалось загрузить устройства.'
   } finally {
     isLoading.value = false
   }
@@ -60,8 +57,7 @@ async function revoke(session: SessionInfo) {
     // отказал, пользователь увидит правду, а не красивую картинку.
     await load()
   } catch (cause) {
-    error.value =
-      cause instanceof ApiError ? cause.message : 'Не удалось отозвать сессию.'
+    error.value = cause instanceof ApiError ? cause.message : 'Не удалось отозвать сессию.'
   } finally {
     revokingId.value = null
   }
@@ -79,16 +75,11 @@ onMounted(load)
   <section>
     <h2 class="mb-2 text-xl font-semibold text-text">Настройки</h2>
 
-    <h3
-      class="mt-8 mb-1 border-t border-border pt-6 text-base font-medium text-text"
-    >
-      Сессии
-    </h3>
+    <h3 class="mt-8 mb-1 border-t border-border pt-6 text-base font-medium text-text">Сессии</h3>
 
     <p class="mb-2 text-sm text-muted">
-      Устройства, где вы вошли. Отзыв выкидывает устройство при следующем
-      обновлении токена — пароль заново вводить не нужно, вход по коду
-      на почту.
+      Устройства, где вы вошли. Отзыв выкидывает устройство при следующем обновлении токена — пароль
+      заново вводить не нужно, вход по коду на почту.
     </p>
 
     <p v-if="isLoading" class="text-sm text-muted">Загружаем…</p>
@@ -106,9 +97,7 @@ onMounted(load)
         <div class="min-w-0">
           <div class="text-sm text-text">
             {{ session.deviceLabel ?? 'Устройство без имени' }}
-            <span v-if="session.isCurrent" class="text-muted">
-              · это устройство
-            </span>
+            <span v-if="session.isCurrent" class="text-muted"> · это устройство </span>
           </div>
           <div class="text-xs text-muted">
             Начало: {{ formatDate(session.createdAt) }} · действует до
@@ -133,11 +122,7 @@ onMounted(load)
       </li>
     </ul>
 
-    <h3
-      class="mt-8 mb-1 border-t border-border pt-6 text-base font-medium text-text"
-    >
-      Анимация
-    </h3>
+    <h3 class="mt-8 mb-1 border-t border-border pt-6 text-base font-medium text-text">Анимация</h3>
 
     <div class="flex flex-col gap-1 py-3 md:flex-row md:items-center md:gap-6">
       <div class="text-sm text-muted md:w-48 md:shrink-0">Сезонный декор</div>
@@ -154,8 +139,7 @@ onMounted(load)
     </div>
 
     <p class="text-xs text-muted">
-      Настройка хранится в этом браузере: на другом устройстве анимацию
-      придётся выключить заново.
+      Настройка хранится в этом браузере: на другом устройстве анимацию придётся выключить заново.
     </p>
   </section>
 </template>

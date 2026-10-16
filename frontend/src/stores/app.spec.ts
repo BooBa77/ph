@@ -126,9 +126,7 @@ describe('useAppStore', () => {
       store.setLastProfilePath('/profile/sessions')
 
       expect(store.lastProfilePath).toBe('/profile/sessions')
-      expect(localStorage.getItem('ph.lastProfilePath')).toBe(
-        '/profile/sessions',
-      )
+      expect(localStorage.getItem('ph.lastProfilePath')).toBe('/profile/sessions')
     })
 
     it('переживает перезагрузку', async () => {

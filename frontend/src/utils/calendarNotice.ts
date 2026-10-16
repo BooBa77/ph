@@ -76,16 +76,9 @@ function whenPhrase(offset: number, date: Date): string {
  * пропускаем: сказать «завтра выходной» на основании неподгруженного дня
  * нельзя, а ждать загрузки подпись не должна.
  */
-export function upcomingNotice(
-  today: Date,
-  dayOf: (iso: string) => CalendarDay | null,
-): string {
+export function upcomingNotice(today: Date, dayOf: (iso: string) => CalendarDay | null): string {
   for (let offset = 0; offset < HORIZON; offset += 1) {
-    const date = new Date(
-      today.getFullYear(),
-      today.getMonth(),
-      today.getDate() + offset,
-    )
+    const date = new Date(today.getFullYear(), today.getMonth(), today.getDate() + offset)
     const day = dayOf(toIsoDate(date))
     if (!day) continue
 
@@ -94,9 +87,7 @@ export function upcomingNotice(
 
     if (day.dayType === 'weekend') {
       if (offset === 0) {
-        return holiday
-          ? `Сегодня ${holiday} — отдыхаем.`
-          : 'Сегодня выходной, отдыхаем.'
+        return holiday ? `Сегодня ${holiday} — отдыхаем.` : 'Сегодня выходной, отдыхаем.'
       }
 
       // Подначиваем только про ближайшие дни: «в субботу выходной, ты уже

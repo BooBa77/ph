@@ -41,19 +41,13 @@ async function load() {
     types.value = data.types
     requests.value = data.requests
   } catch (cause) {
-    error.value =
-      cause instanceof ApiError
-        ? cause.message
-        : 'Не удалось загрузить модерацию.'
+    error.value = cause instanceof ApiError ? cause.message : 'Не удалось загрузить модерацию.'
   } finally {
     isLoading.value = false
   }
 }
 
-async function decide(
-  id: string,
-  status: 'approved' | 'rejected' | 'revision',
-) {
+async function decide(id: string, status: 'approved' | 'rejected' | 'revision') {
   try {
     await decideActivityRequest(id, status, comments.value[id] ?? null)
     await load()
@@ -87,8 +81,8 @@ onMounted(load)
     <h1 class="text-2xl font-bold text-text">Модерация иконок</h1>
 
     <p class="mt-2 text-sm text-muted">
-      Заявки пользователей и все варианты иконок. Иконка живёт в коде фронтенда,
-      поэтому одобрение включает тип, а сама картинка приезжает деплоем.
+      Заявки пользователей и все варианты иконок. Иконка живёт в коде фронтенда, поэтому одобрение
+      включает тип, а сама картинка приезжает деплоем.
     </p>
 
     <p v-if="error" class="mt-3 text-sm text-red-600">{{ error }}</p>
@@ -98,9 +92,7 @@ onMounted(load)
     <section class="mt-6">
       <h2 class="text-lg font-semibold text-text">Заявки</h2>
 
-      <p v-if="requests.length === 0" class="mt-2 text-sm text-muted">
-        Заявок пока нет.
-      </p>
+      <p v-if="requests.length === 0" class="mt-2 text-sm text-muted">Заявок пока нет.</p>
 
       <ul v-else class="mt-3 divide-y divide-border rounded-xl border border-border">
         <li v-for="request in requests" :key="request.id" class="p-3">
@@ -157,8 +149,8 @@ onMounted(load)
         Варианты на рассмотрении ({{ candidates.length }})
       </h2>
       <p v-if="candidates.length === 0" class="mt-2 text-sm text-muted">
-        Все иконки в работе. Новые варианты появляются здесь после того, как я
-        нарисую иконку и заведу тип.
+        Все иконки в работе. Новые варианты появляются здесь после того, как я нарисую иконку и
+        заведу тип.
       </p>
 
       <div v-else class="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-4">
@@ -188,9 +180,7 @@ onMounted(load)
 
     <!-- Что уже у людей -->
     <section class="mt-8">
-      <h2 class="text-lg font-semibold text-text">
-        Иконки в работе ({{ activeTypes.length }})
-      </h2>
+      <h2 class="text-lg font-semibold text-text">Иконки в работе ({{ activeTypes.length }})</h2>
 
       <div class="mt-3 grid grid-cols-3 gap-3 sm:grid-cols-6">
         <button

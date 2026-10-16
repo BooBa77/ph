@@ -23,6 +23,15 @@
 /** Что известно про сущность, на которую ссылаются: токен → имя. */
 export type MentionNames = Record<string, string>
 
+/** Токены ссылок на объекты, найденные в тексте. */
+export function extractObjectIds(markdown: string): string[] {
+  const found = new Set<string>()
+  for (const match of markdown.matchAll(/\[\[object:(\d+)\]\]/g)) {
+    found.add(match[1] as string)
+  }
+  return [...found]
+}
+
 /** Токен ссылки на объект. */
 export function objectToken(id: string | number): string {
   return `[[object:${id}]]`
@@ -87,7 +96,15 @@ export function inlineMarkdownToHtml(text: string, names: MentionNames = {}): st
   })
 
   html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-  html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>')
+  html = html.replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, (_match, text: string, url: string) => {
+    // Только безопасные схемы. `javascript:` в href — это исполняемый код
+    // на нашей странице, а адрес приходит от пользователя.
+    if (!/^(https?:|mailto:)/i.test(url)) {
+      return escapeHtml(`[${text}](${url})`)
+    }
+
+    return `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">${text}</a>`
+  })
 
   return html
 }

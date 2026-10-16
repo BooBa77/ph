@@ -85,18 +85,9 @@ describe('SiteSidebar', () => {
   it('показывает все разделы сайта', async () => {
     const { wrapper } = await mountSidebar()
 
-    const labels = wrapper
-      .findAll('a')
-      .map((link) => link.attributes('aria-label'))
+    const labels = wrapper.findAll('a').map((link) => link.attributes('aria-label'))
 
-    expect(labels).toEqual([
-      'Главная',
-      'Походы',
-      'Профиль',
-      'Календарь',
-      'Спорт',
-      'Настройки',
-    ])
+    expect(labels).toEqual(['Главная', 'Походы', 'Профиль', 'Календарь', 'Спорт', 'Настройки'])
   })
 
   it('ведёт на главную первой ссылкой', async () => {
@@ -117,9 +108,7 @@ describe('SiteSidebar', () => {
     await openMenu(wrapper)
 
     expect(wrapper.text()).toContain('Все разделы')
-    expect(
-      wrapper.findAll('button').some((item) => item.text() === 'Выйти'),
-    ).toBe(true)
+    expect(wrapper.findAll('button').some((item) => item.text() === 'Выйти')).toBe(true)
   })
 
   it('Escape закрывает панель', async () => {
@@ -146,9 +135,7 @@ describe('SiteSidebar', () => {
     const { wrapper } = await mountSidebar()
     await openMenu(wrapper)
 
-    const logoutButton = wrapper
-      .findAll('button')
-      .find((item) => item.text() === 'Выйти')
+    const logoutButton = wrapper.findAll('button').find((item) => item.text() === 'Выйти')
     if (!logoutButton) throw new Error('Нет кнопки «Выйти»')
 
     await logoutButton.trigger('click')

@@ -101,10 +101,7 @@ export async function decideActivityRequest(
 }
 
 /** PATCH /api/calendar/admin/types/:id — показать вариант или вернуть на рассмотрение. */
-export async function setActivityTypeActive(
-  id: number,
-  isActive: boolean,
-): Promise<unknown> {
+export async function setActivityTypeActive(id: number, isActive: boolean): Promise<unknown> {
   return apiFetch(`/calendar/admin/types/${id}`, {
     method: 'PATCH',
     body: JSON.stringify({ isActive }),
@@ -158,10 +155,7 @@ export async function fetchYearState(year: number): Promise<YearState> {
  * Создать календарь на год. Повторный вызов вернёт 409 — год не
  * перезаписывается, чтобы не потерять правки пользователя.
  */
-export async function createYear(
-  year: number,
-  mode: CalendarMode,
-): Promise<YearState> {
+export async function createYear(year: number, mode: CalendarMode): Promise<YearState> {
   return apiFetch<YearState>(`/calendar/years/${year}/init`, {
     method: 'POST',
     body: JSON.stringify({ mode }),
@@ -174,10 +168,7 @@ export async function createYear(
  * Дни диапазона. Фронт просит месяц вместе с хвостами соседних месяцев
  * (42 дня) — одним запросом на экран.
  */
-export async function fetchDays(
-  from: string,
-  to: string,
-): Promise<DaysResponse> {
+export async function fetchDays(from: string, to: string): Promise<DaysResponse> {
   return apiFetch<DaysResponse>(`/calendar/days?from=${from}&to=${to}`)
 }
 
@@ -225,9 +216,7 @@ export async function saveNotes(
 }
 
 /** POST /api/calendar/activity-requests — попросить новую активность. */
-export async function createActivityRequest(
-  label: string,
-): Promise<ActivityRequest> {
+export async function createActivityRequest(label: string): Promise<ActivityRequest> {
   return apiFetch<ActivityRequest>('/calendar/activity-requests', {
     method: 'POST',
     body: JSON.stringify({ label }),
@@ -247,9 +236,7 @@ export async function patchDay(patch: DayPatch): Promise<CalendarDay> {
  * производственного календаря. Если одна дата встречается дважды,
  * применяется последняя запись.
  */
-export async function updateDays(
-  days: DayUpdate[],
-): Promise<{ updated: number }> {
+export async function updateDays(days: DayUpdate[]): Promise<{ updated: number }> {
   return apiFetch<{ updated: number }>('/calendar/days', {
     method: 'PUT',
     body: JSON.stringify({ days }),

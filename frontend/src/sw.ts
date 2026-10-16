@@ -25,12 +25,8 @@ const precacheManifest = self.__WB_MANIFEST
 self.addEventListener('install', (event) => {
   event.waitUntil(
     caches.open(PRECACHE).then((cache) => {
-      return cache.addAll(
-        precacheManifest
-          .filter((entry) => entry.url)
-          .map((entry) => entry.url)
-      )
-    })
+      return cache.addAll(precacheManifest.filter((entry) => entry.url).map((entry) => entry.url))
+    }),
   )
   // никакого self.skipWaiting() здесь — ждём команду с фронта
 })
@@ -41,12 +37,10 @@ self.addEventListener('activate', (event) => {
     (async () => {
       const keys = await caches.keys()
       await Promise.all(
-        keys
-          .filter((k) => k !== PRECACHE && k !== RUNTIME)
-          .map((k) => caches.delete(k))
+        keys.filter((k) => k !== PRECACHE && k !== RUNTIME).map((k) => caches.delete(k)),
       )
       await self.clients.claim()
-    })()
+    })(),
   )
 })
 
@@ -71,6 +65,6 @@ self.addEventListener('fetch', (event) => {
     caches.match(request).then((cached) => {
       if (cached) return cached
       return fetch(request)
-    })
+    }),
   )
 })

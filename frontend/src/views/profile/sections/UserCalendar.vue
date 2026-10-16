@@ -205,9 +205,7 @@ const notice = computed(() => upcomingNotice(today, (iso) => store.day(iso)))
 
 /** Диапазон для этой фразы: сегодня и две недели вперёд. */
 const noticeFrom = toIsoDate(today)
-const noticeTo = toIsoDate(
-  new Date(today.getFullYear(), today.getMonth(), today.getDate() + 13),
-)
+const noticeTo = toIsoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() + 13))
 
 /**
  * Годы, про которые мы уже спросили в этой сессии страницы.
@@ -332,8 +330,7 @@ function dayClass(day: CalendarDay): string {
   }
 
   const status = statusOf(day)
-  const color =
-    status === 'weekend' ? 'text-calendar-weekend' : 'text-calendar-workday'
+  const color = status === 'weekend' ? 'text-calendar-weekend' : 'text-calendar-workday'
 
   // Хвосты соседних месяцев гасим прозрачностью, а не другим цветом:
   // цвет здесь несёт смысл «выходной/рабочий», и перекрашивать его
@@ -372,9 +369,7 @@ function dayLabel(day: CalendarDay): string {
         Vue сжимает пустое место в шаблоне, и строки склеивались
         в «2026.В четверг выходной».
       -->
-      Сегодня — {{ todayLabel }}.<template v-if="notice">{{
-        ' ' + notice
-      }}</template>
+      Сегодня — {{ todayLabel }}.<template v-if="notice">{{ ' ' + notice }}</template>
     </p>
 
     <button

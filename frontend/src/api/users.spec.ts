@@ -114,8 +114,9 @@ describe('api/users — аватарка', () => {
       ),
     )
 
-    await expect(
-      uploadAvatar(new Blob(['x'], { type: 'image/jpeg' })),
-    ).rejects.toMatchObject({ status: 400, message: 'Файл больше 10 МБ' })
+    await expect(uploadAvatar(new Blob(['x'], { type: 'image/jpeg' }))).rejects.toMatchObject({
+      status: 400,
+      message: 'Файл больше 10 МБ',
+    })
   })
 })

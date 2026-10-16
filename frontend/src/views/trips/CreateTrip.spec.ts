@@ -277,7 +277,10 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="created"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="created-name"]').text()).toBe('Витязь')
 
-    await wrapper.find('[data-test="created"] button').trigger('click')
+    const again = wrapper
+      .findAll('[data-test="created"] button')
+      .find((button) => button.text() === 'Создать ещё')
+    await again?.trigger('click')
 
     expect(wrapper.find('[data-test="created"]').exists()).toBe(false)
     const announcement = wrapper.find('[data-test="announcement"]').element as HTMLInputElement

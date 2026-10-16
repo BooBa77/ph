@@ -73,10 +73,7 @@ export function detectSeasonByDate(): Season {
 export function applySeasonTheme(): void {
   if (typeof document === 'undefined') return
 
-  document.documentElement.setAttribute(
-    'data-theme',
-    String(detectSeasonByDate()),
-  )
+  document.documentElement.setAttribute('data-theme', String(detectSeasonByDate()))
 }
 
 /**

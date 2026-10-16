@@ -38,9 +38,7 @@ export function redirectWhenSignedOut(
 
       // Уходим только с закрытых страниц: на самой странице входа и на
       // публичных адресах делать нечего.
-      const isPrivate = route.matched.some(
-        (record) => record.meta.requiresAuth === true,
-      )
+      const isPrivate = route.matched.some((record) => record.meta.requiresAuth === true)
       if (!isPrivate) return
 
       void router.push({ name: 'auth' })

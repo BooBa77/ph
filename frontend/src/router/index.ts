@@ -83,6 +83,13 @@ const router = createRouter({
           name: 'trips-create',
           component: () => import('@/views/trips/CreateTrip.vue'),
         },
+        {
+          // Сам поход: общая рамка и вкладки внутри.:id объявлен после
+          // статических путей — иначе '/trips/new' стал бы походом с id 'new'.
+          path: ':id',
+          name: 'trip',
+          component: () => import('@/views/trips/TripView.vue'),
+        },
       ],
     },
     {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
 import { createTrip } from '@/api/trips'
@@ -95,6 +96,8 @@ const priceRub = ref('')
 const priceNote = ref('')
 
 // ─── Отправка ───
+
+const router = useRouter()
 
 const isSubmitting = ref(false)
 const submitError = ref<string | null>(null)
@@ -240,8 +243,14 @@ async function submit() {
   }
 }
 
-/** Начать заново: форма в исходное состояние. */
-function startOver() {
+/** Открыть созданный поход: у него уже есть свои вкладки. */
+function openTrip() {
+  if (!created.value) return
+  // В тестах роутера нет — переход просто не делается.
+  void router?.push({ name: 'trip', params: { id: created.value.id } })
+}
+
+/** Начать заново: форма в исходное состояние. */ function startOver() {
   created.value = null
   submitError.value = null
   selectedGoal.value = null
@@ -286,7 +295,16 @@ function startOver() {
 
     <button
       type="button"
-      class="mt-4 cursor-pointer rounded-xl border border-border bg-field px-4 py-2 text-sm text-text transition-colors hover:border-primary"
+      class="mt-4 cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm text-white transition-opacity hover:opacity-90"
+      data-test="open-trip"
+      @click="openTrip"
+    >
+      Открыть поход
+    </button>
+
+    <button
+      type="button"
+      class="mt-4 ml-2 cursor-pointer rounded-xl border border-border bg-field px-4 py-2 text-sm text-text transition-colors hover:border-primary"
       @click="startOver"
     >
       Создать ещё

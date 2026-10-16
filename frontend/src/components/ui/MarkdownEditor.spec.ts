@@ -314,7 +314,7 @@ describe('MarkdownEditor', () => {
     await wrapper.find('[data-test="link-insert"]').trigger('click')
 
     expect(emitted(wrapper)).toBe('[https://example.com](https://example.com)')
-    expect(html(wrapper)).toContain('<a href="https://example.com">')
+    expect(html(wrapper)).toContain('<a href="https://example.com"')
   })
 
   it('участники вставляются, когда переданы', async () => {

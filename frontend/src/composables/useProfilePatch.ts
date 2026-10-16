@@ -46,10 +46,7 @@ export function useProfilePatch() {
       const updated = await whileBusy(() => updateMe(patch))
       auth.setUser(updated)
     } catch (e) {
-      error.value =
-        e instanceof ApiError
-          ? e.message
-          : 'Не удалось сохранить. Попробуйте ещё раз.'
+      error.value = e instanceof ApiError ? e.message : 'Не удалось сохранить. Попробуйте ещё раз.'
     }
   }
 

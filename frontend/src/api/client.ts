@@ -13,11 +13,7 @@ const BASE_URL = '/api'
  *
  * Публичный apiFetch (ниже) зовёт эту функцию с isRetry = false.
  */
-async function apiFetchInternal<T>(
-  path: string,
-  init: RequestInit,
-  isRetry: boolean,
-): Promise<T> {
+async function apiFetchInternal<T>(path: string, init: RequestInit, isRetry: boolean): Promise<T> {
   // useAuthStore() можно вызывать только внутри функции, не на уровне модуля:
   // на момент импорта файла Pinia ещё не инициализирована (app.use(pinia) не вызван).
   const store = useAuthStore()
@@ -119,9 +115,6 @@ async function parseResponse<T>(res: Response): Promise<T> {
  * Тип T по умолчанию unknown — заставляет указывать тип явно,
  * чтобы случайно не работать с необработанными данными.
  */
-export async function apiFetch<T = unknown>(
-  path: string,
-  init: RequestInit = {},
-): Promise<T> {
+export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
   return apiFetchInternal<T>(path, init, false)
 }

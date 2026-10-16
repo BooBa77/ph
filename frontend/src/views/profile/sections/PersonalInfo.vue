@@ -147,9 +147,7 @@ async function saveAvatar(blob: Blob) {
     pendingFile.value = null
   } catch (e) {
     error.value =
-      e instanceof ApiError
-        ? e.message
-        : 'Не удалось загрузить аватарку. Попробуйте ещё раз.'
+      e instanceof ApiError ? e.message : 'Не удалось загрузить аватарку. Попробуйте ещё раз.'
   }
 }
 
@@ -168,9 +166,7 @@ async function removeAvatar() {
     auth.setUser(updated)
   } catch (e) {
     error.value =
-      e instanceof ApiError
-        ? e.message
-        : 'Не удалось убрать аватарку. Попробуйте ещё раз.'
+      e instanceof ApiError ? e.message : 'Не удалось убрать аватарку. Попробуйте ещё раз.'
   }
 }
 </script>
@@ -262,9 +258,7 @@ async function removeAvatar() {
       </div>
     </div>
 
-    <h2
-      class="mt-8 mb-2 border-t border-border pt-6 text-xl font-semibold text-text"
-    >
+    <h2 class="mt-8 mb-2 border-t border-border pt-6 text-xl font-semibold text-text">
       Пищевые ограничения
     </h2>
 

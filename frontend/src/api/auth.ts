@@ -81,10 +81,7 @@ export async function requestCode(email: string): Promise<RequestCodeResponse> {
  *   400 — неверный код / код истёк
  *   429 — превышено число попыток
  */
-export async function verifyCode(
-  email: string,
-  code: string,
-): Promise<AuthResponse> {
+export async function verifyCode(email: string, code: string): Promise<AuthResponse> {
   return directFetch<AuthResponse>('/auth/verify-code', {
     method: 'POST',
     body: JSON.stringify({ email, code }),

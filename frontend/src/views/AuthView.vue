@@ -21,13 +21,9 @@ const errorMessage = ref<string | null>(null)
 const resendAfter = ref(0)
 let resendTimer: ReturnType<typeof setInterval> | null = null
 
-const canSubmitEmail = computed(
-  () => email.value.trim().length > 0 && !isLoading.value,
-)
+const canSubmitEmail = computed(() => email.value.trim().length > 0 && !isLoading.value)
 
-const canSubmitCode = computed(
-  () => code.value.trim().length > 0 && !isLoading.value,
-)
+const canSubmitCode = computed(() => code.value.trim().length > 0 && !isLoading.value)
 
 const canResend = computed(() => resendAfter.value === 0 && !isLoading.value)
 
@@ -107,21 +103,11 @@ function backToEmail() {
       компактный знак (`logo.svg`) — он нарисован по мотивам этой же
       иллюстрации, но в 28 px детали рисунка не читаются.
     -->
-    <img
-      src="/img/site-logo.webp"
-      alt=""
-      width="320"
-      height="320"
-      class="auth__logo"
-    />
+    <img src="/img/site-logo.webp" alt="" width="320" height="320" class="auth__logo" />
 
     <h1>PeakHunter</h1>
 
-    <form
-      v-if="step === 'email'"
-      class="auth__form"
-      @submit.prevent="handleRequestCode"
-    >
+    <form v-if="step === 'email'" class="auth__form" @submit.prevent="handleRequestCode">
       <label class="auth__label">
         Email
         <input
@@ -134,20 +120,12 @@ function backToEmail() {
         />
       </label>
 
-      <button
-        type="submit"
-        :disabled="!canSubmitEmail"
-        class="auth__submit"
-      >
+      <button type="submit" :disabled="!canSubmitEmail" class="auth__submit">
         {{ isLoading ? 'Отправляем…' : 'Получить код' }}
       </button>
     </form>
 
-    <form
-      v-else
-      class="auth__form"
-      @submit.prevent="handleVerifyCode"
-    >
+    <form v-else class="auth__form" @submit.prevent="handleVerifyCode">
       <p class="auth__hint">
         Код отправлен на <strong>{{ email }}</strong>
       </p>
@@ -165,31 +143,16 @@ function backToEmail() {
         />
       </label>
 
-      <button
-        type="submit"
-        :disabled="!canSubmitCode"
-        class="auth__submit"
-      >
+      <button type="submit" :disabled="!canSubmitCode" class="auth__submit">
         {{ isLoading ? 'Проверяем…' : 'Войти' }}
       </button>
 
       <div class="auth__actions">
-        <button
-          type="button"
-          :disabled="!canResend"
-          class="auth__link"
-          @click="handleRequestCode"
-        >
+        <button type="button" :disabled="!canResend" class="auth__link" @click="handleRequestCode">
           {{ resendAfter > 0 ? `Повторно через ${resendAfter} с` : 'Отправить ещё раз' }}
         </button>
 
-        <button
-          type="button"
-          class="auth__link"
-          @click="backToEmail"
-        >
-          Изменить email
-        </button>
+        <button type="button" class="auth__link" @click="backToEmail">Изменить email</button>
       </div>
     </form>
 

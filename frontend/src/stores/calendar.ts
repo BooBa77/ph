@@ -70,9 +70,7 @@ export const useCalendarStore = defineStore('calendar', () => {
   }
 
   function isCovered(from: string, to: string): boolean {
-    return loadedRanges.value.some(
-      (range) => range.from <= from && range.to >= to,
-    )
+    return loadedRanges.value.some((range) => range.from <= from && range.to >= to)
   }
 
   /** Загрузить дни диапазона, если их ещё нет в кэше. */
