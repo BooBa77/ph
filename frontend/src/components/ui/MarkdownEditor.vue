@@ -338,7 +338,9 @@ function insertObject(object: GeoObject) {
   names.value = { ...names.value, [token]: object.name }
 
   // Только строчный фрагмент: блочный разорвал бы абзац надвое.
-  insertHtml(inlineMarkdownToHtml(token, names.value), true)
+  // И **без автоматического пробела спереди**: у самого объекта есть
+  // отступ, и пробел перед ним читается как лишний.
+  insertHtml(inlineMarkdownToHtml(token, names.value))
   panel.value = 'none'
 }
 
@@ -346,7 +348,7 @@ function insertParticipant(participant: MentionOption) {
   const token = userToken(participant.id)
   names.value = { ...names.value, [token]: participant.name }
 
-  insertHtml(inlineMarkdownToHtml(token, names.value), true)
+  insertHtml(inlineMarkdownToHtml(token, names.value))
   panel.value = 'none'
 }
 
@@ -366,7 +368,9 @@ function insertDate(iso: string) {
   pickedDate.value = iso
   isDateOpen.value = false
 
-  insertHtml(escapeHtml(formatDate(iso)), true)
+  // Пробел **после** даты: человек продолжает фразу, и без него пришлось бы
+  // ставить его самому. У объекта наоборот — пробел только мешает.
+  insertHtml(`${escapeHtml(formatDate(iso))} `, true)
 }
 
 function insertLink() {
@@ -486,7 +490,7 @@ const EMOJI = [
         type="button"
         title="Дата"
         aria-label="Дата"
-        class="cursor-pointer rounded-lg border p-1.5 transition-colors"
+        class="order-first cursor-pointer rounded-lg border p-1.5 transition-colors"
         :class="
           isDateOpen
             ? 'border-primary text-primary'

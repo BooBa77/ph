@@ -211,7 +211,7 @@ describe('MarkdownEditor', () => {
     await insertObject(wrapper)
 
     // Именно эта строка сломалась у заказчика: объект уезжал в начало.
-    expect(emitted(wrapper)).toBe('Пересекаем ручей, обедаем и к часу дня выходим к [[object:10]]')
+    expect(emitted(wrapper)).toBe('Пересекаем ручей, обедаем и к часу дня выходим к[[object:10]]')
   })
 
   it('вокруг объекта ровно один пробел, а не два', async () => {
@@ -226,7 +226,7 @@ describe('MarkdownEditor', () => {
 
     // Заказчик сказал «обрамляется двумя пробелами, переборщили»: пробел
     // справа принадлежит следующему слову, и свой добавлять не надо.
-    expect(emitted(wrapper)).toBe('Старт [[object:10]] конец')
+    expect(emitted(wrapper)).toBe('Старт[[object:10]] конец')
   })
 
   it('без пробела рядом объект не прилипает к слову', async () => {
@@ -239,7 +239,7 @@ describe('MarkdownEditor', () => {
 
     await insertObject(wrapper)
 
-    expect(emitted(wrapper)).toBe('выходим к [[object:10]]')
+    expect(emitted(wrapper)).toBe('выходим к[[object:10]]')
   })
 
   it('фильтр объекта показывает родителя, а текст — нет', async () => {
