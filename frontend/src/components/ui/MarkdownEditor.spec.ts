@@ -191,21 +191,6 @@ describe('MarkdownEditor', () => {
     expect(emitted(wrapper)).toBe('Привет, **мир**')
   })
 
-  it('список ставит маркеры и снимает их повторным нажатием', async () => {
-    const wrapper = mount(MarkdownEditor, { props: { modelValue: 'Раз' } })
-    placeCaret(wrapper, 3)
-
-    await wrapper.find('[data-test="md-list"]').trigger('click')
-
-    expect(html(wrapper)).toContain('<ul><li>Раз</li></ul>')
-    expect(emitted(wrapper)).toBe('- Раз')
-
-    await wrapper.find('[data-test="md-list"]').trigger('click')
-
-    expect(emitted(wrapper)).toBe('Раз')
-    expect(html(wrapper)).not.toContain('<ul>')
-  })
-
   it('вставленный объект уходит токеном, а виден именем', async () => {
     const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
 
@@ -229,7 +214,7 @@ describe('MarkdownEditor', () => {
     expect(emitted(wrapper)).toBe('Пересекаем ручей, обедаем и к часу дня выходим к [[object:10]]')
   })
 
-  it('объект отделяется пробелами с обеих сторон', async () => {
+  it('вокруг объекта ровно один пробел, а не два', async () => {
     const wrapper = mount(MarkdownEditor, {
       props: { modelValue: 'Старт конец' },
     })
@@ -239,8 +224,22 @@ describe('MarkdownEditor', () => {
 
     await insertObject(wrapper)
 
-    // Без пробелов получилось бы «Старт[[object:10]]конец».
+    // Заказчик сказал «обрамляется двумя пробелами, переборщили»: пробел
+    // справа принадлежит следующему слову, и свой добавлять не надо.
     expect(emitted(wrapper)).toBe('Старт [[object:10]] конец')
+  })
+
+  it('без пробела рядом объект не прилипает к слову', async () => {
+    const wrapper = mount(MarkdownEditor, {
+      props: { modelValue: 'выходим к' },
+    })
+
+    placeCaret(wrapper, 9)
+    await leaveEditor(wrapper)
+
+    await insertObject(wrapper)
+
+    expect(emitted(wrapper)).toBe('выходим к [[object:10]]')
   })
 
   it('фильтр объекта показывает родителя, а текст — нет', async () => {
@@ -262,7 +261,7 @@ describe('MarkdownEditor', () => {
     expect(html(wrapper)).not.toContain('Олхинское')
   })
 
-  it('дата вставляется сразу после выбора в календаре', async () => {
+  it('дата выбирается в календаре-модалке и вставляется сразу', async () => {
     const wrapper = mount(MarkdownEditor, {
       props: { modelValue: 'Ночёвка,' },
     })
@@ -270,16 +269,31 @@ describe('MarkdownEditor', () => {
 
     await wrapper.find('[data-test="md-date"]').trigger('click')
 
-    // Отдельной кнопки «вставить» нет: выбор даты и есть подтверждение.
-    expect(wrapper.find('[data-test="date-insert"]').exists()).toBe(false)
+    // Календарь — модалка по центру, а не панель с полем ввода под панелью:
+    // заказчик просил именно так.
+    expect(wrapper.find('[data-test="date-modal"]').exists()).toBe(true)
 
-    // `setValue` на поле даты приводит к `change`: выбор даты и есть
-    // подтверждение, отдельной кнопки нет.
-    await wrapper.find('[data-test="date-input"]').setValue('2027-05-12')
+    await wrapper.find('[data-test="date-day-15"]').trigger('click')
 
-    expect(emitted(wrapper)).toBe('Ночёвка, 12 мая 2027')
-    // Панель закрылась — вставлять второй раз нечего.
-    expect(wrapper.find('[data-test="date-input"]').exists()).toBe(false)
+    const now = new Date()
+    const months = [
+      'января',
+      'февраля',
+      'марта',
+      'апреля',
+      'мая',
+      'июня',
+      'июля',
+      'августа',
+      'сентября',
+      'октября',
+      'ноября',
+      'декабря',
+    ]
+
+    expect(emitted(wrapper)).toBe(`Ночёвка, 15 ${months[now.getMonth()]} ${now.getFullYear()}`)
+    // Модалка закрылась — вставлять второй раз нечего.
+    expect(wrapper.find('[data-test="date-modal"]').exists()).toBe(false)
   })
 
   it('дату можно не вставлять: «Отмена» закрывает календарь', async () => {
@@ -288,7 +302,7 @@ describe('MarkdownEditor', () => {
     await wrapper.find('[data-test="md-date"]').trigger('click')
     await wrapper.find('[data-test="date-cancel"]').trigger('click')
 
-    expect(wrapper.find('[data-test="date-input"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="date-modal"]').exists()).toBe(false)
     expect(emitted(wrapper)).toBe('')
   })
 

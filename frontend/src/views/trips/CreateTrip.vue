@@ -441,16 +441,22 @@ function startOver() {
     </div>
 
     <!-- Требования -->
-    <label class="flex flex-col gap-2">
+    <div class="flex flex-col gap-2">
       <span class="text-sm text-muted">Требования к участникам</span>
-      <textarea
+
+      <MarkdownEditor
         v-model="requirements"
-        rows="3"
+        min-height="5rem"
         placeholder="Опыт, снаряжение, «нужны свои кошки»"
-        class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-        data-test="requirements"
+        :objects="false"
+        :emoji="false"
       />
-    </label>
+
+      <span class="text-xs text-muted">
+        Базовый набор: оформление текста, ссылка и дата. Объекты сюда не вставляются — они в
+        маршруте.
+      </span>
+    </div>
 
     <!-- Коммерция -->
     <div v-if="isCommercial" class="flex flex-col gap-3">

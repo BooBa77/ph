@@ -7,8 +7,9 @@ export interface MentionOption {
 </script>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
+import DatePickerModal from '@/components/ui/DatePickerModal.vue'
 import GeoObjectPicker from '@/components/ui/GeoObjectPicker.vue'
 import {
   escapeHtml,
@@ -47,13 +48,24 @@ import type { GeoObject } from '@/types/trips'
  * ## Что ещё сделано по замечаниям
  *
  * - нажатая кнопка «жирный» подсвечивается: иначе непонятно, применилось ли;
- * - объекты и даты вставляются **с пробелами по обе стороны**, чтобы не
- *   прилипать к словам;
- * - дата вставляется сразу после выбора в календаре, без лишней кнопки;
- * - список делается **вручную**, а не командой браузера: команда не
- *   срабатывала, а своя работает одинаково везде и её можно проверить;
+ * - перед объектом и датой ставится **один** пробел, если его там нет,
+ *   а после — не ставится: два пробела подряд читаются как ошибка вёрстки;
+ * - дата выбирается в календаре-модалке и вставляется сразу;
  * - ссылку можно открыть по Ctrl+клику — обычный клик в редакторе ставит
  *   курсор, иначе править текст рядом со ссылкой было бы невозможно.
+ *
+ * ## Кнопки «список» нет, и это осознанно
+ *
+ * Она не заработала в браузере: курсор уезжал, маркеры не появлялись.
+ * Первая версия жалась на команду браузера `insertUnorderedList`, вторая
+ * была написана вручную — и тоже не сработала, а отладить это без живого
+ * браузера нельзя: тесты в jsdom проходили, а у человека не работало.
+ *
+ * Показывать кнопку, которая может не сработать, хуже, чем не показывать
+ * её вовсе. **Разметка списков при этом осталась**: текст, начинающийся
+ * с «- », по-прежнему читается и показывается списком — и если в нём
+ * сохранился старый маршрут, он не пропадёт. Вернуть кнопку можно, когда
+ * будет на чём проверить.
  */
 
 const props = withDefaults(
@@ -87,8 +99,11 @@ const text = defineModel<string>({ required: true })
 const names = ref<MentionNames>({ ...props.mentions })
 
 const editor = ref<HTMLDivElement | null>(null)
-const dateInput = ref<HTMLInputElement | null>(null)
-const panel = ref<'none' | 'object' | 'participant' | 'emoji' | 'link' | 'date'>('none')
+const panel = ref<'none' | 'object' | 'participant' | 'emoji' | 'link'>('none')
+
+/** Открыт ли календарь. Он модалка по центру, а не панель под панелью. */
+const isDateOpen = ref(false)
+
 const linkUrl = ref('')
 const pickedDate = ref(new Date().toISOString().slice(0, 10))
 
@@ -211,22 +226,21 @@ function restoreCaret(): Range | null {
   return selection.rangeCount > 0 ? selection.getRangeAt(0) : null
 }
 
-/** Нужен ли пробел перед вставкой: он не нужен в начале строки и после пробела. */
+/**
+ * Нужен ли пробел перед вставкой.
+ *
+ * Пробел нужен, только если слева его нет: иначе объект прилипнет
+ * к предыдущему слову. Справа свой пробел **не ставится никогда** —
+ * заказчик сказал «обрамляется двумя пробелами, переборщили», и он прав:
+ * пробел после объекта либо уже стоит в тексте, либо его поставит человек,
+ * когда продолжит фразу.
+ */
 function needsSpaceBefore(range: Range): boolean {
   const node = range.startContainer
-  if (node.nodeType !== Node.TEXT_NODE) return range.startOffset > 0
+  if (node.nodeType !== Node.TEXT_NODE) return false
 
   const before = (node.textContent ?? '').slice(0, range.startOffset)
   return before.length > 0 && !/\s$/.test(before)
-}
-
-/** Нужен ли пробел после вставки. */
-function needsSpaceAfter(range: Range): boolean {
-  const node = range.endContainer
-  if (node.nodeType !== Node.TEXT_NODE) return false
-
-  const after = (node.textContent ?? '').slice(range.endOffset)
-  return after.length > 0 && !/^\s/.test(after)
 }
 
 /**
@@ -236,8 +250,9 @@ function needsSpaceAfter(range: Range): boolean {
  * устаревшим и в тестовой среде его нет вовсе, а `Range` есть и в браузере,
  * и в jsdom — то есть вставку можно проверить, а не надеяться.
  *
- * `spaced` — для объектов и дат: они отделяются пробелами, иначе прилипают
- * к соседним словам («выходим к[[object:10]]»).
+ * `spaced` — для объектов и дат: перед ними ставится **один** пробел, если
+ * его там нет. После — не ставится: два пробела подряд читаются как ошибка
+ * вёрстки, а продолжить фразу человек и так начнёт с пробела.
  */
 function insertHtml(html: string, spaced = false) {
   const field = editor.value
@@ -252,11 +267,10 @@ function insertHtml(html: string, spaced = false) {
   }
 
   const prefix = spaced && needsSpaceBefore(range) ? ' ' : ''
-  const suffix = spaced && needsSpaceAfter(range) ? ' ' : ''
 
   range.deleteContents()
 
-  const fragment = range.createContextualFragment(`${prefix}${html}${suffix}`)
+  const fragment = range.createContextualFragment(`${prefix}${html}`)
   const last = fragment.lastChild
   range.insertNode(fragment)
 
@@ -309,139 +323,10 @@ function toggleBold() {
   sync()
 }
 
-/** Ближайший блок — прямой ребёнок поля редактирования. */
-function closestBlock(node: Node, field: HTMLElement): HTMLElement | null {
-  let current: Node | null = node
-
-  while (current && current !== field) {
-    if (current.nodeType === Node.ELEMENT_NODE) {
-      const element = current as HTMLElement
-      if (element.parentElement === field) return element
-    }
-    current = current.parentNode
-  }
-
-  return null
-}
-
-/** Блоки, которые задевает выделение. */
-function blocksInRange(field: HTMLElement, range: Range): HTMLElement[] {
-  const touched: HTMLElement[] = []
-
-  field.childNodes.forEach((node) => {
-    if (node.nodeType !== Node.ELEMENT_NODE) return
-    const element = node as HTMLElement
-    if (range.intersectsNode(element)) touched.push(element)
-  })
-
-  // Внутри списка прямым ребёнком поля стоит `<ul>`, а работать надо
-  // с его пунктами.
-  const blocks = touched.flatMap((element) =>
-    element.tagName === 'UL' || element.tagName === 'OL'
-      ? (Array.from(element.children) as HTMLElement[])
-      : [element],
-  )
-
-  if (blocks.length > 0) return blocks
-
-  const block = closestBlock(range.startContainer, field)
-  return block ? [block] : []
-}
-
-/** Обернуть блок в список. */
-function wrapInList(block: HTMLElement): HTMLElement {
-  const list = document.createElement('ul')
-  const item = document.createElement('li')
-
-  while (block.firstChild) item.appendChild(block.firstChild)
-  list.appendChild(item)
-  block.replaceWith(list)
-
-  return item
-}
-
-/** Вынуть пункт списка обратно в обычную строку. */
-function unwrapListItem(item: HTMLElement): HTMLElement {
-  const line = document.createElement('div')
-
-  while (item.firstChild) line.appendChild(item.firstChild)
-
-  // Строку ставим **перед списком**, а не на место пункта: пункт обязан
-  // лежать внутри `<ul>`, и `<div>` внутри списка — это уже не список
-  // с одной строкой, а список с мусором внутри, который потом никуда
-  // не денется.
-  const list = item.parentElement
-  if (list) list.before(line)
-  item.remove()
-
-  return line
-}
-
-/**
- * Список: поставить маркеры или убрать их.
- *
- * **Сделано вручную, а не командой браузера.** `insertUnorderedList` —
- * то самое место, где «ничего не происходит»: команда молча ничего не
- * делает, если курсор потерян или блок устроен не так, как она ждёт.
- * Своя реализация предсказуема, одинаково работает везде и, что важнее,
- * проверяется тестами.
- */
-function toggleList() {
-  const field = editor.value
-  const range = restoreCaret()
-  if (!field || !range) return
-
-  const blocks = blocksInRange(field, range)
-  if (blocks.length === 0) return
-
-  // Если всё выделенное уже в списке — убираем маркеры, иначе ставим.
-  const allItems = blocks.every((block) => block.tagName === 'LI')
-
-  let last: HTMLElement | null = null
-  for (const block of blocks) {
-    last = allItems ? unwrapListItem(block) : wrapInList(block)
-  }
-
-  // Пустые списки после разбора оставлять нельзя: они дают пустые строки
-  // в готовом тексте.
-  field.querySelectorAll('ul, ol').forEach((list) => {
-    if (list.children.length === 0) list.remove()
-  })
-
-  if (last) placeCaretAtEnd(last)
-  sync()
-}
-
-/** Поставить курсор в конец элемента. */
-function placeCaretAtEnd(element: HTMLElement) {
-  const range = document.createRange()
-  range.selectNodeContents(element)
-  range.collapse(false)
-
-  const selection = window.getSelection()
-  selection?.removeAllRanges()
-  selection?.addRange(range)
-  savedRange = range.cloneRange()
-}
-
-/** Открыть панель календаря и сразу показать встроенный календарь. */
-function openDatePanel() {
-  panel.value = panel.value === 'date' ? 'none' : 'date'
-  if (panel.value !== 'date') return
-
-  void nextTick(() => {
-    const input = dateInput.value as (HTMLInputElement & { showPicker?: () => void }) | null
-    if (!input) return
-
-    // `showPicker` открывает тот же календарь, что и клик по полю: человек
-    // жмёт одну кнопку, а не две.
-    try {
-      input.showPicker?.()
-    } catch {
-      // Браузер вправе отказать без жеста пользователя — тогда поле
-      // остаётся, и дату выбирают кликом по нему.
-    }
-  })
+/** Открыть календарь-модалку. */
+function openDatePicker() {
+  panel.value = 'none'
+  isDateOpen.value = true
 }
 
 function togglePanel(next: typeof panel.value) {
@@ -476,12 +361,12 @@ function formatDate(iso: string): string {
   return `${date.getDate()} ${MONTHS_GENITIVE[date.getMonth()]} ${date.getFullYear()}`
 }
 
-/** Дату вставляем сразу после выбора: отдельной кнопки «вставить» нет. */
-function insertDate() {
-  if (!pickedDate.value) return
+/** Дату вставляем сразу после выбора в календаре: отдельной кнопки нет. */
+function insertDate(iso: string) {
+  pickedDate.value = iso
+  isDateOpen.value = false
 
-  insertHtml(escapeHtml(formatDate(pickedDate.value)), true)
-  panel.value = 'none'
+  insertHtml(escapeHtml(formatDate(iso)), true)
 }
 
 function insertLink() {
@@ -570,31 +455,6 @@ const EMOJI = [
 
       <button
         type="button"
-        title="Список"
-        aria-label="Список"
-        class="cursor-pointer rounded-lg border border-border bg-field p-1.5 text-text transition-colors hover:border-primary"
-        data-test="md-list"
-        @mousedown.prevent
-        @click="toggleList"
-      >
-        <svg
-          class="h-5 w-5"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          aria-hidden="true"
-        >
-          <circle cx="5" cy="7" r="1.3" fill="currentColor" />
-          <circle cx="5" cy="12" r="1.3" fill="currentColor" />
-          <circle cx="5" cy="17" r="1.3" fill="currentColor" />
-          <path d="M10 7h9M10 12h9M10 17h9" />
-        </svg>
-      </button>
-
-      <button
-        type="button"
         title="Ссылка"
         aria-label="Ссылка"
         class="cursor-pointer rounded-lg border p-1.5 transition-colors"
@@ -628,13 +488,13 @@ const EMOJI = [
         aria-label="Дата"
         class="cursor-pointer rounded-lg border p-1.5 transition-colors"
         :class="
-          panel === 'date'
+          isDateOpen
             ? 'border-primary text-primary'
             : 'border-border bg-field text-text hover:border-primary'
         "
         data-test="md-date"
         @mousedown.prevent
-        @click="openDatePanel"
+        @click="openDatePicker"
       >
         <svg
           class="h-5 w-5"
@@ -742,30 +602,6 @@ const EMOJI = [
       </button>
     </div>
 
-    <!-- Дата: выбор в календаре и сразу вставка. Отдельной кнопки нет -->
-    <div
-      v-else-if="panel === 'date'"
-      class="flex flex-wrap items-center gap-3 border-b border-border p-2"
-    >
-      <input
-        ref="dateInput"
-        v-model="pickedDate"
-        type="date"
-        class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-        data-test="date-input"
-        @change="insertDate"
-      />
-
-      <button
-        type="button"
-        class="cursor-pointer text-sm text-muted underline transition-colors hover:text-text"
-        data-test="date-cancel"
-        @click="panel = 'none'"
-      >
-        Отмена
-      </button>
-    </div>
-
     <div
       v-else-if="panel === 'link'"
       class="flex flex-wrap items-center gap-3 border-b border-border p-2"
@@ -810,5 +646,14 @@ const EMOJI = [
         {{ placeholder }}
       </span>
     </div>
+
+    <!-- Календарь — модалка по центру, а не панель под панелью: так его
+         видно целиком, и он не толкает текст вниз -->
+    <DatePickerModal
+      v-if="isDateOpen"
+      :value="pickedDate"
+      @select="insertDate"
+      @close="isDateOpen = false"
+    />
   </div>
 </template>
