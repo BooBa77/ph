@@ -95,6 +95,14 @@ const router = createRouter({
           name: 'trip',
           component: () => import('@/views/trips/TripView.vue'),
         },
+        {
+          // Правка похода. Отдельный адрес, а не режим внутри страницы:
+          // форму можно открыть в новой вкладке, а «назад» из неё
+          // возвращает в поход, а не в середину чужого экрана.
+          path: ':id/edit',
+          name: 'trip-edit',
+          component: () => import('@/views/trips/TripEdit.vue'),
+        },
       ],
     },
     {

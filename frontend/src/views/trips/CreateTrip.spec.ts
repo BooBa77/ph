@@ -29,7 +29,7 @@ vi.mock('@/api/trips', () => ({ createTrip: mocks.createTrip }))
 const VITYAZ = {
   id: '10',
   name: 'Витязь',
-  type: 'скала',
+  type: 'скальник',
   url: null,
   parentId: '9',
   parentName: 'Олхинское плато',
@@ -68,7 +68,7 @@ describe('CreateTrip', () => {
       visibility: 'public',
       isCommercial: false,
       isSport: false,
-      goalObject: { id: '10', name: 'Витязь', type: 'скала', url: null },
+      goalObject: { id: '10', name: 'Витязь', type: 'скальник', url: null },
     })
   })
 
@@ -268,6 +268,34 @@ describe('CreateTrip', () => {
     await submit(wrapper)
 
     expect(wrapper.find('[data-test="error"]').text()).toContain('несуществующие объекты')
+  })
+
+  it('место и время сбора с заброской уходят в тело запроса', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    await wrapper.find('[data-test="meeting-place"]').setValue('Иркутск, автовокзал')
+    await wrapper.find('[data-test="meeting-at"]').setValue('2027-05-05T08:00')
+    await wrapper.find('[data-test="transfer"]').setValue('Электричка 6:40')
+    await submit(wrapper)
+
+    expect(lastPayload()).toMatchObject({
+      meetingPlace: 'Иркутск, автовокзал',
+      meetingAt: new Date('2027-05-05T08:00').toISOString(),
+      transferText: 'Электричка 6:40',
+    })
+  })
+
+  it('пустой сбор уезжает null-ом, а не пустой строкой', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+    await submit(wrapper)
+
+    expect(lastPayload()).toMatchObject({
+      meetingPlace: null,
+      meetingAt: null,
+      transferText: null,
+    })
   })
 
   it('после создания сразу открывается поход', async () => {
