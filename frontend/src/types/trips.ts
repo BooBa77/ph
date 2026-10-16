@@ -38,6 +38,23 @@ export const TRIP_STATUS_LABELS: Record<TripStatus, string> = {
   decided: 'Решено',
 }
 
+/**
+ * Что значит «когда» в фильтре ленты — значения бэкенда (`TRIP_WHEN_VALUES`).
+ *
+ * Это не то же самое, что готовность: «Решено» с датой в прошлом — прошедший
+ * поход, а «Мечта» без дат — бездатный. Готовность человек выбирает сам,
+ * «когда» вычисляется из дат и факта.
+ */
+export const TRIP_WHEN_VALUES = ['upcoming', 'ongoing', 'past', 'undated'] as const
+export type TripWhen = (typeof TRIP_WHEN_VALUES)[number]
+
+export const TRIP_WHEN_LABELS: Record<TripWhen, string> = {
+  upcoming: 'Впереди',
+  ongoing: 'Идёт сейчас',
+  past: 'Прошёл',
+  undated: 'Без дат',
+}
+
 /** Месяцы для выбора «когда-нибудь»: индекс — номер месяца от единицы. */
 export const MONTH_SHORT_NAMES = [
   'янв',
@@ -181,10 +198,46 @@ export interface Trip {
   status: TripStatus
   startsAt: string | null
   endsAt: string | null
+  /** Факт выхода на маршрут: он важнее плана — см. `TRIP_WHEN_VALUES`. */
+  actualStartedAt: string | null
+  /** Факт возвращения. */
+  actualFinishedAt: string | null
   isCommercial: boolean
   isSport: boolean
   priceRub: number | null
   priceNote: string | null
+  /** Когда поход отменён. В ленту отменённые не попадают, но по id видны. */
+  cancelledAt: string | null
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * Фильтры `GET /api/trips`.
+ *
+ * Все необязательны, и **отсутствие параметра — это не то же самое, что
+ * `false`**: без `isCommercial` вернутся и коммерческие, и нет, а с
+ * `isCommercial=false` — только некоммерческие. Поэтому «любое значение»
+ * в интерфейсе означает «не отправлять параметр», а не `false`.
+ *
+ * `mine` — три состояния: `true` — только мои, `false` — только чужие,
+ * без параметра — все видимые.
+ */
+export interface TripListQuery {
+  goalObjectId?: number
+  activityTypeId?: number
+  status?: TripStatus
+  isCommercial?: boolean
+  isSport?: boolean
+  when?: TripWhen
+  mine?: boolean
+  organizerUserId?: string
+  limit?: number
+  offset?: number
+}
+
+/** Ответ `GET /api/trips`: страница ленты и сколько всего подходит. */
+export interface TripListResponse {
+  trips: Trip[]
+  total: number
 }

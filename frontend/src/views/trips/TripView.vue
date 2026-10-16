@@ -6,7 +6,8 @@ import { ApiError } from '@/api/errors'
 import { getTrip } from '@/api/trips'
 import TripChats from '@/views/trips/TripChats.vue'
 import TripInfo from '@/views/trips/TripInfo.vue'
-import { TRIP_STATUS_LABELS, TRIP_VISIBILITY_LABELS, type Trip } from '@/types/trips'
+import { TRIP_VISIBILITY_LABELS, type Trip } from '@/types/trips'
+import { tripWhenText } from '@/utils/tripDisplay'
 
 /**
  * Страница похода: общая рамка и вкладки.
@@ -70,23 +71,13 @@ watch(
 /** Имя похода — это цель. Анонс идёт подписью. */
 const goalName = computed(() => trip.value?.goalObject?.name ?? 'Поход')
 
-/** Когда: у решённого — даты, у мечты и плана — готовность. */
-const whenText = computed(() => {
-  const current = trip.value
-  if (!current) return ''
-  if (!current.startsAt) return TRIP_STATUS_LABELS[current.status]
-
-  const format = (iso: string) =>
-    new Date(iso).toLocaleDateString('ru-RU', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    })
-
-  return current.endsAt
-    ? `${format(current.startsAt)} — ${format(current.endsAt)}`
-    : format(current.startsAt)
-})
+/**
+ * Когда: у решённого — даты, у мечты и плана — готовность.
+ *
+ * Форматирование живёт в `utils/tripDisplay.ts`: то же самое показывает
+ * карточка ленты, и третья копия этих строк разошлась бы с ними.
+ */
+const whenText = computed(() => (trip.value ? tripWhenText(trip.value) : ''))
 </script>
 
 <template>

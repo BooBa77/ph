@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 
 import { listObjectsByIds } from '@/api/objects'
 import { extractObjectIds, markdownToHtml, objectToken, type MentionNames } from '@/utils/markdown'
+import { tripFrameParts, tripWhenText } from '@/utils/tripDisplay'
 import { TRIP_STATUS_LABELS, type Trip } from '@/types/trips'
 
 /**
@@ -50,23 +51,14 @@ const requirementsHtml = computed(() =>
  * Когда.
  *
  * У решённого похода стоят даты, у мечты и плана их может не быть вовсе —
- * тогда честнее показать готовность, чем пустое место.
+ * тогда честнее показать готовность, чем пустое место. Форматирование
+ * общее с карточкой ленты, чтобы «когда» не выглядело по-разному
+ * в списке и внутри похода.
  */
-const dates = computed(() => {
-  const current = props.trip
-  if (!current.startsAt) return TRIP_STATUS_LABELS[current.status]
+const dates = computed(() => tripWhenText(props.trip))
 
-  const format = (iso: string) =>
-    new Date(iso).toLocaleDateString('ru-RU', {
-      day: 'numeric',
-      month: 'long',
-      year: 'numeric',
-    })
-
-  return current.endsAt
-    ? `${format(current.startsAt)} — ${format(current.endsAt)}`
-    : format(current.startsAt)
-})
+/** Рамка: коммерция, спортивность, цена — строкой через точку. */
+const frame = computed(() => tripFrameParts(props.trip).join(' · '))
 </script>
 
 <template>
@@ -92,12 +84,7 @@ const dates = computed(() => {
 
       <div>
         <dt class="text-xs text-muted">Рамка</dt>
-        <dd class="text-sm text-text">
-          <template v-if="trip.isCommercial">коммерческий</template>
-          <template v-else>некоммерческий</template>
-          <template v-if="trip.isSport"> · спортивный поход</template>
-          <template v-if="trip.priceRub"> · {{ trip.priceRub }} ₽</template>
-        </dd>
+        <dd class="text-sm text-text" data-test="info-frame">{{ frame }}</dd>
       </div>
     </dl>
 
