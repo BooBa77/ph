@@ -1,0 +1,1975 @@
+[
+  {
+    "slug": "araburektai1",
+    "region": "hamardaban",
+    "name": "на первом левом притоке реки Ара-Буректай",
+    "aliases": []
+  },
+  {
+    "slug": "shirikaya_bezymyannaya_lake",
+    "region": "hamardaban",
+    "name": "Бабочка (на левом истоке реки Широкая)",
+    "aliases": []
+  },
+  {
+    "slug": "babha",
+    "region": "hamardaban",
+    "name": "озеро в северном цирке пика Бабха",
+    "aliases": []
+  },
+  {
+    "slug": "baikal",
+    "region": "hamardaban",
+    "name": "Байкал",
+    "aliases": []
+  },
+  {
+    "slug": "barun_baiga",
+    "region": "hamardaban",
+    "name": "озеро - исток Барун-Байги",
+    "aliases": []
+  },
+  {
+    "slug": "bosan_margasan",
+    "region": "hamardaban",
+    "name": "озёра у гребня в районе пиков Босан и Маргасан",
+    "aliases": []
+  },
+  {
+    "slug": "vysokogornoe",
+    "region": "hamardaban",
+    "name": "Высокогорное",
+    "aliases": []
+  },
+  {
+    "slug": "galicye",
+    "region": "hamardaban",
+    "name": "Галичье",
+    "aliases": []
+  },
+  {
+    "slug": "dalnee_hd",
+    "region": "hamardaban",
+    "name": "озёра Дальние",
+    "aliases": []
+  },
+  {
+    "slug": "zverinoe",
+    "region": "hamardaban",
+    "name": "Звериное",
+    "aliases": []
+  },
+  {
+    "slug": "zun_selenginka",
+    "region": "hamardaban",
+    "name": "озёра в истоках Зун-Селенгинки",
+    "aliases": []
+  },
+  {
+    "slug": "izumrudnoe",
+    "region": "hamardaban",
+    "name": "Изумрудное",
+    "aliases": []
+  },
+  {
+    "slug": "irkut",
+    "region": "hamardaban",
+    "name": "озёра в истоках ручья Иркут",
+    "aliases": []
+  },
+  {
+    "slug": "karrovoe",
+    "region": "hamardaban",
+    "name": "Карровое",
+    "aliases": []
+  },
+  {
+    "slug": "teploe",
+    "region": "hamardaban",
+    "name": "озёра Тёплые",
+    "aliases": [
+      "Карьерские"
+    ]
+  },
+  {
+    "slug": "mamai",
+    "region": "hamardaban",
+    "name": "озёра в верховьях реки Большой Мамай",
+    "aliases": []
+  },
+  {
+    "slug": "medvezhie",
+    "region": "hamardaban",
+    "name": "озёра на правом истоке ручья Медвежьего (притока Селенгинки)",
+    "aliases": []
+  },
+  {
+    "slug": "left_medvezhii",
+    "region": "hamardaban",
+    "name": "озёра на левом истоке ручья Медвежьего",
+    "aliases": []
+  },
+  {
+    "slug": "mertvoe",
+    "region": "hamardaban",
+    "name": "Мёртвое",
+    "aliases": [
+      "Тёплое"
+    ]
+  },
+  {
+    "slug": "langutai",
+    "region": "hamardaban",
+    "name": "озеро - исток Лангутая",
+    "aliases": []
+  },
+  {
+    "slug": "okunevoe",
+    "region": "hamardaban",
+    "name": "Окунёвое",
+    "aliases": []
+  },
+  {
+    "slug": "patovoe",
+    "region": "hamardaban",
+    "name": "Патовое",
+    "aliases": []
+  },
+  {
+    "slug": "perevalnoe",
+    "region": "hamardaban",
+    "name": "Перевальное",
+    "aliases": []
+  },
+  {
+    "slug": "rassoha",
+    "region": "hamardaban",
+    "name": "озёра на истоке Рассохи",
+    "aliases": []
+  },
+  {
+    "slug": "osinovskie",
+    "region": "hamardaban",
+    "name": "озёра в бассейне реки Сайбат",
+    "aliases": []
+  },
+  {
+    "slug": "heart",
+    "region": "hamardaban",
+    "name": "Сердце",
+    "aliases": []
+  },
+  {
+    "slug": "serebryanka",
+    "region": "hamardaban",
+    "name": "озёра на истоках Серебрянки",
+    "aliases": []
+  },
+  {
+    "slug": "skazka",
+    "region": "hamardaban",
+    "name": "Сказка",
+    "aliases": []
+  },
+  {
+    "slug": "sobolinoe",
+    "region": "hamardaban",
+    "name": "Соболиное",
+    "aliases": []
+  },
+  {
+    "slug": "spasshin",
+    "region": "hamardaban",
+    "name": "Спасшин",
+    "aliases": []
+  },
+  {
+    "slug": "subutuehak",
+    "region": "hamardaban",
+    "name": "Субуту-Эхак",
+    "aliases": []
+  },
+  {
+    "slug": "tabachnye",
+    "region": "hamardaban",
+    "name": "озера Табачные",
+    "aliases": []
+  },
+  {
+    "slug": "taglei",
+    "region": "hamardaban",
+    "name": "Таглей",
+    "aliases": []
+  },
+  {
+    "slug": "talcinskie",
+    "region": "hamardaban",
+    "name": "озёра в верховьях ручья Тальцы (под пиком Тальцинским)",
+    "aliases": []
+  },
+  {
+    "slug": "tittit",
+    "region": "hamardaban",
+    "name": "озёра на правом истоке реки Тит-Тит",
+    "aliases": []
+  },
+  {
+    "slug": "tolboziha",
+    "region": "hamardaban",
+    "name": "озеро - исток Толбозихи",
+    "aliases": []
+  },
+  {
+    "slug": "turistskoe",
+    "region": "hamardaban",
+    "name": "Туристское",
+    "aliases": []
+  },
+  {
+    "slug": "figurnoe",
+    "region": "hamardaban",
+    "name": "Фигурное",
+    "aliases": []
+  },
+  {
+    "slug": "handagai",
+    "region": "hamardaban",
+    "name": "Хандагай",
+    "aliases": []
+  },
+  {
+    "slug": "helik",
+    "region": "hamardaban",
+    "name": "Хелик",
+    "aliases": []
+  },
+  {
+    "slug": "chernoe_hamar",
+    "region": "hamardaban",
+    "name": "Чёрное",
+    "aliases": []
+  },
+  {
+    "slug": "hi_chern",
+    "region": "hamardaban",
+    "name": "озёра в цирках левых притоков Чернушки",
+    "aliases": []
+  },
+  {
+    "slug": "chertovo",
+    "region": "hamardaban",
+    "name": "Чёртово",
+    "aliases": []
+  },
+  {
+    "slug": "ozerobl",
+    "region": "hamardaban",
+    "name": "Ы",
+    "aliases": []
+  },
+  {
+    "slug": "yamnoe",
+    "region": "hamardaban",
+    "name": "Ямное",
+    "aliases": []
+  },
+  {
+    "slug": "baikal",
+    "region": "olhon",
+    "name": "Байкал",
+    "aliases": []
+  },
+  {
+    "slug": "gurbinur",
+    "region": "olhon",
+    "name": "Гурби-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "kurma",
+    "region": "olhon",
+    "name": "Курма",
+    "aliases": []
+  },
+  {
+    "slug": "meteoritnoe",
+    "region": "olhon",
+    "name": "Метеоритное",
+    "aliases": []
+  },
+  {
+    "slug": "muhor",
+    "region": "olhon",
+    "name": "озёра на южном берегу залива Мухор",
+    "aliases": []
+  },
+  {
+    "slug": "namishnur",
+    "region": "olhon",
+    "name": "Намиш-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "nukunur",
+    "region": "olhon",
+    "name": "Нуку-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "nurskoe",
+    "region": "olhon",
+    "name": "Нурское",
+    "aliases": []
+  },
+  {
+    "slug": "surhaitor",
+    "region": "olhon",
+    "name": "Сурхайтор-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "tazheran",
+    "region": "olhon",
+    "name": "солёные озёра в Тажеранской степи",
+    "aliases": []
+  },
+  {
+    "slug": "hanhoi",
+    "region": "olhon",
+    "name": "Ханхой (Холой-Нур)",
+    "aliases": [
+      "Холой-Нур"
+    ]
+  },
+  {
+    "slug": "holbonur",
+    "region": "olhon",
+    "name": "Холбо-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "cagan_tyrm",
+    "region": "olhon",
+    "name": "Цаган-Тырм",
+    "aliases": []
+  },
+  {
+    "slug": "shadarnur",
+    "region": "olhon",
+    "name": "Шадар-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "sharanur",
+    "region": "olhon",
+    "name": "Шара-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "baushevo",
+    "region": "olha",
+    "name": "Баушево",
+    "aliases": []
+  },
+  {
+    "slug": "arangatui",
+    "region": "svyatoinos",
+    "name": "Арангатуй",
+    "aliases": []
+  },
+  {
+    "slug": "duhovoe_m",
+    "region": "svyatoinos",
+    "name": "Духовое",
+    "aliases": []
+  },
+  {
+    "slug": "small_arangatui",
+    "region": "svyatoinos",
+    "name": "Малый Арангатуй",
+    "aliases": []
+  },
+  {
+    "slug": "anaiskoe",
+    "region": "tunki",
+    "name": "Анойское",
+    "aliases": []
+  },
+  {
+    "slug": "bogohongoldoi",
+    "region": "tunki",
+    "name": "крупное озеро в верховьях реки Ара-Ошей",
+    "aliases": []
+  },
+  {
+    "slug": "araoshei",
+    "region": "tunki",
+    "name": "озеро - исток Ара-Ошея",
+    "aliases": []
+  },
+  {
+    "slug": "artemyeva",
+    "region": "tunki",
+    "name": "Артемьева",
+    "aliases": []
+  },
+  {
+    "slug": "arhat",
+    "region": "tunki",
+    "name": "озёра в верховьях реки Архат",
+    "aliases": []
+  },
+  {
+    "slug": "barun",
+    "region": "tunki",
+    "name": "озёра в верховьях реки Барун-Хандагай",
+    "aliases": []
+  },
+  {
+    "slug": "belokopytka",
+    "region": "tunki",
+    "name": "озёра на левых притоках Белокопытки",
+    "aliases": []
+  },
+  {
+    "slug": "bezkonechnoct",
+    "region": "tunki",
+    "name": "Бесконечность",
+    "aliases": []
+  },
+  {
+    "slug": "left_biluty",
+    "region": "tunki",
+    "name": "озёра в долине реки Левая Билюты",
+    "aliases": []
+  },
+  {
+    "slug": "right_biluty",
+    "region": "tunki",
+    "name": "озёра в долине реки Правая Билюты",
+    "aliases": []
+  },
+  {
+    "slug": "biron",
+    "region": "tunki",
+    "name": "озёра в верховьях Бирона",
+    "aliases": []
+  },
+  {
+    "slug": "boldokskoe",
+    "region": "tunki",
+    "name": "Болдокское",
+    "aliases": []
+  },
+  {
+    "slug": "big_angara",
+    "region": "tunki",
+    "name": "Большая Ангара",
+    "aliases": []
+  },
+  {
+    "slug": "bulyk",
+    "region": "tunki",
+    "name": "озёра на реке Булык",
+    "aliases": []
+  },
+  {
+    "slug": "ganga",
+    "region": "tunki",
+    "name": "озеро в верховьях реки Ганга-Хайрым",
+    "aliases": []
+  },
+  {
+    "slug": "golechnoe",
+    "region": "tunki",
+    "name": "Голечное",
+    "aliases": []
+  },
+  {
+    "slug": "golcovoe",
+    "region": "tunki",
+    "name": "Гольцовое",
+    "aliases": []
+  },
+  {
+    "slug": "gorlyk_daban",
+    "region": "tunki",
+    "name": "озёра в верховьях Горлык-Дабана",
+    "aliases": []
+  },
+  {
+    "slug": "dabady",
+    "region": "tunki",
+    "name": "Дабады",
+    "aliases": []
+  },
+  {
+    "slug": "domysheva",
+    "region": "tunki",
+    "name": "Домышева",
+    "aliases": []
+  },
+  {
+    "slug": "riverdomysheva",
+    "region": "tunki",
+    "name": "озёра в верховьях ручья Домышева",
+    "aliases": []
+  },
+  {
+    "slug": "dubegol",
+    "region": "tunki",
+    "name": "озёра на истоках реки Дубе-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "eloty_haragun",
+    "region": "tunki",
+    "name": "озеро в верховьях Елоты-Харагуна",
+    "aliases": []
+  },
+  {
+    "slug": "engarga",
+    "region": "tunki",
+    "name": "Енгаргинское",
+    "aliases": []
+  },
+  {
+    "slug": "alive_lake",
+    "region": "tunki",
+    "name": "Живое",
+    "aliases": []
+  },
+  {
+    "slug": "zun",
+    "region": "tunki",
+    "name": "озёра в верховьях реки Зун-Хандагай",
+    "aliases": [
+      "Марабец",
+      "Пулка"
+    ]
+  },
+  {
+    "slug": "pereval",
+    "region": "tunki",
+    "name": "озёра на реке Перевальной",
+    "aliases": [
+      "Изумрудные озёра"
+    ]
+  },
+  {
+    "slug": "iltykshin",
+    "region": "tunki",
+    "name": "озёра в верховьях Илтыкшина",
+    "aliases": []
+  },
+  {
+    "slug": "koimorskie",
+    "region": "tunki",
+    "name": "озёра Койморские",
+    "aliases": []
+  },
+  {
+    "slug": "kortylevo",
+    "region": "tunki",
+    "name": "Кортылёво",
+    "aliases": []
+  },
+  {
+    "slug": "krainee",
+    "region": "tunki",
+    "name": "Крайнее",
+    "aliases": []
+  },
+  {
+    "slug": "dead_lake",
+    "region": "tunki",
+    "name": "Мёртвое",
+    "aliases": []
+  },
+  {
+    "slug": "moglain_gol",
+    "region": "tunki",
+    "name": "Моглайн-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "moigoty",
+    "region": "tunki",
+    "name": "озёра в верховьях Мойготы",
+    "aliases": []
+  },
+  {
+    "slug": "mramornoe",
+    "region": "tunki",
+    "name": "озёра Мраморные",
+    "aliases": []
+  },
+  {
+    "slug": "noganulanur",
+    "region": "tunki",
+    "name": "Ноган-Ула-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "nogon",
+    "region": "tunki",
+    "name": "Ногон-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "nurkutul",
+    "region": "tunki",
+    "name": "озёра Нуркутул",
+    "aliases": []
+  },
+  {
+    "slug": "nuhungol",
+    "region": "tunki",
+    "name": "Нухун-Гол-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "her",
+    "region": "tunki",
+    "name": "озёра на правом истоке реки Хэр",
+    "aliases": []
+  },
+  {
+    "slug": "oerskoe",
+    "region": "tunki",
+    "name": "Оерское",
+    "aliases": []
+  },
+  {
+    "slug": "arhut",
+    "region": "tunki",
+    "name": "озёра на правом борту Архута",
+    "aliases": []
+  },
+  {
+    "slug": "podsnezhnoe",
+    "region": "tunki",
+    "name": "Подснежное",
+    "aliases": []
+  },
+  {
+    "slug": "serebryanoe",
+    "region": "tunki",
+    "name": "Серебряное",
+    "aliases": []
+  },
+  {
+    "slug": "soan",
+    "region": "tunki",
+    "name": "озёра в цирке пика СОАН",
+    "aliases": []
+  },
+  {
+    "slug": "turanskoe",
+    "region": "tunki",
+    "name": "Туранское",
+    "aliases": []
+  },
+  {
+    "slug": "uburhongoldoi",
+    "region": "tunki",
+    "name": "озёра в верховьях реки Убур-Хонголдой",
+    "aliases": []
+  },
+  {
+    "slug": "ugutere",
+    "region": "tunki",
+    "name": "озёра в верховьях Угутэрэ",
+    "aliases": []
+  },
+  {
+    "slug": "ulyabor",
+    "region": "tunki",
+    "name": "озеро под вершиной Улябор",
+    "aliases": []
+  },
+  {
+    "slug": "fedyushka",
+    "region": "tunki",
+    "name": "озеро - исток Федюшкиной Речки",
+    "aliases": []
+  },
+  {
+    "slug": "hotlug_gol",
+    "region": "tunki",
+    "name": "озёра в верховьях Хатлуг-Гола",
+    "aliases": []
+  },
+  {
+    "slug": "hobok",
+    "region": "tunki",
+    "name": "Хобок",
+    "aliases": []
+  },
+  {
+    "slug": "hongoldoiskoe",
+    "region": "tunki",
+    "name": "Хонголдой",
+    "aliases": []
+  },
+  {
+    "slug": "hotogol",
+    "region": "tunki",
+    "name": "озеро в верховьях реки Хото-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "hohyur",
+    "region": "tunki",
+    "name": "озеро в верховьях реки Хохюр",
+    "aliases": []
+  },
+  {
+    "slug": "hibuty_hi",
+    "region": "tunki",
+    "name": "озеро в верховьях реки Хубуты",
+    "aliases": []
+  },
+  {
+    "slug": "hubuty",
+    "region": "tunki",
+    "name": "озёра на развилке троп на Хубуты и Эхе-Гер",
+    "aliases": []
+  },
+  {
+    "slug": "hundy_gol",
+    "region": "tunki",
+    "name": "озёра в истоках Хунды-Гола",
+    "aliases": []
+  },
+  {
+    "slug": "huraihair",
+    "region": "tunki",
+    "name": "озёра в верховьях реки Хурай-Хайр",
+    "aliases": []
+  },
+  {
+    "slug": "chirok",
+    "region": "tunki",
+    "name": "Чирок",
+    "aliases": []
+  },
+  {
+    "slug": "left_shumak",
+    "region": "tunki",
+    "name": "озеро на Левом Шумаке под перевалом Зунгольский",
+    "aliases": []
+  },
+  {
+    "slug": "eheger",
+    "region": "tunki",
+    "name": "озёра в верховьях Эхе-Гера",
+    "aliases": []
+  },
+  {
+    "slug": "left_ehegol",
+    "region": "tunki",
+    "name": "озёра на левом истоке реки Эхе-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "right_ehegol",
+    "region": "tunki",
+    "name": "озёра на правом истоке реки Эхе-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "ehegolustie",
+    "region": "tunki",
+    "name": "у устья Эхе-Гола",
+    "aliases": []
+  },
+  {
+    "slug": "starica",
+    "region": "tunki",
+    "name": "озеро на правом берегу Эхе-Угун",
+    "aliases": []
+  },
+  {
+    "slug": "bazhir",
+    "region": "munku",
+    "name": "озёра в долине Бажира",
+    "aliases": []
+  },
+  {
+    "slug": "golechnoe",
+    "region": "munku",
+    "name": "Голечное",
+    "aliases": []
+  },
+  {
+    "slug": "dutenur",
+    "region": "munku",
+    "name": "Дутэ-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "zhohoi",
+    "region": "munku",
+    "name": "озёра на левом притоке реки Жохой",
+    "aliases": []
+  },
+  {
+    "slug": "ilchir",
+    "region": "munku",
+    "name": "Ильчир",
+    "aliases": []
+  },
+  {
+    "slug": "okinskoe",
+    "region": "munku",
+    "name": "Окинское",
+    "aliases": []
+  },
+  {
+    "slug": "solyaris",
+    "region": "munku",
+    "name": "Солярис",
+    "aliases": []
+  },
+  {
+    "slug": "suser",
+    "region": "munku",
+    "name": "Сусер",
+    "aliases": []
+  },
+  {
+    "slug": "tolta",
+    "region": "munku",
+    "name": "Толта",
+    "aliases": []
+  },
+  {
+    "slug": "tunkunur",
+    "region": "munku",
+    "name": "Тунку-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "ehoi",
+    "region": "munku",
+    "name": "Эхой",
+    "aliases": []
+  },
+  {
+    "slug": "antenur",
+    "region": "dolinavulkanov",
+    "name": "Антэ-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "aranoganhol",
+    "region": "dolinavulkanov",
+    "name": "Ара-Ноган-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "arasailagright",
+    "region": "dolinavulkanov",
+    "name": "озёра в цирках правых притоков Ара-Сайлага",
+    "aliases": []
+  },
+  {
+    "slug": "arasailagnur",
+    "region": "dolinavulkanov",
+    "name": "Ара-Сайлаг-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "argahol",
+    "region": "dolinavulkanov",
+    "name": "Арга-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "arzhanhem",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях Аржан-Хема",
+    "aliases": []
+  },
+  {
+    "slug": "arshantainur",
+    "region": "dolinavulkanov",
+    "name": "Аршантай-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "barunsala",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях Барун-Салы",
+    "aliases": []
+  },
+  {
+    "slug": "barun_hadarus",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях Барун-Хадаруса",
+    "aliases": []
+  },
+  {
+    "slug": "boldoktoinur",
+    "region": "dolinavulkanov",
+    "name": "Болдоктой-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "bumerang",
+    "region": "dolinavulkanov",
+    "name": "Бумеранг",
+    "aliases": []
+  },
+  {
+    "slug": "bursagainur",
+    "region": "dolinavulkanov",
+    "name": "Бурсагай-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "vihlyastoe",
+    "region": "dolinavulkanov",
+    "name": "Виластое",
+    "aliases": []
+  },
+  {
+    "slug": "gazovoe",
+    "region": "dolinavulkanov",
+    "name": "Газовое",
+    "aliases": []
+  },
+  {
+    "slug": "dabatynehinnur",
+    "region": "dolinavulkanov",
+    "name": "Дабатын-Эхин-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "dlinnenkoe",
+    "region": "dolinavulkanov",
+    "name": "Длинненькое",
+    "aliases": []
+  },
+  {
+    "slug": "hrebet_bigs",
+    "region": "dolinavulkanov",
+    "name": "озёра на основном хребте в истоках Довурактыг-Ханнаш-Хема",
+    "aliases": []
+  },
+  {
+    "slug": "dovuraktyg_left",
+    "region": "dolinavulkanov",
+    "name": "озёра на левом истоке Довурактыг-Ханнаш-Хема",
+    "aliases": []
+  },
+  {
+    "slug": "dozornur",
+    "region": "dolinavulkanov",
+    "name": "Дозор-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "doshtughol",
+    "region": "dolinavulkanov",
+    "name": "Доштуг-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "dundaary",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях реки Дунда-Ары",
+    "aliases": []
+  },
+  {
+    "slug": "left_dundagol",
+    "region": "dolinavulkanov",
+    "name": "на левом истоке реки Дунда-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "right_dunda",
+    "region": "dolinavulkanov",
+    "name": "озёра в истоках правого притока Дунда-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "zagasatainur",
+    "region": "dolinavulkanov",
+    "name": "Загасатай-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "ishhenehenur",
+    "region": "dolinavulkanov",
+    "name": "Ишхэн-Эхе-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "karabalyk",
+    "region": "dolinavulkanov",
+    "name": "Кара-Балык",
+    "aliases": []
+  },
+  {
+    "slug": "keledzaram",
+    "region": "dolinavulkanov",
+    "name": "Келед-Зарам",
+    "aliases": []
+  },
+  {
+    "slug": "kokhol",
+    "region": "dolinavulkanov",
+    "name": "Кок-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "krugloe",
+    "region": "dolinavulkanov",
+    "name": "Круглое",
+    "aliases": []
+  },
+  {
+    "slug": "mozaichnoe",
+    "region": "dolinavulkanov",
+    "name": "Мозаичное",
+    "aliases": []
+  },
+  {
+    "slug": "mulesetenur",
+    "region": "dolinavulkanov",
+    "name": "Мулесэтэ-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "mysovidnye",
+    "region": "dolinavulkanov",
+    "name": "озёра Мысовидные",
+    "aliases": []
+  },
+  {
+    "slug": "nedostupnoe",
+    "region": "dolinavulkanov",
+    "name": "Недоступное",
+    "aliases": []
+  },
+  {
+    "slug": "noganhol",
+    "region": "dolinavulkanov",
+    "name": "Ноган-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "nomohonnur",
+    "region": "dolinavulkanov",
+    "name": "Номохон-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "nomtonur",
+    "region": "dolinavulkanov",
+    "name": "Номто-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "nurtoisala",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях Нуртой-Салы",
+    "aliases": []
+  },
+  {
+    "slug": "obtoidaban",
+    "region": "dolinavulkanov",
+    "name": "озёра на перевале Обтой-Дабан",
+    "aliases": []
+  },
+  {
+    "slug": "olonnur",
+    "region": "dolinavulkanov",
+    "name": "озёра Олон-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "ostrovnoe",
+    "region": "dolinavulkanov",
+    "name": "Островное",
+    "aliases": []
+  },
+  {
+    "slug": "sagannur",
+    "region": "dolinavulkanov",
+    "name": "озёра Саган-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "saranog",
+    "region": "dolinavulkanov",
+    "name": "Сараног",
+    "aliases": []
+  },
+  {
+    "slug": "taldyghol",
+    "region": "dolinavulkanov",
+    "name": "Талдыг-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "teroknur",
+    "region": "dolinavulkanov",
+    "name": "Терок-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "tissinzunehin",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях Тиссин-Зун-Эхина",
+    "aliases": []
+  },
+  {
+    "slug": "tissinehinnur",
+    "region": "dolinavulkanov",
+    "name": "Тиссин-Эхин-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "hitissa",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях Тиссы",
+    "aliases": []
+  },
+  {
+    "slug": "todutskoe",
+    "region": "dolinavulkanov",
+    "name": "Тодутское",
+    "aliases": []
+  },
+  {
+    "slug": "tohoinur",
+    "region": "dolinavulkanov",
+    "name": "Тохой-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "trehgolovoe",
+    "region": "dolinavulkanov",
+    "name": "Трёхголовое",
+    "aliases": []
+  },
+  {
+    "slug": "tuhurennur",
+    "region": "dolinavulkanov",
+    "name": "Тухурен-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "tehezharag",
+    "region": "dolinavulkanov",
+    "name": "Тэхе-Жараг",
+    "aliases": []
+  },
+  {
+    "slug": "uzun_uzyu",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях Узун-Узю",
+    "aliases": []
+  },
+  {
+    "slug": "ustyukokhol",
+    "region": "dolinavulkanov",
+    "name": "Устю-Кок-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "utahannur",
+    "region": "dolinavulkanov",
+    "name": "Утахан-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "habsagaita",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях Хабсагайты",
+    "aliases": []
+  },
+  {
+    "slug": "habshunur",
+    "region": "dolinavulkanov",
+    "name": "Хабщу-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "haranur",
+    "region": "dolinavulkanov",
+    "name": "Хара-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "higol",
+    "region": "dolinavulkanov",
+    "name": "озёра в верховьях пади Хи-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "hilynnur",
+    "region": "dolinavulkanov",
+    "name": "Хилын-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "hoitogol",
+    "region": "dolinavulkanov",
+    "name": "озеро - исток реки Хойто-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "huhenur",
+    "region": "dolinavulkanov",
+    "name": "Хухэ-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "dodohuhenur",
+    "region": "dolinavulkanov",
+    "name": "Додо-Хухэ-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "dedehuhenur",
+    "region": "dolinavulkanov",
+    "name": "Дэдэ-Хухэ-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "choigandaban",
+    "region": "dolinavulkanov",
+    "name": "озёра на перевале Чойган-Дабан",
+    "aliases": []
+  },
+  {
+    "slug": "sharza",
+    "region": "dolinavulkanov",
+    "name": "озёра у Шарзинской котловины",
+    "aliases": []
+  },
+  {
+    "slug": "shshuthulainur",
+    "region": "dolinavulkanov",
+    "name": "Шутхулай-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "shuthulainur",
+    "region": "dolinavulkanov",
+    "name": "Шутхулай-Нур (на Тиссе)",
+    "aliases": []
+  },
+  {
+    "slug": "ehinnur",
+    "region": "dolinavulkanov",
+    "name": "Эхин-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "agulskoe",
+    "region": "tofalariya",
+    "name": "Агульское",
+    "aliases": []
+  },
+  {
+    "slug": "arshannyrskie",
+    "region": "tofalariya",
+    "name": "озёра Аршан-Нурские",
+    "aliases": []
+  },
+  {
+    "slug": "verhnee",
+    "region": "tofalariya",
+    "name": "Верхнее",
+    "aliases": []
+  },
+  {
+    "slug": "kinzeluk",
+    "region": "tofalariya",
+    "name": "Верхнее Кинзелюкское",
+    "aliases": []
+  },
+  {
+    "slug": "gornoe",
+    "region": "tofalariya",
+    "name": "Горное",
+    "aliases": []
+  },
+  {
+    "slug": "gutarskie",
+    "region": "tofalariya",
+    "name": "озёра Гутарские",
+    "aliases": []
+  },
+  {
+    "slug": "ikebana",
+    "region": "tofalariya",
+    "name": "Икебана",
+    "aliases": []
+  },
+  {
+    "slug": "ishhenehenur",
+    "region": "tofalariya",
+    "name": "Ишхэн-Эхе-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "low_kinzelyukskoe",
+    "region": "tofalariya",
+    "name": "Нижнее Кинзелюкское",
+    "aliases": []
+  },
+  {
+    "slug": "medvezhee",
+    "region": "tofalariya",
+    "name": "Медвежье",
+    "aliases": []
+  },
+  {
+    "slug": "mulesetenur",
+    "region": "tofalariya",
+    "name": "Мулесэтэ-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "taldyghol",
+    "region": "tofalariya",
+    "name": "Талдыг-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "todutskoe",
+    "region": "tofalariya",
+    "name": "Тодутское",
+    "aliases": []
+  },
+  {
+    "slug": "dergalake",
+    "region": "tofalariya",
+    "name": "под горой Тофалария",
+    "aliases": []
+  },
+  {
+    "slug": "uzunbalykhol",
+    "region": "tofalariya",
+    "name": "Узун-Балык-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "haranur",
+    "region": "tofalariya",
+    "name": "Хара-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "hormunughol",
+    "region": "tofalariya",
+    "name": "Хормунуг-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "hrebtovoe",
+    "region": "tofalariya",
+    "name": "Хребтовое",
+    "aliases": []
+  },
+  {
+    "slug": "shan",
+    "region": "tofalariya",
+    "name": "Шан",
+    "aliases": []
+  },
+  {
+    "slug": "krestovskie",
+    "region": "primorskiihrebet",
+    "name": "озёра у пади Крестовской",
+    "aliases": []
+  },
+  {
+    "slug": "suhoe_semeniha",
+    "region": "primorskiihrebet",
+    "name": "сухое озеро в пади Прямой",
+    "aliases": []
+  },
+  {
+    "slug": "yunnatka",
+    "region": "irkutsk",
+    "name": "Юннатка",
+    "aliases": []
+  },
+  {
+    "slug": "small_akuli",
+    "region": "sever",
+    "name": "Малое Акули",
+    "aliases": []
+  },
+  {
+    "slug": "amutmaskit",
+    "region": "sever",
+    "name": "озёра в верховьях Амутмаскита",
+    "aliases": []
+  },
+  {
+    "slug": "boguchan",
+    "region": "sever",
+    "name": "Богучан",
+    "aliases": []
+  },
+  {
+    "slug": "big_akuli",
+    "region": "sever",
+    "name": "Большое Акули",
+    "aliases": []
+  },
+  {
+    "slug": "hi_ilogir",
+    "region": "sever",
+    "name": "озёра в верховьях реки Илогирь",
+    "aliases": []
+  },
+  {
+    "slug": "ilogir",
+    "region": "sever",
+    "name": "Илогирь",
+    "aliases": []
+  },
+  {
+    "slug": "ilokalui",
+    "region": "sever",
+    "name": "озёра в верховьях Илокалуя",
+    "aliases": []
+  },
+  {
+    "slug": "ilbikaichi_ilogir",
+    "region": "sever",
+    "name": "озёра на водоразделе рек Ильбикайчи и Илогирь",
+    "aliases": []
+  },
+  {
+    "slug": "irkana",
+    "region": "sever",
+    "name": "Иркана",
+    "aliases": []
+  },
+  {
+    "slug": "istochnoe",
+    "region": "sever",
+    "name": "Источное",
+    "aliases": []
+  },
+  {
+    "slug": "svetlaya",
+    "region": "sever",
+    "name": "озёра в верховьях Светлой",
+    "aliases": []
+  },
+  {
+    "slug": "slyudyanskoe",
+    "region": "sever",
+    "name": "Слюдянское",
+    "aliases": []
+  },
+  {
+    "slug": "urel_amutis",
+    "region": "sever",
+    "name": "озёра Урёл-Амутис",
+    "aliases": []
+  },
+  {
+    "slug": "froliha",
+    "region": "sever",
+    "name": "Фролиха",
+    "aliases": []
+  },
+  {
+    "slug": "yanyr_amutis",
+    "region": "sever",
+    "name": "озёра Яныр-Амутис",
+    "aliases": []
+  },
+  {
+    "slug": "hi_irel",
+    "region": "baikalskiihrebet",
+    "name": "Верхнеирельское",
+    "aliases": []
+  },
+  {
+    "slug": "vodopadnyi",
+    "region": "baikalskiihrebet",
+    "name": "озёра на ручье Водопадном",
+    "aliases": []
+  },
+  {
+    "slug": "gitara",
+    "region": "baikalskiihrebet",
+    "name": "Гитара",
+    "aliases": []
+  },
+  {
+    "slug": "zapyataya",
+    "region": "baikalskiihrebet",
+    "name": "Запятая",
+    "aliases": []
+  },
+  {
+    "slug": "krugloe_izumrudnoe",
+    "region": "baikalskiihrebet",
+    "name": "Изумрудное (в верховьях Куркулы)",
+    "aliases": []
+  },
+  {
+    "slug": "baik_krugloe",
+    "region": "baikalskiihrebet",
+    "name": "Круглое (в верховьях Горемыки)",
+    "aliases": []
+  },
+  {
+    "slug": "protochnoe",
+    "region": "baikalskiihrebet",
+    "name": "Проточное",
+    "aliases": []
+  },
+  {
+    "slug": "rybnoe",
+    "region": "baikalskiihrebet",
+    "name": "Рыбное",
+    "aliases": []
+  },
+  {
+    "slug": "tazik",
+    "region": "baikalskiihrebet",
+    "name": "Тазик",
+    "aliases": []
+  },
+  {
+    "slug": "yana",
+    "region": "baikalskiihrebet",
+    "name": "Яна",
+    "aliases": []
+  },
+  {
+    "slug": "big_alginskoe",
+    "region": "barguzinskiihrebet",
+    "name": "Большое Алгинское",
+    "aliases": []
+  },
+  {
+    "slug": "amnut",
+    "region": "barguzinskiihrebet",
+    "name": "Амнут",
+    "aliases": []
+  },
+  {
+    "slug": "balantamur",
+    "region": "barguzinskiihrebet",
+    "name": "Балан-Тамур",
+    "aliases": []
+  },
+  {
+    "slug": "right_biramiya",
+    "region": "barguzinskiihrebet",
+    "name": "озёра в верховьях Правой Бирамьи",
+    "aliases": []
+  },
+  {
+    "slug": "big_gordelanskoe",
+    "region": "barguzinskiihrebet",
+    "name": "Большое Горделанское",
+    "aliases": []
+  },
+  {
+    "slug": "gudzhirchan",
+    "region": "barguzinskiihrebet",
+    "name": "Гуджирчан",
+    "aliases": []
+  },
+  {
+    "slug": "iohanskie",
+    "region": "barguzinskiihrebet",
+    "name": "Иоханские озёра",
+    "aliases": []
+  },
+  {
+    "slug": "namama",
+    "region": "barguzinskiihrebet",
+    "name": "Намама",
+    "aliases": []
+  },
+  {
+    "slug": "left_talaya",
+    "region": "barguzinskiihrebet",
+    "name": "озёра на истоках Левой Талой",
+    "aliases": []
+  },
+  {
+    "slug": "ukoinda",
+    "region": "barguzinskiihrebet",
+    "name": "Укоинда",
+    "aliases": []
+  },
+  {
+    "slug": "ulziha",
+    "region": "barguzinskiihrebet",
+    "name": "озёра в верховьях Ульзихи",
+    "aliases": []
+  },
+  {
+    "slug": "ulyugna",
+    "region": "barguzinskiihrebet",
+    "name": "озёра в верховьях Улюгны",
+    "aliases": []
+  },
+  {
+    "slug": "cheremshannye",
+    "region": "barguzinskiihrebet",
+    "name": "озёра Черемшаные",
+    "aliases": []
+  },
+  {
+    "slug": "shumiliha",
+    "region": "barguzinskiihrebet",
+    "name": "озёра на Шумилихе",
+    "aliases": []
+  },
+  {
+    "slug": "arlykgol",
+    "region": "urikonot",
+    "name": "озёра в верховьях Арлык-Гола",
+    "aliases": []
+  },
+  {
+    "slug": "barunospa",
+    "region": "urikonot",
+    "name": "озёра на Барун-Оспе",
+    "aliases": []
+  },
+  {
+    "slug": "gazar_amanai_nur",
+    "region": "urikonot",
+    "name": "Газар-Аманай-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "dedezunsala",
+    "region": "urikonot",
+    "name": "озёра на Дэдэ-Зун-Сала",
+    "aliases": []
+  },
+  {
+    "slug": "river_ilchir",
+    "region": "urikonot",
+    "name": "озеро - исток реки Ильчир",
+    "aliases": []
+  },
+  {
+    "slug": "sohormorito",
+    "region": "urikonot",
+    "name": "озёра на Сохор-Морито",
+    "aliases": []
+  },
+  {
+    "slug": "ulzyta",
+    "region": "urikonot",
+    "name": "озёра в верховьях Улзыты",
+    "aliases": []
+  },
+  {
+    "slug": "haranur1",
+    "region": "urikonot",
+    "name": "Хара-Нур (Урунгольский хребет)",
+    "aliases": []
+  },
+  {
+    "slug": "big_bychie",
+    "region": "middle",
+    "name": "Большое Бычье",
+    "aliases": []
+  },
+  {
+    "slug": "small_bychie",
+    "region": "middle",
+    "name": "Малое Бычье",
+    "aliases": []
+  },
+  {
+    "slug": "duhovoe",
+    "region": "middle",
+    "name": "Духовое (около Гремячинска)",
+    "aliases": []
+  },
+  {
+    "slug": "kotokel",
+    "region": "middle",
+    "name": "Котокель",
+    "aliases": []
+  },
+  {
+    "slug": "ehenur",
+    "region": "baikalolenskii",
+    "name": "Ехэ-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "zama",
+    "region": "baikalolenskii",
+    "name": "Зама",
+    "aliases": []
+  },
+  {
+    "slug": "izumrudnoe_bl",
+    "region": "baikalolenskii",
+    "name": "Изумрудное (в долине Лены)",
+    "aliases": []
+  },
+  {
+    "slug": "kulgana",
+    "region": "baikalolenskii",
+    "name": "Кулгана",
+    "aliases": []
+  },
+  {
+    "slug": "lena",
+    "region": "baikalolenskii",
+    "name": "озеро - исток Лены",
+    "aliases": []
+  },
+  {
+    "slug": "small_soloncovoe",
+    "region": "baikalolenskii",
+    "name": "Малое Солонцовое",
+    "aliases": []
+  },
+  {
+    "slug": "schuchie_eligei",
+    "region": "baikalolenskii",
+    "name": "Щучье (в устье Элигея)",
+    "aliases": []
+  },
+  {
+    "slug": "alenushka",
+    "region": "kodar",
+    "name": "Алёнушка",
+    "aliases": []
+  },
+  {
+    "slug": "burgai",
+    "region": "kodar",
+    "name": "Бургай",
+    "aliases": []
+  },
+  {
+    "slug": "gryaznoe",
+    "region": "kodar",
+    "name": "Грязное",
+    "aliases": []
+  },
+  {
+    "slug": "dagaldyn",
+    "region": "kodar",
+    "name": "Дагалдын",
+    "aliases": []
+  },
+  {
+    "slug": "kampangna",
+    "region": "kodar",
+    "name": "Кампангна",
+    "aliases": []
+  },
+  {
+    "slug": "kapchan",
+    "region": "kodar",
+    "name": "озёра Капчан",
+    "aliases": []
+  },
+  {
+    "slug": "big_leprindo",
+    "region": "kodar",
+    "name": "Большое Леприндо",
+    "aliases": []
+  },
+  {
+    "slug": "small_leprindo",
+    "region": "kodar",
+    "name": "Малое Леприндо",
+    "aliases": []
+  },
+  {
+    "slug": "leprindokan",
+    "region": "kodar",
+    "name": "Леприндокан",
+    "aliases": []
+  },
+  {
+    "slug": "melchikit",
+    "region": "kodar",
+    "name": "Мельчикит",
+    "aliases": []
+  },
+  {
+    "slug": "nichatka",
+    "region": "kodar",
+    "name": "Ничатка",
+    "aliases": []
+  },
+  {
+    "slug": "olenie",
+    "region": "kodar",
+    "name": "Оленье",
+    "aliases": []
+  },
+  {
+    "slug": "oron",
+    "region": "kodar",
+    "name": "Орон",
+    "aliases": []
+  },
+  {
+    "slug": "hi_sakukan",
+    "region": "kodar",
+    "name": "озеро - исток Верхнего Сакукана",
+    "aliases": []
+  },
+  {
+    "slug": "krasavica",
+    "region": "kodar",
+    "name": "Спящая Красавица",
+    "aliases": []
+  },
+  {
+    "slug": "left_sygykta",
+    "region": "kodar",
+    "name": "озёра в верховьях Левой Сыгыкты",
+    "aliases": []
+  },
+  {
+    "slug": "taezhnoe",
+    "region": "kodar",
+    "name": "Таёжное",
+    "aliases": []
+  },
+  {
+    "slug": "uglovoe",
+    "region": "kodar",
+    "name": "Угловое",
+    "aliases": []
+  },
+  {
+    "slug": "hallas",
+    "region": "kodar",
+    "name": "Халлас",
+    "aliases": []
+  },
+  {
+    "slug": "bazhir",
+    "region": "bigsayan",
+    "name": "озёра в долине Бажира",
+    "aliases": []
+  },
+  {
+    "slug": "bilinhol",
+    "region": "bigsayan",
+    "name": "Билин-Холь",
+    "aliases": []
+  },
+  {
+    "slug": "dozornur",
+    "region": "bigsayan",
+    "name": "Дозор-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "zhohoi_sade",
+    "region": "bigsayan",
+    "name": "озёра на плоскогорье между Жохоем и Садэ",
+    "aliases": []
+  },
+  {
+    "slug": "zhohoi",
+    "region": "bigsayan",
+    "name": "озёра на левом притоке реки Жохой",
+    "aliases": []
+  },
+  {
+    "slug": "hi_zhohoi",
+    "region": "bigsayan",
+    "name": "озёра в верховьях Жохоя",
+    "aliases": []
+  },
+  {
+    "slug": "bigbutugol",
+    "region": "bigsayan",
+    "name": "исток Большого Буту-Гола",
+    "aliases": []
+  },
+  {
+    "slug": "okinskoe",
+    "region": "bigsayan",
+    "name": "Окинское",
+    "aliases": []
+  },
+  {
+    "slug": "podsolnechnoe",
+    "region": "bigsayan",
+    "name": "Подсолнечное",
+    "aliases": []
+  },
+  {
+    "slug": "solyaris",
+    "region": "bigsayan",
+    "name": "Солярис",
+    "aliases": []
+  },
+  {
+    "slug": "suser",
+    "region": "bigsayan",
+    "name": "Сусер",
+    "aliases": []
+  },
+  {
+    "slug": "senhirnur",
+    "region": "bigsayan",
+    "name": "Сэнхир-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "urungenur",
+    "region": "bigsayan",
+    "name": "Урунгэ-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "handagainur",
+    "region": "bigsayan",
+    "name": "Хандагай-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "shuthulainur",
+    "region": "bigsayan",
+    "name": "Шутхулай-Нур (на Тиссе)",
+    "aliases": []
+  },
+  {
+    "slug": "ehoi",
+    "region": "bigsayan",
+    "name": "Эхой",
+    "aliases": []
+  },
+  {
+    "slug": "pionerskoe",
+    "region": "bratsk",
+    "name": "Пионерское",
+    "aliases": []
+  },
+  {
+    "slug": "ulan",
+    "region": "bratsk",
+    "name": "Улан",
+    "aliases": []
+  }
+]

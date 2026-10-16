@@ -65,6 +65,16 @@ const SITE = 'https://nature.baikal.ru';
 const COLLECTIONS = [
   { type: 'скала', section: 'skala', file: 'skala.json' },
   { type: 'вершина', section: 'peak', file: 'peak.json' },
+  { type: 'перевал', section: 'pass', file: 'pass.json' },
+  { type: 'река', section: 'river', file: 'river.json' },
+  { type: 'озеро', section: 'lake', file: 'lake.json' },
+  { type: 'каньон', section: 'kanion', file: 'kanion.json' },
+  { type: 'источник', section: 'spring', file: 'spring.json' },
+  { type: 'хребет', section: 'hrebet', file: 'hrebet.json' },
+  { type: 'залив', section: 'zaliv', file: 'zaliv.json' },
+  { type: 'мыс', section: 'mys', file: 'mys.json' },
+  { type: 'остров', section: 'island', file: 'island.json' },
+  { type: 'пещера', section: 'cave', file: 'cave.json' },
 ];
 
 /** Прочитать файл данных. Ошибку не глотаем: без данных сид бессмыслен. */

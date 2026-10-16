@@ -1,0 +1,274 @@
+[
+  {
+    "slug": "aya",
+    "region": "olhon",
+    "name": "Ая",
+    "aliases": []
+  },
+  {
+    "slug": "big_baidinskaya",
+    "region": "olhon",
+    "name": "Большая Байдинская",
+    "aliases": []
+  },
+  {
+    "slug": "vologodskogo",
+    "region": "olhon",
+    "name": "Вологодского",
+    "aliases": []
+  },
+  {
+    "slug": "elgai",
+    "region": "olhon",
+    "name": "грот на мысе Елгай",
+    "aliases": []
+  },
+  {
+    "slug": "dream",
+    "region": "olhon",
+    "name": "Мечта",
+    "aliases": []
+  },
+  {
+    "slug": "october",
+    "region": "olhon",
+    "name": "Октябрьская",
+    "aliases": []
+  },
+  {
+    "slug": "sarminskaja",
+    "region": "olhon",
+    "name": "Сарминская",
+    "aliases": []
+  },
+  {
+    "slug": "hurganskaya",
+    "region": "olhon",
+    "name": "Хурганская",
+    "aliases": []
+  },
+  {
+    "slug": "shamanskaya",
+    "region": "olhon",
+    "name": "Шаманская",
+    "aliases": []
+  },
+  {
+    "slug": "volglaya",
+    "region": "olha",
+    "name": "Волглая",
+    "aliases": []
+  },
+  {
+    "slug": "radost",
+    "region": "olha",
+    "name": "Радостная",
+    "aliases": []
+  },
+  {
+    "slug": "ikonevskaya",
+    "region": "tunki",
+    "name": "Иконьевская",
+    "aliases": []
+  },
+  {
+    "slug": "cave_nuhun",
+    "region": "tunki",
+    "name": "Нухун-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "okinskaya",
+    "region": "dolinavulkanov",
+    "name": "Окинская",
+    "aliases": []
+  },
+  {
+    "slug": "gutarskaya",
+    "region": "tofalariya",
+    "name": "Верхнегутарская",
+    "aliases": []
+  },
+  {
+    "slug": "mart8",
+    "region": "tofalariya",
+    "name": "Восьмого Марта",
+    "aliases": []
+  },
+  {
+    "slug": "grebnevskaya",
+    "region": "tofalariya",
+    "name": "Гребнёвская",
+    "aliases": []
+  },
+  {
+    "slug": "skazka",
+    "region": "tofalariya",
+    "name": "Урунгайская",
+    "aliases": [
+      "Зимняя Сказка"
+    ]
+  },
+  {
+    "slug": "mirichun",
+    "region": "tofalariya",
+    "name": "Миричун",
+    "aliases": []
+  },
+  {
+    "slug": "small_nizhneudinsk",
+    "region": "tofalariya",
+    "name": "Малая Нижнеудинская",
+    "aliases": []
+  },
+  {
+    "slug": "big_nizhneudinsk",
+    "region": "tofalariya",
+    "name": "Большая Нижнеудинская",
+    "aliases": []
+  },
+  {
+    "slug": "svetlaya",
+    "region": "tofalariya",
+    "name": "Светлая",
+    "aliases": []
+  },
+  {
+    "slug": "spirinskaya",
+    "region": "tofalariya",
+    "name": "Спиринская",
+    "aliases": []
+  },
+  {
+    "slug": "tamarka",
+    "region": "tofalariya",
+    "name": "Тамарка",
+    "aliases": []
+  },
+  {
+    "slug": "aya",
+    "region": "primorskiihrebet",
+    "name": "Ая",
+    "aliases": []
+  },
+  {
+    "slug": "burunskaya",
+    "region": "primorskiihrebet",
+    "name": "Бурунская Ледяная",
+    "aliases": []
+  },
+  {
+    "slug": "vologodskogo",
+    "region": "primorskiihrebet",
+    "name": "Вологодского",
+    "aliases": []
+  },
+  {
+    "slug": "zagadai",
+    "region": "primorskiihrebet",
+    "name": "Загадай",
+    "aliases": []
+  },
+  {
+    "slug": "kadilinskie",
+    "region": "primorskiihrebet",
+    "name": "Кадилинские",
+    "aliases": []
+  },
+  {
+    "slug": "october",
+    "region": "primorskiihrebet",
+    "name": "Октябрьская",
+    "aliases": []
+  },
+  {
+    "slug": "ohotnichya",
+    "region": "primorskiihrebet",
+    "name": "Охотничья",
+    "aliases": []
+  },
+  {
+    "slug": "berloga",
+    "region": "primorskiihrebet",
+    "name": "Перевальная",
+    "aliases": []
+  },
+  {
+    "slug": "podpihtarnaja",
+    "region": "primorskiihrebet",
+    "name": "Подпихтарная",
+    "aliases": []
+  },
+  {
+    "slug": "politeh",
+    "region": "primorskiihrebet",
+    "name": "Политехническая",
+    "aliases": []
+  },
+  {
+    "slug": "prima",
+    "region": "primorskiihrebet",
+    "name": "Прима",
+    "aliases": []
+  },
+  {
+    "slug": "ryadovaya",
+    "region": "primorskiihrebet",
+    "name": "Рядовая",
+    "aliases": []
+  },
+  {
+    "slug": "sagan_zaba",
+    "region": "primorskiihrebet",
+    "name": "Саган-Заба",
+    "aliases": []
+  },
+  {
+    "slug": "skriper",
+    "region": "primorskiihrebet",
+    "name": "Скрипер",
+    "aliases": []
+  },
+  {
+    "slug": "usk_kadiln",
+    "region": "primorskiihrebet",
+    "name": "Холодная",
+    "aliases": []
+  },
+  {
+    "slug": "chasovnya",
+    "region": "primorskiihrebet",
+    "name": "Часовня",
+    "aliases": []
+  },
+  {
+    "slug": "shumihinskaya",
+    "region": "primorskiihrebet",
+    "name": "Шумихинская",
+    "aliases": []
+  },
+  {
+    "slug": "ludarskaya",
+    "region": "sever",
+    "name": "Лударская",
+    "aliases": []
+  },
+  {
+    "slug": "small_samdakan",
+    "region": "barguzinskiihrebet",
+    "name": "в губе Малый Самдакан",
+    "aliases": []
+  },
+  {
+    "slug": "haragunskaya",
+    "region": "hangarul",
+    "name": "Харагунская",
+    "aliases": []
+  },
+  {
+    "slug": "balaganskaya",
+    "region": "bratsk",
+    "name": "Балаганская",
+    "aliases": []
+  }
+]

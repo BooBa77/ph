@@ -1,0 +1,1644 @@
+[
+  {
+    "slug": "boroda",
+    "region": "hamardaban",
+    "name": "Борода",
+    "aliases": []
+  },
+  {
+    "slug": "osinovka",
+    "region": "hamardaban",
+    "name": "водопады на ручье Водопадном (левом притоке Осиновки)",
+    "aliases": []
+  },
+  {
+    "slug": "vorota",
+    "region": "hamardaban",
+    "name": "Ворота",
+    "aliases": []
+  },
+  {
+    "slug": "vydrinleft",
+    "region": "hamardaban",
+    "name": "на левом притоке Выдриной",
+    "aliases": []
+  },
+  {
+    "slug": "gramotuha",
+    "region": "hamardaban",
+    "name": "водопады на Грамотухе",
+    "aliases": []
+  },
+  {
+    "slug": "grobik",
+    "region": "hamardaban",
+    "name": "Гробик",
+    "aliases": []
+  },
+  {
+    "slug": "grotovyi",
+    "region": "hamardaban",
+    "name": "Гротовый",
+    "aliases": []
+  },
+  {
+    "slug": "grohotun",
+    "region": "hamardaban",
+    "name": "Грохотун",
+    "aliases": []
+  },
+  {
+    "slug": "drakon",
+    "region": "hamardaban",
+    "name": "Дракон",
+    "aliases": []
+  },
+  {
+    "slug": "zhaba",
+    "region": "hamardaban",
+    "name": "Жаба",
+    "aliases": []
+  },
+  {
+    "slug": "zhiguli",
+    "region": "hamardaban",
+    "name": "Жикули",
+    "aliases": []
+  },
+  {
+    "slug": "zamok",
+    "region": "hamardaban",
+    "name": "Замок",
+    "aliases": []
+  },
+  {
+    "slug": "zev",
+    "region": "hamardaban",
+    "name": "Зев",
+    "aliases": []
+  },
+  {
+    "slug": "zigzag",
+    "region": "hamardaban",
+    "name": "Зигзаг",
+    "aliases": []
+  },
+  {
+    "slug": "izvilistyi",
+    "region": "hamardaban",
+    "name": "Извилистый",
+    "aliases": []
+  },
+  {
+    "slug": "irkut",
+    "region": "hamardaban",
+    "name": "водопады на ручье Иркут",
+    "aliases": []
+  },
+  {
+    "slug": "k2",
+    "region": "hamardaban",
+    "name": "К2",
+    "aliases": []
+  },
+  {
+    "slug": "kalibr",
+    "region": "hamardaban",
+    "name": "Калибр",
+    "aliases": []
+  },
+  {
+    "slug": "klyk",
+    "region": "hamardaban",
+    "name": "Клык",
+    "aliases": []
+  },
+  {
+    "slug": "langutaiskii",
+    "region": "hamardaban",
+    "name": "Лангутайский",
+    "aliases": []
+  },
+  {
+    "slug": "mamai",
+    "region": "hamardaban",
+    "name": "водопады на левом истоке реки Большой Мамай",
+    "aliases": []
+  },
+  {
+    "slug": "mangutaiskii",
+    "region": "hamardaban",
+    "name": "Мангутайский",
+    "aliases": []
+  },
+  {
+    "slug": "big_mordovorot",
+    "region": "hamardaban",
+    "name": "Большой Мордоворот",
+    "aliases": []
+  },
+  {
+    "slug": "small_mordovorot",
+    "region": "hamardaban",
+    "name": "Малый Мордоворот",
+    "aliases": []
+  },
+  {
+    "slug": "hsmramornij",
+    "region": "hamardaban",
+    "name": "Мраморный",
+    "aliases": []
+  },
+  {
+    "slug": "mungulgolckii",
+    "region": "hamardaban",
+    "name": "Мунгулгольский",
+    "aliases": []
+  },
+  {
+    "slug": "main_osinovka",
+    "region": "hamardaban",
+    "name": "на Осиновке",
+    "aliases": []
+  },
+  {
+    "slug": "osinovka_pritok",
+    "region": "hamardaban",
+    "name": "водопады на притоках Осиновки",
+    "aliases": []
+  },
+  {
+    "slug": "pelota",
+    "region": "hamardaban",
+    "name": "Пелота",
+    "aliases": []
+  },
+  {
+    "slug": "podkomarnye",
+    "region": "hamardaban",
+    "name": "водопады на Подкомарной и Каменке",
+    "aliases": []
+  },
+  {
+    "slug": "prymoi",
+    "region": "hamardaban",
+    "name": "на ручье Прямом",
+    "aliases": []
+  },
+  {
+    "slug": "razdelnyi",
+    "region": "hamardaban",
+    "name": "Раздельный",
+    "aliases": []
+  },
+  {
+    "slug": "rassoha",
+    "region": "hamardaban",
+    "name": "Рассохинский",
+    "aliases": []
+  },
+  {
+    "slug": "rubikon",
+    "region": "hamardaban",
+    "name": "Рубикон",
+    "aliases": []
+  },
+  {
+    "slug": "serayayamka",
+    "region": "hamardaban",
+    "name": "Серая Ямка",
+    "aliases": []
+  },
+  {
+    "slug": "fairstory",
+    "region": "hamardaban",
+    "name": "Сказка",
+    "aliases": []
+  },
+  {
+    "slug": "slon",
+    "region": "hamardaban",
+    "name": "Слон",
+    "aliases": []
+  },
+  {
+    "slug": "snezhinka",
+    "region": "hamardaban",
+    "name": "Снежинка",
+    "aliases": []
+  },
+  {
+    "slug": "sobolya",
+    "region": "hamardaban",
+    "name": "на притоке озера Соболиного",
+    "aliases": []
+  },
+  {
+    "slug": "tank",
+    "region": "hamardaban",
+    "name": "Танк",
+    "aliases": []
+  },
+  {
+    "slug": "travers",
+    "region": "hamardaban",
+    "name": "Траверс",
+    "aliases": []
+  },
+  {
+    "slug": "trek",
+    "region": "hamardaban",
+    "name": "Трек",
+    "aliases": []
+  },
+  {
+    "slug": "hstrek",
+    "region": "hamardaban",
+    "name": "Трек (на Снежной)",
+    "aliases": []
+  },
+  {
+    "slug": "trehkaskadnyi",
+    "region": "hamardaban",
+    "name": "Трёхкаскадный",
+    "aliases": []
+  },
+  {
+    "slug": "low_utulik",
+    "region": "hamardaban",
+    "name": "на берегу реки Утулик в трёх километрах от устья",
+    "aliases": []
+  },
+  {
+    "slug": "utulik",
+    "region": "hamardaban",
+    "name": "на берегу Утулика",
+    "aliases": []
+  },
+  {
+    "slug": "utulik_left",
+    "region": "hamardaban",
+    "name": "водопады на левых притоках Утулика",
+    "aliases": []
+  },
+  {
+    "slug": "harmyndulyu",
+    "region": "hamardaban",
+    "name": "Хармын-Дулю",
+    "aliases": []
+  },
+  {
+    "slug": "charuyushii",
+    "region": "hamardaban",
+    "name": "Чарующий",
+    "aliases": []
+  },
+  {
+    "slug": "chizhik",
+    "region": "hamardaban",
+    "name": "Чижик",
+    "aliases": []
+  },
+  {
+    "slug": "big_porog",
+    "region": "olha",
+    "name": "Большой",
+    "aliases": []
+  },
+  {
+    "slug": "zubkogonskaya_shivera",
+    "region": "olha",
+    "name": "Зубкогонская",
+    "aliases": []
+  },
+  {
+    "slug": "motskii",
+    "region": "olha",
+    "name": "Мотский",
+    "aliases": []
+  },
+  {
+    "slug": "murom_porog",
+    "region": "olha",
+    "name": "Муромский",
+    "aliases": []
+  },
+  {
+    "slug": "low_araoshei",
+    "region": "tunki",
+    "name": "водопад в низовьях реки Ара-Ошей",
+    "aliases": []
+  },
+  {
+    "slug": "middle_araoshei",
+    "region": "tunki",
+    "name": "водопады в средней части реки Ара-Ошей",
+    "aliases": []
+  },
+  {
+    "slug": "hi_araoshei",
+    "region": "tunki",
+    "name": "водопад в верховьях реки Ара-Ошей",
+    "aliases": []
+  },
+  {
+    "slug": "left_araoshei",
+    "region": "tunki",
+    "name": "водопады на Левом Ара-Ошее",
+    "aliases": []
+  },
+  {
+    "slug": "leftpr_araoshei",
+    "region": "tunki",
+    "name": "на левом борту в верховьях Ара-Ошея",
+    "aliases": []
+  },
+  {
+    "slug": "araulangol",
+    "region": "tunki",
+    "name": "на притоке Ара-Ошея с Улангольского перевала",
+    "aliases": []
+  },
+  {
+    "slug": "arhat",
+    "region": "tunki",
+    "name": "на реке Архат",
+    "aliases": []
+  },
+  {
+    "slug": "right_arhut",
+    "region": "tunki",
+    "name": "водопады на правом притоке Архута",
+    "aliases": []
+  },
+  {
+    "slug": "arhut",
+    "region": "tunki",
+    "name": "водопады на границе леса на Архуте",
+    "aliases": []
+  },
+  {
+    "slug": "baraban",
+    "region": "tunki",
+    "name": "Барабан",
+    "aliases": [
+      "Веретено"
+    ]
+  },
+  {
+    "slug": "belokopytka",
+    "region": "tunki",
+    "name": "на истоке Белокопытки с Китойского перевала",
+    "aliases": []
+  },
+  {
+    "slug": "right_belokopytka_hi",
+    "region": "tunki",
+    "name": "водопады в верховьях Белокопытки на правых притоках",
+    "aliases": []
+  },
+  {
+    "slug": "right_belokopytka",
+    "region": "tunki",
+    "name": "на правом притоке Белокопытки",
+    "aliases": []
+  },
+  {
+    "slug": "bilyutskii",
+    "region": "tunki",
+    "name": "порог Билютинский",
+    "aliases": []
+  },
+  {
+    "slug": "right_biluty",
+    "region": "tunki",
+    "name": "водопад на реке Правая Билюты",
+    "aliases": []
+  },
+  {
+    "slug": "right_bilyuta_bel",
+    "region": "tunki",
+    "name": "на притоке Правой Билюты с перевала Белоруссия",
+    "aliases": []
+  },
+  {
+    "slug": "biron",
+    "region": "tunki",
+    "name": "водопад на реке Бирон",
+    "aliases": []
+  },
+  {
+    "slug": "bogohongoldoi",
+    "region": "tunki",
+    "name": "водопады на реке Бого-Хонголдой",
+    "aliases": []
+  },
+  {
+    "slug": "bortogol",
+    "region": "tunki",
+    "name": "водопады на реке Борто-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "borto_hi",
+    "region": "tunki",
+    "name": "в верховьях Борто-Гола",
+    "aliases": []
+  },
+  {
+    "slug": "hi_bugatai",
+    "region": "tunki",
+    "name": "в верховьях Бугатая",
+    "aliases": []
+  },
+  {
+    "slug": "bugatai",
+    "region": "tunki",
+    "name": "водопады в низовьях Бугатая",
+    "aliases": []
+  },
+  {
+    "slug": "bulyk_hi",
+    "region": "tunki",
+    "name": "верхний на Булыке",
+    "aliases": []
+  },
+  {
+    "slug": "bulyk_low",
+    "region": "tunki",
+    "name": "нижний на Булыке",
+    "aliases": []
+  },
+  {
+    "slug": "bychok",
+    "region": "tunki",
+    "name": "Бычок",
+    "aliases": []
+  },
+  {
+    "slug": "vint_kitoi",
+    "region": "tunki",
+    "name": "Винт",
+    "aliases": []
+  },
+  {
+    "slug": "shumakskii",
+    "region": "tunki",
+    "name": "водопад Шумакский",
+    "aliases": [
+      "водопад под Шумакским перевалом"
+    ]
+  },
+  {
+    "slug": "gnomik",
+    "region": "tunki",
+    "name": "Гномик",
+    "aliases": []
+  },
+  {
+    "slug": "gorlykgol",
+    "region": "tunki",
+    "name": "на Горлык-Голе",
+    "aliases": []
+  },
+  {
+    "slug": "daban_zhalga",
+    "region": "tunki",
+    "name": "реки Дабан-Жалга (правого притока Онота)",
+    "aliases": []
+  },
+  {
+    "slug": "dabanzhalga",
+    "region": "tunki",
+    "name": "водопады на Дабан-Жалге",
+    "aliases": []
+  },
+  {
+    "slug": "domysheva",
+    "region": "tunki",
+    "name": "на речке Домышева",
+    "aliases": []
+  },
+  {
+    "slug": "eloty_haragun",
+    "region": "tunki",
+    "name": "водопады на реке Елоты-Харагун",
+    "aliases": []
+  },
+  {
+    "slug": "zungol_ara",
+    "region": "tunki",
+    "name": "на Зун-Голе (притоке Ара-Хонголдоя)",
+    "aliases": []
+  },
+  {
+    "slug": "nadezhda",
+    "region": "tunki",
+    "name": "на притоке Зун-Гола с перевала Надежда",
+    "aliases": []
+  },
+  {
+    "slug": "wonder_vdpd",
+    "region": "tunki",
+    "name": "Изумительный",
+    "aliases": []
+  },
+  {
+    "slug": "izyuminka",
+    "region": "tunki",
+    "name": "Изюминка",
+    "aliases": []
+  },
+  {
+    "slug": "irchir_right",
+    "region": "tunki",
+    "name": "на притоке Ильчира",
+    "aliases": []
+  },
+  {
+    "slug": "kyngarga",
+    "region": "tunki",
+    "name": "водопады на реке Кынгарга",
+    "aliases": []
+  },
+  {
+    "slug": "right_kyngarga",
+    "region": "tunki",
+    "name": "водопады на правом истоке Кынгарги",
+    "aliases": []
+  },
+  {
+    "slug": "kyngarga_kanion",
+    "region": "tunki",
+    "name": "водопады на ручьях, впадающих в Кынгаргу",
+    "aliases": []
+  },
+  {
+    "slug": "lotok",
+    "region": "tunki",
+    "name": "Лоток",
+    "aliases": []
+  },
+  {
+    "slug": "medvezhonok",
+    "region": "tunki",
+    "name": "Медвежонок",
+    "aliases": []
+  },
+  {
+    "slug": "moigoty",
+    "region": "tunki",
+    "name": "на реке Мойготы",
+    "aliases": []
+  },
+  {
+    "slug": "small_motkin",
+    "region": "tunki",
+    "name": "на Малом Моткин-Голе",
+    "aliases": []
+  },
+  {
+    "slug": "right_shumak",
+    "region": "tunki",
+    "name": "водопады на ручье Мраморном (притоке Правого Шумака)",
+    "aliases": []
+  },
+  {
+    "slug": "ganga",
+    "region": "tunki",
+    "name": "водопады на Ганга-Хайрыме",
+    "aliases": []
+  },
+  {
+    "slug": "naringol",
+    "region": "tunki",
+    "name": "на Нарин-Голе",
+    "aliases": []
+  },
+  {
+    "slug": "naringol_pr",
+    "region": "tunki",
+    "name": "водопады на притоках реки Нарин-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "naringol_narinul",
+    "region": "tunki",
+    "name": "на притоке Нарин-Гола с перевалов Шумгайский и Нарин-Ул",
+    "aliases": []
+  },
+  {
+    "slug": "nefrit",
+    "region": "tunki",
+    "name": "Нефрит",
+    "aliases": []
+  },
+  {
+    "slug": "onot",
+    "region": "tunki",
+    "name": "Большой Онотский",
+    "aliases": []
+  },
+  {
+    "slug": "small_onotskii",
+    "region": "tunki",
+    "name": "Малый Онотский",
+    "aliases": []
+  },
+  {
+    "slug": "ochko",
+    "region": "tunki",
+    "name": "Очко",
+    "aliases": []
+  },
+  {
+    "slug": "trehkapitanov",
+    "region": "tunki",
+    "name": "на притоке Перевальной с перевала Трёх Капитанов",
+    "aliases": []
+  },
+  {
+    "slug": "himotkiny",
+    "region": "tunki",
+    "name": "Поднебесный",
+    "aliases": []
+  },
+  {
+    "slug": "poisk",
+    "region": "tunki",
+    "name": "на ручье с перевала Поиск",
+    "aliases": []
+  },
+  {
+    "slug": "poisk_low",
+    "region": "tunki",
+    "name": "нижний водопад на ручье Поисковом",
+    "aliases": []
+  },
+  {
+    "slug": "skazki_pushkina",
+    "region": "tunki",
+    "name": "водопады Сказки Пушкина",
+    "aliases": []
+  },
+  {
+    "slug": "spartak",
+    "region": "tunki",
+    "name": "Спартак",
+    "aliases": []
+  },
+  {
+    "slug": "left_srednii",
+    "region": "tunki",
+    "name": "водопады на левом истоке ручья Среднего",
+    "aliases": []
+  },
+  {
+    "slug": "low_srednii",
+    "region": "tunki",
+    "name": "в нижней части ручья Среднего",
+    "aliases": []
+  },
+  {
+    "slug": "right_srednii",
+    "region": "tunki",
+    "name": "на правом притоке ручья Среднего",
+    "aliases": []
+  },
+  {
+    "slug": "stakan",
+    "region": "tunki",
+    "name": "Стакан",
+    "aliases": []
+  },
+  {
+    "slug": "turbina_onot",
+    "region": "tunki",
+    "name": "Турбина (на реке Онот)",
+    "aliases": []
+  },
+  {
+    "slug": "uburhongoldoi",
+    "region": "tunki",
+    "name": "в верховьях Убур-Хонголдоя",
+    "aliases": []
+  },
+  {
+    "slug": "amazing_vdpd",
+    "region": "tunki",
+    "name": "Удивительный",
+    "aliases": []
+  },
+  {
+    "slug": "ulangol",
+    "region": "tunki",
+    "name": "водопады на реке Улан-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "vodopadharimta",
+    "region": "tunki",
+    "name": "водопад в верховьях Харимты",
+    "aliases": []
+  },
+  {
+    "slug": "hayurta",
+    "region": "tunki",
+    "name": "на Хаюрте",
+    "aliases": []
+  },
+  {
+    "slug": "hotogol",
+    "region": "tunki",
+    "name": "на реке Хото-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "hubuty",
+    "region": "tunki",
+    "name": "водопады на реке Хубуты",
+    "aliases": []
+  },
+  {
+    "slug": "left_hubuty",
+    "region": "tunki",
+    "name": "водопады на левом борту долины реки Хубуты",
+    "aliases": []
+  },
+  {
+    "slug": "huraihair",
+    "region": "tunki",
+    "name": "водопад на Хурай-Хайре",
+    "aliases": []
+  },
+  {
+    "slug": "hurguty_kher",
+    "region": "tunki",
+    "name": "водопады на ручье между Хургутами и Кхером",
+    "aliases": []
+  },
+  {
+    "slug": "hurgutskii",
+    "region": "tunki",
+    "name": "на реке Хургуты",
+    "aliases": []
+  },
+  {
+    "slug": "letuchaya_mysh",
+    "region": "tunki",
+    "name": "водопад на притоке Правого Шумака из-под перевала Летучая Мышь",
+    "aliases": []
+  },
+  {
+    "slug": "vodopad_suntin",
+    "region": "tunki",
+    "name": "водопад правого истока Шунтын-Горхона",
+    "aliases": []
+  },
+  {
+    "slug": "eheger",
+    "region": "tunki",
+    "name": "водопад на ручье, впадающем в Эхе-Гер",
+    "aliases": []
+  },
+  {
+    "slug": "eheger_main",
+    "region": "tunki",
+    "name": "на реке Эхе-Гер",
+    "aliases": []
+  },
+  {
+    "slug": "right_ehegol",
+    "region": "tunki",
+    "name": "водопад на правом истоке Эхе-Гола",
+    "aliases": []
+  },
+  {
+    "slug": "low_ehegol",
+    "region": "tunki",
+    "name": "в низовьях Эхе-Гола",
+    "aliases": []
+  },
+  {
+    "slug": "ehegol",
+    "region": "tunki",
+    "name": "Эхе-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "ehegol_east",
+    "region": "tunki",
+    "name": "на притоке Эхе-Гола с перевала Пеших Туристов",
+    "aliases": []
+  },
+  {
+    "slug": "eheugun",
+    "region": "tunki",
+    "name": "на реке Эхе-Угун",
+    "aliases": []
+  },
+  {
+    "slug": "left_yamangol",
+    "region": "tunki",
+    "name": "высокий водопад на притоке Левого Яман-Гола",
+    "aliases": []
+  },
+  {
+    "slug": "bugovek",
+    "region": "munku",
+    "name": "на Буговеке",
+    "aliases": []
+  },
+  {
+    "slug": "zhohoi",
+    "region": "munku",
+    "name": "в верховьях реки Жохой",
+    "aliases": []
+  },
+  {
+    "slug": "whiteirkut",
+    "region": "munku",
+    "name": "на Белом Иркуте",
+    "aliases": []
+  },
+  {
+    "slug": "oboirkut",
+    "region": "munku",
+    "name": "на берегу Иркута, выше устья Белого Иркута",
+    "aliases": []
+  },
+  {
+    "slug": "left_irkut",
+    "region": "munku",
+    "name": "на левом борту Иркута ниже устья Буговека",
+    "aliases": []
+  },
+  {
+    "slug": "sredniirkut",
+    "region": "munku",
+    "name": "водопады в каньоне Среднего Иркута",
+    "aliases": []
+  },
+  {
+    "slug": "hi_irkut",
+    "region": "munku",
+    "name": "на берегу Чёрного Иркута",
+    "aliases": []
+  },
+  {
+    "slug": "tumelik",
+    "region": "munku",
+    "name": "на Тумелике",
+    "aliases": []
+  },
+  {
+    "slug": "vdpd_prav_pritok_khulugaisha",
+    "region": "munku",
+    "name": "на правом притоке реки Хулугайши",
+    "aliases": []
+  },
+  {
+    "slug": "akoyukch_left",
+    "region": "dolinavulkanov",
+    "name": "на притоке Ак-Оюкч-Хема",
+    "aliases": []
+  },
+  {
+    "slug": "akoyukchhem",
+    "region": "dolinavulkanov",
+    "name": "на Ак-Оюкч-Хеме",
+    "aliases": []
+  },
+  {
+    "slug": "vulkany",
+    "region": "dolinavulkanov",
+    "name": "водопады на притоке Барун-Хадаруса у Долины Вулканов",
+    "aliases": []
+  },
+  {
+    "slug": "billiard",
+    "region": "dolinavulkanov",
+    "name": "Биллиард",
+    "aliases": []
+  },
+  {
+    "slug": "buryatskii",
+    "region": "dolinavulkanov",
+    "name": "Бурятский",
+    "aliases": []
+  },
+  {
+    "slug": "biyushii",
+    "region": "dolinavulkanov",
+    "name": "Бьющий",
+    "aliases": []
+  },
+  {
+    "slug": "variant",
+    "region": "dolinavulkanov",
+    "name": "Вариант",
+    "aliases": []
+  },
+  {
+    "slug": "vostorgvodnika",
+    "region": "dolinavulkanov",
+    "name": "Восторг Водника",
+    "aliases": []
+  },
+  {
+    "slug": "dabata",
+    "region": "dolinavulkanov",
+    "name": "на реке Дабата",
+    "aliases": []
+  },
+  {
+    "slug": "hidovuraktyg",
+    "region": "dolinavulkanov",
+    "name": "на истоке Довурактыг-Ханаш-Хема",
+    "aliases": []
+  },
+  {
+    "slug": "small_zhombolok",
+    "region": "dolinavulkanov",
+    "name": "Малый Жомболок",
+    "aliases": []
+  },
+  {
+    "slug": "kalandarashvili",
+    "region": "dolinavulkanov",
+    "name": "Каландарашвили",
+    "aliases": []
+  },
+  {
+    "slug": "katapulta",
+    "region": "dolinavulkanov",
+    "name": "Катапульта",
+    "aliases": []
+  },
+  {
+    "slug": "kokhem_right",
+    "region": "dolinavulkanov",
+    "name": "на притоке Кок-Хема",
+    "aliases": []
+  },
+  {
+    "slug": "malysh",
+    "region": "dolinavulkanov",
+    "name": "Малыш",
+    "aliases": []
+  },
+  {
+    "slug": "mramurda",
+    "region": "dolinavulkanov",
+    "name": "Мраморный на реке Урда-Шан",
+    "aliases": []
+  },
+  {
+    "slug": "himungelik",
+    "region": "dolinavulkanov",
+    "name": "в верховьях реки Мунгэлик",
+    "aliases": []
+  },
+  {
+    "slug": "mundarga",
+    "region": "dolinavulkanov",
+    "name": "на притоке Мундарги",
+    "aliases": []
+  },
+  {
+    "slug": "arasailag",
+    "region": "dolinavulkanov",
+    "name": "водопады на реке Ара-Сайлаг",
+    "aliases": []
+  },
+  {
+    "slug": "nedotroga",
+    "region": "dolinavulkanov",
+    "name": "Недотрога",
+    "aliases": []
+  },
+  {
+    "slug": "obogol",
+    "region": "dolinavulkanov",
+    "name": "на реке Обо-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "okinskii",
+    "region": "dolinavulkanov",
+    "name": "Большой Окинский",
+    "aliases": []
+  },
+  {
+    "slug": "orosoi",
+    "region": "dolinavulkanov",
+    "name": "водопады на левом истоке Оросоя",
+    "aliases": []
+  },
+  {
+    "slug": "pronecigospodi",
+    "region": "dolinavulkanov",
+    "name": "Пронеси, Господи",
+    "aliases": []
+  },
+  {
+    "slug": "sailagsr",
+    "region": "dolinavulkanov",
+    "name": "в средней части реки Сайлаг",
+    "aliases": []
+  },
+  {
+    "slug": "sailag",
+    "region": "dolinavulkanov",
+    "name": "водопад у устья Сайлага",
+    "aliases": []
+  },
+  {
+    "slug": "skolzyashii",
+    "region": "dolinavulkanov",
+    "name": "Скользящий",
+    "aliases": []
+  },
+  {
+    "slug": "tissa",
+    "region": "dolinavulkanov",
+    "name": "на реке Тисса",
+    "aliases": []
+  },
+  {
+    "slug": "geologov",
+    "region": "dolinavulkanov",
+    "name": "Трёх Геологов",
+    "aliases": []
+  },
+  {
+    "slug": "urdashan",
+    "region": "dolinavulkanov",
+    "name": "на притоке Урда-Шана",
+    "aliases": []
+  },
+  {
+    "slug": "ustyukoktyug",
+    "region": "dolinavulkanov",
+    "name": "на реке Устю-Коктюг-Хем",
+    "aliases": []
+  },
+  {
+    "slug": "hargyta",
+    "region": "dolinavulkanov",
+    "name": "каскад водопадов на Харгыте",
+    "aliases": []
+  },
+  {
+    "slug": "hoitogol",
+    "region": "dolinavulkanov",
+    "name": "на притоке Хойто-Гола с перевала на Хабщу-Нур",
+    "aliases": []
+  },
+  {
+    "slug": "helgin",
+    "region": "dolinavulkanov",
+    "name": "на реке Хэлгин",
+    "aliases": []
+  },
+  {
+    "slug": "sharlainsardyk",
+    "region": "dolinavulkanov",
+    "name": "водопад под горой Шарлайн-Сардык",
+    "aliases": []
+  },
+  {
+    "slug": "askailyoi",
+    "region": "tofalariya",
+    "name": "на реке Аскайлы-Ой",
+    "aliases": []
+  },
+  {
+    "slug": "bazybaiskii",
+    "region": "tofalariya",
+    "name": "Базыбайский",
+    "aliases": []
+  },
+  {
+    "slug": "baigyrskii",
+    "region": "tofalariya",
+    "name": "Байгырский",
+    "aliases": []
+  },
+  {
+    "slug": "bashmak",
+    "region": "tofalariya",
+    "name": "Башмак",
+    "aliases": []
+  },
+  {
+    "slug": "boec",
+    "region": "tofalariya",
+    "name": "Боец",
+    "aliases": []
+  },
+  {
+    "slug": "byk",
+    "region": "tofalariya",
+    "name": "Бык",
+    "aliases": []
+  },
+  {
+    "slug": "vodopadnyi_uda",
+    "region": "tofalariya",
+    "name": "Водопадный (на Уде)",
+    "aliases": []
+  },
+  {
+    "slug": "vorota_uda",
+    "region": "tofalariya",
+    "name": "Ворота (на Уде)",
+    "aliases": []
+  },
+  {
+    "slug": "gutarskii",
+    "region": "tofalariya",
+    "name": "Гутарский",
+    "aliases": []
+  },
+  {
+    "slug": "gutarskiiporog",
+    "region": "tofalariya",
+    "name": "Гутарский",
+    "aliases": []
+  },
+  {
+    "slug": "dzhuglymskii",
+    "region": "tofalariya",
+    "name": "Джуглымский",
+    "aliases": []
+  },
+  {
+    "slug": "dzhuktyrskii",
+    "region": "tofalariya",
+    "name": "Джуктырский",
+    "aliases": []
+  },
+  {
+    "slug": "dlinnyi",
+    "region": "tofalariya",
+    "name": "Длинный",
+    "aliases": []
+  },
+  {
+    "slug": "zigzag_uda",
+    "region": "tofalariya",
+    "name": "Зигзаг (на Уде)",
+    "aliases": []
+  },
+  {
+    "slug": "low_kanion",
+    "region": "tofalariya",
+    "name": "Нижний каньон на Казыре",
+    "aliases": []
+  },
+  {
+    "slug": "kinzelyukskii",
+    "region": "tofalariya",
+    "name": "Кинзелюкский",
+    "aliases": []
+  },
+  {
+    "slug": "small_kishta",
+    "region": "tofalariya",
+    "name": "на Малой Киште",
+    "aliases": []
+  },
+  {
+    "slug": "pritokbolshoikishty",
+    "region": "tofalariya",
+    "name": "на правом притоке Большой Кишты",
+    "aliases": []
+  },
+  {
+    "slug": "klyuch",
+    "region": "tofalariya",
+    "name": "Ключ",
+    "aliases": []
+  },
+  {
+    "slug": "red_kamen",
+    "region": "tofalariya",
+    "name": "Красный Камень",
+    "aliases": []
+  },
+  {
+    "slug": "krivoi",
+    "region": "tofalariya",
+    "name": "Кривой",
+    "aliases": []
+  },
+  {
+    "slug": "krokodil",
+    "region": "tofalariya",
+    "name": "Крокодилы",
+    "aliases": []
+  },
+  {
+    "slug": "kusurgasheva",
+    "region": "tofalariya",
+    "name": "под ледником Кусургашева",
+    "aliases": []
+  },
+  {
+    "slug": "lastochkin",
+    "region": "tofalariya",
+    "name": "Ласточкин Хвост",
+    "aliases": []
+  },
+  {
+    "slug": "lotok_uda",
+    "region": "tofalariya",
+    "name": "Лоток",
+    "aliases": []
+  },
+  {
+    "slug": "makbet",
+    "region": "tofalariya",
+    "name": "Макбет",
+    "aliases": []
+  },
+  {
+    "slug": "millionnyi",
+    "region": "tofalariya",
+    "name": "Миллионный",
+    "aliases": []
+  },
+  {
+    "slug": "seayama",
+    "region": "tofalariya",
+    "name": "Морская Яма",
+    "aliases": []
+  },
+  {
+    "slug": "redut",
+    "region": "tofalariya",
+    "name": "Редут",
+    "aliases": []
+  },
+  {
+    "slug": "sardyk",
+    "region": "tofalariya",
+    "name": "Сардык",
+    "aliases": []
+  },
+  {
+    "slug": "sito",
+    "region": "tofalariya",
+    "name": "Сито",
+    "aliases": []
+  },
+  {
+    "slug": "kosh_pesh",
+    "region": "tofalariya",
+    "name": "Солнечный",
+    "aliases": []
+  },
+  {
+    "slug": "storozhevoi",
+    "region": "tofalariya",
+    "name": "Сторожевой",
+    "aliases": []
+  },
+  {
+    "slug": "suhoi_iden",
+    "region": "tofalariya",
+    "name": "на Сухом Идене",
+    "aliases": []
+  },
+  {
+    "slug": "syurpriz",
+    "region": "tofalariya",
+    "name": "Сюрприз",
+    "aliases": []
+  },
+  {
+    "slug": "tolyan",
+    "region": "tofalariya",
+    "name": "Толян",
+    "aliases": []
+  },
+  {
+    "slug": "tribandita",
+    "region": "tofalariya",
+    "name": "Три Бандита",
+    "aliases": []
+  },
+  {
+    "slug": "hangorokskii",
+    "region": "tofalariya",
+    "name": "Хангарокский",
+    "aliases": []
+  },
+  {
+    "slug": "hanskaya_shel",
+    "region": "tofalariya",
+    "name": "Ханская Щель",
+    "aliases": []
+  },
+  {
+    "slug": "hataga",
+    "region": "tofalariya",
+    "name": "на Хатаге",
+    "aliases": []
+  },
+  {
+    "slug": "right_lowhonda",
+    "region": "tofalariya",
+    "name": "на правом притоке Нижней Хонды",
+    "aliases": []
+  },
+  {
+    "slug": "chatyghemskii",
+    "region": "tofalariya",
+    "name": "Чатыг-Хемский",
+    "aliases": []
+  },
+  {
+    "slug": "black_ostrov",
+    "region": "tofalariya",
+    "name": "Чёрный Остров",
+    "aliases": []
+  },
+  {
+    "slug": "shibitskii",
+    "region": "tofalariya",
+    "name": "водопад Шибитский",
+    "aliases": []
+  },
+  {
+    "slug": "sheki_kazyr",
+    "region": "tofalariya",
+    "name": "Щёки",
+    "aliases": []
+  },
+  {
+    "slug": "right_froliha_self",
+    "region": "sever",
+    "name": "на Правой Фролихе",
+    "aliases": []
+  },
+  {
+    "slug": "right_froliha",
+    "region": "sever",
+    "name": "на притоке Правой Фролихи",
+    "aliases": []
+  },
+  {
+    "slug": "byk_irkut",
+    "region": "kbzd",
+    "name": "Бык",
+    "aliases": []
+  },
+  {
+    "slug": "big_kaskad",
+    "region": "baikalskiihrebet",
+    "name": "Большой каскад",
+    "aliases": []
+  },
+  {
+    "slug": "vodopadnyi",
+    "region": "baikalskiihrebet",
+    "name": "на ручье Водопадном",
+    "aliases": []
+  },
+  {
+    "slug": "goremyka",
+    "region": "baikalskiihrebet",
+    "name": "на Горемыке",
+    "aliases": []
+  },
+  {
+    "slug": "nitka",
+    "region": "baikalskiihrebet",
+    "name": "Нитка",
+    "aliases": []
+  },
+  {
+    "slug": "romantikov",
+    "region": "baikalskiihrebet",
+    "name": "Романтиков",
+    "aliases": []
+  },
+  {
+    "slug": "steklenta",
+    "region": "baikalskiihrebet",
+    "name": "Стеклянная лента",
+    "aliases": []
+  },
+  {
+    "slug": "alla",
+    "region": "barguzinskiihrebet",
+    "name": "водопад на склоне Аллы в 3-х километрах выше источников",
+    "aliases": []
+  },
+  {
+    "slug": "ankokon",
+    "region": "barguzinskiihrebet",
+    "name": "Анкоконский прорыв",
+    "aliases": []
+  },
+  {
+    "slug": "right_left_namama",
+    "region": "barguzinskiihrebet",
+    "name": "на притоке Левой Намамы",
+    "aliases": []
+  },
+  {
+    "slug": "rassypnoi",
+    "region": "barguzinskiihrebet",
+    "name": "Рассыпной",
+    "aliases": []
+  },
+  {
+    "slug": "sogdengdon",
+    "region": "barguzinskiihrebet",
+    "name": "водопад у границы леса на реке Согденгдон",
+    "aliases": []
+  },
+  {
+    "slug": "shumiliha",
+    "region": "barguzinskiihrebet",
+    "name": "водопад на Шумилихе",
+    "aliases": []
+  },
+  {
+    "slug": "ambartagol",
+    "region": "urikonot",
+    "name": "Амбартагольские Щёки",
+    "aliases": []
+  },
+  {
+    "slug": "bychok",
+    "region": "urikonot",
+    "name": "Бычок",
+    "aliases": []
+  },
+  {
+    "slug": "gnomik",
+    "region": "urikonot",
+    "name": "Гномик",
+    "aliases": []
+  },
+  {
+    "slug": "daban_zhalga",
+    "region": "urikonot",
+    "name": "водопады на реке Дабан-Жалга (правом притока Онота)",
+    "aliases": []
+  },
+  {
+    "slug": "zmeika",
+    "region": "urikonot",
+    "name": "Змейка",
+    "aliases": []
+  },
+  {
+    "slug": "zunospa",
+    "region": "urikonot",
+    "name": "на правом притоке Зун-Оспы",
+    "aliases": []
+  },
+  {
+    "slug": "irchir_right",
+    "region": "urikonot",
+    "name": "на притоке Ильчира",
+    "aliases": []
+  },
+  {
+    "slug": "urik123",
+    "region": "urikonot",
+    "name": "Крокодилы",
+    "aliases": []
+  },
+  {
+    "slug": "lotok",
+    "region": "urikonot",
+    "name": "Лоток",
+    "aliases": []
+  },
+  {
+    "slug": "medvezhonok",
+    "region": "urikonot",
+    "name": "Медвежонок",
+    "aliases": []
+  },
+  {
+    "slug": "nefrit",
+    "region": "urikonot",
+    "name": "Нефрит",
+    "aliases": []
+  },
+  {
+    "slug": "onot",
+    "region": "urikonot",
+    "name": "Большой Онотский",
+    "aliases": []
+  },
+  {
+    "slug": "small_onotskii",
+    "region": "urikonot",
+    "name": "Малый Онотский",
+    "aliases": []
+  },
+  {
+    "slug": "ochko",
+    "region": "urikonot",
+    "name": "Очко",
+    "aliases": []
+  },
+  {
+    "slug": "spartak",
+    "region": "urikonot",
+    "name": "Спартак",
+    "aliases": []
+  },
+  {
+    "slug": "turbina_onot",
+    "region": "urikonot",
+    "name": "Турбина (на реке Онот)",
+    "aliases": []
+  },
+  {
+    "slug": "urik100",
+    "region": "urikonot",
+    "name": "100 на реке Урик",
+    "aliases": []
+  },
+  {
+    "slug": "urik101",
+    "region": "urikonot",
+    "name": "101 на реке Урик",
+    "aliases": []
+  },
+  {
+    "slug": "urik",
+    "region": "urikonot",
+    "name": "на реке Урик",
+    "aliases": []
+  },
+  {
+    "slug": "fil_kamen",
+    "region": "urikonot",
+    "name": "порог-водопад Философский Камень",
+    "aliases": []
+  },
+  {
+    "slug": "urik102",
+    "region": "urikonot",
+    "name": "Чёртики",
+    "aliases": []
+  },
+  {
+    "slug": "chortovyvorota",
+    "region": "urikonot",
+    "name": "Чёртовы ворота",
+    "aliases": []
+  },
+  {
+    "slug": "apsatskii",
+    "region": "kodar",
+    "name": "Апсатский",
+    "aliases": []
+  },
+  {
+    "slug": "medvezhii",
+    "region": "kodar",
+    "name": "на ручье Медвежьем",
+    "aliases": []
+  },
+  {
+    "slug": "orto_uryah",
+    "region": "kodar",
+    "name": "водопады на Орто-Уряхе",
+    "aliases": []
+  },
+  {
+    "slug": "sred_sakukan",
+    "region": "kodar",
+    "name": "на Среднем Сакукане",
+    "aliases": []
+  },
+  {
+    "slug": "taezhnaya",
+    "region": "kodar",
+    "name": "на правом притоке Таёжной",
+    "aliases": []
+  },
+  {
+    "slug": "havagda",
+    "region": "kodar",
+    "name": "водопады на Хавагде",
+    "aliases": []
+  },
+  {
+    "slug": "right_elger",
+    "region": "kodar",
+    "name": "на правом притоке реки Эльгер",
+    "aliases": []
+  }
+]

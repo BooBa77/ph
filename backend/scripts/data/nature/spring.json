@@ -1,0 +1,224 @@
+[
+  {
+    "slug": "glaznoi_bystraya",
+    "region": "hamardaban",
+    "name": "глазной у реки Нижняя Тибельти",
+    "aliases": []
+  },
+  {
+    "slug": "surhaitor",
+    "region": "olhon",
+    "name": "Сурхайтор",
+    "aliases": []
+  },
+  {
+    "slug": "arodnik",
+    "region": "olha",
+    "name": "Родник у Большой Олхи",
+    "aliases": []
+  },
+  {
+    "slug": "zmeinnyi",
+    "region": "svyatoinos",
+    "name": "Змеиный",
+    "aliases": []
+  },
+  {
+    "slug": "ust_barguzin",
+    "region": "svyatoinos",
+    "name": "на тракте Усть-Баргузин - Максимиха",
+    "aliases": []
+  },
+  {
+    "slug": "arshan",
+    "region": "tunki",
+    "name": "Аршанские минеральные источники",
+    "aliases": []
+  },
+  {
+    "slug": "zhemchug",
+    "region": "tunki",
+    "name": "Жемчуг",
+    "aliases": []
+  },
+  {
+    "slug": "ara_oshei",
+    "region": "tunki",
+    "name": "на Ара-Ошее",
+    "aliases": []
+  },
+  {
+    "slug": "papii",
+    "region": "tunki",
+    "name": "Папий Аршан",
+    "aliases": []
+  },
+  {
+    "slug": "suburga",
+    "region": "tunki",
+    "name": "Субурга",
+    "aliases": []
+  },
+  {
+    "slug": "shumak",
+    "region": "tunki",
+    "name": "Шумакские минеральные источники",
+    "aliases": []
+  },
+  {
+    "slug": "yamangol",
+    "region": "tunki",
+    "name": "источник недалеко от устья реки Яман-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "arshantai",
+    "region": "dolinavulkanov",
+    "name": "Красные Камни",
+    "aliases": []
+  },
+  {
+    "slug": "ondoltoi",
+    "region": "dolinavulkanov",
+    "name": "Ондольтой",
+    "aliases": []
+  },
+  {
+    "slug": "tarba",
+    "region": "dolinavulkanov",
+    "name": "Тарба",
+    "aliases": []
+  },
+  {
+    "slug": "tissinskii",
+    "region": "dolinavulkanov",
+    "name": "Тиссинский аршан",
+    "aliases": []
+  },
+  {
+    "slug": "halunuhan",
+    "region": "dolinavulkanov",
+    "name": "Халун-Ухан",
+    "aliases": []
+  },
+  {
+    "slug": "hoitogol",
+    "region": "dolinavulkanov",
+    "name": "минеральные источники Хойто-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "choigan",
+    "region": "dolinavulkanov",
+    "name": "минеральные источники Чойган",
+    "aliases": []
+  },
+  {
+    "slug": "shuthulai",
+    "region": "dolinavulkanov",
+    "name": "Шутхулайский аршан",
+    "aliases": []
+  },
+  {
+    "slug": "goudzhekit",
+    "region": "sever",
+    "name": "Гоуджекит",
+    "aliases": []
+  },
+  {
+    "slug": "dzelinda",
+    "region": "sever",
+    "name": "минеральные источники Дзелинда",
+    "aliases": []
+  },
+  {
+    "slug": "temnayapad",
+    "region": "kbzd",
+    "name": "родник у тропы с Тёмной Пади",
+    "aliases": []
+  },
+  {
+    "slug": "kotelnikovskii",
+    "region": "baikalskiihrebet",
+    "name": "Котельниковский",
+    "aliases": []
+  },
+  {
+    "slug": "allinskie",
+    "region": "barguzinskiihrebet",
+    "name": "Аллинские минеральные источники",
+    "aliases": []
+  },
+  {
+    "slug": "davsha",
+    "region": "barguzinskiihrebet",
+    "name": "Давшинский минеральный источник",
+    "aliases": []
+  },
+  {
+    "slug": "kuchiger",
+    "region": "barguzinskiihrebet",
+    "name": "Кучигер",
+    "aliases": []
+  },
+  {
+    "slug": "megdelgun",
+    "region": "barguzinskiihrebet",
+    "name": "Мегдельгун",
+    "aliases": []
+  },
+  {
+    "slug": "sognegdon",
+    "region": "barguzinskiihrebet",
+    "name": "сероводородный источник на Согденгдоне",
+    "aliases": []
+  },
+  {
+    "slug": "umhey",
+    "region": "barguzinskiihrebet",
+    "name": "Умхейские минеральные источники",
+    "aliases": []
+  },
+  {
+    "slug": "eheshigna",
+    "region": "urikonot",
+    "name": "Глазной ключ на реке Ехэ-Шигна",
+    "aliases": []
+  },
+  {
+    "slug": "tustuk",
+    "region": "urikonot",
+    "name": "источник на Тустуке",
+    "aliases": []
+  },
+  {
+    "slug": "goryachinsk",
+    "region": "middle",
+    "name": "Горячинск",
+    "aliases": []
+  },
+  {
+    "slug": "suhaya",
+    "region": "middle",
+    "name": "скважина у села Сухая",
+    "aliases": []
+  },
+  {
+    "slug": "turanskii",
+    "region": "hangarul",
+    "name": "Туранский ключик",
+    "aliases": []
+  },
+  {
+    "slug": "hongor_ulla",
+    "region": "hangarul",
+    "name": "Хонгор-Ула",
+    "aliases": []
+  },
+  {
+    "slug": "arbakalir",
+    "region": "kodar",
+    "name": "Арбакалир",
+    "aliases": []
+  }
+]

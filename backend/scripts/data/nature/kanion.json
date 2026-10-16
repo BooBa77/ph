@@ -1,0 +1,272 @@
+[
+  {
+    "slug": "hi_araoshei",
+    "region": "tunki",
+    "name": "каньоны на Ара-Ошее выше устья ручья Среднего",
+    "aliases": []
+  },
+  {
+    "slug": "ustie_araoshei",
+    "region": "tunki",
+    "name": "нижний каньон реки Ара-Ошей",
+    "aliases": []
+  },
+  {
+    "slug": "low_araoshei",
+    "region": "tunki",
+    "name": "реки Ара-Ошей выше устья Ара-Хубутов",
+    "aliases": []
+  },
+  {
+    "slug": "mid_araoshei",
+    "region": "tunki",
+    "name": "узкие каньоны в средней части реки Ара-Ошей",
+    "aliases": []
+  },
+  {
+    "slug": "araoshei_ulangol",
+    "region": "tunki",
+    "name": "на притоке Ара-Ошея с перевала Улангольского",
+    "aliases": []
+  },
+  {
+    "slug": "ara_hubuty",
+    "region": "tunki",
+    "name": "реки Ара-Хубуты",
+    "aliases": []
+  },
+  {
+    "slug": "arhat",
+    "region": "tunki",
+    "name": "реки Архат",
+    "aliases": []
+  },
+  {
+    "slug": "baromgol",
+    "region": "tunki",
+    "name": "реки Баром-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "low_gorlykgol",
+    "region": "tunki",
+    "name": "в низовьях реки Горлык-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "gorlykgoldaban",
+    "region": "tunki",
+    "name": "на реке Горлык-Гол-Дабан-Жалга",
+    "aliases": []
+  },
+  {
+    "slug": "zungol",
+    "region": "tunki",
+    "name": "реки Зун-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "kyngarga",
+    "region": "tunki",
+    "name": "ущелье реки Кынгарги",
+    "aliases": []
+  },
+  {
+    "slug": "lugovoi",
+    "region": "tunki",
+    "name": "ручья Лугового",
+    "aliases": []
+  },
+  {
+    "slug": "motkiny",
+    "region": "tunki",
+    "name": "Моткины Щёки",
+    "aliases": []
+  },
+  {
+    "slug": "mramornyi",
+    "region": "tunki",
+    "name": "ручья Мраморного",
+    "aliases": []
+  },
+  {
+    "slug": "naringol_hi",
+    "region": "tunki",
+    "name": "верхний каньон на реке Нарин-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "naringol_low",
+    "region": "tunki",
+    "name": "нижний каньон на реке Нарин-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "perevalnaya",
+    "region": "tunki",
+    "name": "реки Перевальной",
+    "aliases": []
+  },
+  {
+    "slug": "poiskovyi",
+    "region": "tunki",
+    "name": "ручья Поискового",
+    "aliases": []
+  },
+  {
+    "slug": "daban_zhalga",
+    "region": "tunki",
+    "name": "реки Дабан-Жалга (правого притока Онота)",
+    "aliases": []
+  },
+  {
+    "slug": "left_shumak",
+    "region": "tunki",
+    "name": "реки Левый Шумак",
+    "aliases": []
+  },
+  {
+    "slug": "shumak",
+    "region": "tunki",
+    "name": "реки Шумак",
+    "aliases": []
+  },
+  {
+    "slug": "pervye_sheki",
+    "region": "tunki",
+    "name": "каньон Первые Щёки",
+    "aliases": []
+  },
+  {
+    "slug": "verhnie_sheki",
+    "region": "tunki",
+    "name": "каньон Верхние Щёки",
+    "aliases": []
+  },
+  {
+    "slug": "yamangol_low",
+    "region": "tunki",
+    "name": "в устье реки Яман-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "yamangol",
+    "region": "tunki",
+    "name": "реки Яман-Гол",
+    "aliases": []
+  },
+  {
+    "slug": "whiteirkut",
+    "region": "munku",
+    "name": "реки Белый Иркут",
+    "aliases": []
+  },
+  {
+    "slug": "middle_irkut",
+    "region": "munku",
+    "name": "реки Средний Иркут",
+    "aliases": []
+  },
+  {
+    "slug": "arasailag",
+    "region": "dolinavulkanov",
+    "name": "на реке Ара-Сайлаг",
+    "aliases": []
+  },
+  {
+    "slug": "hodeshtyghem",
+    "region": "dolinavulkanov",
+    "name": "реки Ходештыг-Хем",
+    "aliases": []
+  },
+  {
+    "slug": "urdashan2",
+    "region": "dolinavulkanov",
+    "name": "на реке Урда-Шан в районе водопада Бьющий",
+    "aliases": []
+  },
+  {
+    "slug": "urdashan1",
+    "region": "dolinavulkanov",
+    "name": "на реке Урда-Шан перед устьем",
+    "aliases": []
+  },
+  {
+    "slug": "uda_hi",
+    "region": "tofalariya",
+    "name": "Верхний каньон Уды",
+    "aliases": []
+  },
+  {
+    "slug": "vorota_v_tofalariyu",
+    "region": "tofalariya",
+    "name": "ущелье Ворота в Тофаларию",
+    "aliases": []
+  },
+  {
+    "slug": "kazyr_low",
+    "region": "tofalariya",
+    "name": "нижний каньон Казыра",
+    "aliases": []
+  },
+  {
+    "slug": "kizhihem",
+    "region": "tofalariya",
+    "name": "реки Кижи-Хем",
+    "aliases": []
+  },
+  {
+    "slug": "big_kishta",
+    "region": "tofalariya",
+    "name": "реки Большая Кишта",
+    "aliases": []
+  },
+  {
+    "slug": "direct_kazyr",
+    "region": "tofalariya",
+    "name": "Прямого Казыра",
+    "aliases": []
+  },
+  {
+    "slug": "uda_low",
+    "region": "tofalariya",
+    "name": "Нижний каньон Уды",
+    "aliases": []
+  },
+  {
+    "slug": "left_holba",
+    "region": "tofalariya",
+    "name": "на левом притоке Холбы",
+    "aliases": []
+  },
+  {
+    "slug": "apsat",
+    "region": "kodar",
+    "name": "реки Апсат",
+    "aliases": []
+  },
+  {
+    "slug": "hi_sakukan",
+    "region": "kodar",
+    "name": "Верхнего Сакукана",
+    "aliases": []
+  },
+  {
+    "slug": "vodopadnyi",
+    "region": "kodar",
+    "name": "Водопадный на притоке реки Эльгер",
+    "aliases": []
+  },
+  {
+    "slug": "porog",
+    "region": "kodar",
+    "name": "реки Порог",
+    "aliases": []
+  },
+  {
+    "slug": "orto_uryah",
+    "region": "kodar",
+    "name": "реки Орто-Юрях",
+    "aliases": []
+  }
+]

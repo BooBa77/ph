@@ -1,0 +1,906 @@
+[
+  {
+    "slug": "kultuk_south",
+    "region": "hamardaban",
+    "name": "Култук",
+    "aliases": []
+  },
+  {
+    "slug": "amtarhaiskii",
+    "region": "olhon",
+    "name": "Амтархайский",
+    "aliases": []
+  },
+  {
+    "slug": "aya",
+    "region": "olhon",
+    "name": "Ая",
+    "aliases": []
+  },
+  {
+    "slug": "bazarnaya",
+    "region": "olhon",
+    "name": "Базарная",
+    "aliases": []
+  },
+  {
+    "slug": "bayanshungen",
+    "region": "olhon",
+    "name": "Баян-Шунген",
+    "aliases": []
+  },
+  {
+    "slug": "togai",
+    "region": "olhon",
+    "name": "Елгай",
+    "aliases": [
+      "Тогай"
+    ]
+  },
+  {
+    "slug": "zagli",
+    "region": "olhon",
+    "name": "Загли",
+    "aliases": []
+  },
+  {
+    "slug": "zunduk",
+    "region": "olhon",
+    "name": "Зундукский",
+    "aliases": []
+  },
+  {
+    "slug": "hytyrhei",
+    "region": "olhon",
+    "name": "Иркутская Губа",
+    "aliases": []
+  },
+  {
+    "slug": "kargante",
+    "region": "olhon",
+    "name": "Карганте",
+    "aliases": []
+  },
+  {
+    "slug": "kodovyi",
+    "region": "olhon",
+    "name": "Кодовый",
+    "aliases": []
+  },
+  {
+    "slug": "kurkut",
+    "region": "olhon",
+    "name": "Куркутская",
+    "aliases": []
+  },
+  {
+    "slug": "small_kurkutskaya",
+    "region": "olhon",
+    "name": "бухта Малая Куркутская",
+    "aliases": []
+  },
+  {
+    "slug": "small_sea",
+    "region": "olhon",
+    "name": "пролив Малое Море",
+    "aliases": []
+  },
+  {
+    "slug": "mangatuutug",
+    "region": "olhon",
+    "name": "Мангату-Утуг",
+    "aliases": []
+  },
+  {
+    "slug": "muhur",
+    "region": "olhon",
+    "name": "Мухор",
+    "aliases": []
+  },
+  {
+    "slug": "nyurganskayaguba",
+    "region": "olhon",
+    "name": "Нюрганская Губа",
+    "aliases": []
+  },
+  {
+    "slug": "olhonskievorota",
+    "region": "olhon",
+    "name": "Ольхонские Ворота",
+    "aliases": []
+  },
+  {
+    "slug": "orso",
+    "region": "olhon",
+    "name": "Орсо",
+    "aliases": []
+  },
+  {
+    "slug": "bzagli",
+    "region": "olhon",
+    "name": "Перевозная",
+    "aliases": []
+  },
+  {
+    "slug": "saraiskii",
+    "region": "olhon",
+    "name": "Сарайский",
+    "aliases": []
+  },
+  {
+    "slug": "sergite",
+    "region": "olhon",
+    "name": "Сергитэ",
+    "aliases": []
+  },
+  {
+    "slug": "tangober",
+    "region": "olhon",
+    "name": "Тангобэр",
+    "aliases": []
+  },
+  {
+    "slug": "tutaiskii",
+    "region": "olhon",
+    "name": "Тутайская",
+    "aliases": []
+  },
+  {
+    "slug": "ulanhushinskii",
+    "region": "olhon",
+    "name": "Улан-Хушинский",
+    "aliases": []
+  },
+  {
+    "slug": "ulanur",
+    "region": "olhon",
+    "name": "Уланур",
+    "aliases": []
+  },
+  {
+    "slug": "ulariaguba",
+    "region": "olhon",
+    "name": "Уларья Губа",
+    "aliases": []
+  },
+  {
+    "slug": "ulhun",
+    "region": "olhon",
+    "name": "Улхун",
+    "aliases": []
+  },
+  {
+    "slug": "hagayaman",
+    "region": "olhon",
+    "name": "Хага-Яман",
+    "aliases": []
+  },
+  {
+    "slug": "hagdandalai",
+    "region": "olhon",
+    "name": "Хагдан-Далай",
+    "aliases": []
+  },
+  {
+    "slug": "hasurta",
+    "region": "olhon",
+    "name": "Хасурта",
+    "aliases": []
+  },
+  {
+    "slug": "horgoiskaya_guba",
+    "region": "olhon",
+    "name": "Хоргойская Губа",
+    "aliases": []
+  },
+  {
+    "slug": "horinirgi",
+    "region": "olhon",
+    "name": "Хорин-Ирги",
+    "aliases": []
+  },
+  {
+    "slug": "huzhirnuga",
+    "region": "olhon",
+    "name": "Хужир-Нуга",
+    "aliases": []
+  },
+  {
+    "slug": "huzhirskii",
+    "region": "olhon",
+    "name": "Хужирский",
+    "aliases": []
+  },
+  {
+    "slug": "hul",
+    "region": "olhon",
+    "name": "Хул",
+    "aliases": []
+  },
+  {
+    "slug": "shalba_dain_yator",
+    "region": "olhon",
+    "name": "Шалба-Даин-Ятор",
+    "aliases": []
+  },
+  {
+    "slug": "shunte",
+    "region": "olhon",
+    "name": "Шунтэ",
+    "aliases": []
+  },
+  {
+    "slug": "barguzin",
+    "region": "svyatoinos",
+    "name": "Баргузинский",
+    "aliases": []
+  },
+  {
+    "slug": "zmeinaya",
+    "region": "svyatoinos",
+    "name": "Змеиная",
+    "aliases": []
+  },
+  {
+    "slug": "krestovaya_maks",
+    "region": "svyatoinos",
+    "name": "губа Крестовая",
+    "aliases": []
+  },
+  {
+    "slug": "krestovskaya",
+    "region": "svyatoinos",
+    "name": "Крестовская",
+    "aliases": []
+  },
+  {
+    "slug": "krohalinaya",
+    "region": "svyatoinos",
+    "name": "Крохалиная",
+    "aliases": []
+  },
+  {
+    "slug": "krutaya",
+    "region": "svyatoinos",
+    "name": "Крутая",
+    "aliases": []
+  },
+  {
+    "slug": "kultuk",
+    "region": "svyatoinos",
+    "name": "Култук (в Баргузинском заливе)",
+    "aliases": []
+  },
+  {
+    "slug": "chivyrkui",
+    "region": "svyatoinos",
+    "name": "Чивыркуйский",
+    "aliases": [
+      "Курбуликский"
+    ]
+  },
+  {
+    "slug": "maksimiha",
+    "region": "svyatoinos",
+    "name": "губа Максимиха",
+    "aliases": []
+  },
+  {
+    "slug": "millionnaya",
+    "region": "svyatoinos",
+    "name": "Миллионная",
+    "aliases": []
+  },
+  {
+    "slug": "mohaika",
+    "region": "svyatoinos",
+    "name": "Мохайка",
+    "aliases": []
+  },
+  {
+    "slug": "okunevaya",
+    "region": "svyatoinos",
+    "name": "Окунёвая",
+    "aliases": []
+  },
+  {
+    "slug": "omulevaya",
+    "region": "svyatoinos",
+    "name": "Омулёвая",
+    "aliases": []
+  },
+  {
+    "slug": "ongokonskaya",
+    "region": "svyatoinos",
+    "name": "Онгоконская",
+    "aliases": []
+  },
+  {
+    "slug": "osinovaya",
+    "region": "svyatoinos",
+    "name": "Осиновая",
+    "aliases": []
+  },
+  {
+    "slug": "pesherka",
+    "region": "svyatoinos",
+    "name": "Пещерка",
+    "aliases": []
+  },
+  {
+    "slug": "solenenkaya",
+    "region": "svyatoinos",
+    "name": "Солёненькая",
+    "aliases": []
+  },
+  {
+    "slug": "sorozhya",
+    "region": "svyatoinos",
+    "name": "Сорожья",
+    "aliases": []
+  },
+  {
+    "slug": "fertik",
+    "region": "svyatoinos",
+    "name": "Фертик",
+    "aliases": []
+  },
+  {
+    "slug": "chirkovskaya",
+    "region": "svyatoinos",
+    "name": "Чирковская",
+    "aliases": []
+  },
+  {
+    "slug": "akademicheskaya",
+    "region": "primorskiihrebet",
+    "name": "Академическая",
+    "aliases": []
+  },
+  {
+    "slug": "babushka",
+    "region": "primorskiihrebet",
+    "name": "Бабушка",
+    "aliases": []
+  },
+  {
+    "slug": "begul",
+    "region": "primorskiihrebet",
+    "name": "Бегул",
+    "aliases": []
+  },
+  {
+    "slug": "birhin",
+    "region": "primorskiihrebet",
+    "name": "Бирхин",
+    "aliases": []
+  },
+  {
+    "slug": "vnuchka",
+    "region": "primorskiihrebet",
+    "name": "Внучка",
+    "aliases": []
+  },
+  {
+    "slug": "zavernyaiha",
+    "region": "primorskiihrebet",
+    "name": "Заверняиха",
+    "aliases": []
+  },
+  {
+    "slug": "krestovaya",
+    "region": "primorskiihrebet",
+    "name": "Крестовая",
+    "aliases": []
+  },
+  {
+    "slug": "listvennichnyi",
+    "region": "primorskiihrebet",
+    "name": "Лиственничный",
+    "aliases": []
+  },
+  {
+    "slug": "pesochnaya",
+    "region": "primorskiihrebet",
+    "name": "Песочная",
+    "aliases": []
+  },
+  {
+    "slug": "small_pesochnaya",
+    "region": "primorskiihrebet",
+    "name": "губа Малая Песочная",
+    "aliases": []
+  },
+  {
+    "slug": "peschanka",
+    "region": "primorskiihrebet",
+    "name": "Песчаная",
+    "aliases": []
+  },
+  {
+    "slug": "sennaya",
+    "region": "primorskiihrebet",
+    "name": "Сенная",
+    "aliases": []
+  },
+  {
+    "slug": "sinichka",
+    "region": "primorskiihrebet",
+    "name": "Синичка",
+    "aliases": []
+  },
+  {
+    "slug": "suhaya",
+    "region": "primorskiihrebet",
+    "name": "Сухая",
+    "aliases": []
+  },
+  {
+    "slug": "ustanga",
+    "region": "primorskiihrebet",
+    "name": "Усть-Анга",
+    "aliases": []
+  },
+  {
+    "slug": "haryuzovaya",
+    "region": "primorskiihrebet",
+    "name": "Харюзовая",
+    "aliases": []
+  },
+  {
+    "slug": "ershi",
+    "region": "irkutsk",
+    "name": "Ершовский",
+    "aliases": []
+  },
+  {
+    "slug": "yakobi",
+    "region": "irkutsk",
+    "name": "Якоби",
+    "aliases": []
+  },
+  {
+    "slug": "angarskiisor",
+    "region": "sever",
+    "name": "Ангарский Сор",
+    "aliases": []
+  },
+  {
+    "slug": "ayaya",
+    "region": "sever",
+    "name": "Аяя",
+    "aliases": []
+  },
+  {
+    "slug": "babushkina",
+    "region": "sever",
+    "name": "Бабушкина Губка",
+    "aliases": []
+  },
+  {
+    "slug": "baltahanova",
+    "region": "sever",
+    "name": "Балтаханова",
+    "aliases": []
+  },
+  {
+    "slug": "biraya",
+    "region": "sever",
+    "name": "Бирая",
+    "aliases": []
+  },
+  {
+    "slug": "boguchanskaya",
+    "region": "sever",
+    "name": "Богучанская",
+    "aliases": []
+  },
+  {
+    "slug": "dagary",
+    "region": "sever",
+    "name": "губа Дагарская",
+    "aliases": []
+  },
+  {
+    "slug": "deddvor",
+    "region": "sever",
+    "name": "Дедушкин Дворчик",
+    "aliases": []
+  },
+  {
+    "slug": "lakanda",
+    "region": "sever",
+    "name": "Лаканда",
+    "aliases": []
+  },
+  {
+    "slug": "ludarskaya",
+    "region": "sever",
+    "name": "Лударская",
+    "aliases": []
+  },
+  {
+    "slug": "okunevyi",
+    "region": "sever",
+    "name": "Окунёвый",
+    "aliases": []
+  },
+  {
+    "slug": "senogda",
+    "region": "sever",
+    "name": "Сеногда",
+    "aliases": []
+  },
+  {
+    "slug": "slyudyanskaya",
+    "region": "sever",
+    "name": "Слюдянская",
+    "aliases": []
+  },
+  {
+    "slug": "tukalaragdy",
+    "region": "sever",
+    "name": "Тукаларагды",
+    "aliases": []
+  },
+  {
+    "slug": "froliha",
+    "region": "sever",
+    "name": "Фролихинская Губа",
+    "aliases": []
+  },
+  {
+    "slug": "hobot",
+    "region": "sever",
+    "name": "Хобот",
+    "aliases": []
+  },
+  {
+    "slug": "berezovaya",
+    "region": "kbzd",
+    "name": "Берёзовая",
+    "aliases": []
+  },
+  {
+    "slug": "kultuk_south",
+    "region": "kbzd",
+    "name": "Култук",
+    "aliases": []
+  },
+  {
+    "slug": "baltahanova",
+    "region": "baikalskiihrebet",
+    "name": "Балтаханова",
+    "aliases": []
+  },
+  {
+    "slug": "bolsodei",
+    "region": "baikalskiihrebet",
+    "name": "Болсодей",
+    "aliases": []
+  },
+  {
+    "slug": "goryachinskaya",
+    "region": "baikalskiihrebet",
+    "name": "Горячинская",
+    "aliases": []
+  },
+  {
+    "slug": "iliiskaya",
+    "region": "baikalskiihrebet",
+    "name": "Илийская",
+    "aliases": []
+  },
+  {
+    "slug": "big_kosa",
+    "region": "baikalskiihrebet",
+    "name": "губа Большая Коса",
+    "aliases": []
+  },
+  {
+    "slug": "small_kosa",
+    "region": "baikalskiihrebet",
+    "name": "губа Малая Коса",
+    "aliases": []
+  },
+  {
+    "slug": "ludarskaya",
+    "region": "baikalskiihrebet",
+    "name": "Лударская",
+    "aliases": []
+  },
+  {
+    "slug": "big_amnundokan",
+    "region": "barguzinskiihrebet",
+    "name": "губа Большой Амнундакан",
+    "aliases": []
+  },
+  {
+    "slug": "small_amnundakan",
+    "region": "barguzinskiihrebet",
+    "name": "губа Малый Амнундакан",
+    "aliases": []
+  },
+  {
+    "slug": "birakan",
+    "region": "barguzinskiihrebet",
+    "name": "Биракан",
+    "aliases": []
+  },
+  {
+    "slug": "duguldzery",
+    "region": "barguzinskiihrebet",
+    "name": "губа Дугульдзеры",
+    "aliases": []
+  },
+  {
+    "slug": "irinda",
+    "region": "barguzinskiihrebet",
+    "name": "Иринда",
+    "aliases": []
+  },
+  {
+    "slug": "big_samdakan",
+    "region": "barguzinskiihrebet",
+    "name": "губа Большой Самдакан",
+    "aliases": []
+  },
+  {
+    "slug": "small_samdakan",
+    "region": "barguzinskiihrebet",
+    "name": "Малый Самдакан",
+    "aliases": []
+  },
+  {
+    "slug": "sosnovka",
+    "region": "barguzinskiihrebet",
+    "name": "бухта Сосновка",
+    "aliases": []
+  },
+  {
+    "slug": "tompuda",
+    "region": "barguzinskiihrebet",
+    "name": "Томпуда",
+    "aliases": []
+  },
+  {
+    "slug": "turkukit",
+    "region": "barguzinskiihrebet",
+    "name": "губа Туркукит",
+    "aliases": []
+  },
+  {
+    "slug": "shegnanda",
+    "region": "barguzinskiihrebet",
+    "name": "губа Шегнанда",
+    "aliases": []
+  },
+  {
+    "slug": "shiraki",
+    "region": "barguzinskiihrebet",
+    "name": "Шираки",
+    "aliases": []
+  },
+  {
+    "slug": "yakshakan",
+    "region": "barguzinskiihrebet",
+    "name": "губа Якшакан",
+    "aliases": []
+  },
+  {
+    "slug": "bezymyanaya",
+    "region": "middle",
+    "name": "Безымянная",
+    "aliases": []
+  },
+  {
+    "slug": "goryachinskaya_east",
+    "region": "middle",
+    "name": "губа Горячинская (на восточном берегу Байкала)",
+    "aliases": []
+  },
+  {
+    "slug": "gremyachenskaya",
+    "region": "middle",
+    "name": "губа Гремячинская",
+    "aliases": []
+  },
+  {
+    "slug": "zolotaya",
+    "region": "middle",
+    "name": "Золотая",
+    "aliases": []
+  },
+  {
+    "slug": "katkova",
+    "region": "middle",
+    "name": "губа Каткова",
+    "aliases": []
+  },
+  {
+    "slug": "mostovaya",
+    "region": "middle",
+    "name": "Мостовая",
+    "aliases": []
+  },
+  {
+    "slug": "oblom",
+    "region": "middle",
+    "name": "Облом",
+    "aliases": []
+  },
+  {
+    "slug": "ostashkina",
+    "region": "middle",
+    "name": "Осташкина",
+    "aliases": []
+  },
+  {
+    "slug": "polkovaya",
+    "region": "middle",
+    "name": "Полковая",
+    "aliases": []
+  },
+  {
+    "slug": "proval",
+    "region": "middle",
+    "name": "Провал",
+    "aliases": []
+  },
+  {
+    "slug": "prorva",
+    "region": "middle",
+    "name": "Прорва",
+    "aliases": []
+  },
+  {
+    "slug": "sor_posol",
+    "region": "middle",
+    "name": "Сор",
+    "aliases": []
+  },
+  {
+    "slug": "zapornaya_guba",
+    "region": "middle",
+    "name": "Сор Запорная Губа",
+    "aliases": []
+  },
+  {
+    "slug": "small_sor",
+    "region": "middle",
+    "name": "Малый Сор",
+    "aliases": []
+  },
+  {
+    "slug": "cherkalovo",
+    "region": "middle",
+    "name": "Сор Черкалово",
+    "aliases": []
+  },
+  {
+    "slug": "small_suhaya",
+    "region": "middle",
+    "name": "Малая Сухая",
+    "aliases": []
+  },
+  {
+    "slug": "talanka",
+    "region": "middle",
+    "name": "Таланка",
+    "aliases": []
+  },
+  {
+    "slug": "turka",
+    "region": "middle",
+    "name": "губа Турка",
+    "aliases": []
+  },
+  {
+    "slug": "zavorotnaya",
+    "region": "baikalolenskii",
+    "name": "Заворотная",
+    "aliases": []
+  },
+  {
+    "slug": "zasechnaya",
+    "region": "baikalolenskii",
+    "name": "Засечная",
+    "aliases": []
+  },
+  {
+    "slug": "kodovyi",
+    "region": "baikalolenskii",
+    "name": "Кодовый",
+    "aliases": []
+  },
+  {
+    "slug": "kyrgaltei",
+    "region": "baikalolenskii",
+    "name": "Кыргалтей",
+    "aliases": []
+  },
+  {
+    "slug": "nuga",
+    "region": "baikalolenskii",
+    "name": "Нуга",
+    "aliases": []
+  },
+  {
+    "slug": "pokoiniki",
+    "region": "baikalolenskii",
+    "name": "Покойники",
+    "aliases": []
+  },
+  {
+    "slug": "soloncovaya",
+    "region": "baikalolenskii",
+    "name": "Солонцовая",
+    "aliases": []
+  },
+  {
+    "slug": "elovyi",
+    "region": "irksea",
+    "name": "Еловый",
+    "aliases": []
+  },
+  {
+    "slug": "ershi",
+    "region": "irksea",
+    "name": "Ершовский",
+    "aliases": []
+  },
+  {
+    "slug": "zybun",
+    "region": "irksea",
+    "name": "Зыбун",
+    "aliases": []
+  },
+  {
+    "slug": "big_kaley",
+    "region": "irksea",
+    "name": "Большой Калей",
+    "aliases": []
+  },
+  {
+    "slug": "small_kalei",
+    "region": "irksea",
+    "name": "Малый Калей",
+    "aliases": []
+  },
+  {
+    "slug": "karolok",
+    "region": "irksea",
+    "name": "Каролок",
+    "aliases": []
+  },
+  {
+    "slug": "kartakoi",
+    "region": "irksea",
+    "name": "Картакой",
+    "aliases": []
+  },
+  {
+    "slug": "kurminskii",
+    "region": "irksea",
+    "name": "Курминский",
+    "aliases": []
+  },
+  {
+    "slug": "melnichnaya_pad",
+    "region": "irksea",
+    "name": "Падь Мельничная",
+    "aliases": []
+  },
+  {
+    "slug": "yakobi",
+    "region": "irksea",
+    "name": "Якоби",
+    "aliases": []
+  },
+  {
+    "slug": "bratskoe_more",
+    "region": "bratsk",
+    "name": "Братское водохранилище",
+    "aliases": []
+  }
+]
