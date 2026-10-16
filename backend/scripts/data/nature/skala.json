@@ -462,5 +462,279 @@
     "region": "olha",
     "name": "Зеркала",
     "aliases": []
+  },
+  {
+    "slug": "parus",
+    "region": "dolinavulkanov",
+    "name": "Парус",
+    "aliases": []
+  },
+  {
+    "slug": "dolmen",
+    "region": "tofalariya",
+    "name": "Дольмен под Алхадыром",
+    "aliases": []
+  },
+  {
+    "slug": "kolokolnya",
+    "region": "tofalariya",
+    "name": "Колокольня",
+    "aliases": []
+  },
+  {
+    "slug": "muksutskaya",
+    "region": "tofalariya",
+    "name": "Муксутская",
+    "aliases": []
+  },
+  {
+    "slug": "pyatbratiev",
+    "region": "tofalariya",
+    "name": "Пять Братьев",
+    "aliases": []
+  },
+  {
+    "slug": "arhei_sk",
+    "region": "primorskiihrebet",
+    "name": "Архейские скалы",
+    "aliases": []
+  },
+  {
+    "slug": "dvabrata",
+    "region": "primorskiihrebet",
+    "name": "Два Брата",
+    "aliases": []
+  },
+  {
+    "slug": "dyrovataya",
+    "region": "primorskiihrebet",
+    "name": "Дыроватая",
+    "aliases": []
+  },
+  {
+    "slug": "big_kolokolnya",
+    "region": "primorskiihrebet",
+    "name": "Большая Колокольня",
+    "aliases": []
+  },
+  {
+    "slug": "small_kolokolnya",
+    "region": "primorskiihrebet",
+    "name": "Малая Колокольня",
+    "aliases": []
+  },
+  {
+    "slug": "loshad",
+    "region": "primorskiihrebet",
+    "name": "Пьющая Лошадь",
+    "aliases": []
+  },
+  {
+    "slug": "saganzaba",
+    "region": "primorskiihrebet",
+    "name": "Саган-Заба",
+    "aliases": []
+  },
+  {
+    "slug": "slon",
+    "region": "primorskiihrebet",
+    "name": "Слон",
+    "aliases": []
+  },
+  {
+    "slug": "shamanskii",
+    "region": "primorskiihrebet",
+    "name": "Шаманский Камень",
+    "aliases": []
+  },
+  {
+    "slug": "strazh",
+    "region": "sever",
+    "name": "Страж",
+    "aliases": []
+  },
+  {
+    "slug": "angasolskii_kamen",
+    "region": "kbzd",
+    "name": "Ангасольский Камень",
+    "aliases": []
+  },
+  {
+    "slug": "andrianovskii",
+    "region": "kbzd",
+    "name": "Андриановский Камень",
+    "aliases": []
+  },
+  {
+    "slug": "vezeniya",
+    "region": "kbzd",
+    "name": "Везения",
+    "aliases": []
+  },
+  {
+    "slug": "angasolka",
+    "region": "kbzd",
+    "name": "Гепард (в верховьях Средней Ангасолки)",
+    "aliases": []
+  },
+  {
+    "slug": "kazachii",
+    "region": "kbzd",
+    "name": "Казачьи Камни",
+    "aliases": []
+  },
+  {
+    "slug": "moigoty",
+    "region": "kbzd",
+    "name": "Камень Мойготы",
+    "aliases": []
+  },
+  {
+    "slug": "near_podos",
+    "region": "kbzd",
+    "name": "скальник недалеко от вершины горы Камни Подосиновые",
+    "aliases": [
+      "на восточном склоне вершины горы Камни Подосиновые"
+    ]
+  },
+  {
+    "slug": "kudliny_kamni",
+    "region": "kbzd",
+    "name": "Кудлины Камни",
+    "aliases": []
+  },
+  {
+    "slug": "1068",
+    "region": "kbzd",
+    "name": "Придорожный",
+    "aliases": [
+      "на водоразделе Ангасолки и Большой Зазары"
+    ]
+  },
+  {
+    "slug": "nimfa",
+    "region": "kbzd",
+    "name": "Нимфа",
+    "aliases": []
+  },
+  {
+    "slug": "otkol",
+    "region": "kbzd",
+    "name": "Откол",
+    "aliases": []
+  },
+  {
+    "slug": "zazara1004",
+    "region": "kbzd",
+    "name": "отметка 1004 м между Левой и Правой Большими Зазарами",
+    "aliases": []
+  },
+  {
+    "slug": "zazara1047",
+    "region": "kbzd",
+    "name": "отметка 1047 м между Левой и Правой Большими Зазарами",
+    "aliases": []
+  },
+  {
+    "slug": "parusa",
+    "region": "kbzd",
+    "name": "Паруса",
+    "aliases": []
+  },
+  {
+    "slug": "kamniponomar",
+    "region": "kbzd",
+    "name": "Камни Пономарёвские",
+    "aliases": []
+  },
+  {
+    "slug": "habartui",
+    "region": "kbzd",
+    "name": "Хабартуйские скальники",
+    "aliases": []
+  },
+  {
+    "slug": "carskievorota",
+    "region": "kbzd",
+    "name": "Царские Ворота",
+    "aliases": []
+  },
+  {
+    "slug": "buheshulun",
+    "region": "barguzinskiihrebet",
+    "name": "Бухэ-Шулун",
+    "aliases": []
+  },
+  {
+    "slug": "gribok",
+    "region": "barguzinskiihrebet",
+    "name": "Грибок",
+    "aliases": []
+  },
+  {
+    "slug": "diandu",
+    "region": "barguzinskiihrebet",
+    "name": "Дианду",
+    "aliases": []
+  },
+  {
+    "slug": "papaha",
+    "region": "barguzinskiihrebet",
+    "name": "Папаха",
+    "aliases": []
+  },
+  {
+    "slug": "suvinskie_stolby",
+    "region": "barguzinskiihrebet",
+    "name": "Сувинские Столбы",
+    "aliases": []
+  },
+  {
+    "slug": "bronenosets",
+    "region": "urikonot",
+    "name": "Броненосец",
+    "aliases": []
+  },
+  {
+    "slug": "belyi",
+    "region": "middle",
+    "name": "Белый",
+    "aliases": []
+  },
+  {
+    "slug": "belyi_kamen",
+    "region": "middle",
+    "name": "Белый Камень",
+    "aliases": []
+  },
+  {
+    "slug": "kamencherepaha",
+    "region": "middle",
+    "name": "Черепаха",
+    "aliases": []
+  },
+  {
+    "slug": "buhu_shulun",
+    "region": "hangarul",
+    "name": "Буху-Шулун",
+    "aliases": []
+  },
+  {
+    "slug": "kreml",
+    "region": "hangarul",
+    "name": "Кремль",
+    "aliases": []
+  },
+  {
+    "slug": "shamanskii",
+    "region": "irksea",
+    "name": "Шаманский камень",
+    "aliases": []
+  },
+  {
+    "slug": "krasnaya_gora",
+    "region": "bratsk",
+    "name": "Красная Гора",
+    "aliases": []
   }
 ]

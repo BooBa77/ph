@@ -43,136 +43,136 @@
     "code": "munku",
     "name": "Мунку-Сардык",
     "nameShort": "Мунку-Сардык",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 0,
     "source": null
   },
   {
     "code": "dolinavulkanov",
     "name": "Долина Вулканов",
     "nameShort": "Долина Вулканов",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 1,
     "source": null
   },
   {
     "code": "tofalariya",
     "name": "Тофалария",
     "nameShort": "Тофалария",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 4,
     "source": null
   },
   {
     "code": "primorskiihrebet",
     "name": "Приморский хребет",
     "nameShort": "Приморский хребет",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 9,
     "source": null
   },
   {
     "code": "irkutsk",
     "name": "Иркутск",
     "nameShort": "Иркутск",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 0,
     "source": null
   },
   {
     "code": "sever",
     "name": "Север Байкала",
     "nameShort": "Север Байкала",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 1,
     "source": null
   },
   {
     "code": "kbzd",
     "name": "Кругобайкалка",
     "nameShort": "Кругобайкалка",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 17,
     "source": null
   },
   {
     "code": "baikalskiihrebet",
     "name": "Байкальский хребет",
     "nameShort": "Байкальский хребет",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 0,
     "source": null
   },
   {
     "code": "barguzinskiihrebet",
     "name": "Баргузинский хребет",
     "nameShort": "Баргузинский хребет",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 5,
     "source": null
   },
   {
     "code": "urikonot",
     "name": "Урик, Онот",
     "nameShort": "Урик, Онот",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 1,
     "source": null
   },
   {
     "code": "middle",
     "name": "Среднебайкальский",
     "nameShort": "Среднебайкальский",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 3,
     "source": null
   },
   {
     "code": "hangarul",
     "name": "Хангарульский, Зангисанский хребты",
     "nameShort": "Хангарульский, Зангисанский хребты",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 2,
     "source": null
   },
   {
     "code": "baikalolenskii",
     "name": "Байкало-Ленский",
     "nameShort": "Байкало-Ленский",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 0,
     "source": null
   },
   {
     "code": "irksea",
     "name": "Иркутское водохранилище",
     "nameShort": "Иркутское водохранилище",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 1,
     "source": null
   },
   {
     "code": "kodar",
     "name": "Кодар",
     "nameShort": "Кодар",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 0,
     "source": null
   },
   {
     "code": "bigsayan",
     "name": "Хребет Большой Саян",
     "nameShort": "Хребет Большой Саян",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 0,
     "source": null
   },
   {
     "code": "bratsk",
     "name": "Братск, Зима",
     "nameShort": "Братск, Зима",
-    "collected": false,
-    "skalaCount": null,
+    "collected": true,
+    "skalaCount": 1,
     "source": null
   }
 ]
