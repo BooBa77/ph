@@ -83,6 +83,16 @@ export class TripListQueryDto {
   isCommercial?: boolean;
 
   @ApiProperty({
+    description: 'Только спортивные или только неспортивные',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @queryBoolean()
+  @IsBoolean({ message: 'Признак спортивного похода должен быть true или false' })
+  isSport?: boolean;
+
+  @ApiProperty({
     description:
       'Когда: upcoming — впереди, ongoing — идёт, past — прошёл, undated — без дат',
     enum: TRIP_WHEN_VALUES,
@@ -93,7 +103,9 @@ export class TripListQueryDto {
   when?: TripWhen;
 
   @ApiProperty({
-    description: 'Только походы, где я участник (в том числе организатор)',
+    description:
+      'true — только походы, где я участник (в том числе организатор); ' +
+      'false — только чужие, где меня нет; без параметра — все видимые',
     example: true,
     required: false,
   })

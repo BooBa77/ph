@@ -493,15 +493,26 @@ export class TripsService {
       });
     }
 
+    if (query.isSport !== undefined) {
+      qb.andWhere('trip.is_sport = :isSport', { isSport: query.isSport });
+    }
+
     if (query.organizerUserId !== undefined) {
       qb.andWhere('trip.organizer_user_id = :organizerUserId', {
         organizerUserId: query.organizerUserId,
       });
     }
 
-    if (query.mine) {
+    /**
+     * `mine` — три состояния, а не два: без параметра лента показывает всё,
+     * `true` — только мои походы, `false` — только чужие. Именно так раздел
+     * и устроен: «Мои походы» и «Анонсы» — две разные страницы, и вторая
+     * обязана не повторять первую. Участие определяется составом: поход,
+     * который я организовал, но не иду, — всё равно мой.
+     */
+    if (query.mine !== undefined) {
       qb.andWhere(
-        `EXISTS (
+        `${query.mine ? '' : 'NOT '}EXISTS (
            SELECT 1 FROM trip_participants p
             WHERE p.trip_id = trip.id AND p.user_id = :userId
          )`,

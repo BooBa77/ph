@@ -448,6 +448,33 @@ describe('Походы (e2e)', () => {
       ).not.toContain('Приватный в ленте');
     });
 
+    /**
+     * `mine` — три состояния. Без параметра лента общая, `true` — только мои,
+     * `false` — только чужие. Разделение на «Мои походы» и «Анонсы» держится
+     * именно на этом: без третьего состояния вторая страница повторяла бы
+     * первую, а «покажи чужие» пришлось бы фильтровать на клиенте.
+     */
+    it('mine=false показывает только чужие походы, mine=true — только свои', async () => {
+      await createTrip({ announcement: 'Мой поход e2e' });
+
+      const mine = await listAnnouncements('?mine=true&limit=50');
+      expect(mine).toContain('Мой поход e2e');
+
+      const others = await listAnnouncements('?mine=false&limit=50');
+      expect(others).not.toContain('Мой поход e2e');
+
+      // Для постороннего этот поход чужой — и он попадает в «чужие»,
+      // а в «мои» не попадает ни при каких условиях.
+      const strangerOthers = await listAnnouncements(
+        '?mine=false&limit=50',
+        strangerToken,
+      );
+      expect(strangerOthers).toContain('Мой поход e2e');
+      expect(
+        await listAnnouncements('?mine=true&limit=50', strangerToken),
+      ).not.toContain('Мой поход e2e');
+    });
+
     it('when=undated не смешивает бездатные походы с предстоящими', async () => {
       await createTrip({ announcement: 'Без дат e2e' });
       await createTrip({
@@ -477,8 +504,33 @@ describe('Походы (e2e)', () => {
       expect(response.body.total).toBeGreaterThan(1);
     });
 
+    /**
+     * Признак спортивного похода — не украшение карточки, а фильтр:
+     * зачётные походы ищут отдельно от «просто сходить». Проверяются оба
+     * значения, потому что `false` — такой же осознанный выбор, как `true`,
+     * и условие «показать неспортивные» обязано работать, а не только
+     * отсекать спортивные.
+     */
+    it('фильтр по спортивному признаку разделяет спортивные и обычные', async () => {
+      await createTrip({ announcement: 'Спортивный e2e', isSport: true });
+      await createTrip({ announcement: 'Обычный e2e', isSport: false });
+
+      const sport = await listAnnouncements('?mine=true&isSport=true');
+      expect(sport).toContain('Спортивный e2e');
+      expect(sport).not.toContain('Обычный e2e');
+
+      const usual = await listAnnouncements('?mine=true&isSport=false');
+      expect(usual).toContain('Обычный e2e');
+      expect(usual).not.toContain('Спортивный e2e');
+    });
+
     it('мусор в фильтрах — 400, а не молчаливое значение по умолчанию', async () => {
-      for (const query of ['?when=когда-нибудь', '?mine=yes', '?limit=999']) {
+      for (const query of [
+        '?when=когда-нибудь',
+        '?mine=yes',
+        '?isSport=yes',
+        '?limit=999',
+      ]) {
         await request(app.getHttpServer())
           .get(`/api/trips${query}`)
           .set('Authorization', `Bearer ${accessToken}`)
