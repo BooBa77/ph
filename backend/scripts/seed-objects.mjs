@@ -62,7 +62,10 @@ const SITE = 'https://nature.baikal.ru';
  * запросы), поэтому справочник пока неполный и это видно по `collected`
  * в `regions.json`.
  */
-const COLLECTIONS = [{ type: 'скала', section: 'skala', file: 'skala.json' }];
+const COLLECTIONS = [
+  { type: 'скала', section: 'skala', file: 'skala.json' },
+  { type: 'вершина', section: 'peak', file: 'peak.json' },
+];
 
 /** Прочитать файл данных. Ошибку не глотаем: без данных сид бессмыслен. */
 function readData(file) {
