@@ -17,7 +17,6 @@ import {
   type CreateTripRequest,
   type DateVariantDraft,
   type GeoObject,
-  type Trip,
   type TripDateVariantInput,
   type TripStatus,
   type TripVisibility,
@@ -101,7 +100,6 @@ const router = useRouter()
 
 const isSubmitting = ref(false)
 const submitError = ref<string | null>(null)
-const created = ref<Trip | null>(null)
 
 /**
  * Что мешает отправить форму. `null` — можно.
@@ -233,7 +231,14 @@ async function submit() {
   submitError.value = null
 
   try {
-    created.value = await createTrip(buildPayload())
+    const trip = await createTrip(buildPayload())
+
+    // Сразу уходим в поход: создание — это начало работы с ним, а не отчёт
+    // о выполненном действии. Карточка «Поход создан» с кнопкой «Создать ещё»
+    // только мешала — заказчик убрал её прямо.
+    //
+    // В тестах роутера может не быть — тогда просто остаёмся на форме.
+    await router?.push({ name: 'trip', params: { id: trip.id } })
   } catch (error) {
     // Текст ошибки даёт бэкенд: он один знает правила окончательно,
     // и переписывать их здесь своими словами — значит разойтись с ним.
@@ -242,77 +247,10 @@ async function submit() {
     isSubmitting.value = false
   }
 }
-
-/** Открыть созданный поход: у него уже есть свои вкладки. */
-function openTrip() {
-  if (!created.value) return
-  // В тестах роутера нет — переход просто не делается.
-  void router?.push({ name: 'trip', params: { id: created.value.id } })
-}
-
-/** Начать заново: форма в исходное состояние. */ function startOver() {
-  created.value = null
-  submitError.value = null
-  selectedGoal.value = null
-  isCommercial.value = false
-  isSport.value = false
-  status.value = 'idea'
-  visibility.value = 'public'
-  announcement.value = ''
-  variants.value = [emptyVariantDraft(1)]
-  startsAt.value = ''
-  endsAt.value = ''
-  routeText.value = ''
-  requirements.value = ''
-  priceRub.value = ''
-  priceNote.value = ''
-}
 </script>
 
 <template>
-  <!-- Готово: показываем, что создалось, чтобы не гадать, ушло ли -->
-  <section
-    v-if="created"
-    class="rounded-xl border border-border bg-surface p-6"
-    data-test="created"
-  >
-    <h2 class="text-lg font-medium text-text">Поход создан</h2>
-    <p class="mt-2 text-sm text-text" data-test="created-name">
-      {{ created.goalObject?.name ?? 'Без цели' }}
-    </p>
-    <p v-if="created.announcement" class="mt-1 text-sm text-muted">
-      {{ created.announcement }}
-    </p>
-    <p class="mt-2 text-sm text-muted">
-      {{ TRIP_STATUS_LABELS[created.status] }} ·
-      {{ TRIP_VISIBILITY_LABELS[created.visibility] }}
-      <template v-if="created.isCommercial"> · коммерческий</template>
-      <template v-if="created.isSport"> · спортивное мероприятие</template>
-    </p>
-    <p class="mt-1 text-xs text-muted">
-      Вы записаны организатором и идёте — статус участия можно поменять в походе.
-    </p>
-
-    <button
-      type="button"
-      class="mt-4 cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm text-white transition-opacity hover:opacity-90"
-      data-test="open-trip"
-      @click="openTrip"
-    >
-      Открыть поход
-    </button>
-
-    <button
-      type="button"
-      class="mt-4 ml-2 cursor-pointer rounded-xl border border-border bg-field px-4 py-2 text-sm text-text transition-colors hover:border-primary"
-      @click="startOver"
-    >
-      Создать ещё
-    </button>
-  </section>
-
   <form
-    v-else
     class="flex flex-col gap-6 rounded-xl border border-border bg-surface p-6"
     @submit.prevent="submit"
   >

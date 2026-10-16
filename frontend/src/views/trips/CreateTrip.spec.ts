@@ -1,6 +1,7 @@
 import { mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
 import CreateTrip from '@/views/trips/CreateTrip.vue'
@@ -269,21 +270,35 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="error"]').text()).toContain('несуществующие объекты')
   })
 
-  it('после создания показывается имя цели, а «Создать ещё» возвращает форму', async () => {
+  it('после создания сразу открывается поход', async () => {
+    // Роутер здесь настоящий, а не заглушка: проверяем именно переход.
+    // Раньше после отправки показывалась карточка «Поход создан» с кнопкой
+    // «Создать ещё», и заказчик справедливо назвал её лишней — создание
+    // это начало работы с походом, а не отчёт.
+    const router = createRouter({
+      history: createMemoryHistory(),
+      routes: [
+        { path: '/trips/new', name: 'trips-create', component: CreateTrip },
+        { path: '/trips/:id', name: 'trip', component: { template: '<div />' } },
+      ],
+    })
+    await router.push('/trips/new')
+    await router.isReady()
+
+    const wrapper = mount(CreateTrip, { global: { plugins: [router] } })
+    await chooseGoal(wrapper)
+    await submit(wrapper)
+
+    expect(mocks.createTrip).toHaveBeenCalledTimes(1)
+    expect(router.currentRoute.value.name).toBe('trip')
+    expect(router.currentRoute.value.params.id).toBe('1')
+  })
+
+  it('без роутера (в тестах компонента) отправка не падает', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
     await submit(wrapper)
 
-    expect(wrapper.find('[data-test="created"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="created-name"]').text()).toBe('Витязь')
-
-    const again = wrapper
-      .findAll('[data-test="created"] button')
-      .find((button) => button.text() === 'Создать ещё')
-    await again?.trigger('click')
-
-    expect(wrapper.find('[data-test="created"]').exists()).toBe(false)
-    const announcement = wrapper.find('[data-test="announcement"]').element as HTMLInputElement
-    expect(announcement.value).toBe('')
+    expect(mocks.createTrip).toHaveBeenCalledTimes(1)
   })
 })
