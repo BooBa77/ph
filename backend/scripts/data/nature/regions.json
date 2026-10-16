@@ -174,5 +174,53 @@
     "collected": true,
     "skalaCount": 1,
     "source": null
+  },
+  {
+    "code": "angara",
+    "name": "По Ангаре ниже Иркутска",
+    "nameShort": "По Ангаре ниже Иркутска",
+    "collected": false,
+    "skalaCount": null,
+    "source": null
+  },
+  {
+    "code": "ulanburgasy",
+    "name": "Улан-Бургасы",
+    "nameShort": "Улан-Бургасы",
+    "collected": false,
+    "skalaCount": null,
+    "source": null
+  },
+  {
+    "code": "south",
+    "name": "Юг Бурятии",
+    "nameShort": "Юг Бурятии",
+    "collected": false,
+    "skalaCount": null,
+    "source": null
+  },
+  {
+    "code": "smuya",
+    "name": "Южно-Муйский хребет, Витимское плоскогорье",
+    "nameShort": "Южно-Муйский хребет, Витимское плоскогорье",
+    "collected": false,
+    "skalaCount": null,
+    "source": null
+  },
+  {
+    "code": "ustilimsk",
+    "name": "Усть-Илимск и Усть-Кут",
+    "nameShort": "Усть-Илимск и Усть-Кут",
+    "collected": false,
+    "skalaCount": null,
+    "source": null
+  },
+  {
+    "code": "zakamenskii",
+    "name": "Закаменский и Джидинский",
+    "nameShort": "Закаменский и Джидинский",
+    "collected": false,
+    "skalaCount": null,
+    "source": null
   }
 ]

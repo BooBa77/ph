@@ -255,9 +255,7 @@
     "slug": "senilga",
     "region": "hamardaban",
     "name": "Синильга",
-    "aliases": [
-      "Турмалиновый"
-    ]
+    "aliases": ["Турмалиновый"]
   },
   {
     "slug": "skalnyi",
@@ -431,9 +429,7 @@
     "slug": "shir_pol2",
     "region": "olha",
     "name": "Изюминка",
-    "aliases": [
-      "с Ключа Широкого на Большую Половинную"
-    ]
+    "aliases": ["с Ключа Широкого на Большую Половинную"]
   },
   {
     "slug": "shir_kri",
@@ -475,9 +471,7 @@
     "slug": "vlksm",
     "region": "tunki",
     "name": "17-го Съезда ВЛКСМ",
-    "aliases": [
-      "Прямой"
-    ]
+    "aliases": ["Прямой"]
   },
   {
     "slug": "40pobedy",
@@ -537,10 +531,7 @@
     "slug": "anapurna",
     "region": "tunki",
     "name": "Анапурна",
-    "aliases": [
-      "Дураков",
-      "Пьяный"
-    ]
+    "aliases": ["Дураков", "Пьяный"]
   },
   {
     "slug": "angarskii",
@@ -606,9 +597,7 @@
     "slug": "baikal_kit",
     "region": "tunki",
     "name": "Сложный",
-    "aliases": [
-      "Байкал"
-    ]
+    "aliases": ["Байкал"]
   },
   {
     "slug": "baikonur",
@@ -644,9 +633,7 @@
     "slug": "araoshei",
     "region": "tunki",
     "name": "Безмолвия",
-    "aliases": [
-      "с притока Ара-Хубутов на Ара-Ошей"
-    ]
+    "aliases": ["с притока Ара-Хубутов на Ара-Ошей"]
   },
   {
     "slug": "bezymyannyi_real",
@@ -748,9 +735,7 @@
     "slug": "chernyshevskogo",
     "region": "tunki",
     "name": "Чернышевского",
-    "aliases": [
-      "Бугатай Западный"
-    ]
+    "aliases": ["Бугатай Западный"]
   },
   {
     "slug": "east_bugatai",
@@ -864,9 +849,7 @@
     "slug": "gorlykgolskii",
     "region": "tunki",
     "name": "Горлыкгольский",
-    "aliases": [
-      "Шиферный"
-    ]
+    "aliases": ["Шиферный"]
   },
   {
     "slug": "gornyi_vostochnyi",
@@ -938,9 +921,7 @@
     "slug": "devyati_kit",
     "region": "tunki",
     "name": "Кутежан-Дабан",
-    "aliases": [
-      "Девяти"
-    ]
+    "aliases": ["Девяти"]
   },
   {
     "slug": "delfin_pass",
@@ -952,9 +933,7 @@
     "slug": "lazarya",
     "region": "tunki",
     "name": "Лазаря",
-    "aliases": [
-      "Денеб"
-    ]
+    "aliases": ["Денеб"]
   },
   {
     "slug": "jonnik",
@@ -1086,9 +1065,7 @@
     "slug": "zunbortoiskii",
     "region": "tunki",
     "name": "Зун-Бортойский",
-    "aliases": [
-      "Зумбортойский"
-    ]
+    "aliases": ["Зумбортойский"]
   },
   {
     "slug": "zungolskii",
@@ -1099,7 +1076,7 @@
   {
     "slug": "zungolskii_s",
     "region": "tunki",
-    "name": "Зун-Гольский",
+    "name": "Зун-Гольский Южный",
     "aliases": []
   },
   {
@@ -1148,9 +1125,7 @@
     "slug": "ilchirskiy_zapadniy",
     "region": "tunki",
     "name": "Ларискин",
-    "aliases": [
-      "Ильчирский Западный"
-    ]
+    "aliases": ["Ильчирский Западный"]
   },
   {
     "slug": "ilya_muromec",
@@ -1180,9 +1155,7 @@
     "slug": "pilmana",
     "region": "tunki",
     "name": "Иркутянок",
-    "aliases": [
-      "Пильмана"
-    ]
+    "aliases": ["Пильмана"]
   },
   {
     "slug": "italianskii",
@@ -1194,9 +1167,7 @@
     "slug": "hitryi",
     "region": "tunki",
     "name": "Хитрый",
-    "aliases": [
-      "Калинина"
-    ]
+    "aliases": ["Калинина"]
   },
   {
     "slug": "lzhekalinina",
@@ -1274,9 +1245,7 @@
     "slug": "chertolenshuntyn",
     "region": "tunki",
     "name": "Конский",
-    "aliases": [
-      "с Чертолен-Горхона на Шунтын-Горхон"
-    ]
+    "aliases": ["с Чертолен-Горхона на Шунтын-Горхон"]
   },
   {
     "slug": "kiseleva",
@@ -1714,9 +1683,7 @@
     "slug": "taburetka",
     "region": "tunki",
     "name": "Табуретка",
-    "aliases": [
-      "под пиком Стол"
-    ]
+    "aliases": ["под пиком Стол"]
   },
   {
     "slug": "podushechnyi",
@@ -1758,17 +1725,13 @@
     "slug": "postysheva",
     "region": "tunki",
     "name": "Постышева",
-    "aliases": [
-      "Средний"
-    ]
+    "aliases": ["Средний"]
   },
   {
     "slug": "arahubuty",
     "region": "tunki",
     "name": "Потайной",
-    "aliases": [
-      "с Архата на приток Ара-Хубутов (Потайная долина)"
-    ]
+    "aliases": ["с Архата на приток Ара-Хубутов (Потайная долина)"]
   },
   {
     "slug": "prezent",
@@ -1834,18 +1797,13 @@
     "slug": "romantik",
     "region": "tunki",
     "name": "Романтик",
-    "aliases": [
-      "Скрытый"
-    ]
+    "aliases": ["Скрытый"]
   },
   {
     "slug": "shelehova",
     "region": "tunki",
     "name": "Шелехова",
-    "aliases": [
-      "Рубин",
-      "Червонный"
-    ]
+    "aliases": ["Рубин", "Червонный"]
   },
   {
     "slug": "rudnichnyi",
@@ -2835,9 +2793,7 @@
     "slug": "akoyukchhigol",
     "region": "dolinavulkanov",
     "name": "Непроходной",
-    "aliases": [
-      "Высоцкого"
-    ]
+    "aliases": ["Высоцкого"]
   },
   {
     "slug": "hidundagol",
@@ -2849,9 +2805,7 @@
     "slug": "dundadovur",
     "region": "dolinavulkanov",
     "name": "с Дунда-Гол на Довурактыг-Ханаш-Хем",
-    "aliases": [
-      "Довурак"
-    ]
+    "aliases": ["Довурак"]
   },
   {
     "slug": "dodohutel",
@@ -3055,9 +3009,7 @@
     "slug": "helgin",
     "region": "dolinavulkanov",
     "name": "Хэлгин",
-    "aliases": [
-      "Пятиозёрный"
-    ]
+    "aliases": ["Пятиозёрный"]
   },
   {
     "slug": "raspalcovka",
