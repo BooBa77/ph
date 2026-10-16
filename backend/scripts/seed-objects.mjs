@@ -75,6 +75,11 @@ const COLLECTIONS = [
   { type: 'мыс', section: 'mys', file: 'mys.json' },
   { type: 'остров', section: 'island', file: 'island.json' },
   { type: 'пещера', section: 'cave', file: 'cave.json' },
+  // Водопады, пороги и шиверы лежат на сайте в одном разделе obj=waterfall,
+  // поэтому ссылки у всех трёх типов строятся по нему же.
+  { type: 'водопад', section: 'waterfall', file: 'waterfall.json' },
+  { type: 'порог', section: 'waterfall', file: 'porog.json' },
+  { type: 'шивера', section: 'waterfall', file: 'shivera.json' },
 ];
 
 /** Прочитать файл данных. Ошибку не глотаем: без данных сид бессмыслен. */
