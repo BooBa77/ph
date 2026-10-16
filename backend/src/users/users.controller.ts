@@ -6,6 +6,7 @@ import {
   NotFoundException,
   Patch,
   Post,
+  Query,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
@@ -25,6 +26,11 @@ import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import { UserResponseDto } from './dto/user-response.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UploadAvatarDto } from './dto/upload-avatar.dto';
+import {
+  UserSearchListDto,
+  UserSearchQueryDto,
+  UserSearchResultDto,
+} from './dto/user-search.dto';
 import { MAX_UPLOAD_BYTES } from '../config/uploads.config';
 
 /**
@@ -93,6 +99,28 @@ export class UsersController {
       throw new NotFoundException('Пользователь не найден');
     }
     return UserResponseDto.from(user);
+  }
+
+  /**
+   * Найти людей по имени — для приглашения в поход.
+   *
+   * Отдаёт только публичную часть: id, имя, аватарку. Ни email, ни города,
+   * ни спортивного опыта — чтобы позвать человека в поход, этого хватает,
+   * а остальное он показывает сам.
+   *
+   * Без `search` возвращается пустой список, а не все пользователи: список
+   * выбора не должен открываться «простынёй» из сотен имён.
+   */
+  @Get()
+  @ApiOperation({ summary: 'Поиск людей по имени' })
+  @ApiOkResponse({ type: UserSearchListDto })
+  async search(
+    @CurrentUser() authUser: AuthUser,
+    @Query() query: UserSearchQueryDto,
+  ): Promise<UserSearchListDto> {
+    const users = await this.usersService.search(query.search, authUser.id);
+
+    return { users: users.map((user) => UserSearchResultDto.from(user)) };
   }
 
   /**

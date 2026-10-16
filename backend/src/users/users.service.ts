@@ -6,6 +6,9 @@ import { SportExperience } from './entities/sport-experience.entity';
 import { DisplayNameHistory } from './entities/display-name-history.entity';
 import type { SportExperienceData } from './sport-experience.types';
 
+/** Сколько людей отдавать в поиске: список выбора, а не справочник. */
+const SEARCH_LIMIT = 20;
+
 /**
  * Данные для создания пользователя.
  * Email/пароль сюда НЕ входят — они идут в auth_identities через AuthService.
@@ -67,6 +70,38 @@ export class UsersService {
     });
 
     return repo.save(user);
+  }
+
+  /**
+   * Найти людей по подстроке имени — для приглашения в поход.
+   *
+   * `%` и `_` экранируются: иначе «%» пользователя превратился бы
+   * в «показать всех», а это не поиск, а его отсутствие.
+   *
+   * Себя из выдачи убираем: пригласить себя в поход нельзя, и человек
+   * в собственном списке выбора — это шум. Уже приглашённых отсеивает
+   * интерфейс: он один знает, кого в этом походе ещё нет.
+   */
+  async search(
+    search: string | undefined,
+    excludeUserId?: string,
+  ): Promise<User[]> {
+    const text = search?.trim();
+    if (!text) return [];
+
+    const escaped = text.replace(/[%_\\]/g, '\\$&');
+
+    const qb = this.usersRepository
+      .createQueryBuilder('user')
+      .where('user.displayName ILIKE :search', { search: `%${escaped}%` })
+      .orderBy('user.displayName', 'ASC')
+      .take(SEARCH_LIMIT);
+
+    if (excludeUserId) {
+      qb.andWhere('user.id <> :excludeUserId', { excludeUserId });
+    }
+
+    return qb.getMany();
   }
 
   /**
