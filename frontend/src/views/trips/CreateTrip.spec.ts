@@ -238,7 +238,7 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="hint"]').text()).toContain('цену')
   })
 
-  it('объект вставляется в маршрут ссылкой', async () => {
+  it('объект вставляется в маршрут ссылкой, а виден именем', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
 
@@ -247,8 +247,14 @@ describe('CreateTrip', () => {
     await vi.advanceTimersByTimeAsync(400)
     await wrapper.find('[data-test="object-option"]').trigger('click')
 
-    const route = wrapper.find('[data-test="md-textarea"]').element as HTMLTextAreaElement
-    expect(route.value).toBe('[[object:10]]')
+    // На экране — имя: разметку в маршруте видеть не должны.
+    const editor = wrapper.find('[data-test="md-editor"]')
+    expect(editor.text()).toContain('Витязь')
+    expect(editor.text()).not.toContain('[[object')
+
+    // А на сервер уходит токен: из него бэкенд строит индекс объектов.
+    await submit(wrapper)
+    expect(lastPayload().routeText).toBe('[[object:10]]')
   })
 
   it('текст ошибки бэкенда показывается как есть', async () => {

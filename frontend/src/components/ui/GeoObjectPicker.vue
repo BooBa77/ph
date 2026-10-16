@@ -16,26 +16,16 @@ import { geoObjectLabel, type GeoObject } from '@/types/trips'
  * в маршрут. Разметка и поведение там одинаковые, а копия через месяц
  * разойдётся — в одном месте появится задержка поиска, в другом нет.
  */
-const props = withDefaults(
+withDefaults(
   defineProps<{
     /** Подпись поля. */
     label?: string
     /** Подсказка в поле ввода. */
     placeholder?: string
-    /**
-     * Показывать ли родителя рядом с именем.
-     *
-     * В выборе цели похода родитель обязателен: там имена повторяются,
-     * и «Черепаха» без района — это выбор наугад. В текстовом редакторе
-     * наоборот: объект вставляется ссылкой, а ссылка подписывается именем,
-     * и хвост «· Олхинское плато» в середине фразы читается как мусор.
-     */
-    showParent?: boolean
   }>(),
   {
     label: '',
     placeholder: 'Начните вводить название — например, Витязь',
-    showParent: true,
   },
 )
 
@@ -120,7 +110,7 @@ function choose(object: GeoObject) {
           data-test="object-option"
           @click="choose(object)"
         >
-          {{ props.showParent ? geoObjectLabel(object) : object.name }}
+          {{ geoObjectLabel(object) }}
           <span class="text-muted">· {{ object.type }}</span>
         </button>
       </li>

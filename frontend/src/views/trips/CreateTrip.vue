@@ -429,7 +429,6 @@ function startOver() {
 
       <MarkdownEditor
         v-model="routeText"
-        :rows="6"
         placeholder="Как идём, где ночуем, чем забрасываемся. Объекты — кнопкой «Объект»"
         :objects="true"
         :emoji="false"

@@ -3,14 +3,19 @@ import type { VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MarkdownEditor from '@/components/ui/MarkdownEditor.vue'
+import { objectToken, userToken } from '@/utils/markdown'
 
 /**
- * Тесты редактора markdown.
+ * Тесты редактора текста.
  *
- * Редактор универсальный: он не знает ни про походы, ни про маршруты,
- * и проверять его надо на этом же уровне — что инструменты оформления
- * работают с выделением, что вставка идёт в место курсора, и что
- * отключаемые куски действительно отключаются.
+ * Главное, что здесь проверяется, — **разметки не видно**. Человек должен
+ * видеть жирное слово, а не `**звёздочки**`, и «Витязь», а не
+ * `[[object:10]]`. Это не украшение, а требование заказчика: он прямо
+ * сказал, что возрастные походники от звёздочек придут в ужас.
+ *
+ * Второе — обратимость: то, что редактор отдаёт наружу, должно быть тем
+ * markdown-ом, из которого он это показал. Проверяется через
+ * `update:modelValue`: именно это значение уедет на сервер.
  *
  * Таймеры поддельные: у поиска объекта задержка.
  */
@@ -27,16 +32,23 @@ const VITYAZ = {
   parentName: 'Олхинское плато',
 }
 
-/** Текущее содержимое поля. */
-function value(wrapper: VueWrapper): string {
-  return (wrapper.find('[data-test="md-textarea"]').element as HTMLTextAreaElement).value
+/** Разметка внутри поля. */
+function html(wrapper: VueWrapper): string {
+  return wrapper.find('[data-test="md-editor"]').element.innerHTML
 }
 
-/** Выделить диапазон и нажать кнопку панели. */
-async function clickWithSelection(wrapper: VueWrapper, start: number, end: number, test: string) {
-  const field = wrapper.find('[data-test="md-textarea"]').element as HTMLTextAreaElement
-  field.setSelectionRange(start, end)
-  await wrapper.find(`[data-test="${test}"]`).trigger('click')
+/** Последнее, что редактор отдал наружу. */
+function emitted(wrapper: VueWrapper): string {
+  const events = wrapper.emitted('update:modelValue')
+  return (events?.[events.length - 1]?.[0] as string) ?? ''
+}
+
+/** Найти и вставить объект через панель. */
+async function insertObject(wrapper: VueWrapper) {
+  await wrapper.find('[data-test="md-object"]').trigger('click')
+  await wrapper.find('[data-test="object-search"]').setValue('Витязь')
+  await vi.advanceTimersByTimeAsync(400)
+  await wrapper.find('[data-test="object-option"]').trigger('click')
 }
 
 describe('MarkdownEditor', () => {
@@ -50,107 +62,135 @@ describe('MarkdownEditor', () => {
     vi.useRealTimers()
   })
 
-  it('выделение оборачивается маркерами жирного и курсива', async () => {
-    // Каждую проверку — на своём экземпляре: подмена modelValue у уже
-    // смонтированного редактора проверяла бы не редактор, а то, как тест
-    // обошёлся с его состоянием.
-    const bold = mount(MarkdownEditor, { props: { modelValue: 'Витязь' } })
-    await clickWithSelection(bold, 0, 6, 'md-bold')
-    expect(value(bold)).toBe('**Витязь**')
-
-    const italic = mount(MarkdownEditor, { props: { modelValue: 'Витязь' } })
-    await clickWithSelection(italic, 0, 6, 'md-italic')
-    expect(value(italic)).toBe('*Витязь*')
-
-    const code = mount(MarkdownEditor, { props: { modelValue: 'Витязь' } })
-    await clickWithSelection(code, 0, 6, 'md-code')
-    expect(value(code)).toBe('`Витязь`')
-  })
-
-  it('список и цитата ставятся префиксом к строкам', async () => {
+  it('показывает текст оформленным, без звёздочек', () => {
     const wrapper = mount(MarkdownEditor, {
-      props: { modelValue: 'Первая\nВторая' },
+      props: { modelValue: 'Идём на **Витязь**' },
     })
 
-    await clickWithSelection(wrapper, 0, 13, 'md-list')
-    expect(value(wrapper)).toBe('- Первая\n- Вторая')
-
-    // Повторное нажатие снимает префикс: иначе кнопка умеет только
-    // включать, и выключить список можно лишь руками.
-    await clickWithSelection(wrapper, 0, value(wrapper).length, 'md-list')
-    expect(value(wrapper)).toBe('Первая\nВторая')
-
-    await clickWithSelection(wrapper, 0, 6, 'md-quote')
-    expect(value(wrapper)).toBe('> Первая\nВторая')
+    expect(html(wrapper)).toContain('<strong>Витязь</strong>')
+    expect(html(wrapper)).not.toContain('**')
   })
 
-  it('смайликов нет, если их не разрешили', () => {
+  it('показывает список списком, без дефисов', () => {
+    const wrapper = mount(MarkdownEditor, {
+      props: { modelValue: '- Раз\n- Два' },
+    })
+
+    expect(html(wrapper)).toContain('<ul>')
+    expect(html(wrapper)).toContain('<li>Раз</li>')
+    expect(html(wrapper)).not.toContain('- Раз')
+  })
+
+  it('показывает объект именем, а не токеном', () => {
+    const wrapper = mount(MarkdownEditor, {
+      props: {
+        modelValue: 'Старт на [[object:10]]',
+        mentions: { [objectToken('10')]: 'Витязь' },
+      },
+    })
+
+    expect(html(wrapper)).toContain('Витязь')
+    // Видимый текст токена не показывает — в этом весь смысл.
+    expect(wrapper.find('[data-test="md-editor"]').text()).not.toContain('[[object')
+    // А внутри токен есть, чтобы ссылка не потерялась при сохранении.
+    expect(html(wrapper)).toContain('data-token="[[object:10]]"')
+    // И id отдельно: у объектов будут свои страницы с историей посещений.
+    expect(html(wrapper)).toContain('data-object-id="10"')
+  })
+
+  it('правка отдаёт наружу markdown', async () => {
     const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
 
-    // В описании маршрута смайлик не несёт ничего, поэтому по умолчанию
-    // кнопки нет вовсе, а не «есть, но неактивна».
-    expect(wrapper.find('[data-test="md-emoji"]').exists()).toBe(false)
+    wrapper.find('[data-test="md-editor"]').element.innerHTML =
+      '<div>Привет, <strong>мир</strong></div>'
+    await wrapper.find('[data-test="md-editor"]').trigger('input')
+
+    expect(emitted(wrapper)).toBe('Привет, **мир**')
   })
 
-  it('смайлик вставляется, когда разрешён', async () => {
+  it('вставленный объект уходит токеном, а виден именем', async () => {
+    const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
+
+    await insertObject(wrapper)
+
+    expect(html(wrapper)).toContain('Витязь')
+    expect(emitted(wrapper)).toBe('[[object:10]]')
+  })
+
+  it('фильтр объекта показывает родителя, а текст — нет', async () => {
+    const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
+
+    await wrapper.find('[data-test="md-object"]').trigger('click')
+    await wrapper.find('[data-test="object-search"]').setValue('Витязь')
+    await vi.advanceTimersByTimeAsync(400)
+
+    // В фильтре родитель обязателен: «Осиновка» без района — выбор наугад.
+    const options = wrapper.find('[data-test="object-options"]').text()
+    expect(options).toContain('Витязь · Олхинское плато')
+
+    await wrapper.find('[data-test="object-option"]').trigger('click')
+
+    // А в тексте — только имя: хвост с районом посреди фразы читается
+    // как мусор.
+    expect(html(wrapper)).toContain('>Витязь</span>')
+    expect(html(wrapper)).not.toContain('Олхинское')
+  })
+
+  it('календарь вставляет дату словами', async () => {
+    const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
+
+    await wrapper.find('[data-test="md-date"]').trigger('click')
+    await wrapper.find('[data-test="date-input"]').setValue('2027-05-12')
+    await wrapper.find('[data-test="date-insert"]').trigger('click')
+
+    expect(emitted(wrapper)).toBe('12 мая 2027')
+  })
+
+  it('ссылка вставляется адресом', async () => {
+    const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
+
+    await wrapper.find('[data-test="md-link"]').trigger('click')
+    await wrapper.find('[data-test="link-input"]').setValue('https://example.com')
+    await wrapper.find('[data-test="link-insert"]').trigger('click')
+
+    expect(emitted(wrapper)).toBe('[https://example.com](https://example.com)')
+    expect(html(wrapper)).toContain('<a href="https://example.com">')
+  })
+
+  it('участники вставляются, когда переданы', async () => {
     const wrapper = mount(MarkdownEditor, {
-      props: { modelValue: '', emoji: true },
-    })
-
-    expect(wrapper.find('[data-test="md-emoji"]').exists()).toBe(true)
-
-    await wrapper.find('[data-test="md-emoji"]').trigger('click')
-    await wrapper.find('[data-test="emoji-option"]').trigger('click')
-
-    expect(value(wrapper)).toContain('⛰️')
-  })
-
-  it('участники есть только там, где их передали', async () => {
-    const without = mount(MarkdownEditor, { props: { modelValue: '' } })
-    expect(without.find('[data-test="md-participant"]').exists()).toBe(false)
-
-    const with_ = mount(MarkdownEditor, {
       props: {
         modelValue: '',
         participants: [{ id: 'u-1', name: 'Сергей' }],
       },
     })
 
-    await with_.find('[data-test="md-participant"]').trigger('click')
-    await with_.find('[data-test="participant-option"]').trigger('click')
+    await wrapper.find('[data-test="md-participant"]').trigger('click')
+    await wrapper.find('[data-test="participant-option"]').trigger('click')
 
-    expect(value(with_)).toBe('[[user:u-1]]')
+    expect(emitted(wrapper)).toBe(userToken('u-1'))
   })
 
-  it('объект вставляется ссылкой в место курсора', async () => {
+  it('смайликов нет, пока их не разрешили', () => {
+    const without = mount(MarkdownEditor, { props: { modelValue: '' } })
+    expect(without.find('[data-test="md-emoji"]').exists()).toBe(false)
+
+    const with_ = mount(MarkdownEditor, {
+      props: { modelValue: '', emoji: true },
+    })
+    expect(with_.find('[data-test="md-emoji"]').exists()).toBe(true)
+  })
+
+  it('подсказка видна в пустом поле и уходит при вводе', async () => {
     const wrapper = mount(MarkdownEditor, {
-      props: { modelValue: 'Старт: конец' },
+      props: { modelValue: '', placeholder: 'Как идём' },
     })
 
-    // Курсор в середине: ссылка должна встать туда, а не в хвост —
-    // маршрут пишут по частям, и дописывание в конец ломало бы порядок.
-    const field = wrapper.find('[data-test="md-textarea"]').element as HTMLTextAreaElement
-    field.setSelectionRange(7, 7)
+    expect(wrapper.text()).toContain('Как идём')
 
-    await wrapper.find('[data-test="md-object"]').trigger('click')
-    await wrapper.find('[data-test="object-search"]').setValue('Витязь')
-    await vi.advanceTimersByTimeAsync(400)
-    await wrapper.find('[data-test="object-option"]').trigger('click')
+    wrapper.find('[data-test="md-editor"]').element.innerHTML = '<div>Текст</div>'
+    await wrapper.find('[data-test="md-editor"]').trigger('input')
 
-    expect(value(wrapper)).toBe('Старт: [[object:10]]конец')
-  })
-
-  it('имя объекта в редакторе показывается без родителя', async () => {
-    const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
-
-    await wrapper.find('[data-test="md-object"]').trigger('click')
-    await wrapper.find('[data-test="object-search"]').setValue('Витязь')
-    await vi.advanceTimersByTimeAsync(400)
-
-    const options = wrapper.find('[data-test="object-options"]').text()
-    expect(options).toContain('Витязь')
-    // В тексте ссылка подписывается именем, и хвост «· Олхинское плато»
-    // в середине фразы читался бы как мусор.
-    expect(options).not.toContain('Олхинское плато')
+    expect(wrapper.text()).not.toContain('Как идём')
   })
 })
