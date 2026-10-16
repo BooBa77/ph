@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { RouterLink, useRoute } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
-import { getTrip } from '@/api/trips'
+import { getTrip, updateTrip } from '@/api/trips'
+import { useAuthStore } from '@/stores/auth'
 import TripChats from '@/views/trips/TripChats.vue'
 import TripInfo from '@/views/trips/TripInfo.vue'
+import TripParticipants from '@/views/trips/TripParticipants.vue'
 import { TRIP_VISIBILITY_LABELS, type Trip } from '@/types/trips'
 import { tripWhenText } from '@/utils/tripDisplay'
 
@@ -21,23 +23,37 @@ import { tripWhenText } from '@/utils/tripDisplay'
  * остаётся одним экраном, поход грузится один раз, переход между вкладками
  * мгновенный. Когда вкладок станет много и понадобятся ссылки на конкретную,
  * их переведут в адрес — это отдельный шаг.
+ *
+ * **Организатору видны свои действия**: правка похода и закрытие набора.
+ * Это не защита — решает бэкенд и отвечает 403, — а честность интерфейса:
+ * кнопка, которая заведомо не сработает, хуже её отсутствия.
  */
 const route = useRoute()
+const auth = useAuthStore()
 
 const trip = ref<Trip | null>(null)
 const isLoading = ref(true)
 const error = ref<string | null>(null)
+const actionError = ref<string | null>(null)
+const isTogglingRecruitment = ref(false)
 
 const TAB_INFO = 'info'
+const TAB_PARTICIPANTS = 'participants'
 const TAB_CHATS = 'chats'
-type Tab = typeof TAB_INFO | typeof TAB_CHATS
+type Tab = typeof TAB_INFO | typeof TAB_PARTICIPANTS | typeof TAB_CHATS
 
 const tab = ref<Tab>(TAB_INFO)
 
 const TABS: { key: Tab; label: string }[] = [
   { key: TAB_INFO, label: 'Информация' },
+  { key: TAB_PARTICIPANTS, label: 'Участники' },
   { key: TAB_CHATS, label: 'Чаты' },
 ]
+
+/** Править поход может только организатор. */
+const isOrganizer = computed(
+  () => trip.value !== null && trip.value.organizerUserId === auth.user?.id,
+)
 
 async function load(id: string) {
   isLoading.value = true
@@ -63,6 +79,7 @@ watch(
   () => route.params.id,
   (id) => {
     tab.value = TAB_INFO
+    actionError.value = null
     if (typeof id === 'string') void load(id)
   },
   { immediate: true },
@@ -78,6 +95,31 @@ const goalName = computed(() => trip.value?.goalObject?.name ?? 'Поход')
  * карточка ленты, и третья копия этих строк разошлась бы с ними.
  */
 const whenText = computed(() => (trip.value ? tripWhenText(trip.value) : ''))
+
+/**
+ * Закрыть или открыть набор.
+ *
+ * Отдельная кнопка, а не поле в форме правки: набор закрывают в тот момент,
+ * когда он закрылся, — и для этого не хочется уходить на другой экран
+ * и заполнять форму целиком. Патч ровно с одним полем, остальное не трогаем.
+ */
+async function toggleRecruitment() {
+  if (!trip.value) return
+
+  isTogglingRecruitment.value = true
+  actionError.value = null
+
+  try {
+    trip.value = await updateTrip(trip.value.id, {
+      isRecruitmentClosed: !trip.value.isRecruitmentClosed,
+    })
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось изменить набор'
+  } finally {
+    isTogglingRecruitment.value = false
+  }
+}
 </script>
 
 <template>
@@ -90,19 +132,48 @@ const whenText = computed(() => (trip.value ? tripWhenText(trip.value) : ''))
 
     <template v-else-if="trip">
       <!-- Шапка: имя похода — цель, а не анонс -->
-      <header class="flex flex-col gap-1">
-        <h1 class="text-2xl font-bold text-text" data-test="trip-name">
-          {{ goalName }}
-        </h1>
+      <header class="flex flex-col gap-3">
+        <div class="flex flex-wrap items-start justify-between gap-2">
+          <div class="flex flex-col gap-1">
+            <h1 class="text-2xl font-bold text-text" data-test="trip-name">
+              {{ goalName }}
+            </h1>
 
-        <p v-if="trip.announcement" class="text-sm text-text">
-          {{ trip.announcement }}
-        </p>
+            <p v-if="trip.announcement" class="text-sm text-text">
+              {{ trip.announcement }}
+            </p>
+          </div>
+
+          <div v-if="isOrganizer" class="flex flex-wrap items-center gap-2">
+            <RouterLink
+              :to="{ name: 'trip-edit', params: { id: trip.id } }"
+              class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text no-underline transition-colors hover:border-primary"
+              data-test="trip-edit-link"
+            >
+              Редактировать
+            </RouterLink>
+
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
+              :disabled="isTogglingRecruitment"
+              data-test="toggle-recruitment"
+              @click="toggleRecruitment"
+            >
+              {{ trip.isRecruitmentClosed ? 'Открыть набор' : 'Закрыть набор' }}
+            </button>
+          </div>
+        </div>
 
         <p class="text-sm text-muted" data-test="trip-when">
           {{ whenText }} · {{ TRIP_VISIBILITY_LABELS[trip.visibility] }}
           <template v-if="trip.isCommercial"> · коммерческий</template>
           <template v-if="trip.isSport"> · спортивный поход</template>
+          <template v-if="trip.isRecruitmentClosed"> · набор закрыт</template>
+        </p>
+
+        <p v-if="actionError" class="text-sm text-red-600" data-test="trip-action-error">
+          {{ actionError }}
         </p>
       </header>
 
@@ -126,6 +197,11 @@ const whenText = computed(() => (trip.value ? tripWhenText(trip.value) : ''))
       </nav>
 
       <TripInfo v-if="tab === TAB_INFO" :trip="trip" />
+      <TripParticipants
+        v-else-if="tab === TAB_PARTICIPANTS"
+        :trip="trip"
+        @changed="load(trip.id)"
+      />
       <TripChats v-else :trip="trip" />
 
       <!-- Вкладки: на телефоне снизу, под большим пальцем -->

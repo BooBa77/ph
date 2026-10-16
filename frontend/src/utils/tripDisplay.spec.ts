@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
-import { tripBadges, tripDatesText, tripFrameParts, tripWhenText } from '@/utils/tripDisplay'
+import {
+  tripBadges,
+  tripDatesText,
+  tripFrameParts,
+  tripMeetingText,
+  tripWhenText,
+} from '@/utils/tripDisplay'
 
 /**
  * Тесты текстов о походе.
@@ -17,6 +23,8 @@ const trip = (overrides: Record<string, unknown> = {}) => ({
   isCommercial: false,
   isSport: false,
   priceRub: null,
+  meetingPlace: null,
+  meetingAt: null,
   ...overrides,
 })
 
@@ -55,5 +63,23 @@ describe('tripDisplay', () => {
     expect(tripBadges(trip())).toEqual([])
     expect(tripBadges(trip({ isCommercial: true }))).toEqual(['коммерческий'])
     expect(tripBadges(trip({ isSport: true }))).toEqual(['спортивный поход'])
+  })
+
+  /**
+   * Сбор — место и время вместе: по отдельности они бесполезны.
+   * Пустая строка вместо «—» — чтобы вкладка «Информация» не показывала
+   * строку «Сбор: —» у похода, где сбора ещё нет.
+   */
+  it('сбор показывает место и время, а пустой — ничего', () => {
+    expect(tripMeetingText(trip())).toBe('')
+
+    expect(
+      tripMeetingText(
+        trip({ meetingPlace: 'У вокзала', meetingAt: '2027-05-05T00:00:00.000Z' }),
+      ),
+    ).toContain('У вокзала · ')
+
+    expect(tripMeetingText(trip({ meetingPlace: 'У вокзала' }))).toBe('У вокзала')
+    expect(tripMeetingText(trip({ meetingAt: '2027-05-05T00:00:00.000Z' }))).toContain('2027')
   })
 })

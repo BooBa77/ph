@@ -3,7 +3,7 @@ import { computed, ref, watch } from 'vue'
 
 import { listObjectsByIds } from '@/api/objects'
 import { extractObjectIds, markdownToHtml, objectToken, type MentionNames } from '@/utils/markdown'
-import { tripFrameParts, tripWhenText } from '@/utils/tripDisplay'
+import { tripFrameParts, tripMeetingText, tripWhenText } from '@/utils/tripDisplay'
 import { TRIP_STATUS_LABELS, type Trip } from '@/types/trips'
 
 /**
@@ -59,6 +59,14 @@ const dates = computed(() => tripWhenText(props.trip))
 
 /** Рамка: коммерция, спортивность, цена — строкой через точку. */
 const frame = computed(() => tripFrameParts(props.trip).join(' · '))
+
+/**
+ * Сбор: где и когда встречаемся.
+ *
+ * Показывается, только если это заполнено: пустая строка «Сбор: —» читается
+ * как поломка, а не как «ещё не решили».
+ */
+const meeting = computed(() => tripMeetingText(props.trip))
 </script>
 
 <template>
@@ -86,7 +94,25 @@ const frame = computed(() => tripFrameParts(props.trip).join(' · '))
         <dt class="text-xs text-muted">Рамка</dt>
         <dd class="text-sm text-text" data-test="info-frame">{{ frame }}</dd>
       </div>
+
+      <div v-if="meeting">
+        <dt class="text-xs text-muted">Сбор</dt>
+        <dd class="text-sm text-text" data-test="info-meeting">{{ meeting }}</dd>
+      </div>
     </dl>
+
+    <div v-if="trip.transferText?.trim()">
+      <h2 class="mb-1 text-sm text-muted">Заброска</h2>
+      <!-- Обычный текст, а не markdown: заброска — это две строки о том,
+           как добираемся, и разметка тут только мешала бы. Переносы строк
+           сохраняем через whitespace-pre-line. -->
+      <p
+        class="text-sm leading-relaxed whitespace-pre-line text-text"
+        data-test="info-transfer"
+      >
+        {{ trip.transferText }}
+      </p>
+    </div>
 
     <div v-if="trip.routeText.trim()">
       <h2 class="mb-1 text-sm text-muted">Маршрут</h2>

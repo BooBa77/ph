@@ -23,6 +23,32 @@ export function formatTripDate(iso: string): string {
   })
 }
 
+/** Момент словами: «5 мая 2027 г., 08:00». Часы нужны там, где важен час. */
+export function formatTripMoment(iso: string): string {
+  const at = new Date(iso)
+  const time = at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+
+  return `${formatTripDate(iso)}, ${time}`
+}
+
+/**
+ * Сбор: где и когда. Пустая строка — не указано вовсе.
+ *
+ * Место и время показываются вместе, потому что по отдельности они
+ * бесполезны: «у вокзала» без часа и «в 8:00» без места не помогают
+ * собраться. Если известно одно — показываем одно, врать нечем.
+ */
+export function tripMeetingText(
+  trip: Pick<Trip, 'meetingPlace' | 'meetingAt'>,
+): string {
+  const parts: string[] = []
+
+  if (trip.meetingPlace) parts.push(trip.meetingPlace)
+  if (trip.meetingAt) parts.push(formatTripMoment(trip.meetingAt))
+
+  return parts.join(' · ')
+}
+
 /**
  * Даты похода одной строкой. Пустая строка — дат нет вовсе.
  *
