@@ -63,7 +63,7 @@ const TRIP: Trip = {
   actualStartedAt: null,
   actualFinishedAt: null,
   isCommercial: false,
-  isSport: false,
+  isOfficial: false,
   priceRub: null,
   priceNote: null,
   cancelledAt: null,

@@ -31,7 +31,7 @@ const BASE: Trip = {
   actualStartedAt: null,
   actualFinishedAt: null,
   isCommercial: false,
-  isSport: false,
+  isOfficial: false,
   priceRub: null,
   priceNote: null,
   cancelledAt: null,
@@ -71,10 +71,10 @@ describe('TripCard', () => {
   })
 
   it('коммерция и спортивность видны значками, цена — рядом с признаком', () => {
-    const wrapper = mountCard(trip({ isCommercial: true, priceRub: 25000, isSport: true }))
+    const wrapper = mountCard(trip({ isCommercial: true, priceRub: 25000, isOfficial: true }))
     const badges = wrapper.findAll('[data-test="trip-card-badge"]').map((badge) => badge.text())
 
-    expect(badges).toEqual(['коммерческий · 25000 ₽', 'спортивный поход'])
+    expect(badges).toEqual(['коммерческий · 25000 ₽', 'официальный поход'])
   })
 
   it('у обычного похода значков нет', () => {

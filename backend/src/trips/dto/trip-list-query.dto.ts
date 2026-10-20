@@ -84,14 +84,14 @@ export class TripListQueryDto {
   isCommercial?: boolean;
 
   @ApiProperty({
-    description: 'Только спортивные или только неспортивные',
+    description: 'Только официальные или только неофициальные',
     example: true,
     required: false,
   })
   @IsOptional()
   @queryBoolean()
-  @IsBoolean({ message: 'Признак спортивного похода должен быть true или false' })
-  isSport?: boolean;
+  @IsBoolean({ message: 'Признак официального похода должен быть true или false' })
+  isOfficial?: boolean;
 
   @ApiProperty({
     description:

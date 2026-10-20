@@ -257,15 +257,16 @@ export class CreateTripDto {
   isCommercial?: boolean;
 
   @ApiProperty({
-    description: 'Спортивный поход: зачётный поход, в основном некатегорийный',
+    description:
+      'Официальный поход: зачётный выход по правилам. Открывает вкладку «Спорт»',
     example: false,
     required: false,
   })
   @IsOptional()
   @IsBoolean({
-    message: 'Признак спортивного похода должен быть true или false',
+    message: 'Признак официального похода должен быть true или false',
   })
-  isSport?: boolean;
+  isOfficial?: boolean;
 
   @ApiProperty({
     description:

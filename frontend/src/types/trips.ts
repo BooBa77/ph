@@ -187,7 +187,8 @@ export function emptyVariantDraft(id: number): DateVariantDraft {
   startsAt?: string | null
   endsAt?: string | null
   isCommercial?: boolean
-  isSport?: boolean
+  /** Официальный поход: зачётный выход по правилам. */
+  isOfficial?: boolean
   priceRub?: number | null
   priceNote?: string | null
   dateVariants?: TripDateVariantInput[]
@@ -224,7 +225,8 @@ export interface UpdateTripRequest {
   /** Набор закрыт: заявки не принимаются. */
   isRecruitmentClosed?: boolean
   isCommercial?: boolean
-  isSport?: boolean
+  /** Официальный поход: зачётный выход по правилам. */
+  isOfficial?: boolean
   priceRub?: number | null
   priceNote?: string | null
   activityTypeIds?: number[]
@@ -267,7 +269,8 @@ export interface Trip {
   /** Факт возвращения. */
   actualFinishedAt: string | null
   isCommercial: boolean
-  isSport: boolean
+  /** Официальный поход: зачётный выход по правилам. */
+  isOfficial: boolean
   priceRub: number | null
   priceNote: string | null
   /** Когда поход отменён. В ленту отменённые не попадают, но по id видны. */
@@ -297,7 +300,7 @@ export interface TripListQuery {
   activityTypeId?: number
   status?: TripStatus
   isCommercial?: boolean
-  isSport?: boolean
+  isOfficial?: boolean
   when?: TripWhen
   mine?: boolean
   organizerUserId?: string

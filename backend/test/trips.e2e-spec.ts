@@ -643,30 +643,30 @@ describe('Походы (e2e)', () => {
     });
 
     /**
-     * Признак спортивного похода — не украшение карточки, а фильтр:
-     * зачётные походы ищут отдельно от «просто сходить». Проверяются оба
+     * Признак официального похода — не украшение карточки, а фильтр:
+     * зачётные выходы ищут отдельно от «просто сходить». Проверяются оба
      * значения, потому что `false` — такой же осознанный выбор, как `true`,
-     * и условие «показать неспортивные» обязано работать, а не только
-     * отсекать спортивные.
+     * и условие «показать неофициальные» обязано работать, а не только
+     * отсекать официальные.
      */
-    it('фильтр по спортивному признаку разделяет спортивные и обычные', async () => {
-      await createTrip({ announcement: 'Спортивный e2e', isSport: true });
-      await createTrip({ announcement: 'Обычный e2e', isSport: false });
+    it('фильтр по официальному признаку разделяет официальные и обычные', async () => {
+      await createTrip({ announcement: 'Официальный e2e', isOfficial: true });
+      await createTrip({ announcement: 'Обычный e2e', isOfficial: false });
 
-      const sport = await listAnnouncements('?mine=true&isSport=true');
-      expect(sport).toContain('Спортивный e2e');
-      expect(sport).not.toContain('Обычный e2e');
+      const official = await listAnnouncements('?mine=true&isOfficial=true');
+      expect(official).toContain('Официальный e2e');
+      expect(official).not.toContain('Обычный e2e');
 
-      const usual = await listAnnouncements('?mine=true&isSport=false');
+      const usual = await listAnnouncements('?mine=true&isOfficial=false');
       expect(usual).toContain('Обычный e2e');
-      expect(usual).not.toContain('Спортивный e2e');
+      expect(usual).not.toContain('Официальный e2e');
     });
 
     it('мусор в фильтрах — 400, а не молчаливое значение по умолчанию', async () => {
       for (const query of [
         '?when=когда-нибудь',
         '?mine=yes',
-        '?isSport=yes',
+        '?isOfficial=yes',
         '?objectId=abc',
         '?limit=999',
       ]) {

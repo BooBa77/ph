@@ -71,7 +71,7 @@ const object = ref<GeoObject | null>(null)
 const when = ref<TripWhen | ''>(queryValue('when', TRIP_WHEN_VALUES))
 const status = ref<TripStatus | ''>(queryValue('status', TRIP_STATUSES))
 const commercial = ref<'' | 'true' | 'false'>(queryBoolean('isCommercial'))
-const sport = ref<'' | 'true' | 'false'>(queryBoolean('isSport'))
+const official = ref<'' | 'true' | 'false'>(queryBoolean('isOfficial'))
 
 /** Имя объекта для подписи фильтра: оно нужно только на экране. */
 async function restoreObject(id: number) {
@@ -107,7 +107,7 @@ function currentQuery(): TripListQuery {
     when: when.value || undefined,
     status: status.value || undefined,
     isCommercial: commercial.value === '' ? undefined : commercial.value === 'true',
-    isSport: sport.value === '' ? undefined : sport.value === 'true',
+    isOfficial: official.value === '' ? undefined : official.value === 'true',
   }
 }
 
@@ -120,7 +120,7 @@ const hasFilters = computed(
     when.value !== '' ||
     status.value !== '' ||
     commercial.value !== '' ||
-    sport.value !== '',
+    official.value !== '',
 )
 
 /** Снять всё выбранное: один обработчик вместо пяти одинаковых. */
@@ -130,7 +130,7 @@ function resetFilters() {
   when.value = ''
   status.value = ''
   commercial.value = ''
-  sport.value = ''
+  official.value = ''
 }
 
 /** Адрес без пустых фильтров: `?when=weekend`, а не `?when=&status=`. */
@@ -141,7 +141,7 @@ function filterQuery(): LocationQueryRaw {
   if (when.value) query.when = when.value
   if (status.value) query.status = status.value
   if (commercial.value) query.isCommercial = commercial.value
-  if (sport.value) query.isSport = sport.value
+  if (official.value) query.isOfficial = official.value
 
   return query
 }
@@ -156,7 +156,7 @@ function filterQuery(): LocationQueryRaw {
  * кнопкой — это один запрос и одна правка адреса, а не пять.
  */
 watch(
-  [objectId, when, status, commercial, sport],
+  [objectId, when, status, commercial, official],
   () => {
     void router.replace({ query: filterQuery() })
     void load()
@@ -240,15 +240,15 @@ watch(
         </label>
 
         <label class="flex flex-col gap-1">
-          <span class="text-sm text-muted">Спортивный</span>
+          <span class="text-sm text-muted">Официальный</span>
           <select
-            v-model="sport"
+            v-model="official"
             class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors hover:border-primary focus:border-primary focus:outline-none"
-            data-test="filter-sport"
+            data-test="filter-official"
           >
             <option value="">Неважно</option>
-            <option value="true">Только спортивные</option>
-            <option value="false">Без спортивных</option>
+            <option value="true">Только официальные</option>
+            <option value="false">Без официальных</option>
           </select>
         </label>
       </div>

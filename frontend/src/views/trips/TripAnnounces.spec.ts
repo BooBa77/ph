@@ -62,7 +62,7 @@ const BASE: Trip = {
   actualStartedAt: null,
   actualFinishedAt: null,
   isCommercial: false,
-  isSport: false,
+  isOfficial: false,
   priceRub: null,
   priceNote: null,
   cancelledAt: null,
@@ -137,7 +137,7 @@ describe('TripAnnounces', () => {
     expect(lastQuery()).toMatchObject({ mine: false, limit: 20, offset: 0 })
     expect(lastQuery().when).toBeUndefined()
     expect(lastQuery().isCommercial).toBeUndefined()
-    expect(lastQuery().isSport).toBeUndefined()
+    expect(lastQuery().isOfficial).toBeUndefined()
     expect(lastQuery().objectId).toBeUndefined()
   })
 
@@ -196,16 +196,16 @@ describe('TripAnnounces', () => {
     expect(text).not.toContain('Платные')
   })
 
-  it('спортивный флаг фильтрует в обе стороны', async () => {
+  it('официальный флаг фильтрует в обе стороны', async () => {
     const { wrapper } = await open()
 
-    await wrapper.find('[data-test="filter-sport"]').setValue('true')
+    await wrapper.find('[data-test="filter-official"]').setValue('true')
     await settle()
-    expect(lastQuery().isSport).toBe(true)
+    expect(lastQuery().isOfficial).toBe(true)
 
-    await wrapper.find('[data-test="filter-sport"]').setValue('false')
+    await wrapper.find('[data-test="filter-official"]').setValue('false')
     await settle()
-    expect(lastQuery().isSport).toBe(false)
+    expect(lastQuery().isOfficial).toBe(false)
   })
 
   it('объект выбирается из справочника и уходит своим id', async () => {
@@ -247,7 +247,7 @@ describe('TripAnnounces', () => {
     const { wrapper, router } = await open()
 
     await wrapper.find('[data-test="filter-when"]').setValue('past')
-    await wrapper.find('[data-test="filter-sport"]').setValue('true')
+    await wrapper.find('[data-test="filter-official"]').setValue('true')
     await settle()
 
     expect(wrapper.find('[data-test="filters-reset"]').exists()).toBe(true)
@@ -257,7 +257,7 @@ describe('TripAnnounces', () => {
 
     expect(lastQuery()).toMatchObject({ mine: false, offset: 0 })
     expect(lastQuery().when).toBeUndefined()
-    expect(lastQuery().isSport).toBeUndefined()
+    expect(lastQuery().isOfficial).toBeUndefined()
     expect(wrapper.find('[data-test="filters-reset"]').exists()).toBe(false)
     expect(router.currentRoute.value.query).toEqual({})
   })
@@ -316,7 +316,7 @@ describe('TripAnnounces', () => {
       when: 'weekend',
       status: 'decided',
       isCommercial: 'true',
-      isSport: 'false',
+      isOfficial: 'false',
     })
 
     expect(lastQuery()).toMatchObject({
@@ -324,7 +324,7 @@ describe('TripAnnounces', () => {
       when: 'weekend',
       status: 'decided',
       isCommercial: true,
-      isSport: false,
+      isOfficial: false,
       offset: 0,
     })
 
@@ -347,10 +347,10 @@ describe('TripAnnounces', () => {
   })
 
   it('мусор в адресе не ломает ленту и не уходит в запрос', async () => {
-    const { wrapper } = await open({ when: 'когда-нибудь', isSport: 'может', objectId: 'abc' })
+    const { wrapper } = await open({ when: 'когда-нибудь', isOfficial: 'может', objectId: 'abc' })
 
     expect(lastQuery().when).toBeUndefined()
-    expect(lastQuery().isSport).toBeUndefined()
+    expect(lastQuery().isOfficial).toBeUndefined()
     expect(lastQuery().objectId).toBeUndefined()
     expect(wrapper.findAll('[data-test="trip-card"]')).toHaveLength(1)
   })

@@ -47,7 +47,7 @@ export function buildTripPatch(initial: Trip, payload: CreateTripRequest): Updat
   set('startsAt', initial.startsAt, payload.startsAt ?? null)
   set('endsAt', initial.endsAt, payload.endsAt ?? null)
   set('isCommercial', initial.isCommercial, payload.isCommercial)
-  set('isSport', initial.isSport, payload.isSport)
+  set('isOfficial', initial.isOfficial, payload.isOfficial)
   set('priceRub', initial.priceRub, payload.priceRub ?? null)
   set('priceNote', initial.priceNote, payload.priceNote ?? null)
 

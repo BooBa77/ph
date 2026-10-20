@@ -176,10 +176,10 @@ export class TripResponseDto {
 
   @ApiProperty({
     description:
-      'Спортивный поход: зачётный поход, в основном некатегорийный. Детали — в отдельных таблицах',
+      'Официальный поход: зачётный выход по правилам. Детали — в отдельных таблицах',
     example: false,
   })
-  isSport: boolean;
+  isOfficial: boolean;
 
   @ApiProperty({
     description: 'Цена участия в рублях. Только у коммерческого похода',
@@ -237,7 +237,7 @@ export class TripResponseDto {
       actualStartedAt: trip.actualStartedAt?.toISOString() ?? null,
       actualFinishedAt: trip.actualFinishedAt?.toISOString() ?? null,
       isCommercial: trip.isCommercial,
-      isSport: trip.isSport,
+      isOfficial: trip.isOfficial,
       priceRub: trip.priceRub,
       priceNote: trip.priceNote,
       cancelledAt: trip.cancelledAt?.toISOString() ?? null,

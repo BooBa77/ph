@@ -176,7 +176,7 @@ export class TripsService {
           startsAt,
           endsAt,
           isCommercial,
-          isSport: dto.isSport ?? false,
+          isOfficial: dto.isOfficial ?? false,
           priceRub: dto.priceRub ?? null,
           priceNote: dto.priceNote ?? null,
         }),
@@ -513,8 +513,10 @@ export class TripsService {
       });
     }
 
-    if (query.isSport !== undefined) {
-      qb.andWhere('trip.is_sport = :isSport', { isSport: query.isSport });
+    if (query.isOfficial !== undefined) {
+      qb.andWhere('trip.is_official = :isOfficial', {
+        isOfficial: query.isOfficial,
+      });
     }
 
     if (query.organizerUserId !== undefined) {
@@ -716,7 +718,7 @@ export class TripsService {
       trip.actualStartedAt = actualStartedAt;
       trip.actualFinishedAt = actualFinishedAt;
       trip.isCommercial = isCommercial;
-      if (dto.isSport !== undefined) trip.isSport = dto.isSport;
+      if (dto.isOfficial !== undefined) trip.isOfficial = dto.isOfficial;
       trip.priceRub = priceRub;
       trip.priceNote = priceNote;
 

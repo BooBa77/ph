@@ -67,7 +67,7 @@ describe('CreateTrip', () => {
       status: 'idea',
       visibility: 'public',
       isCommercial: false,
-      isSport: false,
+      isOfficial: false,
       goalObject: { id: '10', name: 'Витязь', type: 'скальник', url: null },
     })
   })
@@ -93,7 +93,7 @@ describe('CreateTrip', () => {
     // вперёд выбора цели. Проверяем именно порядок в разметке.
     const html = wrapper.html()
     const commercial = html.indexOf('data-test="commercial"')
-    const sport = html.indexOf('data-test="sport"')
+    const sport = html.indexOf('data-test="official"')
     const status = html.indexOf('data-test="status"')
     const goal = html.indexOf('data-test="object-search"')
 
@@ -211,11 +211,11 @@ describe('CreateTrip', () => {
     expect(lastPayload().dateVariants).toEqual([])
   })
 
-  it('флаги «коммерческий» и «спортивное мероприятие» уходят в тело', async () => {
+  it('флаги «коммерческий» и «официальное мероприятие» уходят в тело', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
 
-    await wrapper.find('[data-test="sport"]').setValue(true)
+    await wrapper.find('[data-test="official"]').setValue(true)
     await wrapper.find('[data-test="commercial"]').setValue(true)
     await wrapper.find('[data-test="price"]').setValue('25000')
     await wrapper.find('[data-test="announcement"]').setValue('Идём на майские')
@@ -225,7 +225,7 @@ describe('CreateTrip', () => {
       goalObjectId: 10,
       announcement: 'Идём на майские',
       isCommercial: true,
-      isSport: true,
+      isOfficial: true,
       priceRub: 25000,
     })
   })

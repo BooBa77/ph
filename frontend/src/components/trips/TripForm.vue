@@ -30,7 +30,7 @@ import {
  * родитель, потому что `POST` и `PATCH` — разные истории.
  *
  * **Порядок полей не случаен и повторяет то, как о походе думают.**
- * Сначала флаги: коммерческий или спортивный — это рамка, в которой всё
+ * Сначала флаги: коммерческий или официальный — это рамка, в которой всё
  * остальное читается. Потом готовность и видимость: «мечта, видна всем» —
  * это уже половина ответа о походе. И только потом цель, анонс, когда,
  * как собираемся и как идём.
@@ -90,7 +90,7 @@ const initial = props.initial
 // ─── Рамка ───
 
 const isCommercial = ref(initial?.isCommercial ?? false)
-const isSport = ref(initial?.isSport ?? false)
+const isOfficial = ref(initial?.isOfficial ?? false)
 
 // ─── Готовность и видимость ───
 
@@ -267,7 +267,7 @@ function buildPayload(): CreateTripRequest {
     visibility: visibility.value,
     status: status.value,
     isCommercial: isCommercial.value,
-    isSport: isSport.value,
+    isOfficial: isOfficial.value,
     priceRub: isCommercial.value ? Number(priceRub.value) : null,
     priceNote: isCommercial.value ? priceNote.value.trim() || null : null,
   }
@@ -314,13 +314,13 @@ defineExpose({ validationProblem })
 
       <label class="flex cursor-pointer items-center gap-3">
         <input
-          v-model="isSport"
+          v-model="isOfficial"
           type="checkbox"
           class="h-5 w-5 cursor-pointer accent-[var(--theme-primary)]"
-          data-test="sport"
+          data-test="official"
         />
-        <span class="text-sm text-text">Спортивный поход</span>
-        <span class="text-xs text-muted">зачётный поход, в основном некатегорийный</span>
+        <span class="text-sm text-text">Официальный поход</span>
+        <span class="text-xs text-muted">зачётный выход по правилам, открывает вкладку «Спорт»</span>
       </label>
     </div>
 

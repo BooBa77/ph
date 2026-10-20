@@ -168,7 +168,7 @@ async function toggleRecruitment() {
         <p class="text-sm text-muted" data-test="trip-when">
           {{ whenText }} · {{ TRIP_VISIBILITY_LABELS[trip.visibility] }}
           <template v-if="trip.isCommercial"> · коммерческий</template>
-          <template v-if="trip.isSport"> · спортивный поход</template>
+          <template v-if="trip.isOfficial"> · официальный поход</template>
           <template v-if="trip.isRecruitmentClosed"> · набор закрыт</template>
         </p>
 

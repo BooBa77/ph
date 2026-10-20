@@ -20,7 +20,7 @@ describe('buildTripListQuery', () => {
     const query = buildTripListQuery({
       mine: false,
       isCommercial: false,
-      isSport: undefined,
+      isOfficial: undefined,
       when: undefined,
       limit: 20,
       offset: 0,
@@ -36,14 +36,14 @@ describe('buildTripListQuery', () => {
       when: 'weekend',
       status: 'decided',
       isCommercial: true,
-      isSport: true,
+      isOfficial: true,
     })
 
     expect(query).toContain('objectId=10')
     expect(query).toContain('when=weekend')
     expect(query).toContain('status=decided')
     expect(query).toContain('isCommercial=true')
-    expect(query).toContain('isSport=true')
+    expect(query).toContain('isOfficial=true')
     expect(query).toContain('mine=false')
   })
 })

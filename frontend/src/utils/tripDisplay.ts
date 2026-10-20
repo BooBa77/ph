@@ -78,11 +78,11 @@ export function tripWhenText(trip: WhenTrip): string {
  * «это платное?» целиком.
  */
 export function tripFrameParts(
-  trip: Pick<Trip, 'isCommercial' | 'isSport' | 'priceRub'>,
+  trip: Pick<Trip, 'isCommercial' | 'isOfficial' | 'priceRub'>,
 ): string[] {
   const parts = [trip.isCommercial ? 'коммерческий' : 'некоммерческий']
 
-  if (trip.isSport) parts.push('спортивный поход')
+  if (trip.isOfficial) parts.push('официальный поход')
   if (trip.isCommercial && trip.priceRub) parts.push(`${trip.priceRub} ₽`)
 
   return parts
@@ -96,14 +96,14 @@ export function tripFrameParts(
  * там строка обязана быть полной (см. `tripFrameParts`).
  */
 export function tripBadges(
-  trip: Pick<Trip, 'isCommercial' | 'isSport' | 'priceRub'>,
+  trip: Pick<Trip, 'isCommercial' | 'isOfficial' | 'priceRub'>,
 ): string[] {
   const badges: string[] = []
 
   if (trip.isCommercial) {
     badges.push(trip.priceRub ? `коммерческий · ${trip.priceRub} ₽` : 'коммерческий')
   }
-  if (trip.isSport) badges.push('спортивный поход')
+  if (trip.isOfficial) badges.push('официальный поход')
 
   return badges
 }

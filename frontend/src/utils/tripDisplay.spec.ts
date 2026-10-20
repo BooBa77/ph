@@ -21,7 +21,7 @@ const trip = (overrides: Record<string, unknown> = {}) => ({
   endsAt: null,
   status: 'idea' as const,
   isCommercial: false,
-  isSport: false,
+  isOfficial: false,
   priceRub: null,
   meetingPlace: null,
   meetingAt: null,
@@ -52,9 +52,9 @@ describe('tripDisplay', () => {
       'коммерческий',
       '25000 ₽',
     ])
-    expect(tripFrameParts(trip({ isCommercial: true, priceRub: 25000, isSport: true }))).toEqual([
+    expect(tripFrameParts(trip({ isCommercial: true, priceRub: 25000, isOfficial: true }))).toEqual([
       'коммерческий',
-      'спортивный поход',
+      'официальный поход',
       '25000 ₽',
     ])
   })
@@ -62,7 +62,7 @@ describe('tripDisplay', () => {
   it('в карточке ленты «некоммерческий» не пишется: это норма, а не признак', () => {
     expect(tripBadges(trip())).toEqual([])
     expect(tripBadges(trip({ isCommercial: true }))).toEqual(['коммерческий'])
-    expect(tripBadges(trip({ isSport: true }))).toEqual(['спортивный поход'])
+    expect(tripBadges(trip({ isOfficial: true }))).toEqual(['официальный поход'])
   })
 
   /**
