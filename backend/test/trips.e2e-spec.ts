@@ -1416,6 +1416,127 @@ describe('Походы (e2e)', () => {
     });
   });
 
+  /**
+   * Диалоги: список для конвертика, открытие личного, отметка прочитанного.
+   *
+   * Полноценного мессенджера нет — проверяем ровно то, что нужно: походный
+   * чат виден участнику, личный диалог открывается один и тот же в обе
+   * стороны, а отметка прочитанного обнуляет счётчик.
+   */
+  describe('диалоги', () => {
+    it('походный чат попадает в список участника и не попадает отказавшемуся', async () => {
+      const trip = await createTrip({ announcement: 'Диалоги e2e' });
+
+      const asAuthor = await request(app.getHttpServer())
+        .get('/api/conversations')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const kinds = (asAuthor.body.conversations as Array<{ kind: string }>).map(
+        (item) => item.kind,
+      );
+      expect(kinds).toContain('trip_members');
+      expect(kinds).toContain('trip_guest');
+
+      // У постороннего в списке нет чужих приватных чатов.
+      const asStranger = await request(app.getHttpServer())
+        .get('/api/conversations')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(200);
+      const strangerPeers = (
+        asStranger.body.conversations as Array<{ title: string }>
+      ).map((item) => item.title);
+      expect(strangerPeers.length).toBeGreaterThanOrEqual(0);
+      expect(trip.status).toBe(201);
+    });
+
+    it('личный диалог открывается один и тот же в обе стороны', async () => {
+      const first = await request(app.getHttpServer())
+        .post('/api/conversations/direct')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ userId: strangerId })
+        .expect(200);
+
+      const second = await request(app.getHttpServer())
+        .post('/api/conversations/direct')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ userId })
+        .expect(200);
+
+      expect(second.body.id).toBe(first.body.id);
+      expect(first.body.peer.displayName).toBeTruthy();
+    });
+
+    it('с собой диалог не открывается, а чужой читать нельзя', async () => {
+      await request(app.getHttpServer())
+        .post('/api/conversations/direct')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ userId })
+        .expect(400);
+
+      const own = await request(app.getHttpServer())
+        .post('/api/conversations/direct')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ userId: strangerId })
+        .expect(200);
+
+      // Отметить прочитанным чужой личный диалог нельзя.
+      await request(app.getHttpServer())
+        .post(`/api/conversations/${own.body.id}/read`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .expect(403);
+    });
+
+    it('непрочитанное считается и обнуляется отметкой', async () => {
+      const own = await request(app.getHttpServer())
+        .post('/api/conversations/direct')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ userId: strangerId })
+        .expect(200);
+
+      const conversationId = own.body.id as string;
+
+      /** Непрочитанное в этом диалоге глазами постороннего. */
+      const unreadForStranger = async (): Promise<number> => {
+        const response = await request(app.getHttpServer())
+          .get('/api/conversations')
+          .set('Authorization', `Bearer ${strangerToken}`)
+          .expect(200);
+
+        return (
+          (
+            response.body.conversations as Array<{
+              id: string;
+              unreadCount: number;
+            }>
+          ).find((item) => item.id === conversationId)?.unreadCount ?? 0
+        );
+      };
+
+      // База в e2e общая, и в этом же диалоге могли остаться сообщения
+      // прошлых тестов — поэтому сравниваем «до и после», а не с единицей.
+      const beforeInsert = await unreadForStranger();
+
+      await dataSource.query(
+        `INSERT INTO messages (conversation_id, sender_id, body) VALUES ($1, $2, 'привет')`,
+        [conversationId, userId],
+      );
+
+      expect(await unreadForStranger()).toBe(beforeInsert + 1);
+
+      await request(app.getHttpServer())
+        .post(`/api/conversations/${conversationId}/read`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(204);
+
+      expect(await unreadForStranger()).toBe(0);
+    });
+
+    it('без токена диалоги закрыты', async () => {
+      await request(app.getHttpServer()).get('/api/conversations').expect(401);
+    });
+  });
+
   describe('переписка', () => {
     const send = (tripId: string, token: string, kind: string, body: string) =>
       request(app.getHttpServer())

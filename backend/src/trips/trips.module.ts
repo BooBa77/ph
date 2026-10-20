@@ -16,6 +16,8 @@ import { TripRouteElement } from './entities/trip-route-element.entity';
 import { Trip } from './entities/trip.entity';
 import { TripsController } from './trips.controller';
 import { TripsService } from './trips.service';
+import { ConversationsController } from './conversations.controller';
+import { ConversationsService } from './conversations.service';
 import { MessageActionsController } from './message-actions.controller';
 import { MessageActionsService } from './message-actions.service';
 import { ObjectsController } from './objects.controller';
@@ -49,8 +51,18 @@ import { ObjectsService } from './objects.service';
       CalendarActivityType,
     ]),
   ],
-  controllers: [TripsController, ObjectsController, MessageActionsController],
-  providers: [TripsService, ObjectsService, MessageActionsService],
-  exports: [TripsService, ObjectsService, MessageActionsService],
+  controllers: [
+    TripsController,
+    ObjectsController,
+    MessageActionsController,
+    ConversationsController,
+  ],
+  providers: [
+    TripsService,
+    ObjectsService,
+    MessageActionsService,
+    ConversationsService,
+  ],
+  exports: [TripsService, ObjectsService, MessageActionsService, ConversationsService],
 })
 export class TripsModule {}
