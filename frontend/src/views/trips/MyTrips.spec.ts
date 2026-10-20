@@ -115,7 +115,6 @@ describe('MyTrips', () => {
     const wrapper = await open()
 
     expect(wrapper.find('[data-test="my-trips-empty"]').text()).toContain('появятся походы')
-    expect(wrapper.find('[data-test="my-trips-create"]').attributes('href')).toBe('/trips/new')
   })
 
   it('«показать ещё» догружает следующую страницу', async () => {

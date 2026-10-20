@@ -1,6 +1,4 @@
 <script setup lang="ts">
-import { RouterLink } from 'vue-router'
-
 import TripCard from '@/components/trips/TripCard.vue'
 import { useTripList } from '@/composables/useTripList'
 
@@ -30,14 +28,6 @@ void load()
         <h2 class="text-lg font-medium text-text">Мои походы</h2>
         <p class="text-sm text-muted">Где вы организатор или участник.</p>
       </div>
-
-      <RouterLink
-        to="/trips/new"
-        class="rounded-xl border border-primary bg-primary px-4 py-2 text-sm text-white no-underline transition-opacity hover:opacity-90"
-        data-test="my-trips-create"
-      >
-        Создать поход
-      </RouterLink>
     </header>
 
     <p v-if="isLoading" class="text-muted" data-test="my-trips-loading">Загружаем походы…</p>
