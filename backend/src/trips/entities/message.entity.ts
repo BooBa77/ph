@@ -10,6 +10,7 @@ import {
 
 import { User } from '../../users/entities/user.entity';
 import { Conversation } from './conversation.entity';
+import { MessageAction } from './message-action.entity';
 
 /**
  * Сообщение диалога — походного чата или личного, без разницы.
@@ -51,6 +52,24 @@ export class Message {
   @ManyToOne(() => User, { onDelete: 'RESTRICT', nullable: true })
   @JoinColumn({ name: 'sender_id', foreignKeyConstraintName: 'FK_messages_sender' })
   sender: User | null;
+
+  /**
+   * Действие, которое показывает это сообщение.
+   *
+   * Одно действие может стоять на двух сообщениях (чат похода + личное
+   * получателю), поэтому состояние живёт в `message_actions`, а сообщение
+   * лишь ссылается на него. Кнопки рисуются только там, где ссылка есть,
+   * и только адресату — проверка на сервере, а не в шаблоне.
+   */
+  @Column({ name: 'action_id', type: 'bigint', nullable: true })
+  actionId: string | null;
+
+  @ManyToOne(() => MessageAction, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({
+    name: 'action_id',
+    foreignKeyConstraintName: 'FK_messages_action',
+  })
+  action: MessageAction | null;
 
   @Column({ type: 'text' })
   body: string;
