@@ -34,9 +34,9 @@ import { TripListQueryDto } from './dto/trip-list-query.dto';
 import { TripListResponseDto } from './dto/trip-list-response.dto';
 import { TripResponseDto } from './dto/trip-response.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
-import { Chat } from './entities/chat.entity';
+import { Conversation } from './entities/conversation.entity';
 import { GeoObject } from './entities/geo-object.entity';
-import { GroupMessage } from './entities/group-message.entity';
+import { Message } from './entities/message.entity';
 import { Role } from './entities/role.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
 import { TripMembershipRequest } from './entities/trip-membership-request.entity';
@@ -204,7 +204,7 @@ export class TripsService {
        * существует всегда, а кто в него впущен — вопрос доступа, а не
        * наличия строки.
        */
-      await manager.insert(Chat, [
+      await manager.insert(Conversation, [
         { kind: 'trip_guest', tripId: trip.id },
         { kind: 'trip_members', tripId: trip.id },
       ]);
@@ -896,15 +896,15 @@ export class TripsService {
     kind: ChatKind,
     body: string,
   ): Promise<void> {
-    const chat = await manager.findOne(Chat, { where: { tripId, kind } });
+    const chat = await manager.findOne(Conversation, { where: { tripId, kind } });
     if (!chat) {
       throw new InternalServerErrorException(
         `У похода нет чата «${kind}» — данные похода повреждены`,
       );
     }
 
-    await manager.insert(GroupMessage, {
-      chatId: chat.id,
+    await manager.insert(Message, {
+      conversationId: chat.id,
       senderId: null,
       body,
     });
@@ -1351,7 +1351,7 @@ export class TripsService {
     trip: Trip,
     userId: string,
     kind: ChatKind,
-  ): Promise<Chat> {
+  ): Promise<Conversation> {
     const isParticipant =
       (await manager.count(TripParticipant, {
         where: { tripId: trip.id, userId },
@@ -1370,7 +1370,7 @@ export class TripsService {
       );
     }
 
-    const chat = await manager.findOne(Chat, {
+    const chat = await manager.findOne(Conversation, {
       where: { tripId: trip.id, kind },
     });
     if (!chat) {
@@ -1401,7 +1401,7 @@ export class TripsService {
         where: { tripId: trip.id, userId },
       })) > 0;
 
-    const chats = await manager.find(Chat, {
+    const chats = await manager.find(Conversation, {
       where: { tripId: trip.id },
       order: { id: 'ASC' },
     });
@@ -1418,8 +1418,8 @@ export class TripsService {
           : isParticipant || trip.visibility === 'public';
       if (!allowed) continue;
 
-      const last = await manager.findOne(GroupMessage, {
-        where: { chatId: chat.id },
+      const last = await manager.findOne(Message, {
+        where: { conversationId: chat.id },
         relations: { sender: true },
         order: { id: 'DESC' },
       });
@@ -1459,9 +1459,9 @@ export class TripsService {
     const limit = query.limit ?? DEFAULT_MESSAGE_PAGE_SIZE;
 
     const qb = manager
-      .createQueryBuilder(GroupMessage, 'message')
+      .createQueryBuilder(Message, 'message')
       .leftJoinAndSelect('message.sender', 'sender')
-      .where('message.chatId = :chatId', { chatId: chat.id })
+      .where('message.conversationId = :conversationId', { conversationId: chat.id })
       // Имя свойства, а не колонки: при `take` TypeORM пересобирает
       // ORDER BY и ищет колонку через `findColumnWithPropertyPath`.
       .orderBy('message.id', 'DESC')
@@ -1510,8 +1510,8 @@ export class TripsService {
     }
 
     const saved = await manager.save(
-      manager.create(GroupMessage, {
-        chatId: chat.id,
+      manager.create(Message, {
+        conversationId: chat.id,
         senderId: userId,
         body,
       }),

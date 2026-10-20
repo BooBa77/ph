@@ -12,7 +12,7 @@ import {
   MinLength,
 } from 'class-validator';
 
-import type { GroupMessage } from '../entities/group-message.entity';
+import type { Message } from '../entities/message.entity';
 import { CHAT_KINDS, type ChatKind } from '../trip.types';
 
 /**
@@ -66,7 +66,7 @@ export class TripMessageDto {
   @ApiProperty({ description: 'Когда отправлено' })
   createdAt: string;
 
-  static from(message: GroupMessage): TripMessageDto {
+  static from(message: Message): TripMessageDto {
     return {
       id: message.id,
       senderId: message.senderId,

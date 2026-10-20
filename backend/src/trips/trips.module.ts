@@ -2,9 +2,10 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
-import { Chat } from './entities/chat.entity';
+import { Conversation } from './entities/conversation.entity';
+import { ConversationMember } from './entities/conversation-member.entity';
 import { GeoObject } from './entities/geo-object.entity';
-import { GroupMessage } from './entities/group-message.entity';
+import { Message } from './entities/message.entity';
 import { Role } from './entities/role.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
 import { TripMembershipRequest } from './entities/trip-membership-request.entity';
@@ -38,8 +39,9 @@ import { ObjectsService } from './objects.service';
       TripParticipant,
       TripParticipantRole,
       TripMembershipRequest,
-      Chat,
-      GroupMessage,
+      Conversation,
+      ConversationMember,
+      Message,
       CalendarActivityType,
     ]),
   ],

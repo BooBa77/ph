@@ -229,7 +229,7 @@ describe('Походы (e2e)', () => {
       expect(roles[0].code).toBe(ORGANIZER_ROLE_CODE);
 
       const chats = await dataSource.query(
-        'SELECT kind FROM chats WHERE trip_id = $1 ORDER BY kind',
+        'SELECT kind FROM conversations WHERE trip_id = $1 ORDER BY kind',
         [tripId],
       );
       expect(chats.map((row: { kind: string }) => row.kind)).toEqual([
@@ -900,11 +900,11 @@ describe('Походы (e2e)', () => {
       kind: string,
     ): Promise<string[]> => {
       const rows = await dataSource.query(
-        `SELECT gm.body
-           FROM group_messages gm
-           JOIN chats c ON c.id = gm.chat_id
-          WHERE c.trip_id = $1 AND c.kind = $2 AND gm.sender_id IS NULL
-          ORDER BY gm.id`,
+        `SELECT m.body
+           FROM messages m
+           JOIN conversations c ON c.id = m.conversation_id
+          WHERE c.trip_id = $1 AND c.kind = $2 AND m.sender_id IS NULL
+          ORDER BY m.id`,
         [tripId, kind],
       );
       return rows.map((row: { body: string }) => row.body);
