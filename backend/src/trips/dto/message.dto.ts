@@ -13,6 +13,7 @@ import {
 } from 'class-validator';
 
 import type { Message } from '../entities/message.entity';
+import { MessageActionDto } from './message-action.dto';
 import { CHAT_KINDS, type ChatKind } from '../trip.types';
 
 /**
@@ -66,7 +67,21 @@ export class TripMessageDto {
   @ApiProperty({ description: 'Когда отправлено' })
   createdAt: string;
 
-  static from(message: Message): TripMessageDto {
+  /**
+   * Действие, которое показывает сообщение: кнопки «Да»/«Нет».
+   *
+   * Кнопки рисуются только адресату, поэтому canRespond считается
+   * для того, кто читает: без этого фронт показывал бы «Да» тому,
+   * кто деньги отправил.
+   */
+  @ApiProperty({
+    description: 'Действие в сообщении. null — обычное сообщение',
+    type: () => MessageActionDto,
+    nullable: true,
+  })
+  action: MessageActionDto | null;
+
+  static from(message: Message, viewerId: string): TripMessageDto {
     return {
       id: message.id,
       senderId: message.senderId,
@@ -75,6 +90,13 @@ export class TripMessageDto {
       body: message.body,
       isSystem: message.senderId === null,
       createdAt: message.createdAt.toISOString(),
+      action: message.action
+        ? MessageActionDto.from(
+            message.action,
+            viewerId,
+            message.senderId,
+          )
+        : null,
     };
   }
 }

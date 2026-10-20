@@ -20,12 +20,17 @@ import { User } from '../../users/entities/user.entity';
  * и состояние у них обязано быть общим. Иначе «нет» в чате и «да» в личке
  * сосуществовали бы, а деньги — они одни.
  *
- * Деньги двигает только `confirmed`. `pending`, `disputed` и `cancelled`
- * баланс не меняют: «нет» — это сигнал «до меня не дошло», а не откат.
- * Поэтому ошибочно нажатое «нет» ничего не ломает; из него можно вернуться
- * в «да» (передумал), в «ждём» (отправитель: «посмотри ещё раз») или
- * в «отменено» («мой косяк, отменяем»). Из `confirmed` — никуда:
- * подтверждение окончательное.
+ * Три состояния, и слова «отменено» среди них нет: **отмена — это
+ * удаление**. Отправитель нажал «мой косяк, отменяем» — строки в чате
+ * больше нет, личные сообщения удалены вместе с действием. Нет записи —
+ * нечего подтверждать, и получатель не сможет позже нажать «Да» на
+ * отменённом переводе и сломать баланс.
+ *
+ * Деньги двигает только `confirmed`. `pending` и `disputed` баланс не
+ * меняют: «нет» — это сигнал «до меня не дошло», а не откат. Поэтому
+ * ошибочно нажатое «нет» ничего не ломает; из него можно вернуться
+ * в «да» (передумал) или в «ждём» (отправитель: «посмотри ещё раз»).
+ * Из `confirmed` — никуда: подтверждение окончательное.
  *
  * `payload` — jsonb, потому что форма полезной нагрузки зависит от `kind`
  * (у денег это сумма, поход и кто перевёл). Колонка на каждый вид действия
@@ -38,7 +43,7 @@ import { User } from '../../users/entities/user.entity';
 @Index('IDX_message_actions_target_state', ['targetUserId', 'state'])
 @Check(
   'chk_message_actions_state',
-  `"state" IN ('pending', 'confirmed', 'disputed', 'cancelled')`,
+  `"state" IN ('pending', 'confirmed', 'disputed')`,
 )
 export class MessageAction {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -63,7 +68,7 @@ export class MessageAction {
   payload: Record<string, unknown>;
 
   @Column({ type: 'varchar', length: 20, default: 'pending' })
-  state: 'pending' | 'confirmed' | 'disputed' | 'cancelled';
+  state: 'pending' | 'confirmed' | 'disputed';
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

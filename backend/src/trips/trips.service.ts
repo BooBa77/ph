@@ -1427,7 +1427,7 @@ export class TripsService {
       visible.push(
         TripChatDto.from(
           { id: chat.id, kind },
-          last ? TripMessageDto.from(last) : null,
+          last ? TripMessageDto.from(last, userId) : null,
         ),
       );
     }
@@ -1461,6 +1461,7 @@ export class TripsService {
     const qb = manager
       .createQueryBuilder(Message, 'message')
       .leftJoinAndSelect('message.sender', 'sender')
+      .leftJoinAndSelect('message.action', 'action')
       .where('message.conversationId = :conversationId', { conversationId: chat.id })
       // Имя свойства, а не колонки: при `take` TypeORM пересобирает
       // ORDER BY и ищет колонку через `findColumnWithPropertyPath`.
@@ -1478,7 +1479,7 @@ export class TripsService {
     page.reverse();
 
     return {
-      messages: page.map((message) => TripMessageDto.from(message)),
+      messages: page.map((message) => TripMessageDto.from(message, userId)),
       hasMore,
     };
   }
@@ -1518,6 +1519,6 @@ export class TripsService {
     );
     saved.sender = sender;
 
-    return TripMessageDto.from(saved);
+    return TripMessageDto.from(saved, userId);
   }
 }

@@ -162,6 +162,18 @@ describe('Походы (e2e)', () => {
       // Заявитель и посторонний попадают в состав чужих походов, поэтому
       // пользователей удаляем после походов: `ON DELETE RESTRICT` не даст
       // иначе, и это правильно.
+      // Действия и личные диалоги — до пользователей: у действия внешний
+      // ключ на адресата, а диалоги держат пару участников.
+      await dataSource.query(
+        'DELETE FROM message_actions WHERE target_user_id = ANY($1::uuid[]) OR target_user_id = $2',
+        [[strangerId, applicantId], userId],
+      );
+      await dataSource.query(
+        `DELETE FROM conversations
+          WHERE kind = 'direct'
+            AND (direct_a = ANY($1::uuid[]) OR direct_b = ANY($1::uuid[]))`,
+        [[userId, strangerId, applicantId]],
+      );
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
         [userId, strangerId, applicantId],
       ]);
@@ -1236,6 +1248,171 @@ describe('Походы (e2e)', () => {
         .get('/api/users')
         .query({ search: 'Поиск e2e' })
         .expect(401);
+    });
+  });
+
+  /**
+   * Действия в сообщениях: «Да» / «Нет» и «посмотри ещё раз».
+   *
+   * Создания через API нет намеренно — действие вешает сервер (у денег это
+   * Бухгалтерия). Поэтому строки заводятся прямо в базе, а проверяются
+   * правила переходов и права: ответить может только адресат, переспросить
+   * и отменить — только отправитель, подтверждение окончательно, отмена
+   * удаляет и действие, и его сообщения.
+   */
+  describe('действия в сообщениях', () => {
+    /** Личный диалог двух людей; повторный вызов возвращает тот же. */
+    const directWith = async (otherUserId: string): Promise<string> => {
+      const inserted = await dataSource.query(
+        `INSERT INTO conversations (kind, direct_a, direct_b)
+         VALUES ('direct', LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid))
+         ON CONFLICT DO NOTHING
+         RETURNING id`,
+        [userId, otherUserId],
+      );
+      if (inserted.length > 0) return inserted[0].id;
+
+      const existing = await dataSource.query(
+        `SELECT id FROM conversations
+          WHERE kind = 'direct'
+            AND direct_a = LEAST($1::uuid, $2::uuid)
+            AND direct_b = GREATEST($1::uuid, $2::uuid)`,
+        [userId, otherUserId],
+      );
+      return existing[0].id as string;
+    };
+
+    /** Действие и два сообщения с ним: публичное и личное. */
+    const makeAction = async (
+      targetUserId: string,
+      state = 'pending',
+    ): Promise<{ actionId: string; conversationId: string }> => {
+      const conversationId = await directWith(targetUserId);
+      const action = (
+        await dataSource.query(
+          `INSERT INTO message_actions (kind, target_user_id, payload, state)
+           VALUES ('money_received', $1, $2::jsonb, $3) RETURNING id`,
+          [targetUserId, JSON.stringify({ amountRub: 1000 }), state],
+        )
+      )[0].id;
+
+      await dataSource.query(
+        `INSERT INTO messages (conversation_id, sender_id, body, action_id)
+         VALUES ($1, $2, 'Перевёл 1000 ₽', $3), ($1, $2, 'Перевёл тебе 1000 ₽', $3)`,
+        [conversationId, userId, action],
+      );
+
+      return { actionId: action, conversationId };
+    };
+
+    const respond = (actionId: string, result: string, as: string) =>
+      request(app.getHttpServer())
+        .post(`/api/message-actions/${actionId}/respond`)
+        .set('Authorization', `Bearer ${as}`)
+        .send({ result });
+
+    it('адресат подтверждает, чужой — нет, повтор ничего не меняет', async () => {
+      const { actionId } = await makeAction(strangerId);
+
+      const pending = await request(app.getHttpServer())
+        .get('/api/message-actions/pending')
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(200);
+      expect(
+        (pending.body.toAnswer as Array<{ id: string }>).map((item) => item.id),
+      ).toContain(actionId);
+
+      await respond(actionId, 'confirmed', accessToken).expect(403);
+
+      const confirmed = await respond(actionId, 'confirmed', strangerToken).expect(200);
+      expect(confirmed.body.state).toBe('confirmed');
+
+      // Повторное нажатие — тот же ответ, второго перевода не появляется.
+      const again = await respond(actionId, 'confirmed', strangerToken).expect(200);
+      expect(again.body.state).toBe('confirmed');
+
+      // Подтверждённое отменить нельзя.
+      await request(app.getHttpServer())
+        .delete(`/api/message-actions/${actionId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+    });
+
+    it('«не получено» можно переспросить, копия уходит в личный диалог', async () => {
+      const { actionId, conversationId } = await makeAction(strangerId);
+
+      await respond(actionId, 'disputed', strangerToken).expect(200);
+
+      const before = await dataSource.query(
+        'SELECT count(*)::int AS c FROM messages WHERE conversation_id = $1',
+        [conversationId],
+      );
+
+      const rechecked = await request(app.getHttpServer())
+        .post(`/api/message-actions/${actionId}/recheck`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      expect(rechecked.body.state).toBe('pending');
+
+      const after = await dataSource.query(
+        'SELECT count(*)::int AS c FROM messages WHERE conversation_id = $1',
+        [conversationId],
+      );
+      expect(after[0].c).toBe(before[0].c + 1);
+
+      // Переспросить может только отправитель.
+      await request(app.getHttpServer())
+        .post(`/api/message-actions/${actionId}/recheck`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(403);
+    });
+
+    it('«нет» можно передумать на «да», обратно — нет', async () => {
+      const { actionId } = await makeAction(strangerId);
+
+      await respond(actionId, 'disputed', strangerToken).expect(200);
+      const confirmed = await respond(actionId, 'confirmed', strangerToken).expect(200);
+      expect(confirmed.body.state).toBe('confirmed');
+
+      const back = await respond(actionId, 'disputed', strangerToken).expect(200);
+      expect(back.body.state).toBe('confirmed');
+    });
+
+    it('«мой косяк» удаляет действие вместе с сообщениями', async () => {
+      const { actionId, conversationId } = await makeAction(strangerId);
+
+      await respond(actionId, 'disputed', strangerToken).expect(200);
+
+      // Отменить может только отправитель.
+      await request(app.getHttpServer())
+        .delete(`/api/message-actions/${actionId}`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(403);
+
+      await request(app.getHttpServer())
+        .delete(`/api/message-actions/${actionId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
+
+      const left = await dataSource.query(
+        'SELECT count(*)::int AS c FROM messages WHERE action_id = $1',
+        [actionId],
+      );
+      expect(left[0].c).toBe(0);
+
+      // И подтвердить уже нечего: записи нет.
+      await respond(actionId, 'confirmed', strangerToken).expect(404);
+
+      // Диалог при этом жив, просто без этого сообщения.
+      const dialog = await dataSource.query(
+        'SELECT count(*)::int AS c FROM conversations WHERE id = $1',
+        [conversationId],
+      );
+      expect(dialog[0].c).toBe(1);
+    });
+
+    it('без токена действия закрыты', async () => {
+      await request(app.getHttpServer()).get('/api/message-actions/pending').expect(401);
     });
   });
 
