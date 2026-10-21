@@ -3,13 +3,20 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
-import { getTrip, updateTrip } from '@/api/trips'
+import { fetchTripTabs, getTrip, updateTrip } from '@/api/trips'
 import { getPublicUser, type PublicUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
+import GuestTripView from '@/views/trips/GuestTripView.vue'
 import TripChats from '@/views/trips/TripChats.vue'
 import TripInfo from '@/views/trips/TripInfo.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
-import { TRIP_VISIBILITY_LABELS, type Trip } from '@/types/trips'
+import {
+  TRIP_TAB_LABELS,
+  TRIP_VISIBILITY_LABELS,
+  type Trip,
+  type TripTabCode,
+  type TripTabPermission,
+} from '@/types/trips'
 import { tripWhenText } from '@/utils/tripDisplay'
 
 /**
@@ -49,18 +56,51 @@ const isTogglingRecruitment = ref(false)
  */
 const organizer = ref<PublicUser | null>(null)
 
-const TAB_INFO = 'info'
-const TAB_PARTICIPANTS = 'participants'
+/**
+ * Вкладки похода.
+ *
+ * Список и права приходят с бэкенда (`GET /api/trips/:id/tabs`): видят
+ * вкладки **все участники** (решение заказчика 21.10.2026), а `canEdit`
+ * отвечает на вопрос «кто ведёт» — роль завхоза даёт правку «Питания»,
+ * организатор правит всё. Гостю приходит одна «Гостевая».
+ *
+ * Пока реализованы не все одиннадцать: неготовые показываются как
+ * «в разработке», чтобы карта была видна целиком и не приходилось
+ * переставлять меню на каждой новой вкладке (Ф7).
+ */
 const TAB_CHATS = 'chats'
-type Tab = typeof TAB_INFO | typeof TAB_PARTICIPANTS | typeof TAB_CHATS
+type Tab = TripTabCode | typeof TAB_CHATS
 
-const tab = ref<Tab>(TAB_INFO)
+/** Вкладки, у которых уже есть экран. Порядок — порядок в меню. */
+const IMPLEMENTED: TripTabCode[] = ['general', 'guest', 'members']
 
-const TABS: { key: Tab; label: string }[] = [
-  { key: TAB_INFO, label: 'Информация' },
-  { key: TAB_PARTICIPANTS, label: 'Участники' },
-  { key: TAB_CHATS, label: 'Чаты' },
-]
+const permissions = ref<TripTabPermission[]>([])
+const activeTab = ref<Tab>('general')
+
+/**
+ * Что показать в меню. «Чаты» — исключение: в карте вкладок это часть
+ * «Участников», но экран у нас отдельный и работает, поэтому он стоит
+ * рядом, а не прячется.
+ */
+const displayTabs = computed<{ code: Tab; label: string; available: boolean }[]>(() => {
+  const list = permissions.value.map((permission) => ({
+    code: permission.code as Tab,
+    label: TRIP_TAB_LABELS[permission.code],
+    available: IMPLEMENTED.includes(permission.code),
+  }))
+
+  const afterMembers = list.findIndex((item) => item.code === 'members')
+  const chats = { code: TAB_CHATS as Tab, label: 'Чаты', available: true }
+
+  return afterMembers === -1
+    ? [...list, chats]
+    : [...list.slice(0, afterMembers + 1), chats, ...list.slice(afterMembers + 1)]
+})
+
+/** Править «Участников» — значит назначать роли: разбирает бэкенд по ролям. */
+const canManageRoles = computed(
+  () => permissions.value.find((permission) => permission.code === 'members')?.canEdit ?? false,
+)
 
 /** Править поход может только организатор. */
 const isOrganizer = computed(
@@ -86,6 +126,17 @@ async function load(id: string) {
     isLoading.value = false
   }
 
+  // Вкладки: список и права считает бэкенд. Не загрузились — показываем
+  // базовый набор, чтобы страница не осталась без меню вовсе.
+  try {
+    permissions.value = await fetchTripTabs(id)
+  } catch {
+    permissions.value = [
+      { code: 'general', canEdit: false },
+      { code: 'members', canEdit: false },
+    ]
+  }
+
   // Организатор — после похода и необязательной частью: без него страница
   // показывается, а «кто ведёт» просто не появляется.
   organizer.value = null
@@ -101,7 +152,9 @@ async function load(id: string) {
 watch(
   () => route.params.id,
   (id) => {
-    tab.value = TAB_INFO
+    // Новый поход открывается на «Общей»: вкладки прошлого похода к нему
+    // не относятся, а «Питание» чужого похода показывать нечего.
+    activeTab.value = 'general'
     actionError.value = null
     if (typeof id === 'string') void load(id)
   },
@@ -216,50 +269,64 @@ async function toggleRecruitment() {
         </p>
       </header>
 
-      <!-- Вкладки: на десктопе сверху -->
-      <nav class="hidden gap-1 border-b border-border md:flex" aria-label="Разделы похода">
+      <!-- Вкладки: на десктопе сверху, в строку с переносом -->
+      <nav class="hidden flex-wrap gap-1 border-b border-border md:flex" aria-label="Разделы похода">
         <button
-          v-for="item in TABS"
-          :key="item.key"
+          v-for="item in displayTabs"
+          :key="item.code"
           type="button"
-          class="-mb-px cursor-pointer border-b-2 bg-transparent px-4 py-2 text-sm transition-colors"
+          class="-mb-px cursor-pointer border-b-2 bg-transparent px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           :class="
-            tab === item.key
+            activeTab === item.code
               ? 'border-primary font-medium text-primary'
               : 'border-transparent text-muted hover:text-text'
           "
-          :data-test="`tab-${item.key}`"
-          @click="tab = item.key"
+          :disabled="!item.available"
+          :title="item.available ? undefined : 'Вкладка появится вместе с Ф7'"
+          :data-test="`tab-${item.code}`"
+          @click="activeTab = item.code"
         >
           {{ item.label }}
         </button>
       </nav>
 
-      <TripInfo v-if="tab === TAB_INFO" :trip="trip" />
+      <TripInfo v-if="activeTab === 'general'" :trip="trip" />
+
+      <GuestTripView v-else-if="activeTab === 'guest'" :trip-id="trip.id" />
+
       <TripParticipants
-        v-else-if="tab === TAB_PARTICIPANTS"
+        v-else-if="activeTab === 'members'"
         :trip="trip"
+        :can-manage-roles="canManageRoles"
         @changed="load(trip.id)"
       />
-      <TripChats v-else :trip="trip" />
 
-      <!-- Вкладки: на телефоне снизу, под большим пальцем -->
+      <TripChats v-else-if="activeTab === 'chats'" :trip="trip" />
+
+      <p v-else class="text-sm text-muted" data-test="tab-soon">
+        Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» появится вместе
+        с Ф7: сейчас готовы «Общая», «Гостевая» и «Участники».
+      </p>
+
+      <!-- Вкладки: на телефоне снизу, под большим пальцем. Перенос строк —
+           единственный способ уложить одиннадцать вкладок на узком экране -->
       <nav
-        class="fixed inset-x-0 bottom-0 z-20 flex border-t border-border bg-surface md:hidden"
+        class="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-border bg-surface md:hidden"
         aria-label="Разделы похода"
       >
         <button
-          v-for="item in TABS"
-          :key="item.key"
+          v-for="item in displayTabs"
+          :key="item.code"
           type="button"
-          class="flex flex-1 cursor-pointer items-center justify-center border-t-2 bg-transparent py-3 text-sm transition-colors"
+          class="flex cursor-pointer items-center justify-center border-t-2 bg-transparent px-1 py-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40"
           :class="
-            tab === item.key
+            activeTab === item.code
               ? 'border-primary font-medium text-primary'
               : 'border-transparent text-muted'
           "
-          :data-test="`tab-mobile-${item.key}`"
-          @click="tab = item.key"
+          :disabled="!item.available"
+          :data-test="`tab-mobile-${item.code}`"
+          @click="activeTab = item.code"
         >
           {{ item.label }}
         </button>

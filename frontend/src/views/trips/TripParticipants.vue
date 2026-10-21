@@ -6,10 +6,12 @@ import {
   acceptRequest,
   createRequest,
   deleteRequest,
+  fetchRoles,
   listParticipants,
   listRequests,
   removeParticipant,
   setMyStatus,
+  setParticipantRoles,
 } from '@/api/trips'
 import { searchUsers, type UserSearchResult } from '@/api/users'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
@@ -17,6 +19,7 @@ import { useAuthStore } from '@/stores/auth'
 import {
   PARTICIPANT_STATUS_LABELS,
   type ParticipantStatus,
+  type RoleOption,
   type Trip,
   type TripParticipant,
   type TripRequest,
@@ -34,11 +37,23 @@ import {
  * (его и не отдаёт бэкенд). Права решает сервер; интерфейс лишь не
  * показывает то, что заведомо не сработает.
  *
+ * **Роли назначает организатор** (и соорганизатор — по праву на вкладку;
+ * это решает бэкенд, сюда приходит `canManageRoles`). Сами участники
+ * ролями не управляют даже своими: роль — обязательство перед походом,
+ * а не нашивка (решение заказчика 21.10.2026).
+ *
  * Все действия перезагружают список целиком: состав и тикеты связаны
  * (приглашение сразу добавляет человека в состав), и собирать новое
  * состояние из ответов вручную — верный способ показать неправду.
  */
-const props = defineProps<{ trip: Trip }>()
+const props = withDefaults(
+  defineProps<{
+    trip: Trip
+    /** Может ли смотрящий назначать роли: считает бэкенд по правам вкладки. */
+    canManageRoles?: boolean
+  }>(),
+  { canManageRoles: false },
+)
 
 const emit = defineEmits<{ changed: [] }>()
 
@@ -77,6 +92,62 @@ const invitations = computed(() => requests.value.filter((item) => item.directio
 const canApply = computed(
   () => !isOrganizer.value && me.value === null && myRequest.value === null,
 )
+
+/**
+ * Назначение ролей.
+ *
+ * Справочник грузим при открытии диалога, а не при входе на вкладку:
+ * большинству участников он не нужен, а лишний запрос на каждое открытие
+ * состава — это лишний запрос на каждый поход.
+ */
+const roleOptions = ref<RoleOption[]>([])
+const rolesTarget = ref<TripParticipant | null>(null)
+const selectedRoleCodes = ref<string[]>([])
+const isSavingRoles = ref(false)
+
+async function openRoles(person: TripParticipant) {
+  rolesTarget.value = person
+  selectedRoleCodes.value = person.roles.map((role) => role.code)
+  actionError.value = null
+
+  if (roleOptions.value.length > 0) return
+
+  try {
+    roleOptions.value = await fetchRoles()
+  } catch {
+    actionError.value = 'Не удалось загрузить справочник ролей'
+  }
+}
+
+function toggleRole(code: string) {
+  selectedRoleCodes.value = selectedRoleCodes.value.includes(code)
+    ? selectedRoleCodes.value.filter((value) => value !== code)
+    : [...selectedRoleCodes.value, code]
+}
+
+async function saveRoles() {
+  if (!rolesTarget.value || isSavingRoles.value) return
+
+  isSavingRoles.value = true
+  actionError.value = null
+
+  try {
+    await setParticipantRoles(
+      props.trip.id,
+      rolesTarget.value.userId,
+      selectedRoleCodes.value,
+    )
+    rolesTarget.value = null
+    // Роли меняют права: перечитываем состав и вкладки, а не собираем
+    // новое состояние из ответа — прав у нас в ответе нет.
+    emit('changed')
+  } catch (cause) {
+    actionError.value =
+      cause instanceof ApiError ? cause.message : 'Не удалось сохранить роли'
+  } finally {
+    isSavingRoles.value = false
+  }
+}
 
 async function load() {
   isLoading.value = true
@@ -403,34 +474,116 @@ function invite(person: UserSearchResult) {
             <span class="flex min-w-0 items-center gap-2">
               <UserAvatar :src="person.avatarUrl" :alt="person.displayName" :size="32" />
 
-              <span class="flex flex-col">
-                <span class="text-sm text-text" data-test="participant-name">
-                  {{ person.displayName }}
-                  <span v-if="person.isOrganizer" class="text-xs text-muted"> · организатор</span>
+              <span class="flex min-w-0 flex-col">
+                <span class="flex flex-wrap items-center gap-1 text-sm text-text">
+                  <span data-test="participant-name">{{ person.displayName }}</span>
+
+                  <!-- Роли — рядом с именем: «кто здесь завхоз» ищут по списку,
+                       а не в подписи мелким шрифтом -->
+                  <span
+                    v-for="role in person.roles"
+                    :key="role.code"
+                    class="rounded-full border border-border px-2 py-0.5 text-xs text-muted"
+                    data-test="participant-role"
+                  >
+                    {{ role.name }}
+                  </span>
                 </span>
 
                 <span class="text-xs text-muted">
                   {{ PARTICIPANT_STATUS_LABELS[person.status] }}
-                  <template v-if="person.roles.length > 0">
-                    · {{ person.roles.map((role) => role.name).join(', ') }}
-                  </template>
+                  <template v-if="person.isOrganizer"> · организатор похода</template>
                 </span>
               </span>
             </span>
 
-            <button
-              v-if="isOrganizer && !person.isOrganizer"
-              type="button"
-              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
-              :disabled="pendingUserId !== null"
-              :data-test="`remove-${person.userId}`"
-              @click="remove(person.userId)"
-            >
-              Убрать
-            </button>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                v-if="canManageRoles"
+                type="button"
+                class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
+                :disabled="pendingUserId !== null"
+                :data-test="`roles-${person.userId}`"
+                @click="openRoles(person)"
+              >
+                Роли
+              </button>
+
+              <button
+                v-if="isOrganizer && !person.isOrganizer"
+                type="button"
+                class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
+                :disabled="pendingUserId !== null"
+                :data-test="`remove-${person.userId}`"
+                @click="remove(person.userId)"
+              >
+                Убрать
+              </button>
+            </div>
           </li>
         </ul>
       </div>
     </template>
+
+    <!-- Роли: диалог поверх вкладки. Роли назначает организатор (или
+         соорганизатор — по праву на вкладку), сами участники ими
+         не управляют -->
+    <div
+      v-if="rolesTarget"
+      class="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
+      data-test="roles-dialog"
+    >
+      <div class="w-full max-w-sm rounded-xl border border-border bg-surface p-4">
+        <h3 class="mb-1 text-base font-medium text-text">
+          Роли: {{ rolesTarget.displayName }}
+        </h3>
+        <p class="mb-3 text-xs text-muted">
+          Роль открывает правку своих вкладок. Видят вкладки все участники.
+        </p>
+
+        <ul class="mb-4 flex flex-col gap-1">
+          <li v-for="role in roleOptions" :key="role.code">
+            <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+              <input
+                type="checkbox"
+                class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                :checked="selectedRoleCodes.includes(role.code)"
+                :disabled="role.code === 'organizer'"
+                :data-test="`role-option-${role.code}`"
+                @change="toggleRole(role.code)"
+              />
+              {{ role.name }}
+              <span v-if="role.code === 'organizer'" class="text-xs text-muted">
+                — автор похода, не назначается
+              </span>
+            </label>
+          </li>
+        </ul>
+
+        <p v-if="actionError" class="mb-2 text-sm text-red-600" data-test="roles-error">
+          {{ actionError }}
+        </p>
+
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            class="cursor-pointer rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-text"
+            data-test="roles-cancel"
+            @click="rolesTarget = null"
+          >
+            Отмена
+          </button>
+          <button
+            type="button"
+            :disabled="isSavingRoles"
+            class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            data-test="roles-save"
+            @click="saveRoles"
+          >
+            {{ isSavingRoles ? 'Сохраняем…' : 'Сохранить' }}
+          </button>
+        </div>
+      </div>
+    </div>
   </section>
 </template>

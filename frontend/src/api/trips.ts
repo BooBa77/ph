@@ -1,13 +1,16 @@
 import { apiFetch } from '@/api/client'
 import type {
   CreateTripRequest,
+  GuestTrip,
   ParticipantDecision,
   ParticipantStatus,
+  RoleOption,
   Trip,
   TripListQuery,
   TripListResponse,
   TripParticipant,
   TripRequest,
+  TripTabPermission,
   TripTypeList,
   RequestDirection,
   UpdateTripRequest,
@@ -126,6 +129,47 @@ export function listTripTypes(): Promise<TripTypeList> {
  */
 export function resetTripTypesCache(): void {
   tripTypesRequest = null
+}
+
+// ───────────────────────────── доступ ─────────────────────────────
+
+/**
+ * GET /api/trips/:id/tabs — вкладки и права на правку.
+ *
+ * Права считает бэкенд по ролям и организатору: фронт не решает, кто завхоз.
+ * Гостю (не участнику) приходит только «Гостевая».
+ */
+export async function fetchTripTabs(tripId: string): Promise<TripTabPermission[]> {
+  const response = await apiFetch<{ tabs: TripTabPermission[] }>(`/trips/${tripId}/tabs`)
+  return response.tabs
+}
+
+/** GET /api/trips/roles — справочник активных ролей. */
+export async function fetchRoles(): Promise<RoleOption[]> {
+  const response = await apiFetch<{ roles: RoleOption[] }>('/trips/roles')
+  return response.roles
+}
+
+/**
+ * PUT /api/trips/:id/participants/:userId/roles — назначить роли.
+ *
+ * Присланный список **заменяет** прежние роли. Роли назначают организатор
+ * и соорганизатор; сами участники ими не управляют.
+ */
+export async function setParticipantRoles(
+  tripId: string,
+  userId: string,
+  roleCodes: string[],
+): Promise<TripParticipant> {
+  return apiFetch<TripParticipant>(`/trips/${tripId}/participants/${userId}/roles`, {
+    method: 'PUT',
+    body: JSON.stringify({ roleCodes }),
+  })
+}
+
+/** GET /api/trips/:id/guest — поход глазами гостя. */
+export async function fetchGuestTrip(tripId: string): Promise<GuestTrip> {
+  return apiFetch<GuestTrip>(`/trips/${tripId}/guest`)
 }
 
 // ───────────────────────────── состав ─────────────────────────────

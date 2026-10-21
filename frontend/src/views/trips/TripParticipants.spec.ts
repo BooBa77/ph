@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   acceptRequest: vi.fn(),
   deleteRequest: vi.fn(),
   searchUsers: vi.fn(),
+  fetchRoles: vi.fn(),
+  setParticipantRoles: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
@@ -36,6 +38,8 @@ vi.mock('@/api/trips', () => ({
   createRequest: mocks.createRequest,
   acceptRequest: mocks.acceptRequest,
   deleteRequest: mocks.deleteRequest,
+  fetchRoles: mocks.fetchRoles,
+  setParticipantRoles: mocks.setParticipantRoles,
 }))
 
 vi.mock('@/api/users', () => ({ searchUsers: mocks.searchUsers }))
@@ -114,11 +118,12 @@ async function open(
   people: TripParticipant[],
   tickets: TripRequest[] = [],
   trip: Trip = TRIP,
+  canManageRoles = false,
 ): Promise<VueWrapper> {
   mocks.listParticipants.mockResolvedValue(people)
   mocks.listRequests.mockResolvedValue(tickets)
 
-  const wrapper = mount(TripParticipants, { props: { trip } })
+  const wrapper = mount(TripParticipants, { props: { trip, canManageRoles } })
   await flushPromises()
   return wrapper
 }
@@ -135,6 +140,8 @@ describe('TripParticipants', () => {
     mocks.acceptRequest.mockResolvedValue(person())
     mocks.deleteRequest.mockResolvedValue(undefined)
     mocks.searchUsers.mockResolvedValue([])
+    mocks.fetchRoles.mockResolvedValue([{ code: 'organizer', name: 'Организатор' }, { code: 'quartermaster', name: 'Завхоз' }])
+    mocks.setParticipantRoles.mockResolvedValue(person())
   })
 
   it('показывает состав с ролями и статусами', async () => {
@@ -296,5 +303,53 @@ describe('TripParticipants', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="participants-action-error"]').exists()).toBe(true)
+  })
+
+  /**
+   * Роли: назначает организатор (или соорганизатор — право даёт бэкенд),
+   * сами участники ими не управляют. Поэтому кнопка «Роли» появляется
+   * только по `canManageRoles`, а роль у имени видна всем.
+   */
+  it('без права на управление ролями кнопки нет', async () => {
+    signIn(ME)
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true })], [], TRIP, false)
+
+    expect(wrapper.find(`[data-test="roles-${ORGANIZER}"]`).exists()).toBe(false)
+  })
+
+  it('роль видна у имени участника', async () => {
+    signIn('u-stranger')
+    const wrapper = await open([
+      person({
+        userId: 'u-2',
+        displayName: 'Петя',
+        roles: [{ code: 'quartermaster', name: 'Завхоз' }],
+      }),
+    ])
+
+    expect(wrapper.find('[data-test="participant-role"]').text()).toBe('Завхоз')
+  })
+
+  it('организатор назначает роль: уходит в API и закрывает диалог', async () => {
+    signIn(ORGANIZER)
+    const wrapper = await open(
+      [person({ userId: ORGANIZER, isOrganizer: true }), person({ displayName: 'Петя' })],
+      [],
+      TRIP,
+      true,
+    )
+
+    await wrapper.find(`[data-test="roles-${ME}"]`).trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="roles-dialog"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="role-option-quartermaster"]').trigger('change')
+    await wrapper.find('[data-test="roles-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setParticipantRoles).toHaveBeenCalledWith('7', ME, ['quartermaster'])
+    expect(wrapper.find('[data-test="roles-dialog"]').exists()).toBe(false)
+    expect(wrapper.emitted('changed')).toBeTruthy()
   })
 })

@@ -338,6 +338,79 @@ export interface TripTypeList {
 }
 
 /**
+ * Вкладки страницы похода и права ролей на них (Ф6).
+ *
+ * Порядок и коды — как в бэкенде (`backend/src/trips/trip-tabs.ts`).
+ * Русские подписи живут только здесь.
+ *
+ * **Права — на правку, а не на просмотр:** вкладки видят все участники
+ * (решение заказчика 21.10.2026), гость — только «Гостевую».
+ */
+export const TRIP_TABS = [
+  'general',
+  'guest',
+  'members',
+  'sport',
+  'transfer',
+  'route',
+  'meals',
+  'gear',
+  'firstAid',
+  'finance',
+  'diary',
+] as const
+
+export type TripTabCode = (typeof TRIP_TABS)[number]
+
+export const TRIP_TAB_LABELS: Record<TripTabCode, string> = {
+  general: 'Общая',
+  guest: 'Гостевая',
+  members: 'Участники',
+  sport: 'Спорт',
+  transfer: 'Трансфер',
+  route: 'Маршрут',
+  meals: 'Питание',
+  gear: 'Снаряжение',
+  firstAid: 'Аптечка',
+  finance: 'Бухгалтерия',
+  diary: 'Дневник',
+}
+
+/** Вкладка с правом правки: считает бэкенд по ролям и организатору. */
+export interface TripTabPermission {
+  code: TripTabCode
+  canEdit: boolean
+}
+
+/**
+ * Поход глазами гостя — урезанное представление с гостевой вкладки.
+ *
+ * Места сбора здесь нет (решение заказчика 21.10.2026), состава и
+ * фактических дат — тоже.
+ */
+export interface GuestTrip {
+  id: string
+  goalObject: { id: string; name: string; type: string; url: string | null } | null
+  announcement: string | null
+  routeText: string
+  requirementsText: string | null
+  status: TripStatus
+  startsAt: string | null
+  endsAt: string | null
+  isCommercial: boolean
+  priceRub: number | null
+  priceNote: string | null
+  isOfficial: boolean
+  isRecruitmentClosed: boolean
+}
+
+/** Роль из справочника: код для API, название для человека. */
+export interface RoleOption {
+  code: string
+  name: string
+}
+
+/**
  * Участие в походе.
  *
  * `invited` — пригласили и человек ещё не ответил; `declined` — не идёт
