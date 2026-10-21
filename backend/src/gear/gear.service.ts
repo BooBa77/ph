@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -12,6 +13,7 @@ import {
   UpdateGearItemDto,
 } from './dto/gear.dto';
 import { GearItem } from './entities/gear-item.entity';
+import { TripGear } from './entities/trip-gear.entity';
 
 /**
  * Личное снаряжение человека.
@@ -25,9 +27,11 @@ import { GearItem } from './entities/gear-item.entity';
  * добавлять вещь без веса — заставлять человека взвешивать палатку,
  * чтобы записать её в список.
  *
- * В поход это попадёт через вкладку «Снаряжение» (Ф7): там участники
- * предлагают предметы из своих каталогов. Сейчас каталог стоит сам по себе —
- * и это осмысленный шаг: без него предлагать нечего.
+ * **В поход предмет попадает через `TripGearService`** (вкладка
+ * «Снаряжение», Ф7): участник выбирает предмет из этого списка, и в походе
+ * появляется строка со ссылкой на каталог. Обратная связь — один запрет:
+ * предмет, который уже едет в походе, отсюда не удалить (409), иначе он
+ * исчез бы из подготовки молча.
  */
 @Injectable()
 export class GearService {
@@ -95,10 +99,26 @@ export class GearService {
     return GearItemDto.from(await manager.save(item));
   }
 
-  /** Удалить предмет. */
+  /**
+   * Удалить предмет.
+   *
+   * Вещь, которая уже предложена в поход, удалить нельзя: в походе она
+   * ссылается на каталог (`trip_gear`), и «удалить молча» значило бы
+   * выдернуть палатку из подготовки, о которой договорились. Отвечаем
+   * 409 и говорим, что делать: сначала убрать её из похода.
+   */
   async remove(userId: string, id: number): Promise<void> {
     const manager = this.dataSource.manager;
     const item = await this.findOwned(manager, userId, id);
+
+    const usedInTrips = await manager.count(TripGear, {
+      where: { gearItemId: item.id },
+    });
+    if (usedInTrips > 0) {
+      throw new ConflictException(
+        'Предмет уже едет в походе — сначала уберите его из снаряжения похода',
+      );
+    }
 
     await manager.delete(GearItem, { id: item.id });
   }

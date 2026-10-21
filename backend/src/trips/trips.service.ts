@@ -344,6 +344,32 @@ export class TripsService {
     };
   }
 
+  /**
+   * Может ли человек **править** вкладку — для доменов самих вкладок.
+   *
+   * Нужно снаряжению (Ф7): «Берём / Не берём» решает тот, кому роль дала
+   * вкладку «Снаряжение» — завхоз, ремонтник, организатор. Проверка живёт
+   * здесь, а не в сервисе снаряжения: матрица прав — правило походов,
+   * и вторая её копия однажды разошлась бы с первой.
+   *
+   * Поход передаётся уже полученным (`getVisibleTrip`): вызывающему он
+   * всё равно нужен, и второй запрос ради той же строки был бы лишним
+   * кругом до базы.
+   */
+  async canEditTab(
+    userId: string,
+    trip: Trip,
+    tab: TripTab,
+  ): Promise<boolean> {
+    const editable = await this.editableTabs(
+      this.dataSource.manager,
+      trip,
+      userId,
+    );
+
+    return editable.has(tab);
+  }
+
   /** Активные роли — для выбора при назначении. */
   async listRoles(): Promise<RoleListDto> {
     const roles = await this.dataSource.manager.find(Role, {
