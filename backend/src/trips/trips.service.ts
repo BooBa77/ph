@@ -33,6 +33,12 @@ import {
 } from './dto/request.dto';
 import { TripListQueryDto } from './dto/trip-list-query.dto';
 import { TripListResponseDto } from './dto/trip-list-response.dto';
+import {
+  GuestTripDto,
+  RoleListDto,
+  SetParticipantRolesDto,
+  TripTabListDto,
+} from './dto/trip-access.dto';
 import { TripResponseDto } from './dto/trip-response.dto';
 import { TripTypeListDto, TripTypeOptionDto } from './dto/trip-type.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
@@ -40,6 +46,7 @@ import { Conversation } from './entities/conversation.entity';
 import { GeoObject } from './entities/geo-object.entity';
 import { Message } from './entities/message.entity';
 import { Role } from './entities/role.entity';
+import { RoleTabPermission } from './entities/role-tab-permission.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
 import { TripMembershipRequest } from './entities/trip-membership-request.entity';
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
@@ -48,6 +55,7 @@ import { TripRouteElement } from './entities/trip-route-element.entity';
 import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
+import { MEMBERS_TAB, TRIP_TABS, type TripTab } from './trip-tabs';
 import {
   CHAT_KINDS,
   DEFAULT_TRIP_TYPE_CODE,
@@ -299,6 +307,214 @@ export class TripsService {
     await this.fillTypes(this.dataSource.manager, [trip]);
 
     return TripResponseDto.from(trip);
+  }
+
+  /**
+   * Вкладки похода и права на правку (Ф6 карты вкладок).
+   *
+   * **Видят вкладки все участники** — решение заказчика 21.10.2026:
+   * роль отвечает на вопрос «кто ведёт», а не «кому видно». Поэтому
+   * `canEdit` — про правку, а не про доступ к экрану.
+   *
+   * Гость (зарегистрированный, но не в походе) видит **только гостевую**
+   * вкладку, и править ему нечего. Приватный чужой поход — 404: правило
+   * одно на весь домен (`findVisibleTrip`).
+   *
+   * Отказ от участия (`declined`) прав лишает: он в подготовке
+   * не участвует — то же правило, что у чатов и чек-листов.
+   */
+  async listTabs(userId: string, id: number): Promise<TripTabListDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.findVisibleTrip(manager, userId, id);
+
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId: trip.id, userId },
+    });
+    const isParticipant =
+      participant !== null && participant.status !== 'declined';
+
+    if (!isParticipant) {
+      return { tabs: [{ code: 'guest', canEdit: false }] };
+    }
+
+    const editable = await this.editableTabs(manager, trip, userId);
+
+    return {
+      tabs: TRIP_TABS.map((code) => ({ code, canEdit: editable.has(code) })),
+    };
+  }
+
+  /** Активные роли — для выбора при назначении. */
+  async listRoles(): Promise<RoleListDto> {
+    const roles = await this.dataSource.manager.find(Role, {
+      where: { isActive: true },
+      order: { id: 'ASC' },
+    });
+
+    return { roles: roles.map((role) => TripRoleDto.from(role)) };
+  }
+
+  /**
+   * Назначить роли участнику: присланный список **заменяет** прежние.
+   *
+   * Роли назначают организаторы (и соорганизаторы — через матрицу прав:
+   * проверяется право на вкладку «Участники»). Сами участники ролями
+   * не управляют, даже своими (решение заказчика 21.10.2026): роль —
+   * это обязательство перед походом, а не нашивка.
+   *
+   * Организатор похода роль `organizer` сохраняет при любом теле, и выдать
+   * её другому нельзя: она производная от `trips.organizer_user_id`,
+   * и «второй организатор» в этом проекте — это `coOrganizer`.
+   */
+  async setParticipantRoles(
+    userId: string,
+    id: number,
+    targetUserId: string,
+    dto: SetParticipantRolesDto,
+  ): Promise<TripParticipantDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const trip = await this.findVisibleTrip(manager, userId, id);
+
+      const editable = await this.editableTabs(manager, trip, userId);
+      if (!editable.has(MEMBERS_TAB)) {
+        throw new ForbiddenException(
+          'Роли назначает организатор похода или соорганизатор',
+        );
+      }
+
+      const participant = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: targetUserId },
+        relations: { user: true },
+      });
+      if (!participant) {
+        throw new NotFoundException('Такого участника в походе нет');
+      }
+
+      const codes = [...new Set(dto.roleCodes)];
+      const isTargetOrganizer = participant.userId === trip.organizerUserId;
+
+      if (codes.includes(ORGANIZER_ROLE_CODE) && !isTargetOrganizer) {
+        throw new BadRequestException(
+          'Организатор у похода один — он автор похода; вместо этого назначьте соорганизатора',
+        );
+      }
+
+      const roles: Role[] =
+        codes.length > 0
+          ? await manager.find(Role, {
+              where: { code: In(codes), isActive: true },
+            })
+          : [];
+
+      if (roles.length !== codes.length) {
+        throw new BadRequestException(
+          'Среди ролей есть неизвестные — выберите из справочника',
+        );
+      }
+
+      /**
+       * Роль организатора возвращается на место молча: если человек прислал
+       * список без неё, он мог просто не знать, что она там есть, а убрать
+       * её всё равно нельзя.
+       */
+      const organizerRole = isTargetOrganizer
+        ? await manager.findOne(Role, { where: { code: ORGANIZER_ROLE_CODE } })
+        : null;
+
+      if (isTargetOrganizer && !organizerRole) {
+        throw new InternalServerErrorException(
+          'В справочнике ролей нет роли организатора: выполните npm run seed:roles',
+        );
+      }
+
+      const roleIds = roles
+        .map((role) => role.id)
+        .filter((roleId) => roleId !== organizerRole?.id);
+      if (organizerRole) roleIds.push(organizerRole.id);
+
+      await manager.delete(TripParticipantRole, {
+        tripId: trip.id,
+        userId: targetUserId,
+      });
+      if (roleIds.length > 0) {
+        await manager.insert(
+          TripParticipantRole,
+          roleIds.map((roleId) => ({
+            tripId: trip.id,
+            userId: targetUserId,
+            roleId,
+          })),
+        );
+      }
+
+      const savedRoles = await this.loadRoles(manager, trip.id, targetUserId);
+
+      return TripParticipantDto.from(
+        participant,
+        savedRoles,
+        trip.organizerUserId,
+      );
+    });
+  }
+
+  /**
+   * Поход глазами гостя — урезанное представление для гостевой вкладки.
+   *
+   * Приватный поход гостю не виден — 404, как и сам поход. Участнику
+   * эндпоинт тоже отвечает: организатору он нужен как превью того, что
+   * увидит гость.
+   */
+  async guestView(userId: string, id: number): Promise<GuestTripDto> {
+    const manager = this.dataSource.manager;
+
+    const trip = await manager.findOne(Trip, {
+      where: { id: String(id) },
+      relations: { goalObject: true },
+    });
+    if (!trip) throw new NotFoundException('Поход не найден');
+
+    if (trip.visibility === 'private') {
+      const isParticipant = await manager.count(TripParticipant, {
+        where: { tripId: trip.id, userId },
+      });
+      if (isParticipant === 0) {
+        throw new NotFoundException('Поход не найден');
+      }
+    }
+
+    return GuestTripDto.from(trip);
+  }
+
+  /**
+   * Вкладки, которые этот человек вправе **править**.
+   *
+   * Организатор — все, независимо от матрицы: это правило кода, а не строка
+   * в базе (организатор не должен зависеть от того, засеян ли справочник).
+   * Остальным — объединение прав их ролей; матрица живёт в
+   * `role_tab_permissions` и правится сидом.
+   */
+  private async editableTabs(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<Set<TripTab>> {
+    if (trip.organizerUserId === userId) return new Set(TRIP_TABS);
+
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId: trip.id, userId },
+    });
+    if (!participant || participant.status === 'declined') return new Set();
+
+    const roleRows = await manager.find(TripParticipantRole, {
+      where: { tripId: trip.id, userId },
+    });
+    if (roleRows.length === 0) return new Set();
+
+    const permissions = await manager.find(RoleTabPermission, {
+      where: { roleId: In(roleRows.map((row) => row.roleId)) },
+    });
+
+    return new Set(permissions.map((permission) => permission.tab));
   }
 
   /**

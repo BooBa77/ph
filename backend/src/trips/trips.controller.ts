@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Put,
   Query,
 } from '@nestjs/common';
 import {
@@ -44,6 +45,12 @@ import { TripListQueryDto } from './dto/trip-list-query.dto';
 import { TripListResponseDto } from './dto/trip-list-response.dto';
 import { TripResponseDto } from './dto/trip-response.dto';
 import { TripTypeListDto } from './dto/trip-type.dto';
+import {
+  GuestTripDto,
+  RoleListDto,
+  SetParticipantRolesDto,
+  TripTabListDto,
+} from './dto/trip-access.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
 import { TripsService } from './trips.service';
 
@@ -108,6 +115,70 @@ export class TripsController {
   @ApiOkResponse({ type: TripTypeListDto })
   async listTypes(): Promise<TripTypeListDto> {
     return this.tripsService.listTypes();
+  }
+
+  /**
+   * Справочник активных ролей — для назначения в составе.
+   *
+   * Как и `types`, объявлен **до** `GET /:id`: иначе «roles» попал бы
+   * в `ParseIntPipe` и вернул бы 400.
+   */
+  @Get('roles')
+  @ApiOperation({ summary: 'Роли участников похода' })
+  @ApiOkResponse({ type: RoleListDto })
+  async listRoles(): Promise<RoleListDto> {
+    return this.tripsService.listRoles();
+  }
+
+  /**
+   * Вкладки похода и права на правку.
+   *
+   * Видят вкладки все участники; `canEdit` отвечает на вопрос «кто ведёт».
+   * Гостю (не участнику) отдаётся только гостевая вкладка.
+   */
+  @Get(':id/tabs')
+  @ApiOperation({ summary: 'Вкладки похода' })
+  @ApiOkResponse({ type: TripTabListDto })
+  async listTabs(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripTabListDto> {
+    return this.tripsService.listTabs(authUser.id, id);
+  }
+
+  /**
+   * Поход глазами гостя: урезанное представление для гостевой вкладки.
+   * Приватный поход гостю — 404.
+   */
+  @Get(':id/guest')
+  @ApiOperation({ summary: 'Гостевой обзор похода' })
+  @ApiOkResponse({ type: GuestTripDto })
+  async guestView(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<GuestTripDto> {
+    return this.tripsService.guestView(authUser.id, id);
+  }
+
+  /**
+   * Назначить роли участнику. Присланный список заменяет прежние.
+   * Роли назначают организатор и соорганизатор, участники — никогда.
+   */
+  @Put(':id/participants/:userId/roles')
+  @ApiOperation({ summary: 'Назначить роли участнику' })
+  @ApiOkResponse({ type: TripParticipantDto })
+  async setParticipantRoles(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('userId') targetUserId: string,
+    @Body() dto: SetParticipantRolesDto,
+  ): Promise<TripParticipantDto> {
+    return this.tripsService.setParticipantRoles(
+      authUser.id,
+      id,
+      targetUserId,
+      dto,
+    );
   }
 
   /**

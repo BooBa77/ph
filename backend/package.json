@@ -23,6 +23,7 @@
     "build:state-calendar": "node scripts/build-state-calendar.mjs",
     "seed:calendar": "node scripts/seed-state-calendar.mjs",
     "seed:roles": "node scripts/seed-roles.mjs",
+    "seed:role-tabs": "node scripts/seed-role-tabs.mjs",
     "seed:objects": "node scripts/seed-objects.mjs",
     "seed:products": "node scripts/seed-products.mjs",
     "import:nature": "node scripts/nature-import.mjs",

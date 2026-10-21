@@ -8,6 +8,7 @@ import { GeoObject } from './entities/geo-object.entity';
 import { Message } from './entities/message.entity';
 import { MessageAction } from './entities/message-action.entity';
 import { Role } from './entities/role.entity';
+import { RoleTabPermission } from './entities/role-tab-permission.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
 import { TripMembershipRequest } from './entities/trip-membership-request.entity';
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
@@ -39,6 +40,7 @@ import { ObjectsService } from './objects.service';
     TypeOrmModule.forFeature([
       GeoObject,
       Role,
+      RoleTabPermission,
       Trip,
       TripDateVariant,
       TripRouteElement,
