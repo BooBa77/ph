@@ -23,6 +23,7 @@ defineProps<{
     | 'checklist'
     | 'gear'
     | 'meals'
+    | 'people'
     | 'install'
     | 'logout'
     | 'home'
@@ -106,6 +107,15 @@ defineProps<{
       <path d="M5 11a7 7 0 0 0 14 0" />
       <path d="M9 7c0-1 1-1.4 1-2.4" />
       <path d="M14 7c0-1 1-1.4 1-2.4" />
+    </template>
+
+    <!-- Контакты: двое людей. Профиль — один силуэт, и два читаются
+         как «люди», а не как «мой аккаунт» -->
+    <template v-else-if="name === 'people'">
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3 20c0-2.7 2.7-4.5 6-4.5s6 1.8 6 4.5" />
+      <circle cx="17" cy="9" r="2" />
+      <path d="M15.5 15.6c2.6.3 4.5 1.9 4.5 4.4" />
     </template>
 
     <!-- Вынести ярлык: стрелка вниз в лоток -->

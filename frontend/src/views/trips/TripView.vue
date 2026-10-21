@@ -4,6 +4,7 @@ import { RouterLink, useRoute } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
 import { getTrip, updateTrip } from '@/api/trips'
+import { getPublicUser, type PublicUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import TripChats from '@/views/trips/TripChats.vue'
 import TripInfo from '@/views/trips/TripInfo.vue'
@@ -36,6 +37,17 @@ const isLoading = ref(true)
 const error = ref<string | null>(null)
 const actionError = ref<string | null>(null)
 const isTogglingRecruitment = ref(false)
+
+/**
+ * Организатор — отдельным запросом за публичным профилем.
+ *
+ * В ответе похода есть только `organizerUserId`: имени и аватарки там нет,
+ * потому что лента из двадцати карточек стоить двадцати запросов не должна.
+ * Здесь поход один, и одна ссылка «кто ведёт» стоит одного запроса.
+ * Не загрузилось — просто не показываем имя: вкладки похода от этого
+ * не зависят.
+ */
+const organizer = ref<PublicUser | null>(null)
 
 const TAB_INFO = 'info'
 const TAB_PARTICIPANTS = 'participants'
@@ -72,6 +84,17 @@ async function load(id: string) {
     trip.value = null
   } finally {
     isLoading.value = false
+  }
+
+  // Организатор — после похода и необязательной частью: без него страница
+  // показывается, а «кто ведёт» просто не появляется.
+  organizer.value = null
+  if (trip.value && trip.value.organizerUserId !== auth.user?.id) {
+    try {
+      organizer.value = await getPublicUser(trip.value.organizerUserId)
+    } catch {
+      // Тихо: профиль организатора — украшение шапки, а не данные похода.
+    }
   }
 }
 
@@ -141,6 +164,22 @@ async function toggleRecruitment() {
 
             <p v-if="trip.announcement" class="text-sm text-text">
               {{ trip.announcement }}
+            </p>
+
+            <!-- Кто ведёт: имя ведёт в публичный профиль. У себя — просто
+                 подпись, ссылка на самого себя в шапке не нужна -->
+            <p class="text-sm text-muted" data-test="trip-organizer">
+              <template v-if="organizer">
+                Ведёт:
+                <RouterLink
+                  :to="{ name: 'person', params: { id: organizer.id } }"
+                  class="text-text underline transition-colors hover:text-primary"
+                  data-test="trip-organizer-link"
+                >
+                  {{ organizer.displayName }}
+                </RouterLink>
+              </template>
+              <template v-else-if="isOrganizer">Вы ведёте этот поход</template>
             </p>
           </div>
 

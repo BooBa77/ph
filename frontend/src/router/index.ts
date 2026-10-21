@@ -86,6 +86,21 @@ const router = createRouter({
       ],
     },
     {
+      // Контакты: поиск людей по имени. Профиль человека — отдельный
+      // адрес: на него ведут ссылки из походов и из поиска.
+      path: '/people',
+      name: 'people',
+      component: () => import('@/views/people/PeopleSearch.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // Публичный профиль: имя, город, «на сайте с». Личного здесь нет.
+      path: '/people/:id',
+      name: 'person',
+      component: () => import('@/views/people/PersonProfile.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       // Раздел «Походы». Корень — свои походы, анонсы чужих — отдельной
       // страницей: смешанная лента заставляла бы искать свои походы среди
       // чужих. Адреса у разделов отдельные, поэтому переделка разметки

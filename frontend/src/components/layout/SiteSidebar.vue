@@ -36,6 +36,9 @@ const SECTIONS = [
   { to: '/profile/gear', label: 'Снаряжение', icon: 'gear' },
   { to: '/profile/meals', label: 'Питание', icon: 'meals' },
   { to: '/profile/checklists', label: 'Чек-листы', icon: 'checklist' },
+  // Люди — не раздел аккаунта, а раздел сайта: искать человека нужно
+  // из похода и из меню, а не из настроек.
+  { to: '/people', label: 'Контакты', icon: 'people' },
   { to: '/profile/settings', label: 'Настройки', icon: 'settings' },
 ] as const
 

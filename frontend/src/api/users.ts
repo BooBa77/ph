@@ -26,6 +26,33 @@ export interface UserSearchResult {
 }
 
 /**
+ * Публичный профиль человека — то, что видно кому угодно.
+ *
+ * Не путать с `User` (`/users/me`): там свои аллергии и спортивный опыт,
+ * здесь — имя, аватарка, город и «на сайте с». Личное человек показывает
+ * сам, и в чужой профиль оно не попадает.
+ */
+export interface PublicUser {
+  id: string
+  displayName: string
+  avatarUrl: string | null
+  location: string | null
+  createdAt: string
+  /** Это профиль того, кто смотрит: считает сервер по токену. */
+  isSelf: boolean
+}
+
+/**
+ * GET /api/users/:id
+ *
+ * Публичный профиль человека. Нужен странице «Контакты»: поиск даёт имя,
+ * а «кто это» — уже здесь. Удалённый человек отвечает 404.
+ */
+export async function getPublicUser(id: string): Promise<PublicUser> {
+  return apiFetch<PublicUser>(`/users/${id}`)
+}
+
+/**
  * GET /api/users?search=
  *
  * Найти людей по имени — для приглашения в поход. Без строки поиска (или
