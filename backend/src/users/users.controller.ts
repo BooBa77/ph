@@ -4,6 +4,8 @@ import {
   Delete,
   Get,
   NotFoundException,
+  Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -24,6 +26,7 @@ import { AvatarService } from './avatar.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import { UserResponseDto } from './dto/user-response.dto';
+import { UserPublicProfileDto } from './dto/user-public.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
 import { UploadAvatarDto } from './dto/upload-avatar.dto';
 import {
@@ -121,6 +124,33 @@ export class UsersController {
     const users = await this.usersService.search(query.search, authUser.id);
 
     return { users: users.map((user) => UserSearchResultDto.from(user)) };
+  }
+
+  /**
+   * Публичный профиль человека — для страницы «Контакты».
+   *
+   * Отдаёт **не** свой профиль: ни пищевых ограничений, ни аллергий,
+   * ни спортивного опыта там нет (см. `UserPublicProfileDto`). Это то,
+   * что и так видно в походах: имя, аватарка, город, «на сайте с».
+   *
+   * Роут объявлен **после** `me` и `me/avatar`: `me` — литеральный путь,
+   * и если поставить `:id` выше, «me» попал бы в `ParseUUIDPipe` и вернул
+   * бы 400 вместо профиля. Удалённый (soft delete) человек — 404:
+   * о нём нечего рассказывать.
+   */
+  @Get(':id')
+  @ApiOperation({ summary: 'Публичный профиль человека' })
+  @ApiOkResponse({ type: UserPublicProfileDto })
+  async getPublicProfile(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ): Promise<UserPublicProfileDto> {
+    const user = await this.usersService.findById(id);
+    if (!user || user.deletedAt !== null) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    return UserPublicProfileDto.from(user, user.id === authUser.id);
   }
 
   /**
