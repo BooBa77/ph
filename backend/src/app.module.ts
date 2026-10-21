@@ -14,6 +14,7 @@ import { StorageModule } from './storage/storage.module';
 import { CalendarModule } from './calendar/calendar.module';
 import { TripsModule } from './trips/trips.module';
 import { ChecklistsModule } from './checklists/checklists.module';
+import { GearModule } from './gear/gear.module';
 
 @Module({
   imports: [
@@ -71,6 +72,7 @@ import { ChecklistsModule } from './checklists/checklists.module';
     CalendarModule,
     TripsModule,
     ChecklistsModule,
+    GearModule,
   ],
   controllers: [AppController],
   providers: [
