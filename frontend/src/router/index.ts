@@ -63,6 +63,13 @@ const router = createRouter({
           component: () => import('@/views/profile/sections/UserGear.vue'),
         },
         {
+          // Питание: кулинарная книга — блюда и их состав. Продукты —
+          // общий справочник, блюда личные.
+          path: 'meals',
+          name: 'profile-meals',
+          component: () => import('@/views/profile/sections/UserMeals.vue'),
+        },
+        {
           // Чек-листы: шаблоны снаряжения, продуктов и аптечки. В поход
           // из шаблона попадает копия, поэтому это раздел профиля, а не
           // похода — шаблон живёт вне походов.

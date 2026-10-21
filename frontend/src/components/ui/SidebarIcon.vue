@@ -22,6 +22,7 @@ defineProps<{
     | 'trips'
     | 'checklist'
     | 'gear'
+    | 'meals'
     | 'install'
     | 'logout'
     | 'home'
@@ -96,6 +97,15 @@ defineProps<{
       <path d="M12 4L4 20h16z" />
       <path d="M12 11v9" />
       <path d="M12 11l4 9" />
+    </template>
+
+    <!-- Питание: котелок с паром. Кружка читалась бы как «напитки»,
+         а котелок — это и есть походная еда -->
+    <template v-else-if="name === 'meals'">
+      <path d="M4 11h16" />
+      <path d="M5 11a7 7 0 0 0 14 0" />
+      <path d="M9 7c0-1 1-1.4 1-2.4" />
+      <path d="M14 7c0-1 1-1.4 1-2.4" />
     </template>
 
     <!-- Вынести ярлык: стрелка вниз в лоток -->

@@ -34,6 +34,7 @@ const SECTIONS = [
   // Снаряжение и чек-листы стоят рядом: это подготовка к походу,
   // и человек ищет их вместе, а не в разных концах меню.
   { to: '/profile/gear', label: 'Снаряжение', icon: 'gear' },
+  { to: '/profile/meals', label: 'Питание', icon: 'meals' },
   { to: '/profile/checklists', label: 'Чек-листы', icon: 'checklist' },
   { to: '/profile/settings', label: 'Настройки', icon: 'settings' },
 ] as const
