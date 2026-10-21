@@ -105,6 +105,32 @@ describe('Календарь (e2e)', () => {
       .expect(401);
   });
 
+  /**
+   * Справочник активностей общий с типами похода, и группа «Туризм» живёт
+   * в той же таблице. В календарь она попадать не должна — и держится это
+   * на `scope` в данных, а не на списке кодов в коде. Тест сторожит именно
+   * это: однажды кто-то поставит группе `scope = 'calendar'` «по привычке»,
+   * и «Туризм» всплывёт закладкой в модалке дня.
+   */
+  it('в словаре календаря нет группы «Туризм»', async () => {
+    const response = await auth(
+      request(app.getHttpServer()).get('/api/calendar/activities'),
+    ).expect(200);
+
+    const groups = response.body.groups as Array<{ code: string; label: string }>;
+    const labels = groups.map((group) => group.label);
+
+    expect(groups.map((group) => group.code)).not.toContain('tourism');
+    expect(labels).not.toContain('Туризм');
+
+    // И типов из неё тоже нет — иначе они повисли бы без группы.
+    const typeLabels = (
+      response.body.groups as Array<{ types: Array<{ label: string }> }>
+    ).flatMap((group) => group.types.map((type) => type.label));
+    expect(typeLabels).not.toContain('Альпинизм');
+  });
+
+
   it('до создания календаря год пустой, а шаблон известен', async () => {
     const response = await auth(
       request(app.getHttpServer()).get('/api/calendar/years/2030'),
