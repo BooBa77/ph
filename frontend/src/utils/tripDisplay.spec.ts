@@ -24,7 +24,7 @@ const trip = (overrides: Record<string, unknown> = {}) => ({
   isOfficial: false,
   priceRub: null,
   meetingPlace: null,
-  meetingAt: null,
+  hasGuitar: false,
   ...overrides,
 })
 
@@ -66,20 +66,24 @@ describe('tripDisplay', () => {
   })
 
   /**
-   * Сбор — место и время вместе: по отдельности они бесполезны.
-   * Пустая строка вместо «—» — чтобы вкладка «Информация» не показывала
+   * Гитара — признак, а не норма: в карточке она появляется только когда
+   * она есть. «Без гитары» в ленте так же нечего писать, как
+   * и «некоммерческий».
+   */
+  it('«будет гитара» пишется только когда гитара есть', () => {
+    expect(tripBadges(trip({ hasGuitar: true }))).toEqual(['будет гитара'])
+    expect(
+      tripBadges(trip({ hasGuitar: true, isCommercial: true, priceRub: 5000 })),
+    ).toEqual(['коммерческий · 5000 ₽', 'будет гитара'])
+  })
+
+  /**
+   * Сбор — только место. Время уехало в трансфер вместе с полем, и пустая
+   * строка вместо «—» нужна, чтобы вкладка «Информация» не показывала
    * строку «Сбор: —» у похода, где сбора ещё нет.
    */
-  it('сбор показывает место и время, а пустой — ничего', () => {
+  it('сбор показывает место, а пустой — ничего', () => {
     expect(tripMeetingText(trip())).toBe('')
-
-    expect(
-      tripMeetingText(
-        trip({ meetingPlace: 'У вокзала', meetingAt: '2027-05-05T00:00:00.000Z' }),
-      ),
-    ).toContain('У вокзала · ')
-
     expect(tripMeetingText(trip({ meetingPlace: 'У вокзала' }))).toBe('У вокзала')
-    expect(tripMeetingText(trip({ meetingAt: '2027-05-05T00:00:00.000Z' }))).toContain('2027')
   })
 })

@@ -13,16 +13,28 @@ import TripEdit from '@/views/trips/TripEdit.vue'
  *
  * Главное здесь — что в `PATCH` уходит **разница**, а не форма целиком,
  * и что форма заполнена текущими значениями похода: пустая форма правки
- * означала бы «сохрани пустоту».
+ * означала бы «сохрани пустоту». Второе, что проверяется, — типы похода
+ * и «Будет гитара»: и то и другое появилось в форме 21.10.2026, и оба
+ * обязаны доезжать до сервера.
  */
-const mocks = vi.hoisted(() => ({ getTrip: vi.fn(), updateTrip: vi.fn() }))
+const mocks = vi.hoisted(() => ({
+  getTrip: vi.fn(),
+  updateTrip: vi.fn(),
+  listTripTypes: vi.fn(),
+}))
 
 vi.mock('@/api/trips', () => ({
   getTrip: mocks.getTrip,
   updateTrip: mocks.updateTrip,
+  listTripTypes: mocks.listTripTypes,
 }))
 
 const ORGANIZER = 'u-org'
+
+const TOURISM = [
+  { id: 19, code: 'trip_hiking', label: 'Пеший поход', icon: 'hike' },
+  { id: 20, code: 'trip_alpinism', label: 'Альпинизм', icon: 'mountain' },
+]
 
 const TRIP: Trip = {
   id: '7',
@@ -33,11 +45,10 @@ const TRIP: Trip = {
   routeText: 'Подход от станции',
   requirementsText: 'Свои кошки',
   meetingPlace: 'Иркутск, автовокзал',
-  meetingAt: '2027-05-05T00:00:00.000Z',
-  transferText: 'Электричка 6:40',
+  hasGuitar: false,
   visibility: 'public',
   isRecruitmentClosed: false,
-  activityTypeIds: [],
+  activityTypeIds: [19],
   status: 'decided',
   startsAt: '2027-05-05T01:00:00.000Z',
   endsAt: '2027-05-09T10:00:00.000Z',
@@ -69,6 +80,7 @@ async function open(userId = ORGANIZER) {
   signIn(userId)
   mocks.getTrip.mockResolvedValue(TRIP)
   mocks.updateTrip.mockResolvedValue(TRIP)
+  mocks.listTripTypes.mockResolvedValue({ types: TOURISM, defaultTypeId: 19 })
 
   const router = createRouter({
     history: createMemoryHistory(),
@@ -99,12 +111,14 @@ describe('TripEdit', () => {
 
     const announcement = wrapper.find('[data-test="announcement"]').element as HTMLInputElement
     const meeting = wrapper.find('[data-test="meeting-place"]').element as HTMLInputElement
-    const transfer = wrapper.find('[data-test="transfer"]').element as HTMLTextAreaElement
 
     expect(announcement.value).toBe('Идём на майские')
     expect(meeting.value).toBe('Иркутск, автовокзал')
-    expect(transfer.value).toBe('Электричка 6:40')
     expect(wrapper.find('[data-test="selected-goal"]').text()).toContain('Витязь')
+
+    // Тип похода в форме — выбранный чипс, а не пустой список.
+    expect(wrapper.find('[data-test="trip-type-19"]').attributes('aria-pressed')).toBe('true')
+    expect(wrapper.find('[data-test="trip-type-20"]').attributes('aria-pressed')).toBe('false')
   })
 
   it('чужому формы нет: правит только организатор', async () => {
@@ -133,6 +147,26 @@ describe('TripEdit', () => {
     await flushPromises()
 
     expect(mocks.updateTrip).toHaveBeenCalledWith('7', { meetingPlace: null })
+  })
+
+  it('новый тип похода уезжает в патч, а неизменный — нет', async () => {
+    const { wrapper } = await open()
+
+    await wrapper.find('[data-test="trip-type-20"]').trigger('click')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.updateTrip).toHaveBeenCalledWith('7', { activityTypeIds: [19, 20] })
+  })
+
+  it('«Будет гитара» включается одним чекбоксом', async () => {
+    const { wrapper } = await open()
+
+    await wrapper.find('[data-test="guitar"]').setValue(true)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.updateTrip).toHaveBeenCalledWith('7', { hasGuitar: true })
   })
 
   it('текст ошибки бэкенда показывается как есть', async () => {

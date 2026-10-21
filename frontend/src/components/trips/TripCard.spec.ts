@@ -1,5 +1,5 @@
-import { RouterLinkStub, mount } from '@vue/test-utils'
-import { describe, expect, it } from 'vitest'
+import { RouterLinkStub, flushPromises, mount } from '@vue/test-utils'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import TripCard from '@/components/trips/TripCard.vue'
 import type { Trip } from '@/types/trips'
@@ -10,7 +10,20 @@ import type { Trip } from '@/types/trips'
  * Карточка — единственное место, где поход показывается в списке, и она же
  * ссылка на поход. Проверяем и содержание, и то, что вся карточка целиком
  * ведёт в поход: на телефоне человек жмёт по карточке, а не по её заголовку.
+ *
+ * Словарь типов подменён: карточка спрашивает его у API, а тест не должен
+ * ходить в сеть. Заодно проверяется главное для подписи типа — что в походе
+ * лежат id, а человек видит «Пеший поход».
  */
+const mocks = vi.hoisted(() => ({ listTripTypes: vi.fn() }))
+
+vi.mock('@/api/trips', () => ({ listTripTypes: mocks.listTripTypes }))
+
+const TOURISM = [
+  { id: 19, code: 'trip_hiking', label: 'Пеший поход', icon: 'hike' },
+  { id: 20, code: 'trip_alpinism', label: 'Альпинизм', icon: 'mountain' },
+]
+
 const BASE: Trip = {
   id: '1',
   organizerUserId: 'u-1',
@@ -20,8 +33,7 @@ const BASE: Trip = {
   routeText: '',
   requirementsText: null,
   meetingPlace: null,
-  meetingAt: null,
-  transferText: null,
+  hasGuitar: false,
   visibility: 'public',
   isRecruitmentClosed: false,
   activityTypeIds: [],
@@ -49,6 +61,11 @@ function mountCard(value: Trip) {
 }
 
 describe('TripCard', () => {
+  beforeEach(() => {
+    mocks.listTripTypes.mockReset()
+    mocks.listTripTypes.mockResolvedValue({ types: TOURISM, defaultTypeId: 19 })
+  })
+
   it('имя похода — цель из справочника, анонс идёт подписью', () => {
     const wrapper = mountCard(trip())
 
@@ -78,6 +95,34 @@ describe('TripCard', () => {
   })
 
   it('у обычного похода значков нет', () => {
+    expect(mountCard(trip()).findAll('[data-test="trip-card-badge"]')).toHaveLength(0)
+  })
+
+  /**
+   * Тип похода в походе — id, подпись приходит из словаря. Без этого теста
+   * карточка с типами могла бы показывать пустую строку и не краснеть.
+   */
+  it('типы похода подписаны словами из справочника', async () => {
+    const wrapper = mountCard(trip({ activityTypeIds: [19, 20] }))
+    await flushPromises()
+
+    const text = wrapper.find('[data-test="trip-card-types"]').text()
+    expect(text).toContain('Пеший поход')
+    expect(text).toContain('Альпинизм')
+  })
+
+  it('без типов строки нет, а словарь не запрашивается впустую', () => {
+    const wrapper = mountCard(trip())
+
+    expect(wrapper.find('[data-test="trip-card-types"]').exists()).toBe(false)
+    expect(mocks.listTripTypes).not.toHaveBeenCalled()
+  })
+
+  it('«будет гитара» — значок, как коммерция: по умолчанию его нет', () => {
+    const withGuitar = mountCard(trip({ hasGuitar: true }))
+    const badges = withGuitar.findAll('[data-test="trip-card-badge"]').map((badge) => badge.text())
+
+    expect(badges).toEqual(['будет гитара'])
     expect(mountCard(trip()).findAll('[data-test="trip-card-badge"]')).toHaveLength(0)
   })
 

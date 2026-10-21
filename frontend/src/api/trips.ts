@@ -8,6 +8,7 @@ import type {
   TripListResponse,
   TripParticipant,
   TripRequest,
+  TripTypeList,
   RequestDirection,
   UpdateTripRequest,
 } from '@/types/trips'
@@ -84,6 +85,47 @@ export function buildTripListQuery(query: TripListQuery = {}): string {
  */
 export async function listTrips(query: TripListQuery = {}): Promise<TripListResponse> {
   return apiFetch<TripListResponse>(`/trips${buildTripListQuery(query)}`)
+}
+
+/**
+ * Словарь типов похода, загруженный однажды на жизнь вкладки.
+ *
+ * Лента показывает двадцать карточек, и каждая хочет подпись типа. Двадцать
+ * запросов за тремя строками справочника — это тот самый N+1, от которого
+ * спасает только кеш. Кеш живёт в модуле, а не в Pinia: справочник
+ * не меняется без перезагрузки страницы, а отдельный store заводить ради
+ * него незачем.
+ *
+ * Кешируется **промис**, а не результат: двадцать карточек, смонтированных
+ * одновременно, получают один и тот же запрос, а не двадцать.
+ *
+ * Отказ сбрасывает кеш: иначе сеть упала бы один раз, и до перезагрузки
+ * страницы форма молчала бы без единой попытки повторить.
+ */
+let tripTypesRequest: Promise<TripTypeList> | null = null
+
+/**
+ * GET /api/trips/types
+ *
+ * Типы похода для чипсов в форме и для подписи на странице: id, код,
+ * подпись и ключ иконки. Плюс `defaultTypeId` — тип, который подставляется
+ * неофициальному походу (`trip_hiking`, «Пеший поход»).
+ */
+export function listTripTypes(): Promise<TripTypeList> {
+  tripTypesRequest ??= apiFetch<TripTypeList>('/trips/types').catch((problem) => {
+    tripTypesRequest = null
+    throw problem
+  })
+
+  return tripTypesRequest
+}
+
+/**
+ * Сбросить кеш словаря. Нужен тестам: между ними модуль живёт один,
+ * а база моков у каждого своя.
+ */
+export function resetTripTypesCache(): void {
+  tripTypesRequest = null
 }
 
 // ───────────────────────────── состав ─────────────────────────────

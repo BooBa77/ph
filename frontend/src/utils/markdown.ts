@@ -23,6 +23,20 @@
 /** Что известно про сущность, на которую ссылаются: токен → имя. */
 export type MentionNames = Record<string, string>
 
+/**
+ * Куда ведёт ссылка на сущность: токен → адрес внешней страницы.
+ *
+ * Отдельная карта, а не поле в `MentionNames`: имя нужно **всегда** (иначе
+ * в тексте останется «объект 10»), а ссылка — только в режиме чтения.
+ * В редакторе ссылку делать нельзя: `contenteditable` с якорем внутри
+ * разваливает правку — по объекту начинают ходить переходом вместо
+ * выделения.
+ *
+ * Участникам страницы пока нет, поэтому пустая карта — норма: текст
+ * покажется без ссылки, но с именем.
+ */
+export type MentionLinks = Record<string, string>
+
 /** Токены ссылок на объекты, найденные в тексте. */
 export function extractObjectIds(markdown: string): string[] {
   const found = new Set<string>()
@@ -76,8 +90,18 @@ function mentionLabel(kind: string, id: string, names: MentionNames): string {
  * каждой строки делает `<div>`, и вставленный посреди фразы объект разрывал
  * абзац надвое: «Старт [[object:10]]\n конец» вместо «Старт [[object:10]]
  * конец». Для вставки нужен именно строчный фрагмент.
+ *
+ * **`links` — только для чтения, не для редактора.** Если объекту известна
+ * внешняя страница, имя становится ссылкой на неё (`objects.url`,
+ * «Природа Байкала»); в редакторе карта пустая, и на месте имени остаётся
+ * неизменяемый `span` с токеном — иначе по тексту нельзя было бы щёлкнуть
+ * и встать в него курсором.
  */
-export function inlineMarkdownToHtml(text: string, names: MentionNames = {}): string {
+export function inlineMarkdownToHtml(
+  text: string,
+  names: MentionNames = {},
+  links: MentionLinks = {},
+): string {
   let html = escapeHtml(text)
 
   html = html.replace(/\[\[(object|user):([^\]]+)\]\]/g, (_match, kind: string, id: string) => {
@@ -87,6 +111,20 @@ export function inlineMarkdownToHtml(text: string, names: MentionNames = {}): st
     // страницы с историей посещений, и рендеру понадобится id,
     // а не разбирать ради него токен заново.
     const objectId = kind === 'object' ? ` data-object-id="${escapeHtml(id)}"` : ''
+
+    /**
+     * Адрес приходит из справочника, но проверяем схему всё равно: однажды
+     * справочник пополнят руками, и `javascript:` в `href` стал бы
+     * исполняемым кодом на нашей странице.
+     */
+    const url = kind === 'object' ? links[token] : undefined
+    if (url && /^https?:/i.test(url)) {
+      return (
+        `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"` +
+        ` data-token="${escapeHtml(token)}"${objectId}` +
+        ` class="rounded bg-field px-1 text-primary underline">${escapeHtml(label)}</a>`
+      )
+    }
 
     return (
       `<span data-token="${escapeHtml(token)}"${objectId}` +
@@ -115,8 +153,15 @@ export function inlineMarkdownToHtml(text: string, names: MentionNames = {}): st
  * Каждая строка — отдельный `<div>`: так браузер понимает перевод строки
  * и не склеивает абзацы. Пустая строка — `<div><br></div>`, иначе браузер
  * выбросит её при первой же правке.
+ *
+ * `links` прокидывается в строчную разметку и нужен только режиму чтения:
+ * в редакторе он пустой, и объекты остаются неизменяемыми вставками.
  */
-export function markdownToHtml(markdown: string, names: MentionNames = {}): string {
+export function markdownToHtml(
+  markdown: string,
+  names: MentionNames = {},
+  links: MentionLinks = {},
+): string {
   // Пустой текст — пустое поле. Иначе в нём сразу лежал бы `<div><br></div>`,
   // то есть «одна пустая строка», и подсказка о пустом поле спорила бы
   // с содержимым.
@@ -138,11 +183,11 @@ export function markdownToHtml(markdown: string, names: MentionNames = {}): stri
     }
 
     if (isItem) {
-      html.push(`<li>${inlineMarkdownToHtml(line.slice(2), names)}</li>`)
+      html.push(`<li>${inlineMarkdownToHtml(line.slice(2), names, links)}</li>`)
     } else if (line.trim() === '') {
       html.push('<div><br></div>')
     } else {
-      html.push(`<div>${inlineMarkdownToHtml(line, names)}</div>`)
+      html.push(`<div>${inlineMarkdownToHtml(line, names, links)}</div>`)
     }
   }
 

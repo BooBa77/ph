@@ -76,6 +76,50 @@ describe('markdownToHtml', () => {
       '<a href="https://example.com"',
     )
   })
+
+  /**
+   * В режиме чтения имя объекта — ссылка на его внешнюю страницу
+   * («Природа Байкала»). Значит, `links` прокидывается до строчной
+   * разметки, а не остаётся в компоненте.
+   */
+  it('объект со ссылкой становится ссылкой в новом окне', () => {
+    const html = markdownToHtml('Старт на [[object:10]]', NAMES, {
+      [objectToken('10')]: 'https://nature.baikal.ru/obj.shtml?id=vityaz',
+    })
+
+    expect(html).toContain('<a href="https://nature.baikal.ru/obj.shtml?id=vityaz"')
+    expect(html).toContain('target="_blank"')
+    expect(html).toContain('rel="noopener noreferrer"')
+    expect(html).toContain('>Витязь</a>')
+    // Токен остаётся внутри ссылки: по нему редактор вернёт markdown.
+    expect(html).toContain('data-token="[[object:10]]"')
+  })
+
+  it('без адреса объект остаётся неизменяемой вставкой', () => {
+    const html = markdownToHtml('Старт на [[object:10]]', NAMES, {})
+
+    expect(html).not.toContain('<a ')
+    expect(html).toContain('contenteditable="false"')
+  })
+
+  it('опасная схема адреса не превращается в ссылку', () => {
+    // Справочник пополняют руками, и однажды там окажется `javascript:`.
+    const html = markdownToHtml('[[object:10]]', NAMES, {
+      [objectToken('10')]: 'javascript:alert(1)',
+    })
+
+    expect(html).not.toContain('href=')
+    expect(html).toContain('>Витязь</span>')
+  })
+
+  it('участнику ссылка из карты не подставляется: у него нет страницы', () => {
+    const html = markdownToHtml('[[user:u-1]]', NAMES, {
+      [userToken('u-1')]: 'https://example.com/u-1',
+    })
+
+    expect(html).not.toContain('href=')
+    expect(html).toContain('Сергей')
+  })
 })
 
 describe('htmlToMarkdown', () => {

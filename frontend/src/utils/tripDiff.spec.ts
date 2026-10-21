@@ -20,8 +20,7 @@ const TRIP: Trip = {
   routeText: 'Подход от станции',
   requirementsText: 'Свои кошки',
   meetingPlace: 'У вокзала',
-  meetingAt: '2027-05-05T00:00:00.000Z',
-  transferText: 'Электричка 6:40',
+  hasGuitar: false,
   visibility: 'public',
   isRecruitmentClosed: false,
   activityTypeIds: [],
@@ -46,8 +45,7 @@ const payload = (overrides: Partial<CreateTripRequest> = {}): CreateTripRequest 
   routeText: 'Подход от станции',
   requirementsText: 'Свои кошки',
   meetingPlace: 'У вокзала',
-  meetingAt: '2027-05-05T00:00:00.000Z',
-  transferText: 'Электричка 6:40',
+  hasGuitar: false,
   visibility: 'public',
   status: 'decided',
   startsAt: '2027-05-05T01:00:00.000Z',
@@ -74,13 +72,19 @@ describe('buildTripPatch', () => {
   it('очистка приходит null-ом, а не пропуском поля', () => {
     const patch = buildTripPatch(
       TRIP,
-      payload({ meetingPlace: null, transferText: null, requirementsText: null }),
+      payload({ meetingPlace: null, requirementsText: null }),
     )
 
     expect(patch).toEqual({
       meetingPlace: null,
-      transferText: null,
       requirementsText: null,
+    })
+  })
+
+  it('«будет гитара» — обычный boolean: в патч только при смене', () => {
+    expect(buildTripPatch(TRIP, payload({ hasGuitar: true }))).toEqual({ hasGuitar: true })
+    expect(buildTripPatch({ ...TRIP, hasGuitar: true }, payload({ hasGuitar: false }))).toEqual({
+      hasGuitar: false,
     })
   })
 
@@ -96,6 +100,40 @@ describe('buildTripPatch', () => {
     )
 
     expect(patch).toEqual({ isCommercial: true, priceRub: 25000 })
+  })
+
+  /**
+   * Типы похода — множество: порядок чипсов в форме значит не больше, чем
+   * порядок строк в связке `trip_types`. Сравнение «как есть» гнало бы
+   * в патч неизменный список после каждого перещёлкивания того же набора.
+   */
+  describe('типы похода', () => {
+    const withTypes: Trip = { ...TRIP, activityTypeIds: [19, 20] }
+
+    it('тот же набор в другом порядке — не изменение', () => {
+      expect(buildTripPatch(withTypes, payload({ activityTypeIds: [20, 19] }))).toEqual({})
+    })
+
+    it('новый тип уезжает списком', () => {
+      expect(buildTripPatch(withTypes, payload({ activityTypeIds: [19, 20, 21] }))).toEqual({
+        activityTypeIds: [19, 20, 21],
+      })
+    })
+
+    it('снятый тип уезжает пустым списком, а не пропуском', () => {
+      expect(buildTripPatch(withTypes, payload({ activityTypeIds: [] }))).toEqual({
+        activityTypeIds: [],
+      })
+    })
+
+    it('словарь не загрузился — типов в патче нет', () => {
+      // `undefined` в теле значит «форма типов не видела»: стирать чужой
+      // выбор из-за сетевой ошибки нельзя.
+      const withoutTypes = payload()
+      delete withoutTypes.activityTypeIds
+
+      expect(buildTripPatch(withTypes, withoutTypes)).toEqual({})
+    })
   })
 
   /**

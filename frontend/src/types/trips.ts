@@ -177,10 +177,8 @@ export function emptyVariantDraft(id: number): DateVariantDraft {
   requirementsText?: string | null
   /** Где собираются: «у вокзала, платформа 2». */
   meetingPlace?: string | null
-  /** Когда собираются. */
-  meetingAt?: string | null
-  /** Заброска: как добираемся до начала маршрута. Обычный текст. */
-  transferText?: string | null
+  /** Будет ли гитара. По умолчанию нет: «не указано» и «не будет» — одно. */
+  hasGuitar?: boolean
   visibility?: TripVisibility
   status?: TripStatus
   activityTypeIds?: number[]
@@ -212,8 +210,7 @@ export interface UpdateTripRequest {
   routeText?: string
   requirementsText?: string | null
   meetingPlace?: string | null
-  meetingAt?: string | null
-  transferText?: string | null
+  hasGuitar?: boolean
   visibility?: TripVisibility
   status?: TripStatus
   startsAt?: string | null
@@ -254,10 +251,8 @@ export interface Trip {
   requirementsText: string | null
   /** Где собираются. null — не указано. */
   meetingPlace: string | null
-  /** Когда собираются. null — не указано. */
-  meetingAt: string | null
-  /** Заброска: как добираемся. Обычный текст. */
-  transferText: string | null
+  /** Будет ли гитара. */
+  hasGuitar: boolean
   visibility: TripVisibility
   isRecruitmentClosed: boolean
   activityTypeIds: number[]
@@ -312,6 +307,34 @@ export interface TripListQuery {
 export interface TripListResponse {
   trips: Trip[]
   total: number
+}
+
+/**
+ * Тип похода — строка общего справочника активностей из группы «Туризм».
+ *
+ * Отдельного словаря у похода нет: «Пеший поход», «Альпинизм», «Велосипед»
+ * лежат там же, где активности календаря, и место сужает `scope` группы
+ * (см. `docs/ph/trip-tabs.md`). Фронт получает готовый список с
+ * `GET /api/trips/types` — с подписями и ключами иконок, а не одни id.
+ */
+export interface TripTypeOption {
+  id: number
+  /** Машинный код: по нему узнаём тип по умолчанию, не глядя на порядок. */
+  code: string
+  label: string
+  /** Ключ иконки из `assets/activity-icons.ts`. */
+  icon: string
+}
+
+/** Ответ `GET /api/trips/types`. */
+export interface TripTypeList {
+  types: TripTypeOption[]
+  /**
+   * Тип, который подставляется неофициальному походу. Считает бэкенд:
+   * «пеший поход по умолчанию» — правило домена, а не разметки чипсов.
+   * `null` — в справочнике нет `trip_hiking`, и подставлять нечего.
+   */
+  defaultTypeId: number | null
 }
 
 /**

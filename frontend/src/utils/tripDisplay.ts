@@ -23,30 +23,16 @@ export function formatTripDate(iso: string): string {
   })
 }
 
-/** Момент словами: «5 мая 2027 г., 08:00». Часы нужны там, где важен час. */
-export function formatTripMoment(iso: string): string {
-  const at = new Date(iso)
-  const time = at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-
-  return `${formatTripDate(iso)}, ${time}`
-}
-
 /**
- * Сбор: где и когда. Пустая строка — не указано вовсе.
+ * Сбор: только место. Пустая строка — не указано вовсе.
  *
- * Место и время показываются вместе, потому что по отдельности они
- * бесполезны: «у вокзала» без часа и «в 8:00» без места не помогают
- * собраться. Если известно одно — показываем одно, врать нечем.
+ * Время сбора ушло вместе с полем: «во сколько выезжаем» — это трансфер
+ * (кто на чём едет, во сколько отправление), и его строки живут во вкладке
+ * «Трансфер», а не в шапке похода. Место осталось — его ищут глазами
+ * в день выхода.
  */
-export function tripMeetingText(
-  trip: Pick<Trip, 'meetingPlace' | 'meetingAt'>,
-): string {
-  const parts: string[] = []
-
-  if (trip.meetingPlace) parts.push(trip.meetingPlace)
-  if (trip.meetingAt) parts.push(formatTripMoment(trip.meetingAt))
-
-  return parts.join(' · ')
+export function tripMeetingText(trip: Pick<Trip, 'meetingPlace'>): string {
+  return trip.meetingPlace ?? ''
 }
 
 /**
@@ -94,9 +80,13 @@ export function tripFrameParts(
  * «Некоммерческий» в ленте — не признак, а норма: писать его в каждой
  * карточке значит засорить список. На вкладке «Информация» — наоборот,
  * там строка обязана быть полной (см. `tripFrameParts`).
+ *
+ * «Будет гитара» здесь именно признак: он отличает один поход от другого
+ * и отвечает на вопрос, который задают первым делом. Пишется только когда
+ * гитара есть, — «без гитары» так же нормально, как и «некоммерческий».
  */
 export function tripBadges(
-  trip: Pick<Trip, 'isCommercial' | 'isOfficial' | 'priceRub'>,
+  trip: Pick<Trip, 'isCommercial' | 'isOfficial' | 'priceRub' | 'hasGuitar'>,
 ): string[] {
   const badges: string[] = []
 
@@ -104,6 +94,7 @@ export function tripBadges(
     badges.push(trip.priceRub ? `коммерческий · ${trip.priceRub} ₽` : 'коммерческий')
   }
   if (trip.isOfficial) badges.push('официальный поход')
+  if (trip.hasGuitar) badges.push('будет гитара')
 
   return badges
 }

@@ -21,10 +21,19 @@ import CreateTrip from '@/views/trips/CreateTrip.vue'
 const mocks = vi.hoisted(() => ({
   listObjects: vi.fn(),
   createTrip: vi.fn(),
+  listTripTypes: vi.fn(),
 }))
 
 vi.mock('@/api/objects', () => ({ listObjects: mocks.listObjects }))
-vi.mock('@/api/trips', () => ({ createTrip: mocks.createTrip }))
+vi.mock('@/api/trips', () => ({
+  createTrip: mocks.createTrip,
+  listTripTypes: mocks.listTripTypes,
+}))
+
+const TOURISM = [
+  { id: 19, code: 'trip_hiking', label: 'Пеший поход', icon: 'hike' },
+  { id: 20, code: 'trip_alpinism', label: 'Альпинизм', icon: 'mountain' },
+]
 
 const VITYAZ = {
   id: '10',
@@ -60,7 +69,9 @@ describe('CreateTrip', () => {
     vi.useFakeTimers()
     mocks.listObjects.mockReset()
     mocks.createTrip.mockReset()
+    mocks.listTripTypes.mockReset()
     mocks.listObjects.mockResolvedValue([VITYAZ])
+    mocks.listTripTypes.mockResolvedValue({ types: TOURISM, defaultTypeId: 19 })
     mocks.createTrip.mockResolvedValue({
       id: '1',
       announcement: 'Идём на майские',
@@ -270,32 +281,70 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="error"]').text()).toContain('несуществующие объекты')
   })
 
-  it('место и время сбора с заброской уходят в тело запроса', async () => {
+  it('место сбора и «Будет гитара» уходят в тело запроса', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
 
     await wrapper.find('[data-test="meeting-place"]').setValue('Иркутск, автовокзал')
-    await wrapper.find('[data-test="meeting-at"]').setValue('2027-05-05T08:00')
-    await wrapper.find('[data-test="transfer"]').setValue('Электричка 6:40')
+    await wrapper.find('[data-test="guitar"]').setValue(true)
     await submit(wrapper)
 
     expect(lastPayload()).toMatchObject({
       meetingPlace: 'Иркутск, автовокзал',
-      meetingAt: new Date('2027-05-05T08:00').toISOString(),
-      transferText: 'Электричка 6:40',
+      hasGuitar: true,
     })
   })
 
-  it('пустой сбор уезжает null-ом, а не пустой строкой', async () => {
+  it('пустой сбор уезжает null-ом, а гитара по умолчанию «не будет»', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
     await submit(wrapper)
 
     expect(lastPayload()).toMatchObject({
       meetingPlace: null,
-      meetingAt: null,
-      transferText: null,
+      hasGuitar: false,
     })
+  })
+
+  /**
+   * Тип похода: у неофициального по умолчанию пеший (тип приходит
+   * с бэкенда как `defaultTypeId`), у официального выбор обязателен.
+   * Правило проверяется формой, а не только бэкендом: человек должен
+   * узнать о нём до запроса.
+   */
+  it('неофициальному походу подставляется пеший тип', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    expect(wrapper.find('[data-test="trip-type-19"]').attributes('aria-pressed')).toBe('true')
+
+    await submit(wrapper)
+    expect(lastPayload().activityTypeIds).toEqual([19])
+  })
+
+  it('выбранные типы уходят в тело, повторное нажатие снимает тип', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    await wrapper.find('[data-test="trip-type-20"]').trigger('click')
+    await wrapper.find('[data-test="trip-type-19"]').trigger('click')
+    await submit(wrapper)
+
+    expect(lastPayload().activityTypeIds).toEqual([20])
+  })
+
+  it('у официального похода без типа форма не отправляется', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    await wrapper.find('[data-test="official"]').setValue(true)
+    // Снимаем подставленный пеший: у официального похода тип выбирают.
+    await wrapper.find('[data-test="trip-type-19"]').trigger('click')
+
+    expect(wrapper.find('[data-test="hint"]').text()).toContain('тип')
+
+    await submit(wrapper)
+    expect(mocks.createTrip).not.toHaveBeenCalled()
   })
 
   it('после создания сразу открывается поход', async () => {

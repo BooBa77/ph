@@ -40,8 +40,7 @@ export function buildTripPatch(initial: Trip, payload: CreateTripRequest): Updat
   set('routeText', initial.routeText, payload.routeText ?? '')
   set('requirementsText', initial.requirementsText, payload.requirementsText ?? null)
   set('meetingPlace', initial.meetingPlace, payload.meetingPlace ?? null)
-  set('meetingAt', initial.meetingAt, payload.meetingAt ?? null)
-  set('transferText', initial.transferText, payload.transferText ?? null)
+  set('hasGuitar', initial.hasGuitar, payload.hasGuitar ?? false)
   set('visibility', initial.visibility, payload.visibility)
   set('status', initial.status, payload.status)
   set('startsAt', initial.startsAt, payload.startsAt ?? null)
@@ -50,6 +49,26 @@ export function buildTripPatch(initial: Trip, payload: CreateTripRequest): Updat
   set('isOfficial', initial.isOfficial, payload.isOfficial)
   set('priceRub', initial.priceRub, payload.priceRub ?? null)
   set('priceNote', initial.priceNote, payload.priceNote ?? null)
+
+  /**
+   * Типы похода сравниваются **как множество, а не как список**.
+   *
+   * В базе это связка `trip_types`, порядок в ней ничего не значит, и API
+   * отдаёт id по возрастанию. Форма хранит выбранные чипсы в порядке
+   * нажатий, поэтому сравнение «как есть» находило бы разницу там, где
+   * человек ничего не менял, и гнало бы в патч неизменный список.
+   *
+   * `undefined` в теле — «форма типов не видела» (словарь не загрузился):
+   * сравнивать не с чем, и стирать типы из-за сетевой ошибки нельзя.
+   */
+  if (payload.activityTypeIds !== undefined) {
+    const before = [...initial.activityTypeIds].sort((a, b) => a - b)
+    const after = [...payload.activityTypeIds].sort((a, b) => a - b)
+
+    if (JSON.stringify(before) !== JSON.stringify(after)) {
+      patch.activityTypeIds = after
+    }
+  }
 
   /**
    * Варианты дат — единственное поле, которого нет в исходном походе:

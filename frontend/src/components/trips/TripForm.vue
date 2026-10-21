@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 
+import { listTripTypes } from '@/api/trips'
 import GeoObjectPicker from '@/components/ui/GeoObjectPicker.vue'
 import MarkdownEditor from '@/components/ui/MarkdownEditor.vue'
+import TripTypesPicker from '@/components/trips/TripTypesPicker.vue'
 import TripDateVariants from '@/views/trips/TripDateVariants.vue'
 import {
   TRIP_STATUSES,
@@ -17,6 +19,7 @@ import {
   type Trip,
   type TripDateVariantInput,
   type TripStatus,
+  type TripTypeOption,
   type TripVisibility,
 } from '@/types/trips'
 
@@ -25,15 +28,17 @@ import {
  *
  * **Почему общая.** Создание и правка — те же поля, тот же порядок и те же
  * правила; двумя копиями они разошлись бы на первой же новой колонке
- * (ровно так и появились «место сбора» и «заброска» — их надо было
+ * (ровно так и появились «место сбора» и «типы похода» — их надо было
  * добавить в две формы). Компонент знает только про поля: запрос делает
  * родитель, потому что `POST` и `PATCH` — разные истории.
  *
  * **Порядок полей не случаен и повторяет то, как о походе думают.**
  * Сначала флаги: коммерческий или официальный — это рамка, в которой всё
- * остальное читается. Потом готовность и видимость: «мечта, видна всем» —
+ * остальное читается. Сразу за ними тип похода: от официальности зависит,
+ * обязателен ли он. Потом готовность и видимость: «мечта, видна всем» —
  * это уже половина ответа о походе. И только потом цель, анонс, когда,
- * как собираемся и как идём.
+ * где собираемся и как идём. «Будет гитара» — в самом конце: это обещание
+ * вечера, а не свойство маршрута.
  *
  * **Имя похода — это цель.** Три похода на Витязь в ленте — норма: народ
  * смотрит сначала на цель, потом на когда, потом на кого. Отдельное поле
@@ -91,6 +96,46 @@ const initial = props.initial
 
 const isCommercial = ref(initial?.isCommercial ?? false)
 const isOfficial = ref(initial?.isOfficial ?? false)
+
+// ─── Типы похода ───
+
+/**
+ * Типы похода: чипсы из группы «Туризм» общего справочника активностей.
+ *
+ * Список приходит с бэкенда, а не собирается в коде: новый тип — это
+ * строка в справочнике, и форма обязана узнать о ней без деплоя фронта.
+ *
+ * `isTypesLoaded` — не украшение: если словарь не загрузился, форма
+ * **не отправляет** `activityTypeIds` вовсе. Иначе правка похода без сети
+ * стёрла бы типы: пустой список в `PATCH` — это «типов больше нет»,
+ * а не «я их не видел».
+ */
+const tripTypes = ref<TripTypeOption[]>([])
+const selectedTypeIds = ref<number[]>([...(initial?.activityTypeIds ?? [])])
+const isTypesLoaded = ref(false)
+
+onMounted(async () => {
+  try {
+    const { types, defaultTypeId } = await listTripTypes()
+    tripTypes.value = types
+    isTypesLoaded.value = true
+
+    /**
+     * Неофициальному походу подставляется пеший — но только при создании
+     * и только если человек ещё ничего не выбрал. У официального типа
+     * по умолчанию нет намеренно: там он несёт смысл (вид спорта и зачёт),
+     * и подставлять его за человека значит делать проверку «тип обязателен»
+     * бессмысленной.
+     */
+    if (initial === null && !isOfficial.value && selectedTypeIds.value.length === 0) {
+      if (defaultTypeId !== null) selectedTypeIds.value = [defaultTypeId]
+    }
+  } catch {
+    // Справочник не загрузился — чипсов не будет, и типы не уедут в запрос.
+    // Ронять форму из-за этого незачем: всё остальное заполняется и
+    // сохраняется как обычно.
+  }
+})
 
 // ─── Готовность и видимость ───
 
@@ -152,8 +197,17 @@ const isDateForecast = computed(() => status.value === 'idea' || status.value ==
 const routeText = ref(initial?.routeText ?? '')
 const requirements = ref(initial?.requirementsText ?? '')
 const meetingPlace = ref(initial?.meetingPlace ?? '')
-const meetingAt = ref(toLocalInput(initial?.meetingAt ?? null))
-const transfer = ref(initial?.transferText ?? '')
+
+// ─── Гитара ───
+
+/**
+ * «Будет гитара» — флаг, который решают в конце формы.
+ *
+ * Стоит последним намеренно: это не свойство похода, а обещание вечера,
+ * и спрашивать о нём в начале формы рано. У гитары нет пары полей — она
+ * либо едет, либо нет.
+ */
+const guitar = ref(initial?.hasGuitar ?? false)
 
 // ─── Коммерция ───
 
@@ -169,6 +223,14 @@ const priceNote = ref(initial?.priceNote ?? '')
  */
 const validationProblem = computed<string | null>(() => {
   if (!selectedGoal.value) return 'Выберите цель похода'
+
+  /**
+   * Тип обязателен только у официального и только если справочник
+   * загрузился: без него чипсов нет, и требовать выбор не из чего.
+   */
+  if (isOfficial.value && isTypesLoaded.value && selectedTypeIds.value.length === 0) {
+    return 'У официального похода выберите тип — от него зависит вид спорта и зачёт'
+  }
 
   if (isDateForecast.value) {
     for (const row of variants.value) {
@@ -262,14 +324,22 @@ function buildPayload(): CreateTripRequest {
     routeText: routeText.value,
     requirementsText: requirements.value.trim() || null,
     meetingPlace: meetingPlace.value.trim() || null,
-    meetingAt: toIso(meetingAt.value),
-    transferText: transfer.value.trim() || null,
+    hasGuitar: guitar.value,
     visibility: visibility.value,
     status: status.value,
     isCommercial: isCommercial.value,
     isOfficial: isOfficial.value,
     priceRub: isCommercial.value ? Number(priceRub.value) : null,
     priceNote: isCommercial.value ? priceNote.value.trim() || null : null,
+  }
+
+  /**
+   * Типы уходят только если словарь загрузился: иначе `undefined` в теле
+   * означает «я их не видел», и `PATCH` не тронет то, что уже выбрано
+   * в походе (см. `buildTripPatch`).
+   */
+  if (isTypesLoaded.value) {
+    payload.activityTypeIds = [...selectedTypeIds.value]
   }
 
   if (isDateForecast.value) {
@@ -323,6 +393,9 @@ defineExpose({ validationProblem })
         <span class="text-xs text-muted">зачётный выход по правилам, открывает вкладку «Спорт»</span>
       </label>
     </div>
+
+    <!-- Тип похода: чипсы из группы «Туризм» -->
+    <TripTypesPicker v-model="selectedTypeIds" :types="tripTypes" />
 
     <!-- Готовность и видимость -->
     <div class="grid gap-4 md:grid-cols-2">
@@ -424,12 +497,13 @@ defineExpose({ validationProblem })
       </div>
     </div>
 
-    <!-- Сбор и заброска -->
+    <!-- Сбор -->
     <div class="flex flex-col gap-3">
-      <span class="text-sm text-muted">Сбор и заброска</span>
+      <span class="text-sm text-muted">Сбор</span>
 
       <p class="text-xs text-muted">
-        То, что нужно знать в день выхода: где встречаемся, во сколько и как добираемся.
+        Где встречаемся в день выхода. Во сколько и на чём едем — это «Трансфер»,
+        его заполняют отдельно.
       </p>
 
       <label class="flex flex-col gap-2">
@@ -441,27 +515,6 @@ defineExpose({ validationProblem })
           placeholder="Иркутск, автовокзал, у первой платформы"
           class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
           data-test="meeting-place"
-        />
-      </label>
-
-      <label class="flex flex-col gap-2 md:max-w-xs">
-        <span class="text-xs text-muted">Время сбора</span>
-        <input
-          v-model="meetingAt"
-          type="datetime-local"
-          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-          data-test="meeting-at"
-        />
-      </label>
-
-      <label class="flex flex-col gap-2">
-        <span class="text-xs text-muted">Заброска: как добираемся</span>
-        <textarea
-          v-model="transfer"
-          rows="2"
-          placeholder="Электричка 6:40 от вокзала, дальше пешком 4 км"
-          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-          data-test="transfer"
         />
       </label>
     </div>
@@ -526,6 +579,21 @@ defineExpose({ validationProblem })
         />
       </label>
     </div>
+
+    <!-- Гитара: вопрос на конец формы -->
+    <label
+      class="flex cursor-pointer items-center gap-3 border-t border-border pt-4"
+      data-test="guitar-label"
+    >
+      <input
+        v-model="guitar"
+        type="checkbox"
+        class="h-5 w-5 cursor-pointer accent-[var(--theme-primary)]"
+        data-test="guitar"
+      />
+      <span class="text-sm text-text">Будет гитара</span>
+      <span class="text-xs text-muted">вечер у костра без неё не считается</span>
+    </label>
 
     <!-- Итог -->
     <div class="flex flex-col gap-3 border-t border-border pt-4">
