@@ -2,6 +2,7 @@ import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
+  IsIn,
   IsOptional,
   IsString,
   Matches,
@@ -9,6 +10,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 
+import { USER_GENDERS, type UserGender } from '../gender.types';
 import { SportExperienceDto } from './sport-experience.dto';
 
 /**
@@ -66,6 +68,23 @@ export class UpdateUserDto {
   @IsOptional()
   @IsBoolean()
   isVegetarian?: boolean;
+
+  /**
+   * Пол — коэффициент распределения веса рюкзака (`gear-distribution.md`).
+   *
+   * `@IsIn`, а не `@IsEnum`: значения — короткий список в коде
+   * (`gender.types.ts`), и сообщение об ошибке должно называть их словами.
+   * Очистить поле нельзя: `m` и `f` покрывают всех, третьего состояния нет.
+   */
+  @ApiProperty({
+    description: 'Пол: m — мужской, f — женский. По умолчанию m',
+    enum: USER_GENDERS,
+    example: 'm',
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(USER_GENDERS, { message: 'Пол: m — мужской, f — женский' })
+  gender?: UserGender;
 
   @ApiProperty({
     description: 'Аллергии: свободный текст пользователя. null — очистить.',

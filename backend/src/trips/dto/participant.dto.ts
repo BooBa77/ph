@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsOptional } from 'class-validator';
 
+import { USER_GENDERS, type UserGender } from '../../users/gender.types';
 import type { Role } from '../entities/role.entity';
 import type { TripParticipant } from '../entities/trip-participant.entity';
 import {
@@ -43,6 +44,20 @@ export class TripParticipantDto {
   @ApiProperty({ description: 'URL аватарки', nullable: true })
   avatarUrl: string | null;
 
+  /**
+   * Пол участника — нужен распределению веса рюкзака (Ф7).
+   *
+   * В публичном профиле (`/people/:id`) пола **нет**: случайному гостю
+   * его не показывают. Здесь он есть, потому что состав похода — это
+   * люди, которые идут вместе, и без пола алгоритм не посчитает доли.
+   */
+  @ApiProperty({
+    description: 'Пол: m — мужской, f — женский',
+    enum: USER_GENDERS,
+    example: 'm',
+  })
+  gender: UserGender;
+
   @ApiProperty({
     description: 'Участие: invited, going, maybe, declined',
     enum: PARTICIPANT_STATUSES,
@@ -80,6 +95,11 @@ export class TripParticipantDto {
       userId: participant.userId,
       displayName: participant.user?.displayName ?? 'Неизвестный',
       avatarUrl: participant.user?.avatarUrl ?? null,
+      // Пользователь не удаляется физически, так что связь всегда есть;
+      // `m` — то же значение, что DEFAULT в базе, и оно не выдумывает
+      // коэффициент, а повторяет правило «пол не заполнен — считаем
+      // мужским».
+      gender: participant.user?.gender ?? 'm',
       status: participant.status,
       roles,
       isOrganizer: participant.userId === organizerUserId,

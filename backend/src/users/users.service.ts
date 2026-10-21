@@ -4,6 +4,7 @@ import { DataSource, EntityManager, Repository } from 'typeorm';
 import { User } from './entities/user.entity';
 import { SportExperience } from './entities/sport-experience.entity';
 import { DisplayNameHistory } from './entities/display-name-history.entity';
+import type { UserGender } from './gender.types';
 import type { SportExperienceData } from './sport-experience.types';
 
 /** Сколько людей отдавать в поиске: список выбора, а не справочник. */
@@ -31,6 +32,8 @@ export interface CreateUserData {
 export interface UpdateUserData {
   displayName?: string;
   location?: string | null;
+  /** Пол — коэффициент распределения веса рюкзака; по умолчанию `m`. */
+  gender?: UserGender;
   isVegetarian?: boolean;
   allergies?: string | null;
   /** undefined — не трогать, null — очистить весь спортивный опыт. */
@@ -189,6 +192,7 @@ export class UsersService {
     }
 
     if (data.location !== undefined) user.location = data.location;
+    if (data.gender !== undefined) user.gender = data.gender;
     if (data.isVegetarian !== undefined) user.isVegetarian = data.isVegetarian;
     if (data.allergies !== undefined) user.allergies = data.allergies;
 

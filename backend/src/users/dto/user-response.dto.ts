@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { User } from '../entities/user.entity';
+import { USER_GENDERS, type UserGender } from '../gender.types';
 import { SportExperienceResponseDto } from './sport-experience-response.dto';
 
 /**
@@ -38,6 +39,21 @@ export class UserResponseDto {
     nullable: true,
   })
   location: string | null;
+
+  /**
+   * Пол — в своём профиле, но **не** в публичном.
+   *
+   * Отдаётся владельцу, потому что он его и меняет; в чужие руки уходит
+   * только через состав похода (`TripParticipantDto`), где нужен расчёту
+   * веса, — и это не то же самое, что «случайный гость на странице
+   * контактов».
+   */
+  @ApiProperty({
+    description: 'Пол: m — мужской, f — женский',
+    enum: USER_GENDERS,
+    example: 'm',
+  })
+  gender: UserGender;
 
   @ApiProperty({
     description: 'URL аватарки',
@@ -79,6 +95,7 @@ export class UserResponseDto {
     dto.id = user.id;
     dto.displayName = user.displayName;
     dto.location = user.location;
+    dto.gender = user.gender;
     dto.avatarUrl = user.avatarUrl;
     dto.isVegetarian = user.isVegetarian;
     dto.allergies = user.allergies;

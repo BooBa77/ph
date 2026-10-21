@@ -10,6 +10,7 @@ import {
 
 import { SportExperience } from './sport-experience.entity';
 import type { CalendarMode } from '../../calendar/calendar.types';
+import type { UserGender } from '../gender.types';
 
 /**
  * Пользователь — доменная сущность.
@@ -23,6 +24,7 @@ import type { CalendarMode } from '../../calendar/calendar.types';
   'chk_users_calendar_mode',
   `"calendar_mode" IN ('cycle', 'free', 'study', 'parental', 'retired')`,
 )
+@Check('chk_users_gender', `"gender" IN ('m', 'f')`)
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -38,6 +40,21 @@ export class User {
   /** Место проживания. Строкой, без геокоординат (пока). */
   @Column({ type: 'varchar', length: 100, nullable: true })
   location: string | null;
+
+  /**
+   * Пол: `m` | `f`, по умолчанию `m` (`gender.types.ts`).
+   *
+   * Нужен распределению веса рюкзака (Ф7, `gear-distribution.md`): доля
+   * женщины — 0,8 от мужской. Живёт в профиле, потому что это свойство
+   * человека, а не похода, и «в походе» его не меняют.
+   *
+   * `NOT NULL DEFAULT 'm'`: миграция выдала мужской пол всем, кто был
+   * в базе до неё, и распределение работает, не дожидаясь заполнения
+   * профилей. В публичный профиль поле **не** попадает — см.
+   * `UserPublicProfileDto`.
+   */
+  @Column({ type: 'varchar', length: 1, default: 'm' })
+  gender: UserGender;
 
   @Column({ name: 'avatar_url', type: 'varchar', length: 255, nullable: true })
   avatarUrl: string | null;

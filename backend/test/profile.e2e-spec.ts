@@ -109,6 +109,45 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
     expect(response.body.sportExperience).toBeNull();
   });
 
+  /**
+   * Пол — Ф7: коэффициент распределения веса рюкзака. По умолчанию
+   * мужской, меняется в профиле. Публичный профиль его не отдаёт —
+   * это проверяет `people.e2e-spec.ts` списком ключей.
+   */
+  it('по умолчанию пол мужской', async () => {
+    const response = await auth(
+      request(app.getHttpServer()).get('/api/users/me'),
+    ).expect(200);
+
+    expect(response.body.gender).toBe('m');
+  });
+
+  it('пол меняется в профиле и остаётся после перечитывания', async () => {
+    const response = await patchMe({ gender: 'f' }).expect(200);
+    expect(response.body.gender).toBe('f');
+
+    const reread = await auth(
+      request(app.getHttpServer()).get('/api/users/me'),
+    ).expect(200);
+    expect(reread.body.gender).toBe('f');
+  });
+
+  it('пол вне словаря — 400, в базе — отказ CHECK', async () => {
+    await patchMe({ gender: 'x' }).expect(400);
+
+    // Обход приложения: словарь держится не только на DTO.
+    await expect(
+      dataSource.query('UPDATE users SET gender = $2 WHERE id = $1', [
+        userId,
+        'x',
+      ]),
+    ).rejects.toThrow(/chk_users_gender/);
+  });
+
+  it('пустая строка вместо пола — 400', async () => {
+    await patchMe({ gender: '' }).expect(400);
+  });
+
   it('ответ авторизации отдаёт профиль той же формы', async () => {
     // Проверка eager-связи: если её не подтянуть в авторизационных
     // запросах, форма ответа разъедется с GET /users/me и фронт получит
