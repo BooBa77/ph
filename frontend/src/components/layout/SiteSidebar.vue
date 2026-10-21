@@ -31,6 +31,9 @@ const SECTIONS = [
   { to: '/profile/personal', label: 'Профиль', icon: 'profile' },
   { to: '/profile/calendar', label: 'Календарь', icon: 'calendar' },
   { to: '/profile/sport', label: 'Спорт', icon: 'sport' },
+  // Шаблоны чек-листов. Стоят после «Спорта», потому что нужны реже,
+  // чем календарь и профиль, но чаще, чем настройки.
+  { to: '/profile/checklists', label: 'Чек-листы', icon: 'checklist' },
   { to: '/profile/settings', label: 'Настройки', icon: 'settings' },
 ] as const
 

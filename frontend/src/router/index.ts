@@ -55,6 +55,14 @@ const router = createRouter({
           component: () => import('@/views/profile/sections/SportExperience.vue'),
         },
         {
+          // Чек-листы: шаблоны снаряжения, продуктов и аптечки. В поход
+          // из шаблона попадает копия, поэтому это раздел профиля, а не
+          // похода — шаблон живёт вне походов.
+          path: 'checklists',
+          name: 'profile-checklists',
+          component: () => import('@/views/profile/sections/UserChecklists.vue'),
+        },
+        {
           // Настройки: сессии устройств и сезонная анимация.
           path: 'settings',
           name: 'profile-settings',

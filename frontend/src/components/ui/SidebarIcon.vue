@@ -20,6 +20,7 @@ defineProps<{
     | 'calendar'
     | 'settings'
     | 'trips'
+    | 'checklist'
     | 'install'
     | 'logout'
     | 'home'
@@ -74,6 +75,17 @@ defineProps<{
       <path d="M8 8V6a4 4 0 0 1 8 0v2" />
       <rect x="5" y="8" width="14" height="12" rx="2" />
       <path d="M9 13h6" />
+    </template>
+
+    <!-- Чек-листы: список с галочками. Три строки и три галочки —
+         читается в 20 px, в отличие от «листа с плюсом» -->
+    <template v-else-if="name === 'checklist'">
+      <path d="M9 6h11" />
+      <path d="M9 12h11" />
+      <path d="M9 18h11" />
+      <path d="M4 6l1.4 1.4L8 5" />
+      <path d="M4 12l1.4 1.4L8 11" />
+      <path d="M4 18l1.4 1.4L8 17" />
     </template>
 
     <!-- Вынести ярлык: стрелка вниз в лоток -->

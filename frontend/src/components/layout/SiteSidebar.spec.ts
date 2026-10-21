@@ -87,7 +87,15 @@ describe('SiteSidebar', () => {
 
     const labels = wrapper.findAll('a').map((link) => link.attributes('aria-label'))
 
-    expect(labels).toEqual(['Главная', 'Походы', 'Профиль', 'Календарь', 'Спорт', 'Настройки'])
+    expect(labels).toEqual([
+      'Главная',
+      'Походы',
+      'Профиль',
+      'Календарь',
+      'Спорт',
+      'Чек-листы',
+      'Настройки',
+    ])
   })
 
   it('ведёт на главную первой ссылкой', async () => {
