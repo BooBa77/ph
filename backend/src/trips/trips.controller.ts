@@ -43,6 +43,7 @@ import {
 import { TripListQueryDto } from './dto/trip-list-query.dto';
 import { TripListResponseDto } from './dto/trip-list-response.dto';
 import { TripResponseDto } from './dto/trip-response.dto';
+import { TripTypeListDto } from './dto/trip-type.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
 import { TripsService } from './trips.service';
 
@@ -92,6 +93,21 @@ export class TripsController {
     @Query() query: TripListQueryDto,
   ): Promise<TripListResponseDto> {
     return this.tripsService.list(authUser.id, query);
+  }
+
+  /**
+   * Типы похода: группа «Туризм» общего справочника активностей.
+   *
+   * Роут объявлен **до** `GET /:id` намеренно: Nest разбирает маршруты
+   * в порядке объявления, и ниже `types` попал бы в `ParseIntPipe` как id
+   * и вернул бы 400. Это же правило придётся помнить, добавляя сюда новые
+   * «словарные» адреса.
+   */
+  @Get('types')
+  @ApiOperation({ summary: 'Типы похода' })
+  @ApiOkResponse({ type: TripTypeListDto })
+  async listTypes(): Promise<TripTypeListDto> {
+    return this.tripsService.listTypes();
   }
 
   /**

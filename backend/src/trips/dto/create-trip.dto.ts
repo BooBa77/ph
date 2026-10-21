@@ -170,26 +170,14 @@ export class CreateTripDto {
   meetingPlace?: string | null;
 
   @ApiProperty({
-    description: 'Когда собираются',
-    example: '2027-05-05T00:00:00.000Z',
+    description:
+      'Будет ли гитара. По умолчанию false: «не указано» и «не будет» — одно',
+    example: true,
     required: false,
-    nullable: true,
   })
   @IsOptional()
-  @IsISO8601({}, { message: 'Время сбора должно быть датой в формате ISO 8601' })
-  meetingAt?: string | null;
-
-  @ApiProperty({
-    description: 'Заброска: как добираемся до начала маршрута. Обычный текст',
-    example: 'Электричка 6:40 от вокзала, дальше пешком 4 км',
-    maxLength: 5000,
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsString({ message: 'Заброска должна быть строкой' })
-  @MaxLength(5000, { message: 'Заброска не должна превышать 5000 символов' })
-  transferText?: string | null;
+  @IsBoolean({ message: 'Признак гитары должен быть true или false' })
+  hasGuitar?: boolean;
 
   @ApiProperty({
     description:

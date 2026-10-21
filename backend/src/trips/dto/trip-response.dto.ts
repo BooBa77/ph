@@ -103,17 +103,10 @@ export class TripResponseDto {
   meetingPlace: string | null;
 
   @ApiProperty({
-    description: 'Когда собираются. null — не указано',
-    example: '2027-05-05T00:00:00.000Z',
-    nullable: true,
+    description: 'Будет ли гитара',
+    example: false,
   })
-  meetingAt: string | null;
-
-  @ApiProperty({
-    description: 'Заброска: как добираемся до начала маршрута. Обычный текст',
-    nullable: true,
-  })
-  transferText: string | null;
+  hasGuitar: boolean;
 
   @ApiProperty({
     description: 'Видимость похода',
@@ -226,8 +219,7 @@ export class TripResponseDto {
       routeText: trip.routeText,
       requirementsText: trip.requirementsText,
       meetingPlace: trip.meetingPlace,
-      meetingAt: trip.meetingAt?.toISOString() ?? null,
-      transferText: trip.transferText,
+      hasGuitar: trip.hasGuitar,
       visibility: trip.visibility,
       isRecruitmentClosed: trip.isRecruitmentClosed,
       activityTypeIds: trip.activityTypeIds,

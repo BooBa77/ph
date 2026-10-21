@@ -9,6 +9,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, In, Repository } from 'typeorm';
 
+import { CalendarActivityGroup } from '../calendar/entities/activity-group.entity';
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
 import { User } from '../users/entities/user.entity';
 import { CreateTripDto } from './dto/create-trip.dto';
@@ -33,6 +34,7 @@ import {
 import { TripListQueryDto } from './dto/trip-list-query.dto';
 import { TripListResponseDto } from './dto/trip-list-response.dto';
 import { TripResponseDto } from './dto/trip-response.dto';
+import { TripTypeListDto, TripTypeOptionDto } from './dto/trip-type.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
 import { Conversation } from './entities/conversation.entity';
 import { GeoObject } from './entities/geo-object.entity';
@@ -48,6 +50,7 @@ import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
 import {
   CHAT_KINDS,
+  DEFAULT_TRIP_TYPE_CODE,
   ORGANIZER_ROLE_CODE,
   type ChatKind,
   type ParticipantDecision,
@@ -171,8 +174,7 @@ export class TripsService {
           routeText: dto.routeText ?? '',
           requirementsText: dto.requirementsText ?? null,
           meetingPlace: dto.meetingPlace ?? null,
-          meetingAt: dto.meetingAt ? this.toDate(dto.meetingAt) : null,
-          transferText: dto.transferText ?? null,
+          hasGuitar: dto.hasGuitar ?? false,
           visibility: dto.visibility ?? 'public',
           status,
           startsAt,
@@ -297,6 +299,50 @@ export class TripsService {
     await this.fillTypes(this.dataSource.manager, [trip]);
 
     return TripResponseDto.from(trip);
+  }
+
+  /**
+   * Типы похода для выбора в форме и для подписи на странице.
+   *
+   * Источник — **общий справочник активностей**, а не отдельная таблица:
+   * тип похода и активность календаря — это одно и то же по смыслу
+   * («пеший поход», «альпинизм»), и второй словарь однажды разошёлся бы
+   * с первым (см. `trip-tabs.md`, решение 20.10.2026). Место сужает
+   * `scope` группы: календарные группы («Спорт», «Дом») сюда не попадают,
+   * а календарь не показывает «Туризм» — правило живёт в данных, а не
+   * в списке кодов в коде.
+   *
+   * Два запроса вместо одного с `relations`: типов в группе единицы,
+   * и плоский список — это ровно то, что нужно и чипсам, и подписи;
+   * вложенность «группа → типы» пришлось бы разворачивать на клиенте.
+   *
+   * Авторизация — как у всего модуля (глобальный `JwtAuthGuard`): это
+   * справочник, но и он не должен отдаваться анонимам — иначе форма
+   * оказалась бы единственным открытым местом API.
+   */
+  async listTypes(): Promise<TripTypeListDto> {
+    const groups = await this.dataSource.manager.find(CalendarActivityGroup, {
+      where: { isActive: true, scope: In(['trips', 'both']) },
+      order: { id: 'ASC' },
+    });
+
+    // Пустой `In([])` — это заведомо ложное условие в SQL; без раннего
+    // выхода TypeORM сгенерировал бы `IN ()` и запрос упал бы.
+    if (groups.length === 0) return { types: [], defaultTypeId: null };
+
+    const types = await this.dataSource.manager.find(CalendarActivityType, {
+      where: { isActive: true, groupId: In(groups.map((group) => group.id)) },
+      order: { id: 'ASC' },
+    });
+
+    const options = types.map((type) => TripTypeOptionDto.from(type));
+
+    return {
+      types: options,
+      defaultTypeId:
+        options.find((option) => option.code === DEFAULT_TRIP_TYPE_CODE)?.id ??
+        null,
+    };
   }
 
   /**
@@ -781,12 +827,7 @@ export class TripsService {
         trip.requirementsText = dto.requirementsText;
       }
       if (dto.meetingPlace !== undefined) trip.meetingPlace = dto.meetingPlace;
-      if (dto.meetingAt !== undefined) {
-        trip.meetingAt = this.toDate(dto.meetingAt);
-      }
-      if (dto.transferText !== undefined) {
-        trip.transferText = dto.transferText;
-      }
+      if (dto.hasGuitar !== undefined) trip.hasGuitar = dto.hasGuitar;
       if (dto.visibility !== undefined) trip.visibility = dto.visibility;
       if (dto.isRecruitmentClosed !== undefined) {
         trip.isRecruitmentClosed = dto.isRecruitmentClosed;

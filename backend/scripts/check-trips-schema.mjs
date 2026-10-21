@@ -1,10 +1,10 @@
 /**
  * Проверка инвариантов схемы походов на живой базе.
  *
- * Зачем отдельный скрипт, если есть тесты. Проверять здесь нужно не
- * поведение эндпоинтов (их пока нет), а **схему**: CHECK-и, уникальные
- * индексы, составные внешние ключи и триггеры. Всё это живёт в базе,
- * а не в коде, и обычный `vitest` до него не дотягивается. Скрипт идёт
+ * Зачем отдельный скрипт, если есть тесты. Поведение эндпоинтов проверяют
+ * e2e, а **схему** — CHECK-и, уникальные индексы, составные внешние ключи
+ * и триггеры — обычный `vitest` не дотягивается: всё это живёт в базе,
+ * а не в коде. Скрипт идёт
  * по host-соединению, поэтому работает локально — без Docker и без
  * `@swc/core`, на котором спотыкаются бэкендовые тесты в песочнице.
  *
@@ -119,9 +119,9 @@ const parentId = (
 
 const tripId = (
   await client.query(
-    `INSERT INTO trips (organizer_user_id, goal_object_id, route_text, activity_type_ids)
-     VALUES ($1, $2, '', $3) RETURNING id`,
-    [user1, objectId, [activityTypeId]],
+    `INSERT INTO trips (organizer_user_id, goal_object_id, route_text)
+     VALUES ($1, $2, '') RETURNING id`,
+    [user1, objectId],
   )
 ).rows[0].id;
 
@@ -139,17 +139,46 @@ await check(
   [objectId, parentId],
 );
 
-// ─── Поход: активности, даты, спорт, коммерция ───
+// ─── Поход: типы, даты, коммерция, гитара ───
+/**
+ * Типы похода — связка `trip_types` (миграция `TripTypes`, 20.10.2026).
+ * Раньше это был массив `activity_type_ids`, и существование id держал
+ * триггер; теперь держит внешний ключ, а триггер убран вместе с колонкой.
+ */
 await check(
-  'trips: несуществующий id активности отклонён триггером',
+  'типы: несуществующий id активности отклонён внешним ключом',
   'fail',
-  `UPDATE trips SET activity_type_ids = '{999999}' WHERE id = $1`,
+  `INSERT INTO trip_types (trip_id, activity_type_id) VALUES ($1, 999999)`,
   [tripId],
 );
 await check(
-  'trips: пустой массив активностей принимается',
+  'типы: существующий тип принимается',
   'ok',
-  `UPDATE trips SET activity_type_ids = '{}' WHERE id = $1`,
+  `INSERT INTO trip_types (trip_id, activity_type_id) VALUES ($1, $2)`,
+  [tripId, activityTypeId],
+);
+await check(
+  'типы: дубликат пары (поход, тип) запрещён составным ключом',
+  'fail',
+  `INSERT INTO trip_types (trip_id, activity_type_id) VALUES ($1, $2)`,
+  [tripId, activityTypeId],
+);
+await check(
+  'типы: поход без типов законен — связка пустая',
+  'ok',
+  `DELETE FROM trip_types WHERE trip_id = $1`,
+  [tripId],
+);
+await check(
+  'гитара: значение по умолчанию — false',
+  'ok',
+  `UPDATE trips SET has_guitar = false WHERE id = $1`,
+  [tripId],
+);
+await check(
+  'гитара: NULL запрещён (NOT NULL)',
+  'fail',
+  `UPDATE trips SET has_guitar = NULL WHERE id = $1`,
   [tripId],
 );
 await check(
@@ -322,29 +351,34 @@ await check(
 );
 
 // ─── Чаты и сообщения ───
-const chatId = (
+/**
+ * С 20.10.2026 чат похода и личный диалог — одна модель (`conversations`),
+ * а сообщения лежат в `messages` с `conversation_id`. Отдельных `chats`
+ * и `group_messages` в схеме больше нет.
+ */
+const conversationId = (
   await client.query(
-    `INSERT INTO chats (kind, trip_id) VALUES ('trip_guest', $1) RETURNING id`,
+    `INSERT INTO conversations (kind, trip_id) VALUES ('trip_guest', $1) RETURNING id`,
     [tripId],
   )
 ).rows[0].id;
 await client.query(
-  `INSERT INTO chats (kind, trip_id) VALUES ('trip_members', $1)`,
+  `INSERT INTO conversations (kind, trip_id) VALUES ('trip_members', $1)`,
   [tripId],
 );
 await check(
   'чаты: второй чат того же вида на поход запрещён',
   'fail',
-  `INSERT INTO chats (kind, trip_id) VALUES ('trip_guest', $1)`,
+  `INSERT INTO conversations (kind, trip_id) VALUES ('trip_guest', $1)`,
   [tripId],
 );
 await client.query(
-  `INSERT INTO group_messages (chat_id, sender_id, body) VALUES ($1, $2, 'привет')`,
-  [chatId, user1],
+  `INSERT INTO messages (conversation_id, sender_id, body) VALUES ($1, $2, 'привет')`,
+  [conversationId, user1],
 );
 await client.query(
-  `INSERT INTO group_messages (chat_id, sender_id, body) VALUES ($1, NULL, 'Иван подал заявку')`,
-  [chatId],
+  `INSERT INTO messages (conversation_id, sender_id, body) VALUES ($1, NULL, 'Иван подал заявку')`,
+  [conversationId],
 );
 
 // ─── Триггер на объект в тексте маршрута ───
@@ -376,30 +410,32 @@ await check(
  */
 const counts = `
   SELECT (SELECT count(*) FROM trip_participants WHERE trip_id = $1)::int AS participants,
-         (SELECT count(*) FROM chats WHERE trip_id = $1)::int AS chats,
-         (SELECT count(*) FROM group_messages WHERE chat_id = $2)::int AS messages,
+         (SELECT count(*) FROM conversations WHERE trip_id = $1)::int AS chats,
+         (SELECT count(*) FROM messages WHERE conversation_id = $2)::int AS messages,
          (SELECT count(*) FROM trip_date_variants WHERE trip_id = $1)::int AS variants,
-         (SELECT count(*) FROM trip_participant_roles WHERE trip_id = $1)::int AS roles
+         (SELECT count(*) FROM trip_participant_roles WHERE trip_id = $1)::int AS roles,
+         (SELECT count(*) FROM trip_types WHERE trip_id = $1)::int AS types
 `;
-const before = (await client.query(counts, [tripId, chatId])).rows[0];
+const before = (await client.query(counts, [tripId, conversationId])).rows[0];
 await check(
   'поход: удаление проходит, несмотря на триггер организатора',
   'ok',
   `DELETE FROM trips WHERE id = $1`,
   [tripId],
 );
-const after = (await client.query(counts, [tripId, chatId])).rows[0];
+const after = (await client.query(counts, [tripId, conversationId])).rows[0];
 
 const cascadeClean =
   after.participants === 0 &&
   after.chats === 0 &&
   after.messages === 0 &&
   after.variants === 0 &&
-  after.roles === 0;
+  after.roles === 0 &&
+  after.types === 0;
 if (!cascadeClean) failed += 1;
 rows.push([
   cascadeClean ? 'ok' : 'ОСТАЛСЯ МУСОР',
-  `каскад убрал за походом (было: участников ${before.participants}, чатов ${before.chats}, сообщений ${before.messages}, вариантов ${before.variants}, ролей ${before.roles})`,
+  `каскад убрал за походом (было: участников ${before.participants}, чатов ${before.chats}, сообщений ${before.messages}, вариантов ${before.variants}, ролей ${before.roles}, типов ${before.types})`,
   '',
 ]);
 

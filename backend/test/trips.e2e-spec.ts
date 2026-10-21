@@ -97,7 +97,7 @@ describe('Походы (e2e)', () => {
 
     activityGroupId = (
       await dataSource.query(
-        `INSERT INTO calendar_activity_groups (code, label, color) VALUES ('trips-e2e', 'Походный тест', '#123456') RETURNING id`,
+        `INSERT INTO calendar_activity_groups (code, label, color, scope) VALUES ('trips-e2e', 'Походный тест', '#123456', 'trips') RETURNING id`,
       )
     )[0].id;
     activityTypeId = (
@@ -296,46 +296,59 @@ describe('Походы (e2e)', () => {
     });
 
     /**
-     * Место и время сбора плюс заброска: без них в поход не собраться,
-     * а раньше они писались текстом в маршруте и там терялись.
+     * Место сбора и «Будет гитара»: два коротких поля, которые человек ищет
+     * глазами в день выхода. Время сбора и текст заброски уехали во вкладку
+     * «Трансфер» и живут не в `trips`.
      */
-    it('место, время сбора и заброска сохраняются', async () => {
+    it('место сбора и гитара сохраняются', async () => {
       const response = await createTrip({
         announcement: 'Со сбором',
         meetingPlace: 'Иркутск, автовокзал, у первой платформы',
-        meetingAt: '2099-05-05T00:00:00.000Z',
-        transferText: 'Электричка 6:40 от вокзала',
+        hasGuitar: true,
       });
 
       expect(response.status).toBe(201);
       expect(response.body.meetingPlace).toBe(
         'Иркутск, автовокзал, у первой платформы',
       );
-      expect(response.body.meetingAt).toBe('2099-05-05T00:00:00.000Z');
-      expect(response.body.transferText).toBe('Электричка 6:40 от вокзала');
+      expect(response.body.hasGuitar).toBe(true);
 
-      // В базе лежит момент времени, а не строка: иначе напоминания
-      // о сборе считать было бы нечем.
+      // В базе лежит флаг, а не строка «да»: по нему строится карточка
+      // и подпись на странице похода.
       const stored = await dataSource.query(
-        'SELECT meeting_place, meeting_at, transfer_text FROM trips WHERE id = $1',
+        'SELECT meeting_place, has_guitar FROM trips WHERE id = $1',
         [response.body.id],
       );
-      expect(stored[0].meeting_place).toBe('Иркутск, автовокзал, у первой платформы');
-      expect(stored[0].meeting_at.toISOString()).toBe('2099-05-05T00:00:00.000Z');
+      expect(stored[0].meeting_place).toBe(
+        'Иркутск, автовокзал, у первой платформы',
+      );
+      expect(stored[0].has_guitar).toBe(true);
     });
 
-    it('у похода без сбора поля пустые, а не выдуманные', async () => {
+    it('у похода без сбора поле пустое, а гитары по умолчанию нет', async () => {
       const response = await createTrip({ announcement: 'Без сбора' });
 
       expect(response.body.meetingPlace).toBeNull();
-      expect(response.body.meetingAt).toBeNull();
-      expect(response.body.transferText).toBeNull();
+      expect(response.body.hasGuitar).toBe(false);
     });
 
-    it('мусор во времени сбора — 400', async () => {
-      const response = await createTrip({ meetingAt: 'завтра утром' });
+    it('гитара не boolean — 400', async () => {
+      const response = await createTrip({ hasGuitar: 'да' });
 
       expect(response.status).toBe(400);
+    });
+
+    it('удалённых полей сбора больше нет: время и заброска отбиваются 400-м', async () => {
+      // `forbidNonWhitelisted` не прощает незнакомых полей — это и есть
+      // проверка, что колонки убраны не только из ответа, но и из контракта.
+      for (const body of [
+        { meetingAt: '2099-05-05T00:00:00.000Z' },
+        { transferText: 'Электричка 6:40' },
+      ]) {
+        const response = await createTrip(body);
+
+        expect(response.status).toBe(400);
+      }
     });
 
     it('активности-дубликаты схлопываются, а не ломают проверку', async () => {
@@ -464,6 +477,74 @@ describe('Походы (e2e)', () => {
         .get(`/api/trips/${created.body.id}`)
         .set('Authorization', `Bearer ${strangerToken}`)
         .expect(404);
+    });
+  });
+
+  /**
+   * Словарь типов похода: группа «Туризм» общего справочника активностей.
+   *
+   * Проверяем ровно то, на чём легко ошибиться: что календарные группы сюда
+   * не просачиваются, что погашенные типы не предлагаются и что тип
+   * по умолчанию фронт находит по коду, а не по порядку строк.
+   */
+  describe('типы похода', () => {
+    it('отдаёт типы из походных групп и тип по умолчанию', async () => {
+      const response = await request(app.getHttpServer())
+        .get('/api/trips/types')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      const types = response.body.types as Array<{ id: number; code: string }>;
+
+      // Тестовый тип живёт в группе со `scope = 'trips'` — он обязан быть.
+      expect(types.map((type) => type.id)).toContain(activityTypeId);
+
+      // Календарные группы в словарь типов похода не попадают: у них
+      // `scope = 'calendar'`, и это правило живёт в данных.
+      const calendarIds = await dataSource.query(
+        `SELECT t.id
+           FROM calendar_activity_types t
+           JOIN calendar_activity_groups g ON g.id = t.group_id
+          WHERE g.scope = 'calendar' AND t.is_active`,
+      );
+      const typeIds = types.map((type) => type.id);
+      for (const row of calendarIds as Array<{ id: number }>) {
+        expect(typeIds).not.toContain(row.id);
+      }
+
+      // `defaultTypeId` — это `trip_hiking`, если он залит в базу. На dev
+      // он есть (миграция `ActivityGroupsScope`), на чистой базе может
+      // отсутствовать — тогда словарь честно отдаёт `null`.
+      const hiking = types.find((type) => type.code === 'trip_hiking');
+      expect(response.body.defaultTypeId).toBe(hiking ? hiking.id : null);
+    });
+
+    it('погашенный тип в словарь не попадает', async () => {
+      await dataSource.query(
+        `UPDATE calendar_activity_types SET is_active = false WHERE id = $1`,
+        [activityTypeId],
+      );
+
+      try {
+        const response = await request(app.getHttpServer())
+          .get('/api/trips/types')
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(200);
+
+        const ids = (response.body.types as Array<{ id: number }>).map(
+          (type) => type.id,
+        );
+        expect(ids).not.toContain(activityTypeId);
+      } finally {
+        await dataSource.query(
+          `UPDATE calendar_activity_types SET is_active = true WHERE id = $1`,
+          [activityTypeId],
+        );
+      }
+    });
+
+    it('без токена словарь закрыт', async () => {
+      await request(app.getHttpServer()).get('/api/trips/types').expect(401);
     });
   });
 
@@ -725,34 +806,33 @@ describe('Походы (e2e)', () => {
       expect(untouched.body.id).toBe(created.body.id);
     });
 
-    it('правка меняет и стирает сбор и заброску', async () => {
+    it('правка меняет место сбора и включает гитару, не трогая соседние поля', async () => {
       const created = await createTrip({
         meetingPlace: 'Старое место',
-        meetingAt: '2099-05-05T00:00:00.000Z',
-        transferText: 'Пешком',
+        requirementsText: 'Свои кошки',
       });
 
       const changed = await request(app.getHttpServer())
         .patch(`/api/trips/${created.body.id}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ meetingPlace: 'Новое место, у моста' })
+        .send({ meetingPlace: 'Новое место, у моста', hasGuitar: true })
         .expect(200);
 
-      // Патч одного поля не трогает соседние: время сбора и заброска
-      // остаются как были.
+      // Патч двух полей не трогает соседние: требования остаются как были,
+      // а гитара включается отдельным патчем — «выключить» её можно
+      // только явным `false`.
       expect(changed.body.meetingPlace).toBe('Новое место, у моста');
-      expect(changed.body.meetingAt).toBe('2099-05-05T00:00:00.000Z');
-      expect(changed.body.transferText).toBe('Пешком');
+      expect(changed.body.hasGuitar).toBe(true);
+      expect(changed.body.requirementsText).toBe('Свои кошки');
 
       const cleared = await request(app.getHttpServer())
         .patch(`/api/trips/${created.body.id}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ meetingPlace: null, meetingAt: null, transferText: null })
+        .send({ meetingPlace: null, hasGuitar: false })
         .expect(200);
 
       expect(cleared.body.meetingPlace).toBeNull();
-      expect(cleared.body.meetingAt).toBeNull();
-      expect(cleared.body.transferText).toBeNull();
+      expect(cleared.body.hasGuitar).toBe(false);
     });
 
     it('маршрут пересобирает индекс упоминаний объектов', async () => {
