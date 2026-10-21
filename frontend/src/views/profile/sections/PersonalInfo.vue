@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 
 import { deleteAvatar, uploadAvatar } from '@/api/users'
 import { ApiError } from '@/api/errors'
+import type { Gender } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useProfilePatch } from '@/composables/useProfilePatch'
 import EditableField from '@/components/ui/EditableField.vue'
@@ -11,7 +12,7 @@ import AvatarCropperModal from '@/components/ui/AvatarCropperModal.vue'
 import { canBrowserDecode, looksLikeHeic } from '@/utils/imageDecode'
 
 /**
- * «Профиль» — кто человек: аватарка, имя, город и еда.
+ * «Профиль» — кто человек: аватарка, имя, город, пол и еда.
  *
  * Спортивный опыт отсюда уехал в свою вкладку (`SportExperience.vue`):
  * девятнадцать списков растягивали страницу, и «Профиль» переставал быть
@@ -23,8 +24,28 @@ const { error, whileBusy, saveProfile } = useProfilePatch()
 const displayName = computed(() => auth.user?.displayName ?? '')
 const location = computed(() => auth.user?.location ?? '')
 const avatarUrl = computed(() => auth.user?.avatarUrl ?? null)
+const gender = computed<Gender>(() => auth.user?.gender ?? 'm')
 const isVegetarian = computed(() => auth.user?.isVegetarian ?? false)
 const allergies = computed(() => auth.user?.allergies ?? '')
+
+/**
+ * Варианты пола: значение — словарь кода (`m` / `f` на бэкенде),
+ * подпись — то, что читает человек.
+ *
+ * Пол стоит рядом с городом, потому что это свойство человека, а не
+ * похода: он нужен расчёту веса рюкзака (доля женщины — 0,8 от мужской,
+ * `gear-distribution.md`), но меняется здесь и один раз.
+ */
+const GENDER_OPTIONS: ReadonlyArray<{ value: Gender; label: string }> = [
+  { value: 'm', label: 'Мужской' },
+  { value: 'f', label: 'Женский' },
+]
+
+/** Сохранить пол. Повторный выбор того же значения запрос не шлёт. */
+async function saveGender(value: Gender) {
+  if (value === gender.value) return
+  await saveProfile({ gender: value })
+}
 
 /**
  * Города-подсказки. Показываются, только пока поле пустое: они нужны,
@@ -254,6 +275,34 @@ async function removeAvatar() {
           >
             {{ city }}
           </button>
+        </div>
+      </div>
+
+      <!--
+        Пол — рядом с городом: свойство человека, а не похода. Нужен
+        расчёту веса рюкзака (доля женщины — 0,8 от мужской). Два
+        варианта, потому что коэффициентов в алгоритме тоже два;
+        «не отвечал» здесь не бывает — по умолчанию стоит мужской.
+      -->
+      <div class="flex flex-col gap-1 py-3 md:flex-row md:items-center md:gap-6">
+        <div class="text-sm text-muted md:w-48 md:shrink-0">Пол</div>
+
+        <div class="flex flex-wrap gap-4">
+          <label
+            v-for="option in GENDER_OPTIONS"
+            :key="option.value"
+            class="flex cursor-pointer items-center gap-2 text-base text-text"
+          >
+            <input
+              type="radio"
+              name="gender"
+              class="size-4 cursor-pointer accent-primary"
+              :value="option.value"
+              :checked="gender === option.value"
+              @change="saveGender(option.value)"
+            />
+            <span>{{ option.label }}</span>
+          </label>
         </div>
       </div>
     </div>

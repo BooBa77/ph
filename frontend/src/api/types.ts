@@ -1,6 +1,15 @@
 import type { SportExperience, SportExperiencePatch } from '@/types/sportExperience'
 
 /**
+ * Пол — коэффициент распределения веса рюкзака (`gear-distribution.md`).
+ *
+ * `m` — мужской, `f` — женский. Бэкенд отдаёт его в своём профиле и
+ * в составе похода, а в публичный профиль (`/people/:id`) не кладёт:
+ * случайным гостям пол не показывают.
+ */
+export type Gender = 'm' | 'f'
+
+/**
  * Пользователь — то, что отдаёт бэк в /api/users/me,
  * /api/auth/verify-code и /api/auth/refresh.
  *
@@ -20,6 +29,8 @@ export interface User {
    * (хостовый nginx), поэтому склеивать ничего не нужно.
    */
   avatarUrl: string | null
+  /** Пол. По умолчанию `m` — меняется в профиле. */
+  gender: Gender
   /** Пищевое ограничение «вегетарианство». false — в том числе «не отвечал». */
   isVegetarian: boolean
   /** Аллергии: свободный текст пользователя. */
@@ -80,6 +91,7 @@ export type RefreshResponse = { accessToken: string; user: User } | { accessToke
 export interface UpdateUserRequest {
   displayName?: string
   location?: string | null
+  gender?: Gender
   isVegetarian?: boolean
   allergies?: string | null
   sportExperience?: SportExperiencePatch | null

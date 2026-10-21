@@ -36,6 +36,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     displayName: 'Тест',
     location: null,
     avatarUrl: null,
+    gender: 'm',
     isVegetarian: false,
     allergies: null,
     sportExperience: null,
@@ -161,6 +162,35 @@ describe('PersonalInfo', () => {
     await flushPromises()
 
     expect(mocked.updateMe).toHaveBeenCalledWith({ location: null })
+  })
+
+  it('по умолчанию пол мужской', async () => {
+    const wrapper = await mountSection()
+
+    expect(wrapper.findAll('input[type="radio"]')).toHaveLength(2)
+    expect(
+      wrapper.get<HTMLInputElement>('input[type="radio"][value="m"]').element.checked,
+    ).toBe(true)
+    expect(
+      wrapper.get<HTMLInputElement>('input[type="radio"][value="f"]').element.checked,
+    ).toBe(false)
+  })
+
+  it('переключает пол на женский и сохраняет его', async () => {
+    const wrapper = await mountSection()
+
+    await wrapper.get('input[type="radio"][value="f"]').setValue(true)
+    await flushPromises()
+
+    expect(mocked.updateMe).toHaveBeenCalledWith({ gender: 'f' })
+  })
+
+  it('показывает сохранённый пол', async () => {
+    const wrapper = await mountSection(makeUser({ gender: 'f' }))
+
+    expect(
+      wrapper.get<HTMLInputElement>('input[type="radio"][value="f"]').element.checked,
+    ).toBe(true)
   })
 
   it('показывает галочку вегетарианства снятой, если её не ставили', async () => {

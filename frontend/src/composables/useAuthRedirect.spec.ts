@@ -11,6 +11,7 @@ const user: User = {
   displayName: 'Тест',
   location: null,
   avatarUrl: null,
+  gender: 'm',
   isVegetarian: false,
   allergies: null,
   sportExperience: null,
