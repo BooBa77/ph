@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Between, DataSource, QueryFailedError, Repository } from 'typeorm';
+import { Between, DataSource, In, QueryFailedError, Repository } from 'typeorm';
 
 import { User } from '../users/entities/user.entity';
 import { isAdminUser } from './admin';
@@ -448,7 +448,9 @@ export class CalendarService {
   async getActivityDictionary(userId: string): Promise<ActivityDictionaryDto> {
     const [groups, types, favorites, requests] = await Promise.all([
       this.activityGroups.find({
-        where: { isActive: true },
+        // Только календарные группы: справочник общий с типами похода,
+        // и «Туризм» в календаре появляться не должен.
+        where: { isActive: true, scope: In(['calendar', 'both']) },
         order: { id: 'ASC' },
       }),
       this.activityTypes.find({

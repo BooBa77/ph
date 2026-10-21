@@ -1,4 +1,4 @@
-import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
+import { Check, Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
 
 /**
  * Группа активностей: Спорт, Дом, Работа, Город.
@@ -12,6 +12,7 @@ import { Column, Entity, PrimaryGeneratedColumn } from 'typeorm';
  * этого — лишняя.
  */
 @Entity('calendar_activity_groups')
+@Check('chk_activity_groups_scope', `"scope" IN ('calendar', 'trips', 'both')`)
 export class CalendarActivityGroup {
   @PrimaryGeneratedColumn()
   id: number;
@@ -29,4 +30,15 @@ export class CalendarActivityGroup {
 
   @Column({ name: 'is_active', type: 'boolean', default: true })
   isActive: boolean;
+
+  /**
+   * Где эта группа нужна.
+   *
+   * Справочник один на проект, но мест два: календарь и типы похода.
+   * «Город», «Спорт», «Дом», «Работа» — календарные; «Туризм» — только
+   * походный. Назначение в **данных**, а не списком в коде: иначе новую
+   * группу однажды забудут спрятать, и она появится в календаре молча.
+   */
+  @Column({ type: 'varchar', length: 20, default: 'calendar' })
+  scope: 'calendar' | 'trips' | 'both';
 }
