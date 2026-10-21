@@ -356,7 +356,7 @@ describe('Походы (e2e)', () => {
       expect(response.body.message).toContain('Цель не найдена');
     });
 
-    it('несуществующая активность — 400, а не 500 от триггера', async () => {
+    it('несуществующая активность — 400, а не 500 от внешнего ключа', async () => {
       const response = await createTrip({ activityTypeIds: [999999] });
 
       expect(response.status).toBe(400);

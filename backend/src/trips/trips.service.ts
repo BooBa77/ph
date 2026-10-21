@@ -43,6 +43,7 @@ import { TripMembershipRequest } from './entities/trip-membership-request.entity
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
+import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
 import {
@@ -116,7 +117,8 @@ export class TripsService {
     dto: CreateTripDto,
   ): Promise<TripResponseDto> {
     // Дубликаты в массиве активностей схлопываем: пользователь вправе
-    // прислать `[1, 1]`, и это не повод падать на проверке количества.
+    // прислать `[1, 1]`, и это не повод падать — ни на проверке количества,
+    // ни на составном ключе `trip_types`.
     const activityTypeIds = [...new Set(dto.activityTypeIds ?? [])];
     const startsAt = dto.startsAt ? new Date(dto.startsAt) : null;
     const endsAt = dto.endsAt ? new Date(dto.endsAt) : null;
@@ -138,10 +140,11 @@ export class TripsService {
 
       /**
        * Существование активностей проверяем здесь, хотя в базе есть
-       * триггер. Причина простая: триггер бросает исключение, и наружу
-       * ушёл бы 500 «внутренняя ошибка» — а это ошибка клиента, и сказать
-       * о ней надо 400-м с внятным текстом. Триггер остаётся второй линией
-       * обороны для правок мимо API.
+       * внешний ключ `trip_types.activity_type_id`. Причина простая:
+       * внешний ключ бросает исключение, и наружу ушёл бы 500 «внутренняя
+       * ошибка» — а это ошибка клиента, и сказать о ней надо 400-м
+       * с внятным текстом. Ключ остаётся второй линией обороны для правок
+       * мимо API.
        */
       await this.assertActivityTypes(manager, activityTypeIds);
 
@@ -172,7 +175,6 @@ export class TripsService {
           transferText: dto.transferText ?? null,
           visibility: dto.visibility ?? 'public',
           status,
-          activityTypeIds,
           startsAt,
           endsAt,
           isCommercial,
@@ -224,6 +226,23 @@ export class TripsService {
       }
 
       /**
+       * Типы похода — строками в связке и в той же транзакции: тип,
+       * потерянный при создании, восстанавливать будет не из чего — в теле
+       * запроса его уже нет, а поход к этому моменту считается созданным.
+       * `Set` выше схлопнул дубликаты, поэтому составной ключ
+       * `(trip_id, activity_type_id)` повторов не увидит.
+       */
+      if (activityTypeIds.length > 0) {
+        await manager.insert(
+          TripType,
+          activityTypeIds.map((activityTypeId) => ({
+            tripId: trip.id,
+            activityTypeId,
+          })),
+        );
+      }
+
+      /**
        * Индекс упоминаний собирается из текста сразу при создании: маршрут
        * можно прислать уже со ссылками, и оставлять `trip_route_elements`
        * пустым до первой правки значило бы врать поиску «где упомянут
@@ -234,6 +253,9 @@ export class TripsService {
       // Цель уже прочитана — подставляем её в ответ, чтобы фронт не ходил
       // за именем отдельным запросом.
       trip.goalObject = goal;
+
+      // Типы только что вставлены — читать их обратно из базы незачем.
+      trip.activityTypeIds = activityTypeIds;
 
       return TripResponseDto.from(trip);
     });
@@ -270,6 +292,9 @@ export class TripsService {
         throw new NotFoundException('Поход не найден');
       }
     }
+
+    // Типы похода живут в связке — подтягиваем перед отдачей наружу.
+    await this.fillTypes(this.dataSource.manager, [trip]);
 
     return TripResponseDto.from(trip);
   }
@@ -367,6 +392,45 @@ export class TripsService {
       throw new BadRequestException(
         'Среди активностей есть несуществующие — проверьте идентификаторы',
       );
+    }
+  }
+
+  /**
+   * Разложить типы похода из связки по сущностям — и одним запросом.
+   *
+   * `Trip.activityTypeIds` в базе не хранится (типы живут в `trip_types`),
+   * и это единственное место, где поле наполняется. Отдельный метод —
+   * потому что мест, откуда поход уходит наружу, несколько (`list`,
+   * `findOne`, `update`, `cancel`/`restore`), и забыть заполнить в одном
+   * из них значило бы отдать наружу пустой массив вместо типов: фронт
+   * разницы с «типов нет» не увидит.
+   *
+   * Запрос **один на весь список**, а не по одному на поход: лента
+   * двадцати карточек иначе стоила бы двадцать лишних кругов до базы.
+   * `order` здесь не про сортировку ленты: `tripId` первым — чтобы строки
+   * одного похода шли подряд, `activityTypeId` — чтобы массив в ответе
+   * не менял порядок от прогона к прогону.
+   */
+  private async fillTypes(
+    manager: EntityManager,
+    trips: Trip[],
+  ): Promise<void> {
+    if (trips.length === 0) return;
+
+    const rows = await manager.find(TripType, {
+      where: { tripId: In(trips.map((trip) => trip.id)) },
+      order: { tripId: 'ASC', activityTypeId: 'ASC' },
+    });
+
+    const byTrip = new Map<string, number[]>();
+    for (const row of rows) {
+      const list = byTrip.get(row.tripId) ?? [];
+      list.push(row.activityTypeId);
+      byTrip.set(row.tripId, list);
+    }
+
+    for (const trip of trips) {
+      trip.activityTypeIds = byTrip.get(trip.id) ?? [];
     }
   }
 
@@ -494,9 +558,18 @@ export class TripsService {
       );
     }
 
+    /**
+     * Тип похода — через связку, а не по массиву, как было. `EXISTS`
+     * укладывается в `IDX_trip_types_activity`: «есть ли у похода этот
+     * тип» решается индексным поиском, а не перебором массива у каждой
+     * строки ленты.
+     */
     if (query.activityTypeId !== undefined) {
       qb.andWhere(
-        'CAST(:activityTypeId AS int) = ANY(trip.activity_type_ids)',
+        `EXISTS (
+           SELECT 1 FROM trip_types tt
+            WHERE tt.trip_id = trip.id AND tt.activity_type_id = :activityTypeId
+         )`,
         {
           activityTypeId: query.activityTypeId,
         },
@@ -561,6 +634,10 @@ export class TripsService {
       .take(query.limit ?? DEFAULT_PAGE_SIZE);
 
     const [trips, total] = await qb.getManyAndCount();
+
+    // Типы — одним запросом на всю страницу, а не по запросу на поход:
+    // иначе лента из двадцати карточек стоила бы двадцать один круг до базы.
+    await this.fillTypes(this.tripsRepository.manager, trips);
 
     return { trips: trips.map((trip) => TripResponseDto.from(trip)), total };
   }
@@ -671,11 +748,18 @@ export class TripsService {
       this.assertDates(status, startsAt, endsAt);
       this.assertActualDates(actualStartedAt, actualFinishedAt);
 
+      /**
+       * Типы похода — тоже «замена целиком», как варианты дат ниже:
+       * у пары нет стабильного внешнего идентификатора, и «третий тип»
+       * после правки списка означал бы уже другой. Поэтому присланный
+       * массив снимается и вставляется заново, а `null` — «не трогать»,
+       * иначе `PATCH` без поля стирал бы типы.
+       */
       const activityTypeIds =
         dto.activityTypeIds !== undefined
           ? [...new Set(dto.activityTypeIds)]
-          : trip.activityTypeIds;
-      if (dto.activityTypeIds !== undefined) {
+          : null;
+      if (activityTypeIds !== null) {
         await this.assertActivityTypes(manager, activityTypeIds);
       }
 
@@ -708,9 +792,6 @@ export class TripsService {
         trip.isRecruitmentClosed = dto.isRecruitmentClosed;
       }
       if (dto.routeText !== undefined) trip.routeText = dto.routeText;
-      if (dto.activityTypeIds !== undefined) {
-        trip.activityTypeIds = activityTypeIds;
-      }
 
       trip.status = status;
       trip.startsAt = startsAt;
@@ -751,6 +832,25 @@ export class TripsService {
         }
       }
 
+      // Снимаем и ставим заново в той же транзакции: половина типов
+      // в ответе была бы хуже прежних, а `UPDATE` на связке не выдаётся.
+      if (activityTypeIds !== null) {
+        await manager.delete(TripType, { tripId: saved.id });
+        if (activityTypeIds.length > 0) {
+          await manager.insert(
+            TripType,
+            activityTypeIds.map((activityTypeId) => ({
+              tripId: saved.id,
+              activityTypeId,
+            })),
+          );
+        }
+      }
+
+      // Читаем типы из базы, а не подставляем присланные: `PATCH` без поля
+      // типов их не меняет, и ответ должен показать то, что реально лежит.
+      await this.fillTypes(manager, [saved]);
+
       return TripResponseDto.from(saved);
     });
   }
@@ -783,6 +883,11 @@ export class TripsService {
   ): Promise<TripResponseDto> {
     return this.dataSource.transaction(async (manager) => {
       const trip = await this.findOwnedTrip(manager, userId, id);
+
+      // Типы заполняем один раз, до всех выходов: поле не персистентное,
+      // `save` его не тронет, поэтому и повторная отмена, и настоящая
+      // отмена отдают одинаково полный ответ.
+      await this.fillTypes(manager, [trip]);
 
       if (cancelled && trip.status === 'idea') {
         throw new BadRequestException(
