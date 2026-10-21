@@ -15,6 +15,7 @@ import { CalendarModule } from './calendar/calendar.module';
 import { TripsModule } from './trips/trips.module';
 import { ChecklistsModule } from './checklists/checklists.module';
 import { GearModule } from './gear/gear.module';
+import { MealsModule } from './meals/meals.module';
 
 @Module({
   imports: [
@@ -73,6 +74,7 @@ import { GearModule } from './gear/gear.module';
     TripsModule,
     ChecklistsModule,
     GearModule,
+    MealsModule,
   ],
   controllers: [AppController],
   providers: [
