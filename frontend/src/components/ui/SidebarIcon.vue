@@ -21,6 +21,7 @@ defineProps<{
     | 'settings'
     | 'trips'
     | 'checklist'
+    | 'gear'
     | 'install'
     | 'logout'
     | 'home'
@@ -86,6 +87,15 @@ defineProps<{
       <path d="M4 6l1.4 1.4L8 5" />
       <path d="M4 12l1.4 1.4L8 11" />
       <path d="M4 18l1.4 1.4L8 17" />
+    </template>
+
+    <!-- Снаряжение: палатка. Рюкзак уже занят походами, вершина —
+         спортом, поэтому палатка: у неё свой силуэт и она читается
+         в 20 px лучше, чем котелок -->
+    <template v-else-if="name === 'gear'">
+      <path d="M12 4L4 20h16z" />
+      <path d="M12 11v9" />
+      <path d="M12 11l4 9" />
     </template>
 
     <!-- Вынести ярлык: стрелка вниз в лоток -->

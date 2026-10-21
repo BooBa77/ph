@@ -55,6 +55,14 @@ const router = createRouter({
           component: () => import('@/views/profile/sections/SportExperience.vue'),
         },
         {
+          // Снаряжение: личный каталог предметов с весом. Из него в походе
+          // собирается общественное снаряжение, а вес рюкзака считается
+          // по этим числам.
+          path: 'gear',
+          name: 'profile-gear',
+          component: () => import('@/views/profile/sections/UserGear.vue'),
+        },
+        {
           // Чек-листы: шаблоны снаряжения, продуктов и аптечки. В поход
           // из шаблона попадает копия, поэтому это раздел профиля, а не
           // похода — шаблон живёт вне походов.
