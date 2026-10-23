@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 import type { ProductUnit } from '../meal.types';
 import { PRODUCT_UNITS } from '../meal.types';
@@ -166,11 +166,14 @@ export class AddIngredientDto {
   productId: number;
 
   @ApiProperty({
-    description: 'Количество в единицах продукта',
-    example: 2,
+    description: 'Количество в единицах продукта. Дробное можно: 0.33 банки',
+    example: 0.33,
   })
-  @IsInt({ message: 'Количество должно быть целым числом единиц' })
-  @Min(1, { message: 'Количество должно быть больше нуля' })
+  @IsNumber(
+    { maxDecimalPlaces: 3 },
+    { message: 'Количество — число, не больше трёх знаков после запятой' },
+  )
+  @Min(0.001, { message: 'Количество должно быть больше нуля' })
   amount: number;
 
   @ApiProperty({
@@ -185,9 +188,15 @@ export class AddIngredientDto {
 
 /** Тело `PATCH /api/dishes/ingredients/:id`. */
 export class UpdateIngredientDto {
-  @ApiProperty({ description: 'Количество в единицах продукта', example: 3 })
-  @IsInt({ message: 'Количество должно быть целым числом единиц' })
-  @Min(1, { message: 'Количество должно быть больше нуля' })
+  @ApiProperty({
+    description: 'Количество в единицах продукта. Дробное можно: 0.33 банки',
+    example: 0.5,
+  })
+  @IsNumber(
+    { maxDecimalPlaces: 3 },
+    { message: 'Количество — число, не больше трёх знаков после запятой' },
+  )
+  @Min(0.001, { message: 'Количество должно быть больше нуля' })
   amount: number;
 
   @ApiProperty({

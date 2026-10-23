@@ -1069,7 +1069,10 @@ export class TripMealsService {
     const productDtos: TripMealProductDto[] = [...products.values()]
       .sort((left, right) => left.product.name.localeCompare(right.product.name))
       .map((row) => {
-        const amount = row.recipeAmount + row.manualAmount;
+        // В походе не бывает полутора банок: рецепт дробный, а количество
+        // в приёме — целое, округлённое вверх (0,33 × 4 = 1,32 → 2).
+        const recipeAmount = Math.ceil(row.recipeAmount);
+        const amount = recipeAmount + row.manualAmount;
         const rows = allocationsByProduct.get(row.product.id) ?? [];
         const fixed = rows
           .filter((allocation) => !allocation.isElastic)
