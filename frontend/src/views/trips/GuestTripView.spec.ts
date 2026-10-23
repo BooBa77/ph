@@ -13,7 +13,11 @@ import GuestTripView from '@/views/trips/GuestTripView.vue'
  * (e2e `access.e2e-spec.ts`), второе — тем, что экран рисует ровно
  * гостевые поля.
  */
-vi.mock('@/api/trips', () => ({ fetchGuestTrip: vi.fn() }))
+vi.mock('@/api/trips', () => ({
+  fetchGuestTrip: vi.fn(),
+  listTripMessages: vi.fn(),
+  sendTripMessage: vi.fn(),
+}))
 vi.mock('@/api/objects', () => ({ listObjectsByIds: vi.fn() }))
 
 import * as api from '@/api/trips'
@@ -55,6 +59,7 @@ describe('GuestTripView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocked.fetchGuestTrip.mockResolvedValue(makeGuest())
+    mocked.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
     mockedObjects.listObjectsByIds.mockResolvedValue([])
   })
 
@@ -84,7 +89,10 @@ describe('GuestTripView', () => {
             displayName: 'Ваня',
             avatarUrl: null,
             status: 'going',
-            roles: [{ code: 'organizer', name: 'Организатор' }],
+            roles: [
+              { code: 'organizer', name: 'Организатор' },
+              { code: 'quartermaster', name: 'Завхоз' },
+            ],
             isOrganizer: true,
             createdAt: '2026-10-14T10:00:00.000Z',
             updatedAt: '2026-10-14T10:00:00.000Z',
@@ -99,7 +107,9 @@ describe('GuestTripView', () => {
     expect(list.exists()).toBe(true)
     expect(list.text()).toContain('Ваня')
     expect(list.text()).toContain('организатор')
-    expect(list.text()).toContain('Организатор')
+    // Роль «Организатор» не дублируется: её заменяет подпись выше.
+    expect(list.text()).not.toContain('Организатор')
+    expect(list.text()).toContain('Завхоз')
     expect(list.text()).toContain('Идёт')
   })
 

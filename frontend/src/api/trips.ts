@@ -1,13 +1,16 @@
 import { apiFetch } from '@/api/client'
 import type {
+  ChatKind,
   CreateTripRequest,
   GuestTrip,
   ParticipantDecision,
   ParticipantStatus,
   RoleOption,
   Trip,
+  TripChat,
   TripListQuery,
   TripListResponse,
+  TripMessage,
   TripParticipant,
   TripRequest,
   TripTabPermission,
@@ -253,4 +256,48 @@ export async function acceptRequest(
  */
 export async function deleteRequest(tripId: string, userId: string): Promise<void> {
   await apiFetch<void>(`/trips/${tripId}/requests/${userId}`, { method: 'DELETE' })
+}
+
+// ─────────────────────────── переписка ───────────────────────────
+
+/**
+ * GET /api/trips/:id/chats — чаты похода, доступные смотрящему.
+ *
+ * Гостевой чат видит каждый, кому виден публичный поход; членский — только
+ * состав. Фронт не угадывает: спрашивает список и рисует то, что пришло.
+ */
+export async function listTripChats(tripId: string): Promise<TripChat[]> {
+  const response = await apiFetch<{ chats: TripChat[] }>(`/trips/${tripId}/chats`)
+  return response.chats
+}
+
+/**
+ * GET /api/trips/:id/messages — страница сообщений чата.
+ *
+ * `before` — id самого старого уже загруженного сообщения: листаем вверх
+ * по id, а не по дате (id монотонен, дата — нет).
+ */
+export async function listTripMessages(
+  tripId: string,
+  kind: ChatKind,
+  before?: string,
+): Promise<{ messages: TripMessage[]; hasMore: boolean }> {
+  const query = new URLSearchParams({ kind })
+  if (before) query.set('before', before)
+
+  return apiFetch<{ messages: TripMessage[]; hasMore: boolean }>(
+    `/trips/${tripId}/messages?${query.toString()}`,
+  )
+}
+
+/** POST /api/trips/:id/messages — отправить сообщение в чат. */
+export async function sendTripMessage(
+  tripId: string,
+  kind: ChatKind,
+  body: string,
+): Promise<TripMessage> {
+  return apiFetch<TripMessage>(`/trips/${tripId}/messages`, {
+    method: 'POST',
+    body: JSON.stringify({ kind, body }),
+  })
 }

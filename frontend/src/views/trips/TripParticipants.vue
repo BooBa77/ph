@@ -16,6 +16,7 @@ import {
 import { searchUsers, type UserSearchResult } from '@/api/users'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useAuthStore } from '@/stores/auth'
+import TripChat from '@/views/trips/TripChat.vue'
 import {
   PARTICIPANT_STATUS_LABELS,
   type ParticipantStatus,
@@ -23,6 +24,7 @@ import {
   type Trip,
   type TripParticipant,
   type TripRequest,
+  type TripRole,
 } from '@/types/trips'
 
 /**
@@ -71,6 +73,14 @@ const isLoading = ref(true)
 const error = ref<string | null>(null)
 const actionError = ref<string | null>(null)
 const pendingUserId = ref<string | null>(null)
+
+/**
+ * Роли без «Организатора»: ниже есть подпись «организатор похода»,
+ * и роль выводилась дважды — «Организатор · организатор похода».
+ */
+function extraRoles(person: TripParticipant): TripRole[] {
+  return person.roles.filter((role) => role.code !== 'organizer')
+}
 
 const isOrganizer = computed(() => props.trip.organizerUserId === auth.user?.id)
 
@@ -481,7 +491,7 @@ function invite(person: UserSearchResult) {
                   <!-- Роли — рядом с именем: «кто здесь завхоз» ищут по списку,
                        а не в подписи мелким шрифтом -->
                   <span
-                    v-for="role in person.roles"
+                    v-for="role in extraRoles(person)"
                     :key="role.code"
                     class="rounded-full border border-border px-2 py-0.5 text-xs text-muted"
                     data-test="participant-role"
@@ -585,5 +595,8 @@ function invite(person: UserSearchResult) {
         </div>
       </div>
     </div>
+
+    <!-- Чат участников — часть вкладки, а не отдельная «Чаты». -->
+    <TripChat :trip-id="trip.id" kind="trip_members" />
   </section>
 </template>

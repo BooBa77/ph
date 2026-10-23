@@ -421,6 +421,37 @@ export interface RoleOption {
   name: string
 }
 
+// ─────────────────────────── переписка ───────────────────────────
+
+/** Виды чатов похода: гостевой видят все, членский — только состав. */
+export const CHAT_KINDS = ['trip_guest', 'trip_members'] as const
+export type ChatKind = (typeof CHAT_KINDS)[number]
+
+export const CHAT_KIND_LABELS: Record<ChatKind, string> = {
+  trip_guest: 'Гостевой чат',
+  trip_members: 'Чат участников',
+}
+
+/** Сообщение чата похода. `senderId === null` — системное. */
+export interface TripMessage {
+  id: string
+  senderId: string | null
+  senderName: string | null
+  senderAvatarUrl: string | null
+  body: string
+  isSystem: boolean
+  createdAt: string
+}
+
+/** Чат похода, доступный смотрящему. */
+export interface TripChat {
+  id: string
+  kind: ChatKind
+  title: string
+  canWrite: boolean
+  lastMessage: TripMessage | null
+}
+
 /**
  * Участие в походе.
  *

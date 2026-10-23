@@ -16,7 +16,10 @@ import {
   PARTICIPANT_STATUS_LABELS,
   TRIP_STATUS_LABELS,
   type GuestTrip,
+  type TripParticipant,
+  type TripRole,
 } from '@/types/trips'
+import TripChat from '@/views/trips/TripChat.vue'
 
 /**
  * «Гостевая» вкладка — обзор похода, один для всех.
@@ -95,6 +98,14 @@ const requirementsHtml = computed(() =>
   markdownToHtml(trip.value?.requirementsText ?? '', names.value, links.value),
 )
 
+/**
+ * Роли без «Организатора»: его уже показывает подпись «организатор».
+ * Иначе выходило «организатор · Организатор» — одна и та же роль дважды.
+ */
+function extraRoles(person: TripParticipant): TripRole[] {
+  return person.roles.filter((role) => role.code !== 'organizer')
+}
+
 onMounted(load)
 </script>
 
@@ -151,8 +162,8 @@ onMounted(load)
           <li v-for="person in trip.participants" :key="person.userId">
             <span>{{ person.displayName }}</span>
             <span v-if="person.isOrganizer" class="text-muted"> · организатор</span>
-            <span v-if="person.roles.length" class="text-muted">
-              · {{ person.roles.map((role) => role.name).join(', ') }}
+            <span v-if="extraRoles(person).length" class="text-muted">
+              · {{ extraRoles(person).map((role) => role.name).join(', ') }}
             </span>
             <span class="text-muted"> · {{ PARTICIPANT_STATUS_LABELS[person.status] }}</span>
           </li>
@@ -181,6 +192,9 @@ onMounted(load)
           v-html="requirementsHtml"
         />
       </div>
+
+      <!-- Гостевой чат — часть «Гостевой», отдельной вкладки «Чаты» нет. -->
+      <TripChat :trip-id="trip.id" kind="trip_guest" />
     </template>
   </section>
 </template>

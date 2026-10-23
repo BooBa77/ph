@@ -28,6 +28,8 @@ const mocks = vi.hoisted(() => ({
   searchUsers: vi.fn(),
   fetchRoles: vi.fn(),
   setParticipantRoles: vi.fn(),
+  listTripMessages: vi.fn(),
+  sendTripMessage: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
@@ -40,6 +42,8 @@ vi.mock('@/api/trips', () => ({
   deleteRequest: mocks.deleteRequest,
   fetchRoles: mocks.fetchRoles,
   setParticipantRoles: mocks.setParticipantRoles,
+  listTripMessages: mocks.listTripMessages,
+  sendTripMessage: mocks.sendTripMessage,
 }))
 
 vi.mock('@/api/users', () => ({ searchUsers: mocks.searchUsers }))
@@ -144,6 +148,7 @@ describe('TripParticipants', () => {
     mocks.searchUsers.mockResolvedValue([])
     mocks.fetchRoles.mockResolvedValue([{ code: 'organizer', name: 'Организатор' }, { code: 'quartermaster', name: 'Завхоз' }])
     mocks.setParticipantRoles.mockResolvedValue(person())
+    mocks.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
   })
 
   it('показывает состав с ролями и статусами', async () => {

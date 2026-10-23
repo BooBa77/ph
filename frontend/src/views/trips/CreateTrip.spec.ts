@@ -317,22 +317,21 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="error"]').text()).toContain('несуществующие объекты')
   })
 
-  it('место сбора и «Будет гитара» уходят в тело запроса', async () => {
+  it('«Будет гитара» уходит в тело, а место сбора — нет', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
 
-    // Место сбора и гитара — поля подготовки; у мечты их нет, поэтому
-    // проверяем на решённом походе.
+    // Место сбора уехало в «Трансфер»: в форме его нет вовсе.
+    expect(wrapper.find('[data-test="meeting-place"]').exists()).toBe(false)
+
     await wrapper.find('[data-test="status"]').setValue('decided')
     await wrapper.find('[data-test="starts-at"]').setValue('2027-05-05T09:00')
     await wrapper.find('[data-test="ends-at"]').setValue('2027-05-09T18:00')
-
-    await wrapper.find('[data-test="meeting-place"]').setValue('Иркутск, автовокзал')
     await wrapper.find('[data-test="guitar"]').setValue(true)
     await submit(wrapper)
 
     expect(lastPayload()).toMatchObject({
-      meetingPlace: 'Иркутск, автовокзал',
+      meetingPlace: null,
       hasGuitar: true,
     })
   })

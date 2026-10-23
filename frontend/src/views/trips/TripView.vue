@@ -7,7 +7,6 @@ import { fetchTripTabs, getTrip, updateTrip } from '@/api/trips'
 import { getPublicUser, type PublicUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
-import TripChats from '@/views/trips/TripChats.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
 import {
   TRIP_TAB_LABELS,
@@ -67,37 +66,28 @@ const organizer = ref<PublicUser | null>(null)
  * «в разработке», чтобы карта была видна целиком и не приходилось
  * переставлять меню на каждой новой вкладке (Ф7).
  */
-const TAB_CHATS = 'chats'
-type Tab = TripTabCode | typeof TAB_CHATS
-
-/** Вкладки, у которых уже есть экран. Порядок — порядок в меню. */
+/**
+ * Вкладки, у которых уже есть экран. Порядок — порядок в меню.
+ *
+ * «Чаты» отдельной вкладкой больше нет: гостевой чат живёт на «Гостевой»,
+ * членский — на «Участниках» (решение 21.10.2026: чат — тема вкладки).
+ */
 const IMPLEMENTED: TripTabCode[] = ['guest', 'members']
 
 const permissions = ref<TripTabPermission[]>([])
-const activeTab = ref<Tab>('guest')
+const activeTab = ref<TripTabCode>('guest')
 
 /**
- * Что показать в меню. «Чаты» — исключение: в карте вкладок это часть
- * «Участников», но экран у нас отдельный и работает, поэтому он стоит
- * рядом, а не прячется. У мечты его нет: мечта — вишлист, у неё только
- * «Гостевая» и ни членского чата, ни подготовки (`tabs.md` §7).
+ * Что показать в меню: только то, что вернул бэкенд. Своего списка
+ * у фронта нет — иначе права и видимость разошлись бы с сервером.
  */
-const displayTabs = computed<{ code: Tab; label: string; available: boolean }[]>(() => {
-  const list = permissions.value.map((permission) => ({
-    code: permission.code as Tab,
+const displayTabs = computed<{ code: TripTabCode; label: string; available: boolean }[]>(() =>
+  permissions.value.map((permission) => ({
+    code: permission.code,
     label: TRIP_TAB_LABELS[permission.code],
     available: IMPLEMENTED.includes(permission.code),
-  }))
-
-  if (trip.value?.status === 'idea') return list
-
-  const afterMembers = list.findIndex((item) => item.code === 'members')
-  const chats = { code: TAB_CHATS as Tab, label: 'Чаты', available: true }
-
-  return afterMembers === -1
-    ? [...list, chats]
-    : [...list.slice(0, afterMembers + 1), chats, ...list.slice(afterMembers + 1)]
-})
+  })),
+)
 
 /** Править «Участников» — значит назначать роли: разбирает бэкенд по ролям. */
 const canManageRoles = computed(
@@ -301,8 +291,6 @@ async function toggleRecruitment() {
         :can-manage-roles="canManageRoles"
         @changed="load(trip.id)"
       />
-
-      <TripChats v-else-if="activeTab === 'chats'" :trip="trip" />
 
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» появится вместе

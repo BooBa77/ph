@@ -112,10 +112,10 @@ describe('TripEdit', () => {
     const { wrapper } = await open()
 
     const announcement = wrapper.find('[data-test="announcement"]').element as HTMLInputElement
-    const meeting = wrapper.find('[data-test="meeting-place"]').element as HTMLInputElement
 
     expect(announcement.value).toBe('Идём на майские')
-    expect(meeting.value).toBe('Иркутск, автовокзал')
+    // Место сбора — поле «Трансфера», в форме его нет.
+    expect(wrapper.find('[data-test="meeting-place"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="selected-goal"]').text()).toContain('Витязь')
 
     // Тип похода в форме — выбранный чипс, а не пустой список.
@@ -144,11 +144,11 @@ describe('TripEdit', () => {
   it('очищенное поле уезжает null-ом, а не пропуском', async () => {
     const { wrapper } = await open()
 
-    await wrapper.find('[data-test="meeting-place"]').setValue('')
+    await wrapper.find('[data-test="announcement"]').setValue('')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
-    expect(mocks.updateTrip).toHaveBeenCalledWith('7', { meetingPlace: null })
+    expect(mocks.updateTrip).toHaveBeenCalledWith('7', { announcement: null })
   })
 
   it('новый тип похода уезжает в патч, а неизменный — нет', async () => {

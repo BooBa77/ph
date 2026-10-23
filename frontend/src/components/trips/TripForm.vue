@@ -267,11 +267,10 @@ const endsAt = ref(toLocalInput(initial?.endsAt ?? null))
 
 const isDateForecast = computed(() => status.value === 'idea' || status.value === 'planning')
 
-// ─── Маршрут, требования, сбор ───
+// ─── Маршрут, требования ───
 
 const routeText = ref(initial?.routeText ?? '')
 const requirements = ref(initial?.requirementsText ?? '')
-const meetingPlace = ref(initial?.meetingPlace ?? '')
 
 // ─── Гитара ───
 
@@ -417,7 +416,12 @@ function buildPayload(): CreateTripRequest {
     announcement: announcement.value.trim() || null,
     routeText: routeText.value,
     requirementsText: requirements.value.trim() || null,
-    meetingPlace: meetingPlace.value.trim() || null,
+    /**
+     * Место сбора — поле «Трансфера», а не анонса (решение 21.10.2026).
+     * В форме его нет; значение не теряем: при правке оставляем прежнее,
+     * при создании — null.
+     */
+    meetingPlace: initial?.meetingPlace ?? null,
     hasGuitar: guitar.value,
     visibility: visibility.value,
     status: status.value,
@@ -607,21 +611,9 @@ defineExpose({ validationProblem })
       <span class="text-sm text-muted">Сбор</span>
 
       <p class="text-xs text-muted">
-        Где встречаемся в день выхода. Во сколько и на чём едем — это «Трансфер»,
-        его заполняют отдельно.
+        Где встречаемся в день выхода, — поле «Трансфера» (вкладка появится в Ф7).
+        Здесь его нет: «где встречаемся» не часть анонса, а часть логистики.
       </p>
-
-      <label class="flex flex-col gap-2">
-        <span class="text-xs text-muted">Место сбора</span>
-        <input
-          v-model="meetingPlace"
-          type="text"
-          maxlength="200"
-          placeholder="Иркутск, автовокзал, у первой платформы"
-          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-          data-test="meeting-place"
-        />
-      </label>
     </div>
 
     <!-- Маршрут -->
