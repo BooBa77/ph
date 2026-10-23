@@ -222,7 +222,7 @@ describe('Походы (e2e)', () => {
       expect(response.body.organizerUserId).toBe(userId);
     });
 
-    it('у планируемого похода организатор сразу в составе, с ролью и двумя чатами', async () => {
+    it('у планируемого похода организатор сразу в составе, с ролью и тремя чатами', async () => {
       // У мечты состава нет — она вишлист (`tabs.md` §7). Проверяем
       // настоящий поход: в «Планирую» организатор появляется в составе.
       const response = await createTrip({ status: 'planning' });
@@ -249,8 +249,9 @@ describe('Походы (e2e)', () => {
         'SELECT kind FROM conversations WHERE trip_id = $1 ORDER BY kind',
         [tripId],
       );
-      expect(chats.map((row: { kind: string }) => row.kind)).toEqual([
+      expect(chats.map((row: { kind: string }) => row.kind).sort()).toEqual([
         'trip_guest',
+        'trip_meals',
         'trip_members',
       ]);
     });
@@ -1647,7 +1648,7 @@ describe('Походы (e2e)', () => {
       return response.body;
     };
 
-    it('организатор видит оба чата, посторонний в публичном — только гостевой', async () => {
+    it('организатор видит все три чата, посторонний в публичном — только гостевой', async () => {
       const created = await createTrip({ announcement: 'Чаты похода' });
       const tripId = created.body.id as string;
 
@@ -1658,6 +1659,7 @@ describe('Походы (e2e)', () => {
       expect(mine.body.chats.map((c: { kind: string }) => c.kind)).toEqual([
         'trip_guest',
         'trip_members',
+        'trip_meals',
       ]);
       expect(mine.body.chats[0].lastMessage).toBeNull();
 
@@ -1718,7 +1720,7 @@ describe('Походы (e2e)', () => {
       );
     });
 
-    it('приглашённый получает чат участников, ещё не ответив', async () => {
+    it('приглашённый получает чаты участников и питания, ещё не ответив', async () => {
       const created = await createTrip({ announcement: 'Чат приглашённого' });
       const tripId = created.body.id as string;
 
@@ -1732,7 +1734,7 @@ describe('Походы (e2e)', () => {
         .get(`/api/trips/${tripId}/chats`)
         .set('Authorization', `Bearer ${applicantToken}`)
         .expect(200);
-      expect(chats.body.chats).toHaveLength(2);
+      expect(chats.body.chats).toHaveLength(3);
 
       await send(tripId, applicantToken, 'trip_members', 'Я в деле').expect(
         201,

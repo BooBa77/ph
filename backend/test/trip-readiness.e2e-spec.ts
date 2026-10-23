@@ -175,7 +175,7 @@ describe('Готовность похода (e2e)', () => {
     await expect(tabsOf(strangerToken)).resolves.toEqual(['guest']);
   });
 
-  it('мечта → планирую достраивает организатора, роль и членский чат', async () => {
+  it('мечта → планирую достраивает организатора, роль и чаты', async () => {
     await call('patch', `/api/trips/${tripId}`, ownerToken, {
       status: 'planning',
     }).expect(200);
@@ -197,8 +197,9 @@ describe('Готовность похода (e2e)', () => {
 
     expect(participant[0]?.status).toBe('going');
     expect(role[0]?.code).toBe(ORGANIZER_ROLE_CODE);
-    expect(chats.map((row: { kind: string }) => row.kind)).toEqual([
+    expect(chats.map((row: { kind: string }) => row.kind).sort()).toEqual([
       'trip_guest',
+      'trip_meals',
       'trip_members',
     ]);
   });
