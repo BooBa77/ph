@@ -59,6 +59,14 @@ export class DishIngredient {
   @Column({ type: 'int' })
   amount: number;
 
+  /**
+   * Мясной ингредиент: в походе считается на «едоков минус вегетарианцы».
+   * Флаг у ингредиента, а не у блюда: в каше крупа и мясо живут рядом
+   * (`meals.md` §5.2).
+   */
+  @Column({ name: 'is_meat', type: 'boolean', default: false })
+  isMeat: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

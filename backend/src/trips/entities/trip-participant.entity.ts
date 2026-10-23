@@ -63,6 +63,14 @@ export class TripParticipant {
   @Column({ type: 'varchar', length: 20, default: 'invited' })
   status: ParticipantStatus;
 
+  /**
+   * Отдельное питание: человек не едок — в М/Ж, в вегетарианцах и в мясных
+   * количествах не учитывается, пакеты еды ему не назначаются. Ставит сам
+   * участник (`meals.md` §5.6); в пищевых долях Бухгалтерии он не участвует.
+   */
+  @Column({ name: 'eats_separately', type: 'boolean', default: false })
+  eatsSeparately: boolean;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

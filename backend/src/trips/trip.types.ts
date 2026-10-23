@@ -87,6 +87,21 @@ export const CHAT_KINDS = ['trip_guest', 'trip_members'] as const;
 
 export type ChatKind = (typeof CHAT_KINDS)[number];
 
+/** Приёмы пищи: три в день, больше нельзя (`meals.md` §5.4). */
+export const TRIP_MEAL_KINDS = ['breakfast', 'lunch', 'dinner'] as const;
+
+export type TripMealKind = (typeof TRIP_MEAL_KINDS)[number];
+
+/** Форма приёма: готовка или перекус — форма, а не отдельный приём. */
+export const TRIP_MEAL_FORMS = ['cook', 'snack'] as const;
+
+export type TripMealForm = (typeof TRIP_MEAL_FORMS)[number];
+
+/** Вид пакета: обычный или кулёк всего приёма. */
+export const TRIP_MEAL_PACKAGE_KINDS = ['normal', 'kulek'] as const;
+
+export type TripMealPackageKind = (typeof TRIP_MEAL_PACKAGE_KINDS)[number];
+
 /**
  * Код роли организатора в справочнике `roles`.
  *
