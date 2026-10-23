@@ -1,4 +1,4 @@
-import {
+﻿import {
   Check,
   Column,
   CreateDateColumn,
@@ -27,7 +27,7 @@ import { PRODUCT_UNITS, type ProductUnit } from '../meal.types';
  */
 @Entity('products')
 @Check('chk_products_unit', `"unit" IN (${sqlValues(PRODUCT_UNITS)})`)
-@Check('chk_products_weight', `"weight_per_unit_grams" > 0`)
+@Check('chk_products_weight', `"weight_per_unit_grams" >= 0`)
 @Check('chk_products_name', `char_length(btrim("name")) > 0`)
 export class Product {
   @PrimaryGeneratedColumn()

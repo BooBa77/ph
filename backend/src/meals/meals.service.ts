@@ -9,6 +9,7 @@ import { DataSource, EntityManager, In } from 'typeorm';
 import {
   AddIngredientDto,
   CreateDishDto,
+  CreateProductDto,
   DishDto,
   DishIngredientDto,
   DishListDto,
@@ -67,6 +68,38 @@ export class MealsService {
       .getMany();
 
     return { products: products.map((product) => ProductDto.from(product)) };
+  }
+
+  /**
+   * Свой продукт: «шоколад», «бабушкино варенье». Вес единицы — 0,
+   * граммы по нему не считаются, но в раскладке он живёт как обычный.
+   *
+   * Справочник общий и имя уникально: повторное имя — это тот же продукт,
+   * его надо выбрать из подсказки, а не заводить второй.
+   */
+  async createProduct(dto: CreateProductDto): Promise<ProductDto> {
+    const name = dto.name.trim();
+    if (name.length === 0) {
+      throw new BadRequestException('У продукта должно быть название');
+    }
+
+    const manager = this.dataSource.manager;
+    const existing = await manager.findOne(Product, { where: { name } });
+    if (existing) {
+      throw new ConflictException(
+        'Такой продукт уже есть — выберите его из списка',
+      );
+    }
+
+    const saved = await manager.save(
+      manager.create(Product, {
+        name,
+        unit: dto.unit,
+        weightPerUnitGrams: 0,
+      }),
+    );
+
+    return ProductDto.from(saved);
   }
 
   // ───────────────────────── блюда ─────────────────────────

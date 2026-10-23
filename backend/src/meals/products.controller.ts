@@ -1,7 +1,7 @@
-import { Controller, Get, Query } from '@nestjs/common';
-import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+﻿import { Body, Controller, Get, Post, Query } from '@nestjs/common';
+import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
-import { ProductListDto, ProductSearchQueryDto } from './dto/meal.dto';
+import { CreateProductDto, ProductDto, ProductListDto, ProductSearchQueryDto } from './dto/meal.dto';
 import { MealsService } from './meals.service';
 
 /**
@@ -26,5 +26,13 @@ export class ProductsController {
   @ApiOkResponse({ type: ProductListDto })
   async search(@Query() query: ProductSearchQueryDto): Promise<ProductListDto> {
     return this.mealsService.searchProducts(query.search);
+  }
+
+  /** Свой продукт: вес единицы 0, граммы по нему не считаются. */
+  @Post()
+  @ApiOperation({ summary: 'Добавить свой продукт' })
+  @ApiCreatedResponse({ type: ProductDto })
+  async create(@Body() dto: CreateProductDto): Promise<ProductDto> {
+    return this.mealsService.createProduct(dto);
   }
 }
