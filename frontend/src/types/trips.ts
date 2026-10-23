@@ -596,6 +596,8 @@ export interface TripMealDish {
   dishId: string
   title: string
   ingredients: TripMealDishIngredient[]
+  /** Ингредиенты, убранные в этом приёме; рецепт не меняется. */
+  excludedProductIds: number[]
 }
 
 /** Строка раскладки: продукт в приёме, рецептовая и ручная части. */

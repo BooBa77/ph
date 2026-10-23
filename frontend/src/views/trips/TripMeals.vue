@@ -12,6 +12,7 @@ import {
   removeMealLine,
   removeMealPackage,
   setMealAllocations,
+  setMealDishExclusions,
   setMealForm,
   setMealKulek,
   setMealLine,
@@ -30,6 +31,7 @@ import {
   type Trip,
   type TripMeal,
   type TripMealCheck,
+  type TripMealDish,
   type TripMealForm,
   type TripMealKind,
   type TripMealPackage,
@@ -139,14 +141,31 @@ const meatPortion = computed(() => {
   return `на ${eaters} из ${plan.value.eaters.total}`
 })
 
-function dishComposition(meal: TripMeal): string {
-  return meal.dishes
-    .flatMap((dish) => dish.ingredients)
-    .map(
-      (ingredient) =>
-        `${ingredient.name} ${formatProductAmount(ingredient.amount, ingredient.unit)}`,
-    )
-    .join(', ')
+/**
+ * Убрать или вернуть ингредиент блюда в этом приёме. Рецепт не меняется:
+ * исключение живёт только в строке приёма.
+ */
+function toggleDishIngredient(
+  dayIndex: number,
+  kind: TripMealKind,
+  dish: TripMealDish,
+  productId: number,
+): void {
+  if (!props.canEdit) return
+
+  const excluded = dish.excludedProductIds.includes(productId)
+    ? dish.excludedProductIds.filter((id) => id !== productId)
+    : [...dish.excludedProductIds, productId]
+
+  void run(`${dish.dishId}:${productId}:exclude`, () =>
+    setMealDishExclusions(
+      props.trip.id,
+      dayIndex,
+      kind,
+      dish.dishId,
+      excluded,
+    ),
+  )
 }
 
 function productPackages(product: TripMealProduct): string {
@@ -602,24 +621,49 @@ onMounted(() => {
                   <li
                     v-for="dish in mealOf(day.index, kind)!.dishes"
                     :key="dish.dishId"
-                    class="flex items-start justify-between gap-2 text-sm text-text"
+                    class="flex flex-col gap-1 text-sm text-text"
                     data-test="meal-dish"
                   >
-                    <span>
-                      {{ dish.title }}
-                      <span v-if="dish.ingredients.length" class="text-xs text-muted">
-                        ({{ dishComposition(mealOf(day.index, kind)!) }})
-                      </span>
+                    <span class="flex items-start justify-between gap-2">
+                      <span class="font-medium">{{ dish.title }}</span>
+                      <button
+                        v-if="canEdit"
+                        type="button"
+                        class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
+                        :data-test="`meal-dish-remove-${dish.dishId}`"
+                        @click="removeDish(day.index, kind, dish.dishId)"
+                      >
+                        убрать
+                      </button>
                     </span>
-                    <button
-                      v-if="canEdit"
-                      type="button"
-                      class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
-                      :data-test="`meal-dish-remove-${dish.dishId}`"
-                      @click="removeDish(day.index, kind, dish.dishId)"
-                    >
-                      убрать
-                    </button>
+
+                    <span class="flex flex-wrap gap-1">
+                      <button
+                        v-for="ingredient in dish.ingredients"
+                        :key="ingredient.productId"
+                        type="button"
+                        class="rounded-full border px-2 py-0.5 text-xs transition-colors"
+                        :class="
+                          dish.excludedProductIds.includes(ingredient.productId)
+                            ? 'border-dashed border-border text-muted line-through'
+                            : 'border-border text-text hover:border-primary'
+                        "
+                        :disabled="!canEdit"
+                        :title="
+                          dish.excludedProductIds.includes(ingredient.productId)
+                            ? 'Вернуть ингредиент'
+                            : 'Убрать из этого приёма'
+                        "
+                        :data-test="`dish-ing-${dish.dishId}-${ingredient.productId}`"
+                        @click="toggleDishIngredient(day.index, kind, dish, ingredient.productId)"
+                      >
+                        {{ ingredient.name }}
+                        {{ formatProductAmount(ingredient.amount, ingredient.unit) }}
+                        <span v-if="canEdit">
+                          {{ dish.excludedProductIds.includes(ingredient.productId) ? '+' : '×' }}
+                        </span>
+                      </button>
+                    </span>
                   </li>
                 </ul>
 

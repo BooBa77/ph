@@ -482,3 +482,17 @@ export async function updateMealCheck(
 
   return response.checks
 }
+
+/** PUT .../dishes/:dishId/exclusions — убрать ингредиенты в этом приёме. */
+export async function setMealDishExclusions(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  dishId: string,
+  productIds: number[],
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `${mealPath(tripId, dayIndex, kind)}/dishes/${dishId}/exclusions`,
+    { method: 'PUT', body: JSON.stringify({ productIds }) },
+  )
+}

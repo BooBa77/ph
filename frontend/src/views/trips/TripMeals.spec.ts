@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   updateMealPackage: vi.fn(),
   removeMealPackage: vi.fn(),
   setMealAllocations: vi.fn(),
+  setMealDishExclusions: vi.fn(),
   setMealKulek: vi.fn(),
   fetchMealChecks: vi.fn(),
   updateMealCheck: vi.fn(),
@@ -44,6 +45,7 @@ vi.mock('@/api/trips', () => ({
   updateMealPackage: mocks.updateMealPackage,
   removeMealPackage: mocks.removeMealPackage,
   setMealAllocations: mocks.setMealAllocations,
+  setMealDishExclusions: mocks.setMealDishExclusions,
   setMealKulek: mocks.setMealKulek,
   fetchMealChecks: mocks.fetchMealChecks,
   updateMealCheck: mocks.updateMealCheck,
@@ -128,6 +130,7 @@ function plan(): TripMealPlan {
             ingredients: [
               { productId: 1, name: 'Крупа', unit: 'g', amount: 80, isMeat: false },
             ],
+            excludedProductIds: [],
           },
         ],
         products: [
@@ -249,6 +252,7 @@ describe('TripMeals', () => {
     mocks.updateMealPackage.mockResolvedValue(current)
     mocks.removeMealPackage.mockResolvedValue(current)
     mocks.setMealAllocations.mockResolvedValue(current)
+    mocks.setMealDishExclusions.mockResolvedValue(current)
     mocks.setMealKulek.mockResolvedValue(current)
     mocks.fetchMealChecks.mockResolvedValue(checks())
     mocks.updateMealCheck.mockImplementation(
@@ -370,6 +374,15 @@ describe('TripMeals', () => {
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
       { packageId: 'p1', amount: 0, isElastic: true },
     ])
+  })
+
+  it('ингредиент блюда убирается в приёме и возвращается', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="dish-ing-d1-1"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMealDishExclusions).toHaveBeenCalledWith('7', 1, 'breakfast', 'd1', [1])
   })
 
   it('кулёк приёма включается кнопкой', async () => {
