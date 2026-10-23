@@ -350,10 +350,11 @@ export interface TripTypeList {
  * Русские подписи живут только здесь.
  *
  * **Права — на правку, а не на просмотр:** вкладки видят все участники
- * (решение заказчика 21.10.2026), гость — только «Гостевую».
+ * (решение заказчика 21.10.2026), гость — «Гостевую». Отдельной вкладки
+ * «Инфо» нет: информация живёт в «Гостевой», она одна для всех, правка —
+ * кнопкой «Редактировать» в шапке.
  */
 export const TRIP_TABS = [
-  'general',
   'guest',
   'members',
   'sport',
@@ -369,7 +370,6 @@ export const TRIP_TABS = [
 export type TripTabCode = (typeof TRIP_TABS)[number]
 
 export const TRIP_TAB_LABELS: Record<TripTabCode, string> = {
-  general: 'Инфо',
   guest: 'Гостевая',
   members: 'Участники',
   sport: 'Спорт',
@@ -389,10 +389,11 @@ export interface TripTabPermission {
 }
 
 /**
- * Поход глазами гостя — урезанное представление с гостевой вкладки.
+ * Поход глазами гостя — вкладка «Гостевая», одна для всех.
  *
- * Места сбора здесь нет (решение заказчика 21.10.2026), состава и
- * фактических дат — тоже.
+ * С 21.10.2026 информации о походе одна: состав участников и даты (решение
+ * и факт) здесь тоже есть — это важная часть анонса. Места сбора нет:
+ * «где встречаемся» уехало в «Трансфер».
  */
 export interface GuestTrip {
   id: string
@@ -403,6 +404,10 @@ export interface GuestTrip {
   status: TripStatus
   startsAt: string | null
   endsAt: string | null
+  actualStartedAt: string | null
+  actualFinishedAt: string | null
+  /** Состав: кто идёт, с ролями и статусами. */
+  participants: TripParticipant[]
   isCommercial: boolean
   priceRub: number | null
   priceNote: string | null

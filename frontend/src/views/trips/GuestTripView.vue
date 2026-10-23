@@ -11,19 +11,20 @@ import {
   type MentionLinks,
   type MentionNames,
 } from '@/utils/markdown'
-import { tripFrameParts, tripWhenText } from '@/utils/tripDisplay'
-import { TRIP_STATUS_LABELS, type GuestTrip } from '@/types/trips'
+import { tripFrameParts, tripWhenText, formatTripDate } from '@/utils/tripDisplay'
+import {
+  PARTICIPANT_STATUS_LABELS,
+  TRIP_STATUS_LABELS,
+  type GuestTrip,
+} from '@/types/trips'
 
 /**
- * «Гостевая» вкладка — поход глазами гостя.
+ * «Гостевая» вкладка — обзор похода, один для всех.
  *
- * Гость — зарегистрированный человек, который **в походе не участвует**.
- * Ему показывается обзор из «Общей»: цель, анонс, даты, маршрут, требования,
- * коммерция и цена. **Места сбора здесь нет** (решение заказчика
- * 21.10.2026): «где встречаемся» — дело состава. Состава и фактических дат
- * выхода в гостевом обзоре тоже нет — это отдаёт бэкенд, а не прячет фронт.
- *
- * Организатору вкладка нужна как превью: он видит ровно то же, что гость.
+ * С 21.10.2026 отдельной вкладки «Инфо» нет: и участники, и гости видят
+ * здесь одно и то же — цель, анонс, даты (решение и факт), состав с ролями,
+ * маршрут, требования, коммерцию и цену. Правка — кнопкой «Редактировать»
+ * в шапке. **Места сбора здесь нет**: «где встречаемся» уехало в «Трансфер».
  */
 const props = defineProps<{ tripId: string }>()
 
@@ -75,6 +76,20 @@ async function load() {
 const whenText = computed(() => (trip.value ? tripWhenText(trip.value) : ''))
 const frame = computed(() => (trip.value ? tripFrameParts(trip.value).join(' · ') : ''))
 
+/**
+ * Фактические даты: их видят все, это часть анонса. Показываем, только
+ * если поход действительно состоялся (или начался) — план и так выше.
+ */
+const actualText = computed(() => {
+  const started = trip.value?.actualStartedAt
+  const finished = trip.value?.actualFinishedAt
+  if (!started) return ''
+
+  return finished
+    ? `${formatTripDate(started)} — ${formatTripDate(finished)}`
+    : formatTripDate(started)
+})
+
 const routeHtml = computed(() => markdownToHtml(trip.value?.routeText ?? '', names.value, links.value))
 const requirementsHtml = computed(() =>
   markdownToHtml(trip.value?.requirementsText ?? '', names.value, links.value),
@@ -85,11 +100,6 @@ onMounted(load)
 
 <template>
   <section class="flex flex-col gap-4" data-test="guest-trip">
-    <p class="rounded-xl border border-dashed border-border p-3 text-xs text-muted">
-      Так поход видит гость: обзор без состава, места сбора и фактических дат. Всё, что ниже, гость
-      видит и без участия в походе.
-    </p>
-
     <p v-if="isLoading" class="text-sm text-muted" data-test="guest-loading">Загружаем…</p>
 
     <p v-else-if="error" class="text-sm text-muted" data-test="guest-error">{{ error }}</p>
@@ -120,10 +130,33 @@ onMounted(load)
           <dt class="text-xs text-muted">Набор</dt>
           <dd class="text-sm text-text">закрыт</dd>
         </div>
+
+        <div v-if="actualText">
+          <dt class="text-xs text-muted">Факт</dt>
+          <dd class="text-sm text-text" data-test="guest-actual-dates">{{ actualText }}</dd>
+        </div>
       </dl>
 
       <div v-if="trip.announcement" class="text-sm text-text" data-test="guest-announcement">
         {{ trip.announcement }}
+      </div>
+
+      <!--
+        Состав — часть анонса и виден всем: с 21.10.2026 у «Гостевой» нет
+        «урезанного» режима для гостей. Роли и статусы показываем как есть.
+      -->
+      <div v-if="trip.participants.length > 0">
+        <h2 class="mb-1 text-sm text-muted">Состав</h2>
+        <ul class="flex flex-col gap-1 text-sm text-text" data-test="guest-participants">
+          <li v-for="person in trip.participants" :key="person.userId">
+            <span>{{ person.displayName }}</span>
+            <span v-if="person.isOrganizer" class="text-muted"> · организатор</span>
+            <span v-if="person.roles.length" class="text-muted">
+              · {{ person.roles.map((role) => role.name).join(', ') }}
+            </span>
+            <span class="text-muted"> · {{ PARTICIPANT_STATUS_LABELS[person.status] }}</span>
+          </li>
+        </ul>
       </div>
 
       <div v-if="trip.priceNote?.trim()">

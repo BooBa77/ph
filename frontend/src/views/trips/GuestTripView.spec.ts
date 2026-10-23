@@ -32,6 +32,9 @@ function makeGuest(overrides: Partial<GuestTrip> = {}): GuestTrip {
     status: 'decided',
     startsAt: '2027-05-05T00:00:00.000Z',
     endsAt: '2027-05-09T00:00:00.000Z',
+    actualStartedAt: null,
+    actualFinishedAt: null,
+    participants: [],
     isCommercial: true,
     priceRub: 5000,
     priceNote: 'Заброска и питание',
@@ -65,12 +68,52 @@ describe('GuestTripView', () => {
     expect(wrapper.find('[data-test="guest-requirements"]').text()).toContain('кошки')
   })
 
-  it('места сбора и состава на гостевой вкладке нет', async () => {
+  it('места сбора на обзоре нет', async () => {
     const wrapper = await mountView()
 
-    const text = wrapper.text()
-    expect(text).not.toContain('Место сбора')
-    expect(text).not.toContain('Участники')
+    expect(wrapper.text()).not.toContain('Место сбора')
+  })
+
+  it('состав виден всем: имя, роль и статус', async () => {
+    // С 21.10.2026 «Гостевая» одна для всех: состав — часть анонса.
+    mocked.fetchGuestTrip.mockResolvedValue(
+      makeGuest({
+        participants: [
+          {
+            userId: 'u-1',
+            displayName: 'Ваня',
+            avatarUrl: null,
+            status: 'going',
+            roles: [{ code: 'organizer', name: 'Организатор' }],
+            isOrganizer: true,
+            createdAt: '2026-10-14T10:00:00.000Z',
+            updatedAt: '2026-10-14T10:00:00.000Z',
+          },
+        ],
+      }),
+    )
+
+    const wrapper = await mountView()
+    const list = wrapper.find('[data-test="guest-participants"]')
+
+    expect(list.exists()).toBe(true)
+    expect(list.text()).toContain('Ваня')
+    expect(list.text()).toContain('организатор')
+    expect(list.text()).toContain('Организатор')
+    expect(list.text()).toContain('Идёт')
+  })
+
+  it('фактические даты видны, если поход состоялся', async () => {
+    mocked.fetchGuestTrip.mockResolvedValue(
+      makeGuest({
+        actualStartedAt: '2027-05-05T09:00:00.000Z',
+        actualFinishedAt: '2027-05-09T18:00:00.000Z',
+      }),
+    )
+
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[data-test="guest-actual-dates"]').text()).toContain('2027')
   })
 
   it('404 объясняется словами «закрыт», а не пустой страницей', async () => {

@@ -8,7 +8,6 @@ import { getPublicUser, type PublicUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
 import TripChats from '@/views/trips/TripChats.vue'
-import TripInfo from '@/views/trips/TripInfo.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
 import {
   TRIP_TAB_LABELS,
@@ -72,16 +71,16 @@ const TAB_CHATS = 'chats'
 type Tab = TripTabCode | typeof TAB_CHATS
 
 /** Вкладки, у которых уже есть экран. Порядок — порядок в меню. */
-const IMPLEMENTED: TripTabCode[] = ['general', 'guest', 'members']
+const IMPLEMENTED: TripTabCode[] = ['guest', 'members']
 
 const permissions = ref<TripTabPermission[]>([])
-const activeTab = ref<Tab>('general')
+const activeTab = ref<Tab>('guest')
 
 /**
  * Что показать в меню. «Чаты» — исключение: в карте вкладок это часть
  * «Участников», но экран у нас отдельный и работает, поэтому он стоит
  * рядом, а не прячется. У мечты его нет: мечта — вишлист, у неё только
- * «Инфо»/«Гостевая» и ни членского чата, ни подготовки (`tabs.md` §7).
+ * «Гостевая» и ни членского чата, ни подготовки (`tabs.md` §7).
  */
 const displayTabs = computed<{ code: Tab; label: string; available: boolean }[]>(() => {
   const list = permissions.value.map((permission) => ({
@@ -135,7 +134,7 @@ async function load(id: string) {
     permissions.value = await fetchTripTabs(id)
   } catch {
     permissions.value = [
-      { code: 'general', canEdit: false },
+      { code: 'guest', canEdit: false },
       { code: 'members', canEdit: false },
     ]
   }
@@ -155,9 +154,10 @@ async function load(id: string) {
 watch(
   () => route.params.id,
   (id) => {
-    // Новый поход открывается на «Общей»: вкладки прошлого похода к нему
-    // не относятся, а «Питание» чужого похода показывать нечего.
-    activeTab.value = 'general'
+    // Новый поход открывается на «Гостевой»: это его информация, одна
+    // для всех. Вкладки прошлого похода к нему не относятся, а «Питание»
+    // чужого похода показывать нечего.
+    activeTab.value = 'guest'
     actionError.value = null
     if (typeof id === 'string') void load(id)
   },
@@ -293,9 +293,7 @@ async function toggleRecruitment() {
         </button>
       </nav>
 
-      <TripInfo v-if="activeTab === 'general'" :trip="trip" />
-
-      <GuestTripView v-else-if="activeTab === 'guest'" :trip-id="trip.id" />
+      <GuestTripView v-if="activeTab === 'guest'" :trip-id="trip.id" />
 
       <TripParticipants
         v-else-if="activeTab === 'members'"
@@ -308,11 +306,11 @@ async function toggleRecruitment() {
 
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» появится вместе
-        с Ф7: сейчас готовы «Общая», «Гостевая» и «Участники».
+        с Ф7: сейчас готовы «Гостевая» и «Участники».
       </p>
 
       <!-- Вкладки: на телефоне снизу, под большим пальцем. Перенос строк —
-           единственный способ уложить одиннадцать вкладок на узком экране -->
+           единственный способ уложить десять вкладок на узком экране -->
       <nav
         class="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-border bg-surface md:hidden"
         aria-label="Разделы похода"
