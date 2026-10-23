@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
 import {
@@ -88,7 +88,7 @@ async function load() {
     dishes.value = await listDishes()
     ensureDrafts()
   } catch (cause) {
-    error.value = messageOf(cause, 'Не удалось загрузить блюда.')
+    error.value = messageOf(cause, 'Не удалось загрузить рецепты.')
   } finally {
     isLoading.value = false
   }
@@ -106,7 +106,7 @@ async function create() {
     ensureDrafts()
     newTitle.value = ''
   } catch (cause) {
-    error.value = messageOf(cause, 'Не удалось создать блюдо.')
+    error.value = messageOf(cause, 'Не удалось создать рецепт.')
   } finally {
     isCreating.value = false
   }
@@ -129,7 +129,7 @@ async function saveTitle(dish: Dish, event: Event) {
   try {
     Object.assign(dish, await updateDish(dish.id, { title }))
   } catch (cause) {
-    error.value = messageOf(cause, 'Не удалось переименовать блюдо.')
+    error.value = messageOf(cause, 'Не удалось переименовать рецепт.')
     await load()
   } finally {
     pendingId.value = null
@@ -163,7 +163,7 @@ async function removeDish(dish: Dish) {
     await deleteDish(dish.id)
     dishes.value = dishes.value.filter((row) => row.id !== dish.id)
   } catch (cause) {
-    error.value = messageOf(cause, 'Не удалось удалить блюдо.')
+    error.value = messageOf(cause, 'Не удалось удалить рецепт.')
   } finally {
     pendingId.value = null
     confirmingDeleteId.value = null
@@ -181,8 +181,8 @@ async function addRow(dish: Dish) {
   const draft = draftOf(dish)
   const amount = Number(String(draft.amount).trim())
 
-  if (!draft.product || !Number.isInteger(amount) || amount <= 0) {
-    error.value = 'Выберите продукт и укажите количество — целое число больше нуля.'
+  if (!draft.product || !Number.isFinite(amount) || amount <= 0) {
+    error.value = 'Выберите продукт и укажите количество — число больше нуля.'
     return
   }
 
@@ -211,9 +211,9 @@ async function saveAmount(dish: Dish, ingredient: DishIngredient, event: Event) 
   const input = event.target as HTMLInputElement
   const amount = Number(input.value)
 
-  if (!Number.isInteger(amount) || amount <= 0) {
+  if (!Number.isFinite(amount) || amount <= 0) {
     input.value = String(ingredient.amount)
-    error.value = 'Количество — целое число больше нуля.'
+    error.value = 'Количество — число больше нуля.'
     return
   }
   if (amount === ingredient.amount) return
@@ -266,7 +266,7 @@ onMounted(load)
         v-model="newTitle"
         type="text"
         maxlength="120"
-        placeholder="Название блюда: «Каша с тушёнкой»"
+        placeholder="Название рецепта: «Каша с тушёнкой»"
         class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
         data-test="new-dish-title"
       />
@@ -276,12 +276,12 @@ onMounted(load)
         class="cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         data-test="create-dish"
       >
-        {{ isCreating ? 'Создаём…' : 'Создать блюдо' }}
+        {{ isCreating ? 'Создаём…' : 'Создать рецепт' }}
       </button>
     </form>
 
     <p v-if="isLoading" class="text-sm text-muted" data-test="meals-loading">
-      Загружаем блюда…
+      Загружаем рецепты…
     </p>
 
     <p
@@ -289,7 +289,7 @@ onMounted(load)
       class="rounded-xl border border-dashed border-border p-4 text-sm text-muted"
       data-test="meals-empty"
     >
-      Блюд пока нет. Заведите первое — и в следующий поход раскладка соберётся из готовых.
+      Рецептов пока нет. Заведите первое — и в следующий поход раскладка соберётся из готовых.
     </p>
 
     <ul v-else class="flex flex-col gap-4">
@@ -305,7 +305,7 @@ onMounted(load)
             type="text"
             maxlength="120"
             :disabled="pendingId === dish.id"
-            aria-label="Название блюда"
+            aria-label="Название рецепта"
             class="min-w-0 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-base font-medium text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
             data-test="dish-title"
             @change="saveTitle(dish, $event)"
@@ -352,7 +352,7 @@ onMounted(load)
           maxlength="500"
           placeholder="Как готовить: «варить 15 минут, солить в конце»"
           :disabled="pendingId === dish.id"
-          aria-label="Заметка к блюду"
+          aria-label="Заметка к рецепту"
           class="mb-3 w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-xs text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
           data-test="dish-note"
           @change="saveNote(dish, $event)"
@@ -382,8 +382,8 @@ onMounted(load)
               <input
                 :value="ingredient.amount"
                 type="number"
-                min="1"
-                step="1"
+                min="0.001"
+                step="0.001"
                 :disabled="pendingId === ingredient.id"
                 aria-label="Количество"
                 class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-right text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
@@ -433,8 +433,8 @@ onMounted(load)
             <input
               v-model="drafts[dish.id]!.amount"
               type="number"
-              min="1"
-              step="1"
+              min="0.001"
+              step="0.001"
               placeholder="кол-во"
               class="w-24 rounded-xl border border-border bg-field px-2 py-1.5 text-sm text-text focus:border-primary focus:outline-none"
               data-test="ingredient-amount-input"

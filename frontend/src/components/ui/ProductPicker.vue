@@ -20,11 +20,11 @@ const props = withDefaults(
     /** Подсказка в поле ввода. */
     placeholder?: string
   }>(),
-  { placeholder: 'Начните вводить название — например, Гречка' },
+  { placeholder: 'Введите название продукта' },
 )
 
 const emit = defineEmits<{
-  /** Выбран продукт. Поле после выбора очищается. */
+  /** Выбран продукт. Поле показывает его название, чтобы выбор был виден. */
   select: [product: Product]
 }>()
 
@@ -37,6 +37,8 @@ const isLoading = ref(false)
 const error = ref<string | null>(null)
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
+/** После выбора поле заполняется названием — искать его заново не надо. */
+let skipNextSearch = false
 
 async function search() {
   const text = query.value.trim()
@@ -61,6 +63,12 @@ async function search() {
 }
 
 watch(query, () => {
+  if (skipNextSearch) {
+    skipNextSearch = false
+
+    return
+  }
+
   if (searchTimer) clearTimeout(searchTimer)
   searchTimer = setTimeout(search, SEARCH_DELAY_MS)
 })
@@ -71,7 +79,8 @@ onUnmounted(() => {
 
 function choose(product: Product) {
   emit('select', product)
-  query.value = ''
+  skipNextSearch = true
+  query.value = product.name
   options.value = []
 }
 </script>

@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
@@ -34,7 +34,7 @@ const SECTIONS = [
   // Снаряжение и чек-листы стоят рядом: это подготовка к походу,
   // и человек ищет их вместе, а не в разных концах меню.
   { to: '/profile/gear', label: 'Снаряжение', icon: 'gear' },
-  { to: '/profile/meals', label: 'Питание', icon: 'meals' },
+  { to: '/profile/meals', label: 'Кулинарная книга', icon: 'meals' },
   { to: '/profile/checklists', label: 'Чек-листы', icon: 'checklist' },
   // Люди — не раздел аккаунта, а раздел сайта: искать человека нужно
   // из похода и из меню, а не из настроек.

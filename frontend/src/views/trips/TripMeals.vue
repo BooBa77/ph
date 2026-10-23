@@ -27,7 +27,6 @@ import {
   TRIP_MEAL_FORM_LABELS,
   TRIP_MEAL_KINDS,
   TRIP_MEAL_LABELS,
-  TRIP_MEAL_TIMES,
   type Trip,
   type TripMeal,
   type TripMealCheck,
@@ -66,12 +65,6 @@ const busy = ref<string | null>(null)
 const dishDrafts = ref<Record<string, string>>({})
 /** Черновик ручной строки: ключ приёма → продукт и количество. */
 const lineDrafts = ref<Record<string, { product: Product | null; amount: string }>>({})
-
-const MEAL_HOURS: Record<TripMealKind, number> = {
-  breakfast: 8,
-  lunch: 13,
-  dinner: 19,
-}
 
 function messageOf(cause: unknown, fallback: string): string {
   return cause instanceof ApiError ? cause.message : fallback
@@ -114,34 +107,6 @@ const packageNames = computed<Record<string, string>>(() =>
 const start = computed(() =>
   props.trip.startsAt ? new Date(props.trip.startsAt) : null,
 )
-const end = computed(() =>
-  props.trip.endsAt ? new Date(props.trip.endsAt) : null,
-)
-
-/** 00:00 — «время не задано»: края дня не подрезаем. */
-function isUnknownTime(date: Date | null): boolean {
-  return !date || (date.getHours() === 0 && date.getMinutes() === 0)
-}
-
-/** Какие приёмы попадают в день с учётом времени заезда и выезда. */
-function visibleKinds(dayIndex: number): TripMealKind[] {
-  const dayCount = plan.value?.dayCount ?? 0
-  const arrival =
-    dayIndex === 1 && start.value && !isUnknownTime(start.value)
-      ? start.value.getHours() + start.value.getMinutes() / 60
-      : null
-  const departure =
-    dayIndex === dayCount && end.value && !isUnknownTime(end.value)
-      ? end.value.getHours() + end.value.getMinutes() / 60
-      : null
-
-  return TRIP_MEAL_KINDS.filter(
-    (kind) =>
-      (arrival === null || MEAL_HOURS[kind] >= arrival) &&
-      (departure === null || MEAL_HOURS[kind] <= departure),
-  )
-}
-
 function dateLabel(dayIndex: number): string {
   if (!start.value) return ''
 
@@ -160,7 +125,7 @@ const days = computed(() => {
     return {
       index: dayIndex,
       date: dateLabel(dayIndex),
-      kinds: visibleKinds(dayIndex),
+      kinds: [...TRIP_MEAL_KINDS],
     }
   })
 })
@@ -530,8 +495,10 @@ onMounted(() => {
         <h2 class="text-sm text-muted">Едоки</h2>
 
         <p class="text-sm text-text" data-test="eaters-counts">
-          Всего {{ plan.eaters.total }}: мужчин {{ plan.eaters.men }}, женщин
-          {{ plan.eaters.women }}, вегетарианцев {{ plan.eaters.vegetarians }}
+          Едоков в общей раскладке — {{ plan.eaters.total }}
+          (М-{{ plan.eaters.men }}, Ж-{{ plan.eaters.women }}),
+          <template v-if="plan.eaters.vegetarians === 0">вегетарианцев нет</template>
+          <template v-else>вегетарианцев {{ plan.eaters.vegetarians }}</template>
         </p>
 
         <ul class="flex flex-col gap-1" data-test="eaters-list">
@@ -541,25 +508,27 @@ onMounted(() => {
             class="flex flex-wrap items-baseline gap-2 text-sm text-text"
             data-test="eater"
           >
-            <span>{{ person.displayName }}</span>
             <span class="text-xs text-muted">{{ person.gender === 'm' ? 'м' : 'ж' }}</span>
+            <span>{{ person.displayName }}</span>
             <span v-if="person.isVegetarian" class="text-xs text-muted">вегетарианец</span>
             <span v-if="person.allergies" class="text-xs text-muted">аллергии: {{ person.allergies }}</span>
             <span v-if="person.eatsSeparately" class="text-xs text-muted">питается отдельно</span>
           </li>
         </ul>
 
-        <label v-if="me" class="flex cursor-pointer items-center gap-2 text-sm text-text">
-          <input
-            type="checkbox"
-            class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
-            :checked="me.eatsSeparately"
-            :disabled="busy === 'separate'"
-            data-test="eats-separately"
-            @change="toggleSeparate"
-          />
-          Буду питаться отдельно
-        </label>
+        <div v-if="me" class="mt-2 border-t border-border pt-2" data-test="eats-separately-block">
+          <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+            <input
+              type="checkbox"
+              class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+              :checked="me.eatsSeparately"
+              :disabled="busy === 'separate'"
+              data-test="eats-separately"
+              @change="toggleSeparate"
+            />
+            Буду питаться отдельно
+          </label>
+        </div>
       </div>
 
       <!-- Раскладка по дням -->
@@ -588,7 +557,6 @@ onMounted(() => {
                 <span class="text-sm font-medium text-text">
                   {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
                 </span>
-                <span class="text-xs text-muted">{{ TRIP_MEAL_TIMES[kind] }}</span>
               </header>
 
               <template v-if="mealOf(day.index, kind)">
@@ -773,7 +741,7 @@ onMounted(() => {
                     class="w-full rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
                     :data-test="`meal-dish-select-${day.index}-${kind}`"
                   >
-                    <option value="">Блюдо из книги…</option>
+                    <option value="">Выберите рецепт блюда</option>
                     <option v-for="dish in dishes" :key="dish.id" :value="dish.id">
                       {{ dish.title }}
                     </option>

@@ -218,7 +218,7 @@ describe('UserMeals', () => {
     await flushPromises()
 
     expect(mocked.updateIngredient).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-test="meals-error"]').text()).toContain('целое число')
+    expect(wrapper.find('[data-test="meals-error"]').text()).toContain('число больше нуля')
   })
 
   it('продукт убирается из состава, вес пересчитывается', async () => {
