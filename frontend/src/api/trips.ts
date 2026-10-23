@@ -12,6 +12,7 @@ import type {
   TripListQuery,
   TripListResponse,
   TripMessage,
+  TripMealCheck,
   TripMealForm,
   TripMealKind,
   TripMealPlan,
@@ -455,4 +456,29 @@ export async function setMealKulek(
     method: 'PUT',
     body: JSON.stringify({ enabled }),
   })
+}
+
+// ─────────────────────── чек-лист покупок ───────────────────────
+
+/** GET /api/trips/:id/meal-checks — проекция раскладки и отметки. */
+export async function fetchMealChecks(tripId: string): Promise<TripMealCheck[]> {
+  const response = await apiFetch<{ checks: TripMealCheck[] }>(
+    `/trips/${tripId}/meal-checks`,
+  )
+
+  return response.checks
+}
+
+/** PUT /api/trips/:id/meal-checks/:productId — отметка чек-листа. */
+export async function updateMealCheck(
+  tripId: string,
+  productId: number,
+  patch: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
+): Promise<TripMealCheck[]> {
+  const response = await apiFetch<{ checks: TripMealCheck[] }>(
+    `/trips/${tripId}/meal-checks/${productId}`,
+    { method: 'PUT', body: JSON.stringify(patch) },
+  )
+
+  return response.checks
 }

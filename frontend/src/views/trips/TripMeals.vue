@@ -6,6 +6,7 @@ import { listDishes } from '@/api/meals'
 import {
   addMealDish,
   createMealPackage,
+  fetchMealChecks,
   fetchMealPlan,
   removeMealDish,
   removeMealLine,
@@ -15,6 +16,7 @@ import {
   setMealKulek,
   setMealLine,
   setMyStatus,
+  updateMealCheck,
   updateMealPackage,
 } from '@/api/trips'
 import ProductPicker from '@/components/ui/ProductPicker.vue'
@@ -28,6 +30,7 @@ import {
   TRIP_MEAL_TIMES,
   type Trip,
   type TripMeal,
+  type TripMealCheck,
   type TripMealForm,
   type TripMealKind,
   type TripMealPackage,
@@ -465,6 +468,50 @@ function removePackage(pack: TripMealPackage): void {
   void run(`${pack.id}:delete`, () => removeMealPackage(props.trip.id, pack.id))
 }
 
+// ─── чек-лист покупок ───
+
+const checks = ref<TripMealCheck[] | null>(null)
+const checksOpen = ref(false)
+
+function toggleChecklist(): void {
+  checksOpen.value = !checksOpen.value
+
+  if (checksOpen.value && checks.value === null) {
+    void loadChecks()
+  }
+}
+
+async function loadChecks(): Promise<void> {
+  try {
+    checks.value = await fetchMealChecks(props.trip.id)
+  } catch (problem) {
+    error.value = messageOf(problem, 'Не удалось загрузить чек-лист')
+  }
+}
+
+async function patchCheck(
+  check: TripMealCheck,
+  patch: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
+): Promise<void> {
+  try {
+    checks.value = await updateMealCheck(props.trip.id, check.productId, patch)
+  } catch (problem) {
+    error.value = messageOf(problem, 'Не удалось сохранить отметку')
+  }
+}
+
+function toggleCheck(check: TripMealCheck, field: 'isBought' | 'isHome'): void {
+  void patchCheck(check, { [field]: !check[field] })
+}
+
+function setCheckAmount(check: TripMealCheck, event: Event): void {
+  const raw = (event.target as HTMLInputElement).value.trim()
+  const amount = raw === '' ? null : Number(raw)
+  if (amount !== null && (!Number.isInteger(amount) || amount < 0)) return
+
+  void patchCheck(check, { boughtAmount: amount })
+}
+
 onMounted(() => {
   void load()
   void loadDishes()
@@ -877,6 +924,84 @@ onMounted(() => {
             </template>
           </li>
         </ul>
+      </div>
+
+      <!-- Чек-лист покупок: живая проекция раскладки -->
+      <div class="flex flex-col gap-2" data-test="checklist">
+        <button
+          type="button"
+          class="w-full cursor-pointer rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text transition-colors hover:border-primary"
+          data-test="checklist-toggle"
+          @click="toggleChecklist"
+        >
+          {{ checksOpen ? 'Скрыть чек-лист' : 'Чек-лист покупок' }}
+        </button>
+
+        <template v-if="checksOpen">
+          <p v-if="checks === null" class="text-sm text-muted" data-test="checklist-loading">
+            Загружаем чек-лист…
+          </p>
+
+          <p v-else-if="checks.length === 0" class="text-sm text-muted" data-test="checklist-empty">
+            В раскладке пока нет продуктов.
+          </p>
+
+          <ul v-else class="flex flex-col gap-2">
+            <li
+              v-for="check in checks"
+              :key="check.productId"
+              class="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-2 text-sm"
+              :class="check.isOrphaned ? 'text-muted' : 'text-text'"
+              data-test="check-row"
+            >
+              <span>{{ check.name }}</span>
+              <span class="text-xs text-muted">
+                надо: {{ formatProductAmount(check.needAmount, check.unit) }}
+              </span>
+              <span v-if="check.isOrphaned" class="text-xs text-muted">нет в плане</span>
+
+              <label class="flex items-center gap-1 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  :checked="check.isBought"
+                  class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                  data-test="check-bought"
+                  @change="toggleCheck(check, 'isBought')"
+                />
+                куплено
+              </label>
+
+              <label class="flex items-center gap-1 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  :checked="check.isHome"
+                  class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                  data-test="check-home"
+                  @change="toggleCheck(check, 'isHome')"
+                />
+                домашнее
+              </label>
+
+              <label class="flex items-center gap-1 text-xs text-muted">
+                куплено:
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  :value="check.boughtAmount ?? ''"
+                  placeholder="—"
+                  class="w-16 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
+                  data-test="check-amount"
+                  @change="setCheckAmount(check, $event)"
+                />
+              </label>
+
+              <span v-if="check.boughtByName" class="text-xs text-muted">
+                купил(а): {{ check.boughtByName }}
+              </span>
+            </li>
+          </ul>
+        </template>
       </div>
     </template>
   </section>

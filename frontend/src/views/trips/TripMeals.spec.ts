@@ -3,7 +3,7 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAuthStore } from '@/stores/auth'
-import type { Trip, TripMealPlan } from '@/types/trips'
+import type { Trip, TripMealCheck, TripMealPlan } from '@/types/trips'
 import TripMeals from '@/views/trips/TripMeals.vue'
 
 /**
@@ -26,6 +26,8 @@ const mocks = vi.hoisted(() => ({
   removeMealPackage: vi.fn(),
   setMealAllocations: vi.fn(),
   setMealKulek: vi.fn(),
+  fetchMealChecks: vi.fn(),
+  updateMealCheck: vi.fn(),
   listDishes: vi.fn(),
   searchProducts: vi.fn(),
 }))
@@ -43,6 +45,8 @@ vi.mock('@/api/trips', () => ({
   removeMealPackage: mocks.removeMealPackage,
   setMealAllocations: mocks.setMealAllocations,
   setMealKulek: mocks.setMealKulek,
+  fetchMealChecks: mocks.fetchMealChecks,
+  updateMealCheck: mocks.updateMealCheck,
 }))
 
 vi.mock('@/api/meals', () => ({
@@ -158,6 +162,53 @@ function plan(): TripMealPlan {
   }
 }
 
+function checks(): TripMealCheck[] {
+  return [
+    {
+      productId: 1,
+      name: 'Крупа',
+      unit: 'g',
+      weightPerUnitGrams: 1,
+      needAmount: 160,
+      needGrams: 160,
+      isBought: false,
+      isHome: false,
+      boughtAmount: null,
+      boughtByName: null,
+      boughtAt: null,
+      isOrphaned: false,
+    },
+    {
+      productId: 2,
+      name: 'Тушёнка',
+      unit: 'can',
+      weightPerUnitGrams: 340,
+      needAmount: 1,
+      needGrams: 340,
+      isBought: true,
+      isHome: false,
+      boughtAmount: 1,
+      boughtByName: 'Вегетарианка',
+      boughtAt: '2026-10-21T10:00:00.000Z',
+      isOrphaned: false,
+    },
+    {
+      productId: 3,
+      name: 'Старая крупа',
+      unit: 'g',
+      weightPerUnitGrams: 1,
+      needAmount: 0,
+      needGrams: 0,
+      isBought: true,
+      isHome: false,
+      boughtAmount: 500,
+      boughtByName: 'Организатор',
+      boughtAt: '2026-10-21T10:00:00.000Z',
+      isOrphaned: true,
+    },
+  ]
+}
+
 function signIn() {
   const auth = useAuthStore()
   auth.user = {
@@ -199,6 +250,11 @@ describe('TripMeals', () => {
     mocks.removeMealPackage.mockResolvedValue(current)
     mocks.setMealAllocations.mockResolvedValue(current)
     mocks.setMealKulek.mockResolvedValue(current)
+    mocks.fetchMealChecks.mockResolvedValue(checks())
+    mocks.updateMealCheck.mockImplementation(
+      async (_tripId: string, productId: number, patch: Record<string, unknown>) =>
+        checks().map((row) => (row.productId === productId ? { ...row, ...patch } : row)),
+    )
     mocks.listDishes.mockResolvedValue([
       {
         id: 'd2',
@@ -336,5 +392,40 @@ describe('TripMeals', () => {
     expect(mocks.updateMealPackage).toHaveBeenCalledWith('7', 'p1', {
       weightActualGrams: 500,
     })
+  })
+
+  it('чек-лист открывается кнопкой: проекция и отметки', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="checklist-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.fetchMealChecks).toHaveBeenCalledWith('7')
+    expect(wrapper.findAll('[data-test="check-row"]')).toHaveLength(3)
+    expect(wrapper.text()).toContain('надо')
+    expect(wrapper.text()).toContain('купил(а): Вегетарианка')
+  })
+
+  it('отметка «куплено» ставится любым участником', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="checklist-toggle"]').trigger('click')
+    await flushPromises()
+
+    const box = wrapper.findAll('[data-test="check-bought"]')[0]
+    expect(box).toBeTruthy()
+    await box!.setValue(true)
+    await flushPromises()
+
+    expect(mocks.updateMealCheck).toHaveBeenCalledWith('7', 1, { isBought: true })
+  })
+
+  it('продукт, ушедший из плана, помечен', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="checklist-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('нет в плане')
   })
 })

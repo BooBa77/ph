@@ -651,3 +651,22 @@ export interface TripMealPlan {
   meals: TripMeal[]
   packages: TripMealPackage[]
 }
+
+/** Строка чек-листа покупок: продукт раскладки и его отметки. */
+export interface TripMealCheck {
+  productId: number
+  name: string
+  unit: ProductUnit
+  weightPerUnitGrams: number
+  /** Сколько надо по раскладке. */
+  needAmount: number
+  needGrams: number
+  isBought: boolean
+  /** Домашнее: покупать не нужно, но строка остаётся. */
+  isHome: boolean
+  boughtAmount: number | null
+  boughtByName: string | null
+  boughtAt: string | null
+  /** Продукт ушёл из раскладки, но куплен — строка осталась. */
+  isOrphaned: boolean
+}
