@@ -27,6 +27,7 @@ const TRIP: Trip = {
   status: 'decided',
   startsAt: '2027-05-05T01:00:00.000Z',
   endsAt: '2027-05-09T10:00:00.000Z',
+  dateVariants: [],
   actualStartedAt: null,
   actualFinishedAt: null,
   isCommercial: false,

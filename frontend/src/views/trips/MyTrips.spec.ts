@@ -33,6 +33,7 @@ const BASE: Trip = {
   status: 'idea',
   startsAt: null,
   endsAt: null,
+  dateVariants: [],
   actualStartedAt: null,
   actualFinishedAt: null,
   isCommercial: false,

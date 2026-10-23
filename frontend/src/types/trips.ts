@@ -259,6 +259,12 @@ export interface Trip {
   status: TripStatus
   startsAt: string | null
   endsAt: string | null
+  /**
+   * Прогноз дат. Нужен форме правки: без него смена готовности с «Мечты»
+   * на «Планирую» показывала бы пустую продолжительность и стирала её
+   * при сохранении.
+   */
+  dateVariants: TripDateVariantInput[]
   /** Факт выхода на маршрут: он важнее плана — см. `TRIP_WHEN_VALUES`. */
   actualStartedAt: string | null
   /** Факт возвращения. */

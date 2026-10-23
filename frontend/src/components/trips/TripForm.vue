@@ -14,6 +14,7 @@ import {
   emptyVariantDraft,
   geoObjectLabel,
   type CreateTripRequest,
+  type DatePeriod,
   type DateVariantDraft,
   type GeoObject,
   type Trip,
@@ -142,6 +143,12 @@ onMounted(async () => {
 const status = ref<TripStatus>(initial?.status ?? 'idea')
 const visibility = ref<TripVisibility>(initial?.visibility ?? 'public')
 
+/**
+ * Мечта — вишлист, а не поход (`tabs.md` §7): место сбора, требования
+ * к участникам и гитара — поля подготовки, у мечты их нет.
+ */
+const isIdea = computed(() => status.value === 'idea')
+
 /** Пояснение к выбранной готовности: оно же объясняет, почему даты такие. */
 const STATUS_HINTS: Record<TripStatus, string> = {
   idea: 'Мечта: элемент вишлиста. Даты может не быть вовсе — «когда-нибудь». Если знаете месяцы или число, укажите их, а продолжительность важнее даты.',
@@ -182,11 +189,79 @@ const announcement = ref(initial?.announcement ?? '')
 // ─── Даты ───
 
 /**
- * Варианты дат в правке не предзаполняются: их нет в ответе API (`GET
- * /api/trips/:id` отдаёт решение, а не прогноз). Пустой список означает
- * «не трогали», и патч их не тронет — см. `buildTripPatch`.
+ * Собрать черновики из вариантов, которые пришли в ответе похода.
+ *
+ * Месяцы с одинаковой продолжительностью собираются в одну строку
+ * «примерного периода» и становятся отдельными вариантами при отправке;
+ * варианты с конкретным числом — по строке на каждый. Так форма правки
+ * показывает то же, что человек ввёл когда-то, и смена готовности
+ * не теряет продолжительность.
  */
-const variants = ref<DateVariantDraft[]>([emptyVariantDraft(1)])
+function draftsFromVariants(source: TripDateVariantInput[]): DateVariantDraft[] {
+  const drafts: DateVariantDraft[] = []
+  let nextId = 0
+
+  const months = new Map<
+    string,
+    { durationDays: string; durationDelta: string; periods: DatePeriod[] }
+  >()
+  const exact: TripDateVariantInput[] = []
+
+  for (const variant of source) {
+    if (variant.day != null) {
+      exact.push(variant)
+      continue
+    }
+
+    const key = `${variant.durationDays ?? ''}|${variant.durationDelta ?? 0}`
+    const group = months.get(key) ?? {
+      durationDays: variant.durationDays ? String(variant.durationDays) : '',
+      durationDelta: variant.durationDelta ? String(variant.durationDelta) : '',
+      periods: [],
+    }
+    if (variant.month != null) {
+      group.periods.push({
+        // Месяц без года в форме не выразить: подставляем текущий год,
+        // чтобы строка не пропала. Данные приложения всегда с годом.
+        year: variant.year ?? new Date().getFullYear(),
+        month: variant.month,
+      })
+    }
+    months.set(key, group)
+  }
+
+  for (const group of months.values()) {
+    drafts.push({
+      ...emptyVariantDraft(++nextId),
+      periods: group.periods,
+      durationDays: group.durationDays,
+      durationDelta: group.durationDelta,
+    })
+  }
+
+  for (const variant of exact) {
+    drafts.push({
+      ...emptyVariantDraft(++nextId),
+      mode: 'exact',
+      year: variant.year ? String(variant.year) : '',
+      month: variant.month ? String(variant.month) : '',
+      day: String(variant.day),
+      durationDays: variant.durationDays ? String(variant.durationDays) : '',
+      durationDelta: variant.durationDelta ? String(variant.durationDelta) : '',
+    })
+  }
+
+  return drafts.length > 0 ? drafts : [emptyVariantDraft(1)]
+}
+
+/**
+ * Варианты дат приходят в ответе похода (`dateVariants`) и предзаполняются:
+ * иначе смена готовности с «Мечты» на «Планирую» теряла бы введённую
+ * продолжительность — форма отправляла бы пустой прогноз.
+ */
+const variants = ref<DateVariantDraft[]>(
+  draftsFromVariants(initial?.dateVariants ?? []),
+)
 const startsAt = ref(toLocalInput(initial?.startsAt ?? null))
 const endsAt = ref(toLocalInput(initial?.endsAt ?? null))
 
@@ -251,6 +326,17 @@ const validationProblem = computed<string | null>(() => {
     const hasDuration = variants.value.some((row) => Number(row.durationDays) > 0)
     if (!hasDuration) {
       return 'Укажите продолжительность: без неё поход не планируется'
+    }
+
+    // «Планирую» без даты не бывает: месяц или конкретное число обязательны.
+    // У мечты дат может не быть вовсе — это вишлист.
+    if (status.value === 'planning') {
+      const hasDate = variants.value.some((row) =>
+        row.mode === 'exact' ? Boolean(row.month) : row.periods.length > 0,
+      )
+      if (!hasDate) {
+        return 'Укажите месяц или конкретное число: «Планирую» без даты не бывает'
+      }
     }
   } else {
     if (!startsAt.value || !endsAt.value) {
@@ -351,13 +437,24 @@ function buildPayload(): CreateTripRequest {
   }
 
   if (isDateForecast.value) {
-    payload.startsAt = null
-    payload.endsAt = null
+    /**
+     * Даты не теряем: «Решено → Планирую» разрешено, и решённые даты
+     * остаются (`tabs.md` §7). У создания черновика нет — там null.
+     */
+    payload.startsAt = initial?.startsAt ?? null
+    payload.endsAt = initial?.endsAt ?? null
     payload.dateVariants = buildVariants()
   } else {
     payload.startsAt = toIso(startsAt.value)
     payload.endsAt = toIso(endsAt.value)
     payload.dateVariants = []
+  }
+
+  // У мечты полей подготовки нет — и в теле им делать нечего.
+  if (isIdea.value) {
+    payload.meetingPlace = null
+    payload.requirementsText = null
+    payload.hasGuitar = false
   }
 
   return payload
@@ -505,8 +602,8 @@ defineExpose({ validationProblem })
       </div>
     </div>
 
-    <!-- Сбор -->
-    <div class="flex flex-col gap-3">
+    <!-- Сбор: только у настоящего похода, у мечты его нет -->
+    <div v-if="!isIdea" class="flex flex-col gap-3">
       <span class="text-sm text-muted">Сбор</span>
 
       <p class="text-xs text-muted">
@@ -544,8 +641,8 @@ defineExpose({ validationProblem })
       </span>
     </div>
 
-    <!-- Требования -->
-    <div class="flex flex-col gap-2">
+    <!-- Требования: подготовка, у мечты их нет -->
+    <div v-if="!isIdea" class="flex flex-col gap-2">
       <span class="text-sm text-muted">Требования к участникам</span>
 
       <MarkdownEditor
@@ -588,8 +685,9 @@ defineExpose({ validationProblem })
       </label>
     </div>
 
-    <!-- Гитара: вопрос на конец формы -->
+    <!-- Гитара: вопрос на конец формы, только у настоящего похода -->
     <label
+      v-if="!isIdea"
       class="flex cursor-pointer items-center gap-3 border-t border-border pt-4"
       data-test="guitar-label"
     >

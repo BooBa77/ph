@@ -40,6 +40,7 @@ const BASE: Trip = {
   status: 'decided',
   startsAt: '2027-05-05T00:00:00.000Z',
   endsAt: '2027-05-09T00:00:00.000Z',
+  dateVariants: [],
   actualStartedAt: null,
   actualFinishedAt: null,
   isCommercial: false,

@@ -229,6 +229,18 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="submit"]').attributes('disabled')).toBeDefined()
   })
 
+  it('«Планирую» без месяца или числа не отправляется', async () => {
+    // У мечты дат может не быть, у «Планирую» — нет: месяц или конкретное
+    // число обязательны (решение 21.10.2026).
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+    await wrapper.find('[data-test="status"]').setValue('planning')
+    await wrapper.find('[data-test="duration-days"]').setValue('5')
+
+    expect(wrapper.find('[data-test="hint"]').text()).toContain('месяц')
+    expect(wrapper.find('[data-test="submit"]').attributes('disabled')).toBeDefined()
+  })
+
   it('решённый поход без дат не отправляется', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
@@ -309,6 +321,12 @@ describe('CreateTrip', () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
 
+    // Место сбора и гитара — поля подготовки; у мечты их нет, поэтому
+    // проверяем на решённом походе.
+    await wrapper.find('[data-test="status"]').setValue('decided')
+    await wrapper.find('[data-test="starts-at"]').setValue('2027-05-05T09:00')
+    await wrapper.find('[data-test="ends-at"]').setValue('2027-05-09T18:00')
+
     await wrapper.find('[data-test="meeting-place"]').setValue('Иркутск, автовокзал')
     await wrapper.find('[data-test="guitar"]').setValue(true)
     await submit(wrapper)
@@ -322,6 +340,9 @@ describe('CreateTrip', () => {
   it('пустой сбор уезжает null-ом, а гитара по умолчанию «не будет»', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
+    await wrapper.find('[data-test="status"]').setValue('decided')
+    await wrapper.find('[data-test="starts-at"]').setValue('2027-05-05T09:00')
+    await wrapper.find('[data-test="ends-at"]').setValue('2027-05-09T18:00')
     await submit(wrapper)
 
     expect(lastPayload()).toMatchObject({
