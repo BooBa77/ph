@@ -19,6 +19,7 @@ import {
   SetMealFormDto,
   SetMealKulekDto,
   SetMealLineDto,
+  SetDishExclusionsDto,
   TripMealCheckListDto,
   TripMealPlanDto,
   UpdateMealCheckDto,
@@ -91,6 +92,28 @@ export class TripMealsController {
     @Param('dishId') dishId: string,
   ): Promise<TripMealPlanDto> {
     return this.tripMeals.removeDish(authUser.id, id, dayIndex, kind, dishId);
+  }
+
+  /** Исключить ингредиенты блюда в этом приёме: «лук не любим». */
+  @Put(':id/meals/:dayIndex/:kind/dishes/:dishId/exclusions')
+  @ApiOperation({ summary: 'Исключения ингредиентов в приёме' })
+  @ApiOkResponse({ type: TripMealPlanDto })
+  async setDishExclusions(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('dayIndex', ParseIntPipe) dayIndex: number,
+    @Param('kind') kind: TripMealKind,
+    @Param('dishId') dishId: string,
+    @Body() dto: SetDishExclusionsDto,
+  ): Promise<TripMealPlanDto> {
+    return this.tripMeals.setDishExclusions(
+      authUser.id,
+      id,
+      dayIndex,
+      kind,
+      dishId,
+      dto.productIds,
+    );
   }
 
   /** Ручная строка: «хлеб 600 г» — абсолютная. */

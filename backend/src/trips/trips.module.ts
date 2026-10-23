@@ -12,6 +12,7 @@ import { RoleTabPermission } from './entities/role-tab-permission.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
 import { TripMealAllocation } from './entities/trip-meal-allocation.entity';
 import { TripMealCheck } from './entities/trip-meal-check.entity';
+import { TripMealDishExclusion } from './entities/trip-meal-dish-exclusion.entity';
 import { TripMealDish } from './entities/trip-meal-dish.entity';
 import { TripMealLine } from './entities/trip-meal-line.entity';
 import { TripMealPackage } from './entities/trip-meal-package.entity';
@@ -57,6 +58,7 @@ import { ObjectsService } from './objects.service';
       TripMealPackage,
       TripMealAllocation,
       TripMealCheck,
+      TripMealDishExclusion,
       TripRouteElement,
       TripType,
       TripParticipant,

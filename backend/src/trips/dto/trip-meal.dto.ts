@@ -58,6 +58,27 @@ export class TripMealDishDto {
 
   @ApiProperty({ description: 'Состав на одного', type: [TripMealIngredientDto] })
   ingredients: TripMealIngredientDto[];
+
+  @ApiProperty({
+    description: 'Ингредиенты, убранные в этом приёме (рецепт не меняется)',
+    type: [Number],
+    example: [12],
+  })
+  excludedProductIds: number[];
+}
+
+/** Тело `PUT .../meals/:day/:kind/dishes/:dishId/exclusions`. */
+export class SetDishExclusionsDto {
+  @ApiProperty({
+    description: 'Продукты, которые убрать из блюда в этом приёме. Пусто — вернуть все',
+    type: [Number],
+    example: [12],
+  })
+  @IsArray({ message: 'Исключения должны быть списком продуктов' })
+  @ArrayMaxSize(100, { message: 'Слишком много исключений' })
+  @IsInt({ each: true, message: 'Продукт должен быть id из справочника' })
+  @Min(1, { each: true, message: 'Продукт должен быть id из справочника' })
+  productIds: number[];
 }
 
 /** Доля строки раскладки в пакете. */

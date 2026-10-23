@@ -621,6 +621,48 @@ describe('Питание похода (e2e)', () => {
     });
   });
 
+  it('ингредиент рецепта убирается в приёме и возвращается', async () => {
+    const excluded = await call(
+      'put',
+      `/api/trips/${tripId}/meals/2/breakfast/dishes/${organizerDishId}/exclusions`,
+      organizerToken,
+    )
+      .send({ productIds: [canId] })
+      .expect(200);
+
+    const plan = excluded.body as {
+      meals: Array<{
+        dayIndex: number;
+        kind: string;
+        dishes: Array<{ dishId: string; excludedProductIds: number[] }>;
+        products: Array<{ name: string }>;
+      }>;
+    };
+    const meal = plan.meals.find(
+      (row) => row.dayIndex === 2 && row.kind === 'breakfast',
+    )!;
+
+    expect(meal.dishes[0].excludedProductIds).toEqual([canId]);
+    // Убранный ингредиент исчез из строк приёма.
+    expect(meal.products.some((row) => row.name === canName)).toBe(false);
+
+    const restored = await call(
+      'put',
+      `/api/trips/${tripId}/meals/2/breakfast/dishes/${organizerDishId}/exclusions`,
+      organizerToken,
+    )
+      .send({ productIds: [] })
+      .expect(200);
+
+    const restoredPlan = restored.body as typeof plan;
+    const restoredMeal = restoredPlan.meals.find(
+      (row) => row.dayIndex === 2 && row.kind === 'breakfast',
+    )!;
+
+    expect(restoredMeal.dishes[0].excludedProductIds).toEqual([]);
+    expect(restoredMeal.products.some((row) => row.name === canName)).toBe(true);
+  });
+
   it('удаление пакета обнуляет его доли', async () => {
     const plan = await readPlan(organizerToken);
     const second = packagesOf(plan).find((row) => row.name === 'Пакет 2')!;

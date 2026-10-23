@@ -25,6 +25,7 @@ import {
 import { TripDateVariant } from './entities/trip-date-variant.entity';
 import { TripMealAllocation } from './entities/trip-meal-allocation.entity';
 import { TripMealCheck } from './entities/trip-meal-check.entity';
+import { TripMealDishExclusion } from './entities/trip-meal-dish-exclusion.entity';
 import { TripMealDish } from './entities/trip-meal-dish.entity';
 import { TripMealLine } from './entities/trip-meal-line.entity';
 import { TripMealPackage } from './entities/trip-meal-package.entity';
@@ -509,13 +510,23 @@ export class TripMealsService {
           where: { dishId: In(dishIds) },
         })
       : [];
+    const mealDishIds = dishes.map((row) => row.id);
+    const exclusions = mealDishIds.length
+      ? await manager.find(TripMealDishExclusion, {
+          where: { mealDishId: In(mealDishIds) },
+        })
+      : [];
+    const excluded = new Set(exclusions.map((row) => row.productId));
+
     const lines = await manager.find(TripMealLine, {
       where: { mealId: meal.id },
     });
 
     return [
       ...new Set([
-        ...ingredients.map((ingredient) => ingredient.productId),
+        ...ingredients
+          .filter((ingredient) => !excluded.has(ingredient.productId))
+          .map((ingredient) => ingredient.productId),
         ...lines.map((line) => line.productId),
       ]),
     ];
@@ -612,6 +623,64 @@ export class TripMealsService {
       { id: In(ids) },
       { weightActualStale: true },
     );
+  }
+
+  // ─────────────────────────── исключения в приёме ───────────────────────────
+
+  /**
+   * Убрать ингредиенты блюда в этом приёме: «лук не любим».
+   *
+   * Рецепт не меняется — исключение живёт в строке приёма. Раскладка
+   * вычитает ингредиент из состава и количеств, а доли пакетов по ушедшему
+   * продукту чистятся. Пустой список — вернуть всё.
+   */
+  async setDishExclusions(
+    userId: string,
+    id: number,
+    dayIndex: number,
+    kind: TripMealKind,
+    dishId: string,
+    productIds: number[],
+  ): Promise<TripMealPlanDto> {
+    await this.mutate(userId, id, async (manager, trip) => {
+      const meal = await this.findMeal(manager, trip.id, dayIndex, kind);
+      if (!meal) {
+        throw new NotFoundException('В приёме пока нет блюд');
+      }
+
+      const row = await manager.findOne(TripMealDish, {
+        where: { mealId: meal.id, dishId },
+      });
+      if (!row) {
+        throw new NotFoundException('Это блюдо не в этом приёме');
+      }
+
+      const ingredients = await manager.find(DishIngredient, {
+        where: { dishId },
+      });
+      const allowed = new Set(
+        ingredients.map((ingredient) => ingredient.productId),
+      );
+      const unique = [...new Set(productIds)];
+      if (unique.some((productId) => !allowed.has(productId))) {
+        throw new BadRequestException('Такого ингредиента нет в блюде');
+      }
+
+      await manager.delete(TripMealDishExclusion, {
+        mealDishId: row.id,
+      });
+      for (const productId of unique) {
+        await manager.insert(TripMealDishExclusion, {
+          mealDishId: row.id,
+          productId,
+        });
+      }
+
+      await this.cleanupAllocations(manager, meal);
+      await this.markMealPackagesStale(manager, meal.id);
+    });
+
+    return this.getPlan(userId, id);
   }
 
   // ─────────────────────────── чек-лист покупок ───────────────────────────
@@ -978,6 +1047,19 @@ export class TripMealsService {
       where: { mealId: In(mealIds) },
     });
 
+    const mealDishIds = dishes.map((row) => row.id);
+    const exclusions = mealDishIds.length
+      ? await manager.find(TripMealDishExclusion, {
+          where: { mealDishId: In(mealDishIds) },
+        })
+      : [];
+    const exclusionsByDish = new Map<string, Set<number>>();
+    for (const exclusion of exclusions) {
+      const set = exclusionsByDish.get(exclusion.mealDishId) ?? new Set<number>();
+      set.add(exclusion.productId);
+      exclusionsByDish.set(exclusion.mealDishId, set);
+    }
+
     const ingredientsByDish = new Map<number, DishIngredient[]>();
     for (const ingredient of ingredients) {
       const list = ingredientsByDish.get(Number(ingredient.dishId)) ?? [];
@@ -991,6 +1073,7 @@ export class TripMealsService {
         ingredientsByDish,
         lines: lines.filter((row) => row.mealId === meal.id),
         allocations: allocations.filter((row) => row.mealId === meal.id),
+        exclusionsByDish,
         eaters,
       }),
     );
@@ -1003,6 +1086,7 @@ export class TripMealsService {
       ingredientsByDish: Map<number, DishIngredient[]>;
       lines: TripMealLine[];
       allocations: TripMealAllocation[];
+      exclusionsByDish: Map<string, Set<number>>;
       eaters: TripEatersDto;
     },
   ): TripMealDto {
@@ -1012,6 +1096,7 @@ export class TripMealsService {
     for (const row of data.dishes) {
       const dish = row.dish;
       const ingredients = data.ingredientsByDish.get(Number(dish.id)) ?? [];
+      const excluded = data.exclusionsByDish.get(row.id) ?? new Set<number>();
 
       dishDtos.push({
         dishId: dish.id,
@@ -1023,9 +1108,12 @@ export class TripMealsService {
           amount: ingredient.amount,
           isMeat: ingredient.isMeat,
         })),
+        excludedProductIds: [...excluded],
       });
 
       for (const ingredient of ingredients) {
+        if (excluded.has(ingredient.productId)) continue;
+
         const portion = ingredient.isMeat
           ? Math.max(0, data.eaters.total - data.eaters.vegetarians)
           : data.eaters.total;
