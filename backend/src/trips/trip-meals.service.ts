@@ -1,10 +1,11 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, In, type EntityManager } from 'typeorm';
+import { DataSource, In, Not, type EntityManager } from 'typeorm';
 
 import { DishIngredient } from '../meals/entities/dish-ingredient.entity';
 import { Dish } from '../meals/entities/dish.entity';
@@ -143,6 +144,7 @@ export class TripMealsService {
       });
       if (!exists) {
         await manager.insert(TripMealDish, { mealId: meal.id, dishId });
+        await this.syncKulekForMeal(manager, meal);
       }
     });
 
@@ -162,6 +164,8 @@ export class TripMealsService {
       if (!meal) return;
 
       await manager.delete(TripMealDish, { mealId: meal.id, dishId });
+      await this.cleanupAllocations(manager, meal);
+      await this.markMealPackagesStale(manager, meal.id);
       await this.cleanupMeal(manager, meal.id);
     });
 
@@ -202,6 +206,8 @@ export class TripMealsService {
           amount,
         });
       }
+
+      await this.syncKulekForMeal(manager, meal);
     });
 
     return this.getPlan(userId, id);
@@ -220,6 +226,8 @@ export class TripMealsService {
       if (!meal) return;
 
       await manager.delete(TripMealLine, { mealId: meal.id, productId });
+      await this.cleanupAllocations(manager, meal);
+      await this.markMealPackagesStale(manager, meal.id);
       await this.cleanupMeal(manager, meal.id);
     });
 
@@ -241,6 +249,366 @@ export class TripMealsService {
     });
 
     return this.getPlan(userId, id);
+  }
+
+  // ─────────────────────────── фасовка ───────────────────────────
+
+  /**
+   * Новый пакет. Имя по умолчанию «Пакет N»; пустой пакет создать можно —
+   * завхоз заводит тару заранее.
+   */
+  async createPackage(userId: string, id: number): Promise<TripMealPlanDto> {
+    await this.mutate(userId, id, async (manager, trip) => {
+      const name = await this.nextPackageName(manager, trip.id);
+      await manager.insert(TripMealPackage, {
+        tripId: trip.id,
+        name,
+        kind: 'normal',
+      });
+    });
+
+    return this.getPlan(userId, id);
+  }
+
+  /** Имя пакета и фактический вес после взвешивания. */
+  async updatePackage(
+    userId: string,
+    id: number,
+    packageId: string,
+    dto: { name?: string; weightActualGrams?: number | null },
+  ): Promise<TripMealPlanDto> {
+    await this.mutate(userId, id, async (manager, trip) => {
+      const pack = await this.findPackage(manager, trip.id, packageId);
+
+      if (dto.name !== undefined) {
+        const name = dto.name.trim();
+        if (!name) {
+          throw new BadRequestException('Имя пакета не может быть пустым');
+        }
+        if (name !== pack.name) {
+          const clash = await manager.exists(TripMealPackage, {
+            where: { tripId: trip.id, name },
+          });
+          if (clash) {
+            throw new ConflictException('Пакет с таким именем уже есть');
+          }
+        }
+        pack.name = name;
+      }
+
+      if (dto.weightActualGrams !== undefined) {
+        pack.weightActualGrams = dto.weightActualGrams;
+        // Взвесили заново — метка «перевесить» снимается.
+        pack.weightActualStale = false;
+      }
+
+      await manager.save(pack);
+    });
+
+    return this.getPlan(userId, id);
+  }
+
+  /** Удаление пакета обнуляет его доли: они уходят каскадом. */
+  async removePackage(
+    userId: string,
+    id: number,
+    packageId: string,
+  ): Promise<TripMealPlanDto> {
+    await this.mutate(userId, id, async (manager, trip) => {
+      const pack = await this.findPackage(manager, trip.id, packageId);
+      await manager.delete(TripMealPackage, { id: pack.id });
+    });
+
+    return this.getPlan(userId, id);
+  }
+
+  /**
+   * Доли строки раскладки: список заменяет прежние.
+   *
+   * Фиксированных долей сколько угодно, «всё» — не больше одной. Эластичная
+   * забирает остаток и следует за изменением количества. «Всё» на всю
+   * строку — это та же эластичная одна: интерфейс, выбрав «всё», присылает
+   * только её, и прежние доли этим же списком снимаются.
+   */
+  async setAllocations(
+    userId: string,
+    id: number,
+    dayIndex: number,
+    kind: TripMealKind,
+    productId: number,
+    allocations: { packageId: string; amount: number; isElastic?: boolean }[],
+  ): Promise<TripMealPlanDto> {
+    await this.mutate(userId, id, async (manager, trip) => {
+      const meal = await this.findMeal(manager, trip.id, dayIndex, kind);
+      if (!meal) {
+        throw new NotFoundException('В приёме пока нет строк');
+      }
+
+      const kulek = await manager.findOne(TripMealPackage, {
+        where: { mealId: meal.id, kind: 'kulek' },
+      });
+      if (kulek) {
+        throw new BadRequestException(
+          'Приём упакован в кулёк — доли меняются вместе с кульком',
+        );
+      }
+
+      const productIds = await this.mealProductIds(manager, meal);
+      if (!productIds.includes(productId)) {
+        throw new NotFoundException('Такой строки в приёме нет');
+      }
+
+      const elastic = allocations.filter((row) => row.isElastic);
+      if (elastic.length > 1) {
+        throw new BadRequestException('Эластичная «всё» — одна на строку');
+      }
+
+      const rows = allocations;
+      const packageIds = [...new Set(rows.map((row) => row.packageId))];
+      if (packageIds.length > 0) {
+        const packs = await manager.find(TripMealPackage, {
+          where: { id: In(packageIds), tripId: trip.id },
+        });
+        if (packs.length !== packageIds.length) {
+          throw new BadRequestException('Пакет не из этого похода');
+        }
+      }
+
+      const previous = await manager.find(TripMealAllocation, {
+        where: { mealId: meal.id, productId },
+        select: { packageId: true },
+      });
+
+      await manager.delete(TripMealAllocation, { mealId: meal.id, productId });
+
+      for (const row of rows) {
+        await manager.insert(TripMealAllocation, {
+          mealId: meal.id,
+          productId,
+          packageId: row.packageId,
+          amount: row.isElastic ? 0 : row.amount,
+          isElastic: row.isElastic ?? false,
+        });
+      }
+
+      await this.markMealPackagesStale(manager, meal.id, [
+        ...previous.map((row) => row.packageId),
+        ...packageIds,
+      ]);
+    });
+
+    return this.getPlan(userId, id);
+  }
+
+  /**
+   * Кулёк приёма: все продукты, включая соль, — в пакет с кодом «3з».
+   *
+   * Включение добавляет пакет и эластичные доли на каждый продукт приёма;
+   * новые строки приёма тоже уходят в кулёк (`syncKulekForMeal`).
+   * Выключение удаляет пакет, доли уходят каскадом.
+   */
+  async setKulek(
+    userId: string,
+    id: number,
+    dayIndex: number,
+    kind: TripMealKind,
+    enabled: boolean,
+  ): Promise<TripMealPlanDto> {
+    await this.mutate(userId, id, async (manager, trip) => {
+      const meal = enabled
+        ? await this.upsertMeal(manager, trip.id, dayIndex, kind)
+        : await this.findMeal(manager, trip.id, dayIndex, kind);
+      if (!meal) return;
+
+      const kulek = await manager.findOne(TripMealPackage, {
+        where: { mealId: meal.id, kind: 'kulek' },
+      });
+
+      if (enabled) {
+        if (kulek) return;
+
+        const base = this.kulekName(dayIndex, kind);
+        const clash = await manager.exists(TripMealPackage, {
+          where: { tripId: trip.id, name: base },
+        });
+        const pack = await manager.save(
+          manager.create(TripMealPackage, {
+            tripId: trip.id,
+            name: clash ? `${base} (${meal.id})` : base,
+            kind: 'kulek',
+            mealId: meal.id,
+          }),
+        );
+        await this.syncKulek(manager, meal, pack);
+      } else if (kulek) {
+        await manager.delete(TripMealPackage, { id: kulek.id });
+        await this.cleanupMeal(manager, meal.id);
+      }
+    });
+
+    return this.getPlan(userId, id);
+  }
+
+  private async findPackage(
+    manager: EntityManager,
+    tripId: string,
+    packageId: string,
+  ): Promise<TripMealPackage> {
+    const pack = await manager.findOne(TripMealPackage, {
+      where: { id: packageId, tripId },
+    });
+    if (!pack) {
+      throw new NotFoundException('Пакет не найден');
+    }
+
+    return pack;
+  }
+
+  private async nextPackageName(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<string> {
+    const rows = await manager.find(TripMealPackage, {
+      where: { tripId },
+      select: { name: true },
+    });
+
+    let max = 0;
+    for (const row of rows) {
+      const match = /^Пакет (\d+)$/.exec(row.name);
+      if (match) max = Math.max(max, Number(match[1]));
+    }
+
+    return `Пакет ${max + 1}`;
+  }
+
+  private kulekName(dayIndex: number, kind: TripMealKind): string {
+    const letter: Record<TripMealKind, string> = {
+      breakfast: 'з',
+      lunch: 'о',
+      dinner: 'у',
+    };
+
+    return `${dayIndex}${letter[kind]}`;
+  }
+
+  /** Продукты приёма: из блюд и из ручных строк. */
+  private async mealProductIds(
+    manager: EntityManager,
+    meal: TripMeal,
+  ): Promise<number[]> {
+    const dishes = await manager.find(TripMealDish, {
+      where: { mealId: meal.id },
+    });
+    const dishIds = dishes.map((row) => row.dishId);
+    const ingredients = dishIds.length
+      ? await manager.find(DishIngredient, {
+          where: { dishId: In(dishIds) },
+        })
+      : [];
+    const lines = await manager.find(TripMealLine, {
+      where: { mealId: meal.id },
+    });
+
+    return [
+      ...new Set([
+        ...ingredients.map((ingredient) => ingredient.productId),
+        ...lines.map((line) => line.productId),
+      ]),
+    ];
+  }
+
+  /** Эластичные доли кулька на продукты, которых в нём ещё нет. */
+  private async syncKulek(
+    manager: EntityManager,
+    meal: TripMeal,
+    pack: TripMealPackage,
+  ): Promise<void> {
+    const productIds = await this.mealProductIds(manager, meal);
+    const existing = await manager.find(TripMealAllocation, {
+      where: { mealId: meal.id, packageId: pack.id },
+    });
+    const have = new Set(existing.map((row) => row.productId));
+
+    for (const productId of productIds) {
+      if (have.has(productId)) continue;
+
+      await manager.insert(TripMealAllocation, {
+        mealId: meal.id,
+        productId,
+        packageId: pack.id,
+        amount: 0,
+        isElastic: true,
+      });
+    }
+  }
+
+  /** После правки приёма новые продукты попадают в кулёк. */
+  private async syncKulekForMeal(
+    manager: EntityManager,
+    meal: TripMeal,
+  ): Promise<void> {
+    const kulek = await manager.findOne(TripMealPackage, {
+      where: { mealId: meal.id, kind: 'kulek' },
+    });
+    if (kulek) {
+      await this.syncKulek(manager, meal, kulek);
+    }
+
+    await this.markMealPackagesStale(manager, meal.id);
+  }
+
+  /** У продукта не осталось строк — его доли больше не нужны. */
+  private async cleanupAllocations(
+    manager: EntityManager,
+    meal: TripMeal,
+  ): Promise<void> {
+    const productIds = await this.mealProductIds(manager, meal);
+
+    if (productIds.length === 0) {
+      await manager.delete(TripMealAllocation, { mealId: meal.id });
+
+      return;
+    }
+
+    await manager.delete(TripMealAllocation, {
+      mealId: meal.id,
+      productId: Not(In(productIds)),
+    });
+  }
+
+  /**
+   * Содержимое пакета изменилось — если его взвешивали, пора перевесить.
+   * Пакеты без фактического веса метка не мешает: её просто не видно.
+   */
+  private async markMealPackagesStale(
+    manager: EntityManager,
+    mealId: string,
+    extra: string[] = [],
+  ): Promise<void> {
+    const packs = await manager.find(TripMealPackage, {
+      where: { mealId },
+      select: { id: true },
+    });
+    const shares = await manager.find(TripMealAllocation, {
+      where: { mealId },
+      select: { packageId: true },
+    });
+
+    const ids = [
+      ...new Set([
+        ...packs.map((pack) => pack.id),
+        ...shares.map((share) => share.packageId),
+        ...extra,
+      ]),
+    ];
+    if (ids.length === 0) return;
+
+    await manager.update(
+      TripMealPackage,
+      { id: In(ids) },
+      { weightActualStale: true },
+    );
   }
 
   // ─────────────────────────── доступ ───────────────────────────

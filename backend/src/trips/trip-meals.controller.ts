@@ -5,6 +5,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Put,
 } from '@nestjs/common';
@@ -14,9 +15,12 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
   AddMealDishDto,
+  SetMealAllocationsDto,
   SetMealFormDto,
+  SetMealKulekDto,
   SetMealLineDto,
   TripMealPlanDto,
+  UpdateMealPackageDto,
 } from './dto/trip-meal.dto';
 import type { TripMealKind } from './trip.types';
 import { TripMealsService } from './trip-meals.service';
@@ -140,5 +144,85 @@ export class TripMealsController {
     @Param('kind') kind: TripMealKind,
   ): Promise<TripMealPlanDto> {
     return this.tripMeals.removeMeal(authUser.id, id, dayIndex, kind);
+  }
+
+  // ─────────────────────────── фасовка ───────────────────────────
+
+  /** Новый пакет: имя по умолчанию «Пакет N». */
+  @Post(':id/meal-packages')
+  @ApiOperation({ summary: 'Новый пакет' })
+  @ApiOkResponse({ type: TripMealPlanDto })
+  async createPackage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripMealPlanDto> {
+    return this.tripMeals.createPackage(authUser.id, id);
+  }
+
+  /** Имя пакета и фактический вес после взвешивания. */
+  @Patch(':id/meal-packages/:packageId')
+  @ApiOperation({ summary: 'Правка пакета' })
+  @ApiOkResponse({ type: TripMealPlanDto })
+  async updatePackage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('packageId') packageId: string,
+    @Body() dto: UpdateMealPackageDto,
+  ): Promise<TripMealPlanDto> {
+    return this.tripMeals.updatePackage(authUser.id, id, packageId, dto);
+  }
+
+  /** Удаление пакета: его доли уходят каскадом. */
+  @Delete(':id/meal-packages/:packageId')
+  @ApiOperation({ summary: 'Удалить пакет' })
+  @ApiOkResponse({ type: TripMealPlanDto })
+  async removePackage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('packageId') packageId: string,
+  ): Promise<TripMealPlanDto> {
+    return this.tripMeals.removePackage(authUser.id, id, packageId);
+  }
+
+  /** Доли строки раскладки по пакетам: список заменяет прежние. */
+  @Put(':id/meals/:dayIndex/:kind/allocations/:productId')
+  @ApiOperation({ summary: 'Доли строки по пакетам' })
+  @ApiOkResponse({ type: TripMealPlanDto })
+  async setAllocations(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('dayIndex', ParseIntPipe) dayIndex: number,
+    @Param('kind') kind: TripMealKind,
+    @Param('productId', ParseIntPipe) productId: number,
+    @Body() dto: SetMealAllocationsDto,
+  ): Promise<TripMealPlanDto> {
+    return this.tripMeals.setAllocations(
+      authUser.id,
+      id,
+      dayIndex,
+      kind,
+      productId,
+      dto.allocations,
+    );
+  }
+
+  /** Кулёк приёма: включить или выключить. */
+  @Put(':id/meals/:dayIndex/:kind/kulek')
+  @ApiOperation({ summary: 'Кулёк приёма' })
+  @ApiOkResponse({ type: TripMealPlanDto })
+  async setKulek(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('dayIndex', ParseIntPipe) dayIndex: number,
+    @Param('kind') kind: TripMealKind,
+    @Body() dto: SetMealKulekDto,
+  ): Promise<TripMealPlanDto> {
+    return this.tripMeals.setKulek(
+      authUser.id,
+      id,
+      dayIndex,
+      kind,
+      dto.enabled,
+    );
   }
 }

@@ -1,5 +1,18 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsInt, IsString, Matches, Min } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  ArrayMaxSize,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Matches,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 
 import type { ProductUnit } from '../../meals/meal.types';
 import { PRODUCT_UNITS } from '../../meals/meal.types';
@@ -270,4 +283,77 @@ export class SetMealLineDto {
   @IsInt({ message: 'Количество должно быть целым числом единиц' })
   @Min(1, { message: 'Количество должно быть больше нуля' })
   amount: number;
+}
+
+/** Тело `PATCH /api/trips/:id/meal-packages/:packageId`. */
+export class UpdateMealPackageDto {
+  @ApiProperty({
+    description: 'Имя пакета. Не задано — не трогаем',
+    required: false,
+    maxLength: 60,
+  })
+  @IsOptional()
+  @IsString({ message: 'Имя пакета должно быть строкой' })
+  @MaxLength(60, { message: 'Имя пакета не должно превышать 60 символов' })
+  name?: string;
+
+  @ApiProperty({
+    description:
+      'Фактический вес, граммы. null — сбросить взвешивание; не задано — не трогаем',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Вес должен быть целым числом граммов' })
+  @Min(1, { message: 'Вес должен быть больше нуля' })
+  weightActualGrams?: number | null;
+}
+
+/** Одна доля строки раскладки в пакете. */
+export class MealAllocationInputDto {
+  @ApiProperty({ description: 'Id пакета', example: '2' })
+  @IsString({ message: 'Пакет должен быть id' })
+  @Matches(/^\d+$/, { message: 'Пакет должен быть id' })
+  packageId: string;
+
+  @ApiProperty({
+    description: 'Количество. Для «всё» не важно — остаток считается сам',
+    example: 400,
+  })
+  @IsInt({ message: 'Количество должно быть целым числом' })
+  @Min(0, { message: 'Количество не может быть отрицательным' })
+  amount: number;
+
+  @ApiProperty({
+    description: 'Эластичная «всё»: забирает остаток и следует за количеством',
+    required: false,
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг «всё» должен быть true или false' })
+  isElastic?: boolean;
+}
+
+/** Тело `PUT /api/trips/:id/meals/:day/:kind/allocations/:productId`. */
+export class SetMealAllocationsDto {
+  @ApiProperty({
+    description:
+      'Доли строки целиком: список заменяет прежние. Пустой — снять все',
+    type: [MealAllocationInputDto],
+  })
+  @IsArray({ message: 'Доли должны быть списком' })
+  @ArrayMaxSize(50, { message: 'Слишком много долей' })
+  @ValidateNested({ each: true })
+  @Type(() => MealAllocationInputDto)
+  allocations: MealAllocationInputDto[];
+}
+
+/** Тело `PUT /api/trips/:id/meals/:day/:kind/kulek`. */
+export class SetMealKulekDto {
+  @ApiProperty({
+    description: 'Включить кулёк приёма (true) или выключить (false)',
+    example: true,
+  })
+  @IsBoolean({ message: 'Кулёк — true или false' })
+  enabled: boolean;
 }

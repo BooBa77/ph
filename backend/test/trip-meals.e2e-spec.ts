@@ -113,6 +113,53 @@ describe('Питание похода (e2e)', () => {
     };
   }
 
+  function packagesOf(
+    plan: Record<string, unknown>,
+  ): Array<{
+    id: string;
+    name: string;
+    kind: string;
+    mealId: string | null;
+    weightActualGrams: number | null;
+    weightActualStale: boolean;
+    items: unknown[];
+  }> {
+    return (plan.packages ?? []) as never;
+  }
+
+  function mealProduct(
+    plan: Record<string, unknown>,
+    dayIndex: number,
+    kind: string,
+    name: string,
+  ): {
+    amount: number;
+    allocations: Array<{ packageId: string; amount: number; isElastic: boolean }>;
+  } {
+    const meals = plan.meals as Array<{
+      dayIndex: number;
+      kind: string;
+      products: Array<{
+        name: string;
+        amount: number;
+        allocations: Array<{
+          packageId: string;
+          amount: number;
+          isElastic: boolean;
+        }>;
+      }>;
+    }>;
+
+    const meal = meals.find((row) => row.dayIndex === dayIndex && row.kind === kind);
+    const product = meal?.products.find((row) => row.name === name);
+
+    if (!product) {
+      throw new Error(`В приёме ${dayIndex}/${kind} нет продукта ${name}`);
+    }
+
+    return product;
+  }
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -420,6 +467,197 @@ describe('Питание похода (e2e)', () => {
     expect(
       meals.some((meal) => meal.dayIndex === 1 && meal.kind === 'breakfast'),
     ).toBe(false);
+  });
+
+  it('пакет создаётся с именем «Пакет N»', async () => {
+    const response = await call(
+      'post',
+      `/api/trips/${tripId}/meal-packages`,
+      organizerToken,
+    ).expect(201);
+
+    expect(packagesOf(response.body as Record<string, unknown>).map((row) => row.name)).toContain(
+      'Пакет 1',
+    );
+  });
+
+  it('доли строки: фиксированная часть и эластичное «всё»', async () => {
+    await call(
+      'post',
+      `/api/trips/${tripId}/meals/2/breakfast/dishes`,
+      organizerToken,
+    )
+      .send({ dishId: organizerDishId })
+      .expect(201);
+
+    const created = await call(
+      'post',
+      `/api/trips/${tripId}/meal-packages`,
+      organizerToken,
+    ).expect(201);
+    const packages = packagesOf(created.body as Record<string, unknown>);
+    const first = packages.find((row) => row.name === 'Пакет 1')!;
+    const second = packages.find((row) => row.name === 'Пакет 2')!;
+
+    const response = await call(
+      'put',
+      `/api/trips/${tripId}/meals/2/breakfast/allocations/${gramId}`,
+      organizerToken,
+    )
+      .send({
+        allocations: [
+          { packageId: first.id, amount: 50 },
+          { packageId: second.id, amount: 0, isElastic: true },
+        ],
+      })
+      .expect(200);
+
+    const gram = mealProduct(response.body as Record<string, unknown>, 2, 'breakfast', gramName);
+
+    // Крупа на второго завтрака: 80 г (организатор ест один, участница — отдельно).
+    expect(gram.amount).toBe(80);
+    expect(gram.allocations.find((row) => row.packageId === first.id)).toMatchObject({
+      amount: 50,
+      isElastic: false,
+    });
+    expect(gram.allocations.find((row) => row.packageId === second.id)).toMatchObject({
+      amount: 30,
+      isElastic: true,
+    });
+  });
+
+  it('фактический вес и метка «перевесить»', async () => {
+    const plan = await readPlan(organizerToken);
+    const first = packagesOf(plan).find((row) => row.name === 'Пакет 1')!;
+    const second = packagesOf(plan).find((row) => row.name === 'Пакет 2')!;
+
+    const weighted = await call(
+      'patch',
+      `/api/trips/${tripId}/meal-packages/${first.id}`,
+      organizerToken,
+    )
+      .send({ weightActualGrams: 500 })
+      .expect(200);
+
+    const afterWeight = packagesOf(weighted.body as Record<string, unknown>).find(
+      (row) => row.id === first.id,
+    )!;
+    expect(afterWeight.weightActualGrams).toBe(500);
+    expect(afterWeight.weightActualStale).toBe(false);
+
+    // Содержимое поменяли — пакет просит перевесить.
+    await call(
+      'put',
+      `/api/trips/${tripId}/meals/2/breakfast/allocations/${gramId}`,
+      organizerToken,
+    )
+      .send({
+        allocations: [
+          { packageId: first.id, amount: 60 },
+          { packageId: second.id, amount: 0, isElastic: true },
+        ],
+      })
+      .expect(200);
+
+    const changed = packagesOf(await readPlan(organizerToken)).find(
+      (row) => row.id === first.id,
+    )!;
+    expect(changed.weightActualStale).toBe(true);
+
+    const reweighed = await call(
+      'patch',
+      `/api/trips/${tripId}/meal-packages/${first.id}`,
+      organizerToken,
+    )
+      .send({ weightActualGrams: 600 })
+      .expect(200);
+
+    expect(
+      packagesOf(reweighed.body as Record<string, unknown>).find(
+        (row) => row.id === first.id,
+      )!.weightActualStale,
+    ).toBe(false);
+  });
+
+  it('«всё» снимает остальные доли строки', async () => {
+    const plan = await readPlan(organizerToken);
+    const second = packagesOf(plan).find((row) => row.name === 'Пакет 2')!;
+
+    // Так это делает интерфейс: выбрав «всё», остальные доли снимаются.
+    const response = await call(
+      'put',
+      `/api/trips/${tripId}/meals/2/breakfast/allocations/${gramId}`,
+      organizerToken,
+    )
+      .send({
+        allocations: [{ packageId: second.id, amount: 0, isElastic: true }],
+      })
+      .expect(200);
+
+    const gram = mealProduct(response.body as Record<string, unknown>, 2, 'breakfast', gramName);
+
+    expect(gram.allocations).toHaveLength(1);
+    expect(gram.allocations[0]).toMatchObject({
+      packageId: second.id,
+      amount: 80,
+      isElastic: true,
+    });
+  });
+
+  it('удаление пакета обнуляет его доли', async () => {
+    const plan = await readPlan(organizerToken);
+    const second = packagesOf(plan).find((row) => row.name === 'Пакет 2')!;
+
+    const response = await call(
+      'delete',
+      `/api/trips/${tripId}/meal-packages/${second.id}`,
+      organizerToken,
+    ).expect(200);
+
+    const gram = mealProduct(response.body as Record<string, unknown>, 2, 'breakfast', gramName);
+    expect(gram.allocations).toHaveLength(0);
+  });
+
+  it('кулёк приёма: все продукты в пакет с кодом', async () => {
+    await call(
+      'post',
+      `/api/trips/${tripId}/meals/3/breakfast/dishes`,
+      organizerToken,
+    )
+      .send({ dishId: organizerDishId })
+      .expect(201);
+
+    const response = await call(
+      'put',
+      `/api/trips/${tripId}/meals/3/breakfast/kulek`,
+      organizerToken,
+    )
+      .send({ enabled: true })
+      .expect(200);
+
+    const kulek = packagesOf(response.body as Record<string, unknown>).find(
+      (row) => row.kind === 'kulek',
+    )!;
+    expect(kulek.name).toBe('3з');
+    expect(kulek.mealId).toBeTruthy();
+    // Крупа и тушёнка — оба продукта приёма в кульке.
+    expect(kulek.items).toHaveLength(2);
+
+    const off = await call(
+      'put',
+      `/api/trips/${tripId}/meals/3/breakfast/kulek`,
+      organizerToken,
+    )
+      .send({ enabled: false })
+      .expect(200);
+
+    expect(
+      packagesOf(off.body as Record<string, unknown>).some((row) => row.kind === 'kulek'),
+    ).toBe(false);
+  });
+
+  it('посторонний не создаёт пакеты', async () => {
+    await call('post', `/api/trips/${tripId}/meal-packages`, strangerToken).expect(403);
   });
 
   it('у мечты раскладки нет', async () => {
