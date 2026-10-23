@@ -10,6 +10,11 @@ import { MessageAction } from './entities/message-action.entity';
 import { Role } from './entities/role.entity';
 import { RoleTabPermission } from './entities/role-tab-permission.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
+import { TripMealAllocation } from './entities/trip-meal-allocation.entity';
+import { TripMealDish } from './entities/trip-meal-dish.entity';
+import { TripMealLine } from './entities/trip-meal-line.entity';
+import { TripMealPackage } from './entities/trip-meal-package.entity';
+import { TripMeal } from './entities/trip-meal.entity';
 import { TripMembershipRequest } from './entities/trip-membership-request.entity';
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
@@ -18,6 +23,8 @@ import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { TripsController } from './trips.controller';
 import { TripsService } from './trips.service';
+import { TripMealsController } from './trip-meals.controller';
+import { TripMealsService } from './trip-meals.service';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
 import { MessageActionsController } from './message-actions.controller';
@@ -43,6 +50,11 @@ import { ObjectsService } from './objects.service';
       RoleTabPermission,
       Trip,
       TripDateVariant,
+      TripMeal,
+      TripMealDish,
+      TripMealLine,
+      TripMealPackage,
+      TripMealAllocation,
       TripRouteElement,
       TripType,
       TripParticipant,
@@ -57,16 +69,24 @@ import { ObjectsService } from './objects.service';
   ],
   controllers: [
     TripsController,
+    TripMealsController,
     ObjectsController,
     MessageActionsController,
     ConversationsController,
   ],
   providers: [
     TripsService,
+    TripMealsService,
     ObjectsService,
     MessageActionsService,
     ConversationsService,
   ],
-  exports: [TripsService, ObjectsService, MessageActionsService, ConversationsService],
+  exports: [
+    TripsService,
+    TripMealsService,
+    ObjectsService,
+    MessageActionsService,
+    ConversationsService,
+  ],
 })
 export class TripsModule {}

@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 import type { ProductUnit } from '../meal.types';
 import { PRODUCT_UNITS } from '../meal.types';
@@ -61,6 +61,13 @@ export class DishIngredientDto {
   })
   grams: number;
 
+  @ApiProperty({
+    description:
+      'Мясной ингредиент: в походе считается на «едоков минус вегетарианцы»',
+    example: false,
+  })
+  isMeat: boolean;
+
   static from(ingredient: DishIngredient): DishIngredientDto {
     const product = ingredient.product;
 
@@ -69,6 +76,7 @@ export class DishIngredientDto {
       product: ProductDto.from(product),
       amount: ingredient.amount,
       grams: ingredient.amount * product.weightPerUnitGrams,
+      isMeat: ingredient.isMeat,
     };
   }
 }
@@ -164,6 +172,15 @@ export class AddIngredientDto {
   @IsInt({ message: 'Количество должно быть целым числом единиц' })
   @Min(1, { message: 'Количество должно быть больше нуля' })
   amount: number;
+
+  @ApiProperty({
+    description: 'Мясной ингредиент',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Мясной флаг должен быть true или false' })
+  isMeat?: boolean;
 }
 
 /** Тело `PATCH /api/dishes/ingredients/:id`. */
@@ -172,6 +189,15 @@ export class UpdateIngredientDto {
   @IsInt({ message: 'Количество должно быть целым числом единиц' })
   @Min(1, { message: 'Количество должно быть больше нуля' })
   amount: number;
+
+  @ApiProperty({
+    description: 'Мясной ингредиент. Не задано — не трогаем',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Мясной флаг должен быть true или false' })
+  isMeat?: boolean;
 }
 
 /** Строка поиска по справочнику продуктов. */

@@ -1532,6 +1532,7 @@ export class TripsService {
     userId: string,
     id: number,
     status: ParticipantStatus,
+    eatsSeparately?: boolean,
   ): Promise<TripParticipantDto> {
     return this.dataSource.transaction(async (manager) => {
       const trip = await this.findVisibleTrip(manager, userId, id);
@@ -1544,9 +1545,24 @@ export class TripsService {
         throw new NotFoundException('Вы не в составе этого похода');
       }
 
-      if (participant.status !== status) {
+      const statusChanged = participant.status !== status;
+      const dietChanged =
+        eatsSeparately !== undefined &&
+        participant.eatsSeparately !== eatsSeparately;
+
+      if (dietChanged) {
+        participant.eatsSeparately = eatsSeparately as boolean;
+      }
+
+      if (statusChanged) {
         participant.status = status;
+      }
+
+      if (statusChanged || dietChanged) {
         await manager.save(participant);
+      }
+
+      if (statusChanged) {
         await this.postSystemMessage(
           manager,
           trip.id,

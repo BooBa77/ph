@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsOptional } from 'class-validator';
+import { IsBoolean, IsIn, IsOptional } from 'class-validator';
 
 import { USER_GENDERS, type UserGender } from '../../users/gender.types';
 import type { Role } from '../entities/role.entity';
@@ -66,6 +66,21 @@ export class TripParticipantDto {
   status: ParticipantStatus;
 
   @ApiProperty({
+    description: 'Вегетарианец — мясное на него не считается',
+    example: false,
+  })
+  isVegetarian: boolean;
+
+  @ApiProperty({ description: 'Аллергии из профиля', nullable: true })
+  allergies: string | null;
+
+  @ApiProperty({
+    description: 'Питается отдельно: не едок, пакеты еды не назначаются',
+    example: false,
+  })
+  eatsSeparately: boolean;
+
+  @ApiProperty({
     description: 'Роли в походе. Пусто — ролей нет',
     type: [TripRoleDto],
   })
@@ -101,6 +116,9 @@ export class TripParticipantDto {
       // мужским».
       gender: participant.user?.gender ?? 'm',
       status: participant.status,
+      isVegetarian: participant.user?.isVegetarian ?? false,
+      allergies: participant.user?.allergies ?? null,
+      eatsSeparately: participant.eatsSeparately,
       roles,
       isOrganizer: participant.userId === organizerUserId,
       createdAt: participant.createdAt.toISOString(),
@@ -128,6 +146,16 @@ export class UpdateMyStatusDto {
   })
   @IsIn(PARTICIPANT_STATUSES, { message: 'Недопустимый статус участия' })
   status: ParticipantStatus;
+
+  @ApiProperty({
+    description:
+      'Питаться отдельно: не едок, пакеты еды не назначаются. Не задано — не трогаем',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг отдельного питания должен быть true или false' })
+  eatsSeparately?: boolean;
 }
 
 /**

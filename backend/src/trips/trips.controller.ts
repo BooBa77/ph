@@ -264,7 +264,12 @@ export class TripsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateMyStatusDto,
   ): Promise<TripParticipantDto> {
-    return this.tripsService.updateMyStatus(authUser.id, id, dto.status);
+    return this.tripsService.updateMyStatus(
+      authUser.id,
+      id,
+      dto.status,
+      dto.eatsSeparately,
+    );
   }
 
   /** Убрать человека из состава. Только организатор, и только не себя. */

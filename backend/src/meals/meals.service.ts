@@ -162,6 +162,7 @@ export class MealsService {
         dishId: dish.id,
         productId: product.id,
         amount: dto.amount,
+        isMeat: dto.isMeat ?? false,
       }),
     );
 
@@ -182,6 +183,9 @@ export class MealsService {
     );
 
     ingredient.amount = dto.amount;
+    if (dto.isMeat !== undefined) {
+      ingredient.isMeat = dto.isMeat;
+    }
 
     return DishIngredientDto.from(await manager.save(ingredient));
   }
