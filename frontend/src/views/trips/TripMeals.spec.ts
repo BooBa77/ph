@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   setMealKulek: vi.fn(),
   fetchMealChecks: vi.fn(),
   updateMealCheck: vi.fn(),
+  listTripMessages: vi.fn(),
+  sendTripMessage: vi.fn(),
   listDishes: vi.fn(),
   searchProducts: vi.fn(),
 }))
@@ -49,6 +51,8 @@ vi.mock('@/api/trips', () => ({
   setMealKulek: mocks.setMealKulek,
   fetchMealChecks: mocks.fetchMealChecks,
   updateMealCheck: mocks.updateMealCheck,
+  listTripMessages: mocks.listTripMessages,
+  sendTripMessage: mocks.sendTripMessage,
 }))
 
 vi.mock('@/api/meals', () => ({
@@ -255,6 +259,7 @@ describe('TripMeals', () => {
     mocks.setMealDishExclusions.mockResolvedValue(current)
     mocks.setMealKulek.mockResolvedValue(current)
     mocks.fetchMealChecks.mockResolvedValue(checks())
+    mocks.listTripMessages.mockResolvedValue({ messages: [], nextCursor: null })
     mocks.updateMealCheck.mockImplementation(
       async (_tripId: string, productId: number, patch: Record<string, unknown>) =>
         checks().map((row) => (row.productId === productId ? { ...row, ...patch } : row)),

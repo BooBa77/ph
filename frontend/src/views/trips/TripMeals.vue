@@ -21,6 +21,7 @@ import {
   updateMealPackage,
 } from '@/api/trips'
 import ProductPicker from '@/components/ui/ProductPicker.vue'
+import TripChat from '@/views/trips/TripChat.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   TRIP_MEAL_CODES,
@@ -1015,6 +1016,9 @@ onMounted(() => {
           </ul>
         </template>
       </div>
+
+      <!-- Чат питания: обсуждение раскладки и закупки -->
+      <TripChat :trip-id="trip.id" kind="trip_meals" />
     </template>
   </section>
 </template>

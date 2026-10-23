@@ -73,12 +73,14 @@ describe('TripChat', () => {
 
     const wrapper = await mountChat()
 
-    await wrapper.find('[data-test="chat-input"]').setValue('Буду к восьми')
+    const editor = wrapper.find('[data-test="md-editor"]')
+    editor.element.innerHTML = 'Буду к восьми'
+    await editor.trigger('input')
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
     expect(mocks.sendTripMessage).toHaveBeenCalledWith('7', 'trip_guest', 'Буду к восьми')
     expect(wrapper.find('[data-test="chat-messages"]').text()).toContain('Буду к восьми')
-    expect((wrapper.find('[data-test="chat-input"]').element as HTMLInputElement).value).toBe('')
+    expect(wrapper.find('[data-test="md-editor"]').element.innerHTML).toBe('')
   })
 })

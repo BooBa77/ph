@@ -425,13 +425,14 @@ export interface RoleOption {
 
 // ─────────────────────────── переписка ───────────────────────────
 
-/** Виды чатов похода: гостевой видят все, членский — только состав. */
-export const CHAT_KINDS = ['trip_guest', 'trip_members'] as const
+/** Виды чатов похода: гостевой видят все, членский и питания — только состав. */
+export const CHAT_KINDS = ['trip_guest', 'trip_members', 'trip_meals'] as const
 export type ChatKind = (typeof CHAT_KINDS)[number]
 
 export const CHAT_KIND_LABELS: Record<ChatKind, string> = {
   trip_guest: 'Гостевой чат',
   trip_members: 'Чат участников',
+  trip_meals: 'Чат питания',
 }
 
 /** Сообщение чата похода. `senderId === null` — системное. */

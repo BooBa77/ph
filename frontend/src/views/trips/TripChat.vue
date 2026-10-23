@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
 import { listTripMessages, sendTripMessage } from '@/api/trips'
+import MarkdownEditor from '@/components/ui/MarkdownEditor.vue'
 import { markdownToHtml } from '@/utils/markdown'
 import { CHAT_KIND_LABELS, type ChatKind, type TripMessage } from '@/types/trips'
 
@@ -125,18 +126,17 @@ onMounted(load)
       </li>
     </ol>
 
-    <form class="flex gap-2" @submit.prevent="send">
-      <input
+    <form class="flex flex-col gap-2" @submit.prevent="send">
+      <MarkdownEditor
         v-model="draft"
-        type="text"
-        maxlength="4000"
+        :objects="false"
+        :emoji="true"
+        min-height="4rem"
         placeholder="Написать в чат…"
-        class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-        data-test="chat-input"
       />
       <button
         type="submit"
-        class="cursor-pointer rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+        class="self-end cursor-pointer rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
         :disabled="!draft.trim() || isSending"
         data-test="chat-send"
       >
