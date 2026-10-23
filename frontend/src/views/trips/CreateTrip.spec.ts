@@ -52,8 +52,18 @@ async function chooseGoal(wrapper: VueWrapper, name = 'Витязь') {
   await vi.advanceTimersByTimeAsync(0)
 }
 
-/** Отправить форму и дать промисам разрешиться. */
+/**
+ * Отправить форму и дать промисам разрешиться.
+ *
+ * Продолжительность обязательна при создании (решение 21.10.2026): если
+ * тест не задаёт её сам, подставляем — иначе ни один поход не отправится.
+ * Тесты про отсутствие продолжительности submit не вызывают.
+ */
 async function submit(wrapper: VueWrapper) {
+  const duration = wrapper.find('[data-test="duration-days"]')
+  if (duration.exists() && !(duration.element as HTMLInputElement).value) {
+    await duration.setValue('5')
+  }
   await wrapper.find('form').trigger('submit')
   await vi.advanceTimersByTimeAsync(0)
 }
@@ -190,10 +200,12 @@ describe('CreateTrip', () => {
 
     await wrapper.find('[data-test="exact-day"]').setValue('12')
     await wrapper.find('[data-test="exact-month"]').setValue('8')
+    // Продолжительность обязательна при создании: без неё кнопка не работает.
+    await wrapper.find('[data-test="duration-days"]').setValue('5')
     await submit(wrapper)
 
     expect(lastPayload().dateVariants).toEqual([
-      { year: null, month: 8, day: 12, durationDays: null, durationDelta: 0 },
+      { year: null, month: 8, day: 12, durationDays: 5, durationDelta: 0 },
     ])
   })
 
@@ -204,6 +216,16 @@ describe('CreateTrip', () => {
     await wrapper.find('[data-test="duration-delta"]').setValue('2')
 
     expect(wrapper.find('[data-test="hint"]').text()).toContain('без продолжительности')
+    expect(wrapper.find('[data-test="submit"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('без продолжительности поход не отправляется', async () => {
+    // Продолжительность — обязательное поле кнопки «Создать поход»
+    // (решение 21.10.2026): без неё поход не планируется.
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    expect(wrapper.find('[data-test="hint"]').text()).toContain('продолжительность')
     expect(wrapper.find('[data-test="submit"]').attributes('disabled')).toBeDefined()
   })
 
@@ -244,6 +266,8 @@ describe('CreateTrip', () => {
   it('коммерческий поход без цены не отправляется', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
+    // Продолжительность обязательна: без неё форма споткнётся раньше цены.
+    await wrapper.find('[data-test="duration-days"]').setValue('5')
     await wrapper.find('[data-test="commercial"]').setValue(true)
 
     expect(wrapper.find('[data-test="price"]').exists()).toBe(true)

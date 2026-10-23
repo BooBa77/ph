@@ -80,7 +80,8 @@ const activeTab = ref<Tab>('general')
 /**
  * Что показать в меню. «Чаты» — исключение: в карте вкладок это часть
  * «Участников», но экран у нас отдельный и работает, поэтому он стоит
- * рядом, а не прячется.
+ * рядом, а не прячется. У мечты его нет: мечта — вишлист, у неё только
+ * «Инфо»/«Гостевая» и ни членского чата, ни подготовки (`tabs.md` §7).
  */
 const displayTabs = computed<{ code: Tab; label: string; available: boolean }[]>(() => {
   const list = permissions.value.map((permission) => ({
@@ -88,6 +89,8 @@ const displayTabs = computed<{ code: Tab; label: string; available: boolean }[]>
     label: TRIP_TAB_LABELS[permission.code],
     available: IMPLEMENTED.includes(permission.code),
   }))
+
+  if (trip.value?.status === 'idea') return list
 
   const afterMembers = list.findIndex((item) => item.code === 'members')
   const chats = { code: TAB_CHATS as Tab, label: 'Чаты', available: true }

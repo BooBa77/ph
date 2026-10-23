@@ -363,7 +363,7 @@ export const TRIP_TABS = [
 export type TripTabCode = (typeof TRIP_TABS)[number]
 
 export const TRIP_TAB_LABELS: Record<TripTabCode, string> = {
-  general: 'Общая',
+  general: 'Инфо',
   guest: 'Гостевая',
   members: 'Участники',
   sport: 'Спорт',
