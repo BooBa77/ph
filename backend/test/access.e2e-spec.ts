@@ -112,19 +112,28 @@ describe('Вкладки и роли (e2e)', () => {
       )
     )[0].id;
 
+    /**
+     * Походы заводятся «решёнными» (с датами): с 21.10.2026 набор вкладок
+     * зависит от готовности и конкретного числа (`tabs.md` §7), а этот
+     * тест про права, а не про готовность. Даты — в будущем, чтобы поход
+     * не выглядел прошедшим.
+     */
     tripId = (
       await dataSource.query(
         `INSERT INTO trips (organizer_user_id, goal_object_id, route_text, announcement,
-                            is_commercial, price_rub)
-         VALUES ($1, $2, 'Подход от станции', 'Гостевой обзор', true, 5000) RETURNING id`,
+                            is_commercial, price_rub, status, starts_at, ends_at)
+         VALUES ($1, $2, 'Подход от станции', 'Гостевой обзор', true, 5000, 'decided',
+                 now() + interval '10 days', now() + interval '12 days') RETURNING id`,
         [organizerId, objectId],
       )
     )[0].id;
 
     privateTripId = (
       await dataSource.query(
-        `INSERT INTO trips (organizer_user_id, goal_object_id, route_text, visibility)
-         VALUES ($1, $2, '', 'private') RETURNING id`,
+        `INSERT INTO trips (organizer_user_id, goal_object_id, route_text, visibility,
+                            status, starts_at, ends_at)
+         VALUES ($1, $2, '', 'private', 'decided',
+                 now() + interval '10 days', now() + interval '12 days') RETURNING id`,
         [organizerId, objectId],
       )
     )[0].id;

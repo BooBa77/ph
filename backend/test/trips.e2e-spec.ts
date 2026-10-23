@@ -189,7 +189,10 @@ describe('Походы (e2e)', () => {
     const response = await request(app.getHttpServer())
       .post('/api/trips')
       .set('Authorization', `Bearer ${token}`)
-      .send({ goalObjectId: Number(goalObjectId), ...body });
+      // По умолчанию — настоящий поход: с 21.10.2026 у мечты нет ни
+      // состава, ни членского чата (`tabs.md` §7). Тесты про мечту
+      // передают `status: 'idea'` явно.
+      .send({ goalObjectId: Number(goalObjectId), status: 'planning', ...body });
 
     if (response.status === 201) {
       createdTripIds.push(response.body.id as string);
@@ -199,7 +202,7 @@ describe('Походы (e2e)', () => {
 
   describe('создание', () => {
     it('минимальный поход: только цель, остальное по умолчанию', async () => {
-      const response = await createTrip({});
+      const response = await createTrip({ status: 'idea' });
 
       expect(response.status).toBe(201);
       expect(response.body.status).toBe('idea');
@@ -219,8 +222,10 @@ describe('Походы (e2e)', () => {
       expect(response.body.organizerUserId).toBe(userId);
     });
 
-    it('организатор сразу в составе, с ролью и двумя чатами', async () => {
-      const response = await createTrip({});
+    it('у планируемого похода организатор сразу в составе, с ролью и двумя чатами', async () => {
+      // У мечты состава нет — она вишлист (`tabs.md` §7). Проверяем
+      // настоящий поход: в «Планирую» организатор появляется в составе.
+      const response = await createTrip({ status: 'planning' });
       const tripId = response.body.id as string;
 
       const participants = await dataSource.query(
@@ -932,7 +937,10 @@ describe('Походы (e2e)', () => {
 
   describe('отмена', () => {
     it('идею отменить нельзя: у неё нет договорённостей', async () => {
-      const created = await createTrip({ announcement: 'Идея' });
+      const created = await createTrip({
+        announcement: 'Идея',
+        status: 'idea',
+      });
       expect(created.body.status).toBe('idea');
 
       await request(app.getHttpServer())

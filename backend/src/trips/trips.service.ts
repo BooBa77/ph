@@ -7,7 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, In, Repository } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull, Not, Repository } from 'typeorm';
 
 import { CalendarActivityGroup } from '../calendar/entities/activity-group.entity';
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
@@ -136,6 +136,14 @@ export class TripsService {
     const isCommercial = dto.isCommercial ?? false;
     const status = dto.status ?? 'idea';
 
+    /**
+     * «Мечта» — не поход, а вишлист (`tabs.md` §7): у неё нет участников,
+     * ролей и членского чата, только гостевой чат. Связанные таблицы пустые,
+     * а организатор в составе, роль и членский чат появятся при переходе
+     * в «Планирую» (`prepareTripFromIdea`).
+     */
+    const isIdea = status === 'idea';
+
     this.assertPriceRules(isCommercial, dto.priceRub, dto.priceNote);
     this.assertDates(status, startsAt, endsAt);
 
@@ -160,18 +168,20 @@ export class TripsService {
       await this.assertActivityTypes(manager, activityTypeIds);
 
       /**
-       * Роль организатора обязана быть в справочнике. Если её нет — это
-       * не ошибка клиента, а незалитый справочник, поэтому 500 и подсказка
-       * с командой: без неё сообщение «роль не найдена» не говорит, что
-       * делать.
+       * Роль организатора обязана быть в справочнике. Мечте она не нужна:
+       * у неё нет состава. Если её нет — это не ошибка клиента, а
+       * незалитый справочник, поэтому 500 и подсказка с командой.
        */
-      const organizerRole = await manager.findOne(Role, {
-        where: { code: ORGANIZER_ROLE_CODE },
-      });
-      if (!organizerRole) {
-        throw new InternalServerErrorException(
-          'В справочнике ролей нет роли организатора: выполните npm run seed:roles',
-        );
+      let organizerRole: Role | null = null;
+      if (!isIdea) {
+        organizerRole = await manager.findOne(Role, {
+          where: { code: ORGANIZER_ROLE_CODE },
+        });
+        if (!organizerRole) {
+          throw new InternalServerErrorException(
+            'В справочнике ролей нет роли организатора: выполните npm run seed:roles',
+          );
+        }
       }
 
       const trip = await manager.save(
@@ -194,32 +204,39 @@ export class TripsService {
         }),
       );
 
-      /**
-       * Организатор сразу в составе, со статусом `going`. «Организую,
-       * но сам не иду» — законная ситуация, но она требует явного действия
-       * человека, а не является значением по умолчанию.
-       */
-      await manager.insert(TripParticipant, {
-        tripId: trip.id,
-        userId: organizerUserId,
-        status: 'going',
-      });
+      if (!isIdea && organizerRole) {
+        /**
+         * Организатор сразу в составе, со статусом `going`. «Организую,
+         * но сам не иду» — законная ситуация, но она требует явного
+         * действия человека, а не является значением по умолчанию.
+         */
+        await manager.insert(TripParticipant, {
+          tripId: trip.id,
+          userId: organizerUserId,
+          status: 'going',
+        });
 
-      await manager.insert(TripParticipantRole, {
-        tripId: trip.id,
-        userId: organizerUserId,
-        roleId: organizerRole.id,
-      });
+        await manager.insert(TripParticipantRole, {
+          tripId: trip.id,
+          userId: organizerUserId,
+          roleId: organizerRole.id,
+        });
+      }
 
       /**
-       * Оба чата создаются сразу, даже для приватного похода: чат
-       * существует всегда, а кто в него впущен — вопрос доступа, а не
-       * наличия строки.
+       * Гостевой чат есть у любого похода, даже у мечты: это единственное
+       * место, где гости могут спросить о вишлисте. Членский — только
+       * у настоящего похода: у мечты нет состава.
        */
-      await manager.insert(Conversation, [
-        { kind: 'trip_guest', tripId: trip.id },
-        { kind: 'trip_members', tripId: trip.id },
-      ]);
+      await manager.insert(
+        Conversation,
+        isIdea
+          ? [{ kind: 'trip_guest', tripId: trip.id }]
+          : [
+              { kind: 'trip_guest', tripId: trip.id },
+              { kind: 'trip_members', tripId: trip.id },
+            ],
+      );
 
       if (dto.dateVariants?.length) {
         await manager.insert(
@@ -294,7 +311,7 @@ export class TripsService {
       throw new NotFoundException('Поход не найден');
     }
 
-    if (trip.visibility === 'private') {
+    if (trip.visibility === 'private' && trip.organizerUserId !== userId) {
       const isParticipant = await this.participantsRepository.count({
         where: { tripId: trip.id, userId },
       });
@@ -316,7 +333,15 @@ export class TripsService {
    * роль отвечает на вопрос «кто ведёт», а не «кому видно». Поэтому
    * `canEdit` — про правку, а не про доступ к экрану.
    *
-   * Гость (зарегистрированный, но не в походе) видит **только гостевую**
+   * **Готовность похода меняет набор** (`tabs.md` §7):
+   *
+   * - «Мечта» — вишлист, а не поход: у владельца «Инфо» и «Гостевая»,
+   *   у остальных только «Гостевая»; участников и подготовки нет;
+   * - «Планирую» без конкретного числа (дня месяца) — «Инфо» и «Участники»:
+   *   люди и состав есть, но готовить ещё нечего;
+   * - «Решено» и «Планирую» с конкретным числом — все вкладки.
+   *
+   * Гость (зарегистрированный, но не в походе) видит только гостевую
    * вкладку, и править ему нечего. Приватный чужой поход — 404: правило
    * одно на весь домен (`findVisibleTrip`).
    *
@@ -326,6 +351,20 @@ export class TripsService {
   async listTabs(userId: string, id: number): Promise<TripTabListDto> {
     const manager = this.dataSource.manager;
     const trip = await this.findVisibleTrip(manager, userId, id);
+
+    // Мечта — вишлист: владелец смотрит «Инфо» и «Гостевую», остальные
+    // только «Гостевую». Ни участников, ни подготовки здесь нет.
+    if (trip.status === 'idea') {
+      return {
+        tabs:
+          trip.organizerUserId === userId
+            ? [
+                { code: 'general', canEdit: true },
+                { code: 'guest', canEdit: false },
+              ]
+            : [{ code: 'guest', canEdit: false }],
+      };
+    }
 
     const participant = await manager.findOne(TripParticipant, {
       where: { tripId: trip.id, userId },
@@ -339,9 +378,101 @@ export class TripsService {
 
     const editable = await this.editableTabs(manager, trip, userId);
 
+    /**
+     * «Планирую» без конкретного числа — только «Инфо» и «Участники».
+     * Конкретное число (день месяца) — точка, после которой открывается
+     * вся подготовка; см. `hasConcreteDate`.
+     */
+    if (
+      trip.status === 'planning' &&
+      !(await this.hasConcreteDate(manager, trip))
+    ) {
+      return {
+        tabs: (['general', 'members'] as const).map((code) => ({
+          code,
+          canEdit: editable.has(code),
+        })),
+      };
+    }
+
     return {
       tabs: TRIP_TABS.map((code) => ({ code, canEdit: editable.has(code) })),
     };
+  }
+
+  /**
+   * Есть ли у похода **конкретное число** — день месяца в прогнозе или
+   * решённые даты. Месяц без числа сроком не считается: «в июле» — это
+   * ещё не дата, а «5 июля» — да (`tabs.md` §7).
+   */
+  private async hasConcreteDate(
+    manager: EntityManager,
+    trip: Trip,
+  ): Promise<boolean> {
+    if (trip.startsAt !== null) return true;
+
+    const variants = await manager.count(TripDateVariant, {
+      where: { tripId: trip.id, day: Not(IsNull()) },
+    });
+
+    return variants > 0;
+  }
+
+  /**
+   * Достроить «Планирую» из «Мечты»: организатор в составе, роль
+   * организатора и членский чат. У мечты этого нет намеренно — она
+   * вишлист, а не поход; появляется всё при первом повышении готовности.
+   * Идемпотентно: повторный переход ничего не дублирует.
+   */
+  private async prepareTripFromIdea(
+    manager: EntityManager,
+    trip: Trip,
+  ): Promise<void> {
+    const organizerRole = await manager.findOne(Role, {
+      where: { code: ORGANIZER_ROLE_CODE },
+    });
+    if (!organizerRole) {
+      throw new InternalServerErrorException(
+        'В справочнике ролей нет роли организатора: выполните npm run seed:roles',
+      );
+    }
+
+    const hasParticipant = await manager.exists(TripParticipant, {
+      where: { tripId: trip.id, userId: trip.organizerUserId },
+    });
+    if (!hasParticipant) {
+      await manager.insert(TripParticipant, {
+        tripId: trip.id,
+        userId: trip.organizerUserId,
+        status: 'going',
+      });
+    }
+
+    const hasRole = await manager.exists(TripParticipantRole, {
+      where: {
+        tripId: trip.id,
+        userId: trip.organizerUserId,
+        roleId: organizerRole.id,
+      },
+    });
+    if (!hasRole) {
+      await manager.insert(TripParticipantRole, {
+        tripId: trip.id,
+        userId: trip.organizerUserId,
+        roleId: organizerRole.id,
+      });
+    }
+
+    // Гостевой чат у мечты уже есть; членский появляется здесь. Проверка
+    // на существование нужна и для старых мечт, созданных до правила.
+    for (const kind of ['trip_guest', 'trip_members'] as const) {
+      const hasChat = await manager.exists(Conversation, {
+        where: { tripId: trip.id, kind },
+      });
+      if (!hasChat) {
+        await manager.insert(Conversation, { kind, tripId: trip.id });
+      }
+    }
   }
 
   /**
@@ -499,7 +630,7 @@ export class TripsService {
     });
     if (!trip) throw new NotFoundException('Поход не найден');
 
-    if (trip.visibility === 'private') {
+    if (trip.visibility === 'private' && trip.organizerUserId !== userId) {
       const isParticipant = await manager.count(TripParticipant, {
         where: { tripId: trip.id, userId },
       });
@@ -816,7 +947,9 @@ export class TripsService {
       .createQueryBuilder('trip')
       .leftJoinAndSelect('trip.goalObject', 'goal')
       .where(
-        `(trip.visibility = 'public' OR EXISTS (
+        `(trip.visibility = 'public'
+          OR trip.organizer_user_id = :userId
+          OR EXISTS (
            SELECT 1 FROM trip_participants p
             WHERE p.trip_id = trip.id AND p.user_id = :userId
          ))`,
@@ -894,10 +1027,16 @@ export class TripsService {
      * который я организовал, но не иду, — всё равно мой.
      */
     if (query.mine !== undefined) {
+      // «Мои» — где я организатор или участник. Организатор важен отдельно:
+      // у мечты состава нет, и без этой ветки свои же мечты исчезли бы
+      // из «Моих походов» (`tabs.md` §7).
       qb.andWhere(
-        `${query.mine ? '' : 'NOT '}EXISTS (
-           SELECT 1 FROM trip_participants p
-            WHERE p.trip_id = trip.id AND p.user_id = :userId
+        `${query.mine ? '' : 'NOT '}(
+           trip.organizer_user_id = :userId
+           OR EXISTS (
+             SELECT 1 FROM trip_participants p
+              WHERE p.trip_id = trip.id AND p.user_id = :userId
+           )
          )`,
       );
     }
@@ -1013,7 +1152,16 @@ export class TripsService {
     return this.dataSource.transaction(async (manager) => {
       const trip = await this.findOwnedTrip(manager, userId, id);
 
+      /**
+       * Правила готовности (`tabs.md` §7) требуют знать, чем поход был:
+       * из «Мечты» в «Планирую» достраивается состав и чаты, а обратно
+       * и к «без конкретного числа» пути нет. Оба факта снимаем до правок.
+       */
+      const previousStatus = trip.status;
+      const previousHasConcreteDate = await this.hasConcreteDate(manager, trip);
+
       const isCommercial = dto.isCommercial ?? trip.isCommercial;
+
       const priceRub =
         dto.priceRub !== undefined ? dto.priceRub : trip.priceRub;
       const priceNote =
@@ -1035,6 +1183,34 @@ export class TripsService {
       this.assertPriceRules(isCommercial, priceRub, priceNote);
       this.assertDates(status, startsAt, endsAt);
       this.assertActualDates(actualStartedAt, actualFinishedAt);
+
+      /**
+       * Назад в «Мечту» нельзя: поход уже готовится, у него есть состав
+       * и подготовка, а «мечта» — это вишлист без данных (`tabs.md` §7).
+       */
+      if (status === 'idea' && previousStatus !== 'idea') {
+        throw new BadRequestException(
+          'Вернуться в мечту нельзя: поход уже готовится — выберите «Планирую»',
+        );
+      }
+
+      /**
+       * Конкретное число — точка невозврата: как только по нему открылись
+       * закладки подготовки, убрать его нельзя. Вернуться к «без числа»
+       * значит вернуть поход в состояние, из которого он вышел.
+       */
+      const nextVariants =
+        dto.dateVariants !== undefined
+          ? dto.dateVariants
+          : await manager.find(TripDateVariant, { where: { tripId: trip.id } });
+      const willHaveConcreteDate =
+        startsAt !== null || nextVariants.some((variant) => variant.day != null);
+
+      if (previousHasConcreteDate && !willHaveConcreteDate) {
+        throw new BadRequestException(
+          'Конкретное число у похода уже было — вернуться к «без числа» нельзя',
+        );
+      }
 
       /**
        * Типы похода — тоже «замена целиком», как варианты дат ниже:
@@ -1113,6 +1289,12 @@ export class TripsService {
             })),
           );
         }
+      }
+
+      // Мечта становится походом: состав, роль организатора и членский чат
+      // появляются здесь — до этого их не было.
+      if (previousStatus === 'idea' && status !== 'idea') {
+        await this.prepareTripFromIdea(manager, saved);
       }
 
       // Снимаем и ставим заново в той же транзакции: половина типов
@@ -1207,7 +1389,7 @@ export class TripsService {
       throw new NotFoundException('Поход не найден');
     }
 
-    if (trip.visibility === 'private') {
+    if (trip.visibility === 'private' && trip.organizerUserId !== userId) {
       const isParticipant = await manager.count(TripParticipant, {
         where: { tripId: trip.id, userId },
       });
