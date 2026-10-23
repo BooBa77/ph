@@ -235,6 +235,7 @@ export class TripsService {
           : [
               { kind: 'trip_guest', tripId: trip.id },
               { kind: 'trip_members', tripId: trip.id },
+              { kind: 'trip_meals', tripId: trip.id },
             ],
       );
 
@@ -470,7 +471,7 @@ export class TripsService {
 
     // Гостевой чат у мечты уже есть; членский появляется здесь. Проверка
     // на существование нужна и для старых мечт, созданных до правила.
-    for (const kind of ['trip_guest', 'trip_members'] as const) {
+    for (const kind of ['trip_guest', 'trip_members', 'trip_meals'] as const) {
       const hasChat = await manager.exists(Conversation, {
         where: { tripId: trip.id, kind },
       });
@@ -1973,14 +1974,14 @@ export class TripsService {
       })) > 0;
 
     const allowed =
-      kind === 'trip_members'
+      kind === 'trip_members' || kind === 'trip_meals'
         ? isParticipant
         : isParticipant || trip.visibility === 'public';
 
     if (!allowed) {
       throw new ForbiddenException(
-        kind === 'trip_members'
-          ? 'Чат участников доступен только участникам похода'
+        kind === 'trip_members' || kind === 'trip_meals'
+          ? 'Этот чат доступен только участникам похода'
           : 'Этот чат похода вам недоступен',
       );
     }
@@ -2028,7 +2029,7 @@ export class TripsService {
       if (!CHAT_KINDS.includes(kind)) continue;
 
       const allowed =
-        kind === 'trip_members'
+        kind === 'trip_members' || kind === 'trip_meals'
           ? isParticipant
           : isParticipant || trip.visibility === 'public';
       if (!allowed) continue;

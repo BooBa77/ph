@@ -83,7 +83,7 @@ export type RequestDirection = (typeof REQUEST_DIRECTIONS)[number];
  * чат существует всегда, а кто в него впущен — вопрос доступа, а не
  * наличия строки.
  */
-export const CHAT_KINDS = ['trip_guest', 'trip_members'] as const;
+export const CHAT_KINDS = ['trip_guest', 'trip_members', 'trip_meals'] as const;
 
 export type ChatKind = (typeof CHAT_KINDS)[number];
 

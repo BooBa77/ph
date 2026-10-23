@@ -26,6 +26,7 @@ import { CHAT_KINDS, type ChatKind } from '../trip.types';
 const CHAT_TITLES: Record<ChatKind, string> = {
   trip_guest: 'Гостевой чат',
   trip_members: 'Чат участников',
+  trip_meals: 'Чат питания',
 };
 
 /** Сообщение чата похода. */
