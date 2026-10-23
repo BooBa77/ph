@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onUnmounted, ref, watch } from 'vue'
 
-import { searchProducts } from '@/api/meals'
+import { createProduct, searchProducts } from '@/api/meals'
 import { PRODUCT_UNIT_LABELS, type Product } from '@/types/meals'
 
 /**
@@ -11,16 +11,22 @@ import { PRODUCT_UNIT_LABELS, type Product } from '@/types/meals'
  * не листают целиком — в нём десятки позиций, и простыня из них
  * не помогает выбрать, а мешает.
  *
- * Компонент общий для блюда в кулинарной книге и (в Ф7) для раскладки
- * и списка продуктов: там тот же поиск, и копия разошлась бы задержкой
- * и поведением.
+ * **Своего продукта в справочнике может не быть** — шоколад, бабушкино
+ * варенье, самодельный сухарь. «Ничего не нашлось» здесь было бы тупиком:
+ * поэтому вместо него — «Добавить „Шоколад“», и продукт заводится с нулевым
+ * весом (граммы по нему не считаются, но в раскладке он живёт).
+ *
+ * Компонент общий для блюда в кулинарной книге и для раскладки: там тот же
+ * поиск, и копия разошлась бы задержкой и поведением.
  */
 const props = withDefaults(
   defineProps<{
     /** Подсказка в поле ввода. */
     placeholder?: string
+    /** Выбранный продукт: поле показывает его и сбрасывается вместе с ним. */
+    product?: Product | null
   }>(),
-  { placeholder: 'Введите название продукта' },
+  { placeholder: 'Введите название продукта', product: null },
 )
 
 const emit = defineEmits<{
@@ -34,6 +40,7 @@ const SEARCH_DELAY_MS = 300
 const query = ref('')
 const options = ref<Product[]>([])
 const isLoading = ref(false)
+const isCreating = ref(false)
 const error = ref<string | null>(null)
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
@@ -73,6 +80,23 @@ watch(query, () => {
   searchTimer = setTimeout(search, SEARCH_DELAY_MS)
 })
 
+watch(
+  () => props.product,
+  (product) => {
+    if (!product) {
+      query.value = ''
+      options.value = []
+
+      return
+    }
+    if (query.value !== product.name) {
+      skipNextSearch = true
+      query.value = product.name
+      options.value = []
+    }
+  },
+)
+
 onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
 })
@@ -82,6 +106,24 @@ function choose(product: Product) {
   skipNextSearch = true
   query.value = product.name
   options.value = []
+}
+
+/** Свой продукт: вес единицы 0, граммы по нему не считаются. */
+async function createCustom() {
+  const name = query.value.trim()
+  if (name.length === 0) return
+
+  isCreating.value = true
+  error.value = null
+
+  try {
+    choose(await createProduct({ name, unit: 'piece' }))
+  } catch (cause) {
+    error.value =
+      cause instanceof Error ? cause.message : 'Не удалось добавить продукт'
+  } finally {
+    isCreating.value = false
+  }
 }
 </script>
 
@@ -119,12 +161,15 @@ function choose(product: Product) {
       </li>
     </ul>
 
-    <p
+    <button
       v-else-if="query.trim().length > 0"
-      class="text-xs text-muted"
-      data-test="product-nothing"
+      type="button"
+      class="cursor-pointer rounded-xl border border-dashed border-border px-3 py-1.5 text-left text-xs text-muted transition-colors hover:border-primary hover:text-text"
+      :disabled="isCreating"
+      data-test="product-create"
+      @click="createCustom"
     >
-      Ничего не нашлось
-    </p>
+      {{ isCreating ? 'Добавляем…' : `Добавить «${query.trim()}» — нет в справочнике` }}
+    </button>
   </div>
 </template>

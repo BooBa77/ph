@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
@@ -39,7 +39,7 @@ import {
   type TripMealPlan,
   type TripMealProduct,
 } from '@/types/trips'
-import { PRODUCT_UNIT_LABELS, formatProductAmount, type Dish, type Product } from '@/types/meals'
+import { formatProductAmount, type Dish, type Product } from '@/types/meals'
 import { formatWeight } from '@/utils/gearWeight'
 
 /**
@@ -247,16 +247,20 @@ function chooseLineProduct(key: string, product: Product) {
   draft.amount = ''
 }
 
-function addLine(dayIndex: number, kind: TripMealKind) {
-  const key = mealKey(dayIndex, kind)
+function lineReady(key: string): boolean {
   const draft = lineDraft(key)
   const amount = Number(String(draft.amount).trim())
 
-  if (!draft.product || !Number.isInteger(amount) || amount <= 0) {
-    error.value = 'Выберите продукт и укажите количество — целое число больше нуля.'
+  return Boolean(draft.product) && Number.isInteger(amount) && amount > 0
+}
 
-    return
-  }
+function addLine(dayIndex: number, kind: TripMealKind) {
+  const key = mealKey(dayIndex, kind)
+  const draft = lineDraft(key)
+
+  if (!lineReady(key)) return
+
+  const amount = Number(String(draft.amount).trim())
 
   void run(`${key}:line`, async () => {
     const next = await setMealLine(
@@ -512,14 +516,16 @@ onMounted(() => {
     <template v-else-if="plan">
       <!-- Едоки -->
       <div class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-4" data-test="eaters">
-        <h2 class="text-sm text-muted">Едоки</h2>
+        <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h2 class="text-sm text-muted">Едоки</h2>
 
-        <p class="text-sm text-text" data-test="eaters-counts">
+          <p class="text-sm text-text" data-test="eaters-counts">
           Едоков в общей раскладке — {{ plan.eaters.total }}
           (М-{{ plan.eaters.men }}, Ж-{{ plan.eaters.women }}),
           <template v-if="plan.eaters.vegetarians === 0">вегетарианцев нет</template>
           <template v-else>вегетарианцев {{ plan.eaters.vegetarians }}</template>
-        </p>
+          </p>
+        </div>
 
         <ul class="flex flex-col gap-1" data-test="eaters-list">
           <li
@@ -577,27 +583,26 @@ onMounted(() => {
                 <span class="text-sm font-medium text-text">
                   {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
                 </span>
-              </header>
-
-              <template v-if="mealOf(day.index, kind)">
                 <button
-                  v-if="canEdit"
+                  v-if="canEdit && mealOf(day.index, kind)"
                   type="button"
-                  class="w-full cursor-pointer rounded-lg border px-2 py-1 text-xs transition-colors"
+                  class="cursor-pointer text-xs transition-colors"
                   :class="
                     kulekOf(mealOf(day.index, kind)!)
-                      ? 'border-primary font-medium text-primary'
-                      : 'border-border text-muted hover:text-text'
+                      ? 'font-medium text-primary'
+                      : 'text-muted underline hover:text-text'
                   "
                   :data-test="`meal-kulek-${day.index}-${kind}`"
                   @click="toggleKulek(mealOf(day.index, kind)!)"
                 >
-                  {{
-                    kulekOf(mealOf(day.index, kind)!)
-                      ? `Кулёк включён: ${kulekOf(mealOf(day.index, kind)!)!.name}`
-                      : 'Кулёк'
-                  }}
+                  <template v-if="kulekOf(mealOf(day.index, kind)!)">кулёк собран</template>
+                  <template v-else>
+                    <span class="hidden sm:inline">всё </span>в отдельный кулёк
+                  </template>
                 </button>
+              </header>
+
+              <template v-if="mealOf(day.index, kind)">
 
                 <div v-if="canEdit" class="flex gap-1" data-test="meal-form">
                   <button
@@ -786,7 +791,7 @@ onMounted(() => {
                     class="w-full rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
                     :data-test="`meal-dish-select-${day.index}-${kind}`"
                   >
-                    <option value="">Выберите рецепт блюда</option>
+                    <option value="" disabled hidden>Выберите рецепт блюда</option>
                     <option v-for="dish in dishes" :key="dish.id" :value="dish.id">
                       {{ dish.title }}
                     </option>
@@ -802,32 +807,33 @@ onMounted(() => {
                   </button>
                 </div>
 
-                <div class="flex flex-col gap-1">
-                  <ProductPicker @select="chooseLineProduct(mealKey(day.index, kind), $event)" />
-
-                  <div class="flex items-center gap-1">
-                    <input
-                      v-model="lineDraft(mealKey(day.index, kind)).amount"
-                      type="number"
-                      min="1"
-                      step="1"
-                      placeholder="кол-во"
-                      class="w-20 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
-                      :data-test="`meal-line-amount-${day.index}-${kind}`"
+                <div class="flex items-start gap-2">
+                  <div class="min-w-0 flex-1">
+                    <ProductPicker
+                      :product="lineDraft(mealKey(day.index, kind)).product"
+                      @select="chooseLineProduct(mealKey(day.index, kind), $event)"
                     />
-                    <span class="text-xs text-muted">
-                      {{ lineDraft(mealKey(day.index, kind)).product ? PRODUCT_UNIT_LABELS[lineDraft(mealKey(day.index, kind)).product!.unit] : '—' }}
-                    </span>
-                    <button
-                      type="button"
-                      class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary disabled:opacity-50"
-                      :disabled="!lineDraft(mealKey(day.index, kind)).product || busy !== null"
-                      :data-test="`meal-line-add-${day.index}-${kind}`"
-                      @click="addLine(day.index, kind)"
-                    >
-                      Строка
-                    </button>
                   </div>
+
+                  <input
+                    v-model="lineDraft(mealKey(day.index, kind)).amount"
+                    type="number"
+                    min="1"
+                    step="1"
+                    placeholder="кол-во"
+                    class="w-20 shrink-0 rounded-lg border border-border bg-field px-2 py-1.5 text-xs text-text focus:border-primary focus:outline-none"
+                    :data-test="`meal-line-amount-${day.index}-${kind}`"
+                  />
+
+                  <button
+                    type="button"
+                    class="shrink-0 cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+                    :disabled="!lineReady(mealKey(day.index, kind)) || busy !== null"
+                    :data-test="`meal-line-add-${day.index}-${kind}`"
+                    @click="addLine(day.index, kind)"
+                  >
+                    Добавить
+                  </button>
                 </div>
               </div>
             </article>

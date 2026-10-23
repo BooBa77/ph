@@ -1,5 +1,5 @@
-import { apiFetch } from '@/api/client'
-import type { Dish, DishIngredient, Product } from '@/types/meals'
+﻿import { apiFetch } from '@/api/client'
+import type { Dish, DishIngredient, Product, ProductUnit } from '@/types/meals'
 
 /**
  * Питание: справочник продуктов (только чтение) и кулинарная книга.
@@ -85,4 +85,15 @@ export async function updateIngredient(
 /** DELETE /api/dishes/ingredients/:id */
 export async function deleteIngredient(ingredientId: string): Promise<void> {
   await apiFetch<void>(`/dishes/ingredients/${ingredientId}`, { method: 'DELETE' })
+}
+
+/** POST /products — свой продукт с нулевым весом. */
+export async function createProduct(payload: {
+  name: string
+  unit: ProductUnit
+}): Promise<Product> {
+  return apiFetch<Product>('/products', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
 }
