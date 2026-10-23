@@ -16,8 +16,9 @@
  * вкладками, чтобы матрица не врала при чтении глазами.
  *
  * Коды ролей — из `seed-roles.mjs`; коды вкладок — из `trip-tabs.md`
- * (`general, guest, members, sport, transfer, route, meals, gear,
- * firstAid, finance, diary`).
+ * (`guest, members, sport, transfer, route, meals, gear, firstAid, finance,
+ * diary`). Вкладки «Инфо» нет с 21.10.2026: информация живёт в «Гостевой»,
+ * правка — кнопкой «Редактировать».
  *
  * Запуск:
  *   node scripts/seed-role-tabs.mjs
@@ -32,7 +33,6 @@ if (!url) {
 }
 
 const ALL_TABS = [
-  'general',
   'guest',
   'members',
   'sport',

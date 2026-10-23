@@ -5,7 +5,7 @@ import type { TripTab } from '../trip-tabs';
 import { TRIP_TABS } from '../trip-tabs';
 import type { Trip } from '../entities/trip.entity';
 import type { TripStatus } from '../trip.types';
-import { TripRoleDto } from './participant.dto';
+import { TripParticipantDto, TripRoleDto } from './participant.dto';
 import { TripGoalDto } from './trip-response.dto';
 
 /**
@@ -72,17 +72,17 @@ export class SetParticipantRolesDto {
 }
 
 /**
- * Поход глазами гостя — урезанное представление.
+ * Поход глазами гостя — то, что видно на вкладке «Гостевая».
  *
  * Гость — зарегистрированный человек, который **в походе не участвует**.
- * Ему показывается гостевая вкладка, собранная из «Общей»: цель, анонс,
- * походные даты, маршрут, требования, коммерция и цена. **Места сбора здесь
- * нет** (решение заказчика 21.10.2026): «где встречаемся» — дело тех, кто
- * уже в составе.
+ * С 21.10.2026 «Гостевая» **одна для всех**: отдельной вкладки «Инфо» нет,
+ * информация о походе живёт здесь и одинакова для участников и гостей
+ * (решение заказчика). Поэтому здесь есть и состав участников с ролями,
+ * и фактические даты. **Места сбора нет** — «где встречаемся» уехало
+ * в «Трансфер».
  *
- * Чего здесь нет намеренно: состава участников, фактических дат выхода
- * и возвращения, приватных пометок. Гость узнаёт, куда и когда идут
- * и сколько это стоит, — и решает, проситься ли в поход.
+ * Приватных пометок здесь нет: что не показывается гостю, то не показывается
+ * и участнику на этой вкладке.
  */
 export class GuestTripDto {
   @ApiProperty({ description: 'Id похода', example: '7' })
@@ -117,6 +117,25 @@ export class GuestTripDto {
   @ApiProperty({ description: 'Конец по решению организатора', nullable: true })
   endsAt: string | null;
 
+  @ApiProperty({
+    description: 'Фактический выход на маршрут',
+    nullable: true,
+  })
+  actualStartedAt: string | null;
+
+  @ApiProperty({
+    description: 'Фактическое возвращение с маршрута',
+    nullable: true,
+  })
+  actualFinishedAt: string | null;
+
+  @ApiProperty({
+    description:
+      'Состав: кто идёт, с ролями и статусами. Виден и гостю — это важная часть анонса',
+    type: () => [TripParticipantDto],
+  })
+  participants: TripParticipantDto[];
+
   @ApiProperty({ description: 'Коммерческий поход', example: false })
   isCommercial: boolean;
 
@@ -132,7 +151,10 @@ export class GuestTripDto {
   @ApiProperty({ description: 'Набор закрыт', example: false })
   isRecruitmentClosed: boolean;
 
-  static from(trip: Trip): GuestTripDto {
+  static from(
+    trip: Trip,
+    participants: TripParticipantDto[] = [],
+  ): GuestTripDto {
     return {
       id: trip.id,
       goalObject: trip.goalObject
@@ -149,6 +171,9 @@ export class GuestTripDto {
       status: trip.status,
       startsAt: trip.startsAt?.toISOString() ?? null,
       endsAt: trip.endsAt?.toISOString() ?? null,
+      actualStartedAt: trip.actualStartedAt?.toISOString() ?? null,
+      actualFinishedAt: trip.actualFinishedAt?.toISOString() ?? null,
+      participants,
       isCommercial: trip.isCommercial,
       priceRub: trip.priceRub,
       priceNote: trip.priceNote,

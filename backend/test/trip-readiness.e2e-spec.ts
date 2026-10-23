@@ -170,8 +170,8 @@ describe('Готовность похода (e2e)', () => {
     ]);
   });
 
-  it('у владельца мечты «Инфо» и «Гостевая», у остальных — только «Гостевая»', async () => {
-    await expect(tabsOf(ownerToken)).resolves.toEqual(['general', 'guest']);
+  it('у мечты одна «Гостевая» — и у владельца, и у гостя', async () => {
+    await expect(tabsOf(ownerToken)).resolves.toEqual(['guest']);
     await expect(tabsOf(strangerToken)).resolves.toEqual(['guest']);
   });
 
@@ -203,9 +203,9 @@ describe('Готовность похода (e2e)', () => {
     ]);
   });
 
-  it('без конкретного числа видны только «Инфо» и «Участники»', async () => {
+  it('без конкретного числа видны только «Гостевая» и «Участники»', async () => {
     // Продолжительность есть, месяц/число — нет: срок не задан.
-    await expect(tabsOf(ownerToken)).resolves.toEqual(['general', 'members']);
+    await expect(tabsOf(ownerToken)).resolves.toEqual(['guest', 'members']);
     await expect(tabsOf(strangerToken)).resolves.toEqual(['guest']);
   });
 
@@ -215,7 +215,6 @@ describe('Готовность похода (e2e)', () => {
     }).expect(200);
 
     await expect(tabsOf(ownerToken)).resolves.toEqual([
-      'general',
       'guest',
       'members',
       'sport',
@@ -252,7 +251,7 @@ describe('Готовность похода (e2e)', () => {
       status: 'planning',
     }).expect(200);
 
-    await expect(tabsOf(ownerToken)).resolves.toHaveLength(11);
+    await expect(tabsOf(ownerToken)).resolves.toHaveLength(10);
   });
 
   it('без токена — 401', async () => {

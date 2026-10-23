@@ -364,18 +364,10 @@ export class TripsService {
     const manager = this.dataSource.manager;
     const trip = await this.findVisibleTrip(manager, userId, id);
 
-    // Мечта — вишлист: владелец смотрит «Инфо» и «Гостевую», остальные
-    // только «Гостевую». Ни участников, ни подготовки здесь нет.
+    // Мечта — вишлист: одна «Гостевая», одинаковая для владельца и гостей.
+    // Правка — кнопкой «Редактировать» в шапке, отдельной вкладки «Инфо» нет.
     if (trip.status === 'idea') {
-      return {
-        tabs:
-          trip.organizerUserId === userId
-            ? [
-                { code: 'general', canEdit: true },
-                { code: 'guest', canEdit: false },
-              ]
-            : [{ code: 'guest', canEdit: false }],
-      };
+      return { tabs: [{ code: 'guest', canEdit: false }] };
     }
 
     const participant = await manager.findOne(TripParticipant, {
@@ -391,16 +383,17 @@ export class TripsService {
     const editable = await this.editableTabs(manager, trip, userId);
 
     /**
-     * «Планирую» без конкретного числа — только «Инфо» и «Участники».
-     * Конкретное число (день месяца) — точка, после которой открывается
-     * вся подготовка; см. `hasConcreteDate`.
+     * «Планирую» без конкретного числа — «Гостевая» и «Участники»:
+     * информация и состав есть, готовить ещё нечего. Конкретное число
+     * (день месяца) — точка, после которой открывается вся подготовка;
+     * см. `hasConcreteDate`.
      */
     if (
       trip.status === 'planning' &&
       !(await this.hasConcreteDate(manager, trip))
     ) {
       return {
-        tabs: (['general', 'members'] as const).map((code) => ({
+        tabs: (['guest', 'members'] as const).map((code) => ({
           code,
           canEdit: editable.has(code),
         })),
@@ -651,7 +644,11 @@ export class TripsService {
       }
     }
 
-    return GuestTripDto.from(trip);
+    // «Гостевая» одна для всех: состав участников — часть анонса, и он
+    // виден гостю. Место сбора сюда не входит — оно в «Трансфере».
+    const participants = await this.loadParticipants(manager, trip);
+
+    return GuestTripDto.from(trip, participants);
   }
 
   /**

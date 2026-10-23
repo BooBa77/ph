@@ -181,14 +181,14 @@ describe('Вкладки и роли (e2e)', () => {
     // завхоз — «Питание». Организатору права не нужны: он правит всё.
     await dataSource.query(
       `INSERT INTO role_tab_permissions (role_id, tab)
-       VALUES ($1, 'members'), ($1, 'general'), ($2, 'meals')
+       VALUES ($1, 'members'), ($1, 'guest'), ($2, 'meals')
        ON CONFLICT DO NOTHING`,
       [await roleId('coOrganizer'), await roleId('quartermaster')],
     );
 
     /**
      * Своя роль для проверки матрицы: в dev справочник уже засеян, и
-     * у «завхоза» там две вкладки, а у «соорганизатора» — все одиннадцать.
+     * у «завхоза» там две вкладки, а у «соорганизатора» — все десять.
      * Проверка «роль даёт только свою вкладку» на чужих данных зависела бы
      * от сида, поэтому тест заводит роль с одной вкладкой и убирает её за
      * собой.
@@ -243,10 +243,10 @@ describe('Вкладки и роли (e2e)', () => {
   }
 
   describe('вкладки', () => {
-    it('организатор правит все одиннадцать', async () => {
+    it('организатор правит все десять', async () => {
       const tabs = await tabsOf(organizerToken);
 
-      expect(Object.keys(tabs)).toHaveLength(11);
+      expect(Object.keys(tabs)).toHaveLength(10);
       expect(Object.values(tabs).every(Boolean)).toBe(true);
       expect(tabs.meals).toBe(true);
       expect(tabs.finance).toBe(true);
@@ -263,7 +263,7 @@ describe('Вкладки и роли (e2e)', () => {
 
       const tabs = await tabsOf(memberToken);
 
-      expect(Object.keys(tabs)).toHaveLength(11);
+      expect(Object.keys(tabs)).toHaveLength(10);
       expect(Object.values(tabs).some(Boolean)).toBe(false);
     });
 
@@ -425,7 +425,7 @@ describe('Вкладки и роли (e2e)', () => {
   });
 
   describe('гостевая вкладка', () => {
-    it('отдаёт обзор из «Общей», но без места сбора и состава', async () => {
+    it('отдаёт обзор, одинаковый для всех: состав и даты, но без места сбора', async () => {
       const response = await call(
         'get',
         `/api/trips/${tripId}/guest`,
@@ -437,11 +437,23 @@ describe('Вкладки и роли (e2e)', () => {
       expect(response.body.priceRub).toBe(5000);
       expect(response.body.goalObject).toBeTruthy();
 
-      // Место сбора — решение заказчика: гостю не нужно.
+      // Место сбора — решение заказчика: гостю не нужно, оно в «Трансфере».
       expect(response.body).not.toHaveProperty('meetingPlace');
-      // Состава и фактических дат в гостевом обзоре нет.
-      expect(response.body).not.toHaveProperty('participants');
-      expect(response.body).not.toHaveProperty('actualStartedAt');
+
+      // А состав и даты — часть анонса, с 21.10.2026 их видят все.
+      expect(response.body).toHaveProperty('participants');
+      expect(response.body).toHaveProperty('actualStartedAt');
+      expect(response.body).toHaveProperty('actualFinishedAt');
+
+      const participants = response.body.participants as Array<{
+        userId: string;
+        isOrganizer: boolean;
+        roles: Array<{ code: string }>;
+      }>;
+      expect(participants).toHaveLength(3);
+      expect(
+        participants.find((person) => person.isOrganizer)?.userId,
+      ).toBe(organizerId);
     });
 
     it('приватный поход гостю не виден — 404', async () => {
