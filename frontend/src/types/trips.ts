@@ -8,6 +8,8 @@
  * что база отвергнет.
  */
 
+import type { ProductUnit } from '@/types/meals'
+
 /** Видимость похода. */
 export const TRIP_VISIBILITIES = ['public', 'private'] as const
 export type TripVisibility = (typeof TRIP_VISIBILITIES)[number]
@@ -506,4 +508,139 @@ export interface TripRequest {
   direction: RequestDirection
   message: string | null
   createdAt: string
+}
+
+// ─────────────────────── питание похода ───────────────────────
+
+/** Приёмы пищи: три в день, больше нельзя (`meals.md` §5.4). */
+export const TRIP_MEAL_KINDS = ['breakfast', 'lunch', 'dinner'] as const
+export type TripMealKind = (typeof TRIP_MEAL_KINDS)[number]
+
+export const TRIP_MEAL_LABELS: Record<TripMealKind, string> = {
+  breakfast: 'Завтрак',
+  lunch: 'Обед',
+  dinner: 'Ужин',
+}
+
+/** Время приёма: 08 / 13 / 19. Края дня подрезаются по времени заезда. */
+export const TRIP_MEAL_TIMES: Record<TripMealKind, string> = {
+  breakfast: '08:00',
+  lunch: '13:00',
+  dinner: '19:00',
+}
+
+/** Буква приёма в коде дня: «1з», «2о», «3у». */
+export const TRIP_MEAL_CODES: Record<TripMealKind, string> = {
+  breakfast: 'з',
+  lunch: 'о',
+  dinner: 'у',
+}
+
+export const TRIP_MEAL_FORMS = ['cook', 'snack'] as const
+export type TripMealForm = (typeof TRIP_MEAL_FORMS)[number]
+
+export const TRIP_MEAL_FORM_LABELS: Record<TripMealForm, string> = {
+  cook: 'Готовка',
+  snack: 'Перекус',
+}
+
+export const TRIP_MEAL_PACKAGE_KINDS = ['normal', 'kulek'] as const
+export type TripMealPackageKind = (typeof TRIP_MEAL_PACKAGE_KINDS)[number]
+
+/** Едок: идущий участник с диетическими пометками. */
+export interface TripEater {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  gender: 'm' | 'f'
+  isVegetarian: boolean
+  allergies: string | null
+  eatsSeparately: boolean
+}
+
+export interface TripEaters {
+  /** Едоков всего — без тех, кто питается отдельно. */
+  total: number
+  men: number
+  women: number
+  vegetarians: number
+  /** Идущие, включая тех, кто ест отдельно. */
+  people: TripEater[]
+}
+
+/** Доля строки раскладки в пакете. */
+export interface TripMealAllocation {
+  packageId: string
+  /** У эластичной «всё» — остаток. */
+  amount: number
+  isElastic: boolean
+}
+
+/** Ингредиент блюда в раскладке — на человека. */
+export interface TripMealDishIngredient {
+  productId: number
+  name: string
+  unit: ProductUnit
+  amount: number
+  isMeat: boolean
+}
+
+export interface TripMealDish {
+  dishId: string
+  title: string
+  ingredients: TripMealDishIngredient[]
+}
+
+/** Строка раскладки: продукт в приёме, рецептовая и ручная части. */
+export interface TripMealProduct {
+  productId: number
+  name: string
+  unit: ProductUnit
+  weightPerUnitGrams: number
+  recipeAmount: number
+  manualAmount: number
+  amount: number
+  isMeat: boolean
+  fromDishes: string[]
+  allocations: TripMealAllocation[]
+}
+
+export interface TripMeal {
+  id: string
+  dayIndex: number
+  kind: TripMealKind
+  form: TripMealForm
+  dishes: TripMealDish[]
+  products: TripMealProduct[]
+  weightGrams: number
+}
+
+export interface TripMealPackageItem {
+  mealId: string
+  dayIndex: number
+  kind: TripMealKind
+  productId: number
+  name: string
+  amount: number
+  isElastic: boolean
+  weightGrams: number
+}
+
+export interface TripMealPackage {
+  id: string
+  name: string
+  kind: TripMealPackageKind
+  mealId: string | null
+  weightActualGrams: number | null
+  weightActualStale: boolean
+  weightEstimatedGrams: number
+  items: TripMealPackageItem[]
+}
+
+/** Раскладка и фасовка похода целиком. */
+export interface TripMealPlan {
+  dayCount: number
+  eaters: TripEaters
+  meals: TripMeal[]
+  packages: TripMealPackage[]
 }

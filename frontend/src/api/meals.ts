@@ -62,21 +62,23 @@ export async function addIngredient(
   dishId: string,
   productId: number,
   amount: number,
+  isMeat = false,
 ): Promise<DishIngredient> {
   return apiFetch<DishIngredient>(`/dishes/${dishId}/ingredients`, {
     method: 'POST',
-    body: JSON.stringify({ productId, amount }),
+    body: JSON.stringify({ productId, amount, isMeat }),
   })
 }
 
-/** PATCH /api/dishes/ingredients/:id — количество. */
+/** PATCH /api/dishes/ingredients/:id — количество и/или мясной флаг. */
 export async function updateIngredient(
   ingredientId: string,
   amount: number,
+  isMeat?: boolean,
 ): Promise<DishIngredient> {
   return apiFetch<DishIngredient>(`/dishes/ingredients/${ingredientId}`, {
     method: 'PATCH',
-    body: JSON.stringify({ amount }),
+    body: JSON.stringify(isMeat === undefined ? { amount } : { amount, isMeat }),
   })
 }
 

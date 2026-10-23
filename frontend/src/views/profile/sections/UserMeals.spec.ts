@@ -37,6 +37,7 @@ function makeIngredient(overrides: Partial<DishIngredient> = {}): DishIngredient
     product: KRUPA,
     amount: 200,
     grams: 200,
+    isMeat: false,
     ...overrides,
   }
 }
@@ -155,9 +156,32 @@ describe('UserMeals', () => {
     await wrapper.findAll('form')[1]?.trigger('submit')
     await flushPromises()
 
-    expect(mocked.addIngredient).toHaveBeenCalledWith('dish-1', 2, 2)
+    expect(mocked.addIngredient).toHaveBeenCalledWith('dish-1', 2, 2, false)
     // Вес блюда пересчитан по строкам: 200 г крупы + 680 г тушёнки.
     expect(wrapper.find('[data-test="dish-weight"]').text()).toBe('880 г')
+  })
+
+  it('мясной ингредиент помечается и уходит в запрос', async () => {
+    const wrapper = await mountSection()
+    mocked.addIngredient.mockResolvedValue(
+      makeIngredient({ id: 'ing-2', product: TUSHONKA, amount: 2, grams: 680, isMeat: true }),
+    )
+
+    // Подсказка справочника: та же, что в обычном добавлении.
+    const picker = wrapper.find('[data-test="product-search"]')
+    await picker.setValue('туш')
+    await vi.waitFor(() => {
+      expect(wrapper.find('[data-test="product-option"]').exists()).toBe(true)
+    })
+    await wrapper.find('[data-test="product-option"]').trigger('click')
+
+    await wrapper.find('[data-test="ingredient-amount-input"]').setValue('2')
+    await wrapper.find('[data-test="ingredient-meat-input"]').setValue(true)
+    await wrapper.findAll('form')[1]?.trigger('submit')
+    await flushPromises()
+
+    expect(mocked.addIngredient).toHaveBeenCalledWith('dish-1', 2, 2, true)
+    expect(wrapper.findAll('[data-test="ingredient-meat"]')).toHaveLength(1)
   })
 
   it('без выбранного продукта добавление не отправляется', async () => {

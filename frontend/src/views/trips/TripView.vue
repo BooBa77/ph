@@ -7,6 +7,7 @@ import { fetchTripTabs, getTrip, updateTrip } from '@/api/trips'
 import { getPublicUser, type PublicUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
+import TripMeals from '@/views/trips/TripMeals.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
 import {
   TRIP_TAB_LABELS,
@@ -72,7 +73,7 @@ const organizer = ref<PublicUser | null>(null)
  * «Чаты» отдельной вкладкой больше нет: гостевой чат живёт на «Гостевой»,
  * членский — на «Участниках» (решение 21.10.2026: чат — тема вкладки).
  */
-const IMPLEMENTED: TripTabCode[] = ['guest', 'members']
+const IMPLEMENTED: TripTabCode[] = ['guest', 'members', 'meals']
 
 const permissions = ref<TripTabPermission[]>([])
 const activeTab = ref<TripTabCode>('guest')
@@ -92,6 +93,11 @@ const displayTabs = computed<{ code: TripTabCode; label: string; available: bool
 /** Править «Участников» — значит назначать роли: разбирает бэкенд по ролям. */
 const canManageRoles = computed(
   () => permissions.value.find((permission) => permission.code === 'members')?.canEdit ?? false,
+)
+
+/** Править раскладку может завхоз или организатор: это же решает бэкенд. */
+const canEditMeals = computed(
+  () => permissions.value.find((permission) => permission.code === 'meals')?.canEdit ?? false,
 )
 
 /** Править поход может только организатор. */
@@ -292,9 +298,15 @@ async function toggleRecruitment() {
         @changed="load(trip.id)"
       />
 
+      <TripMeals
+        v-else-if="activeTab === 'meals'"
+        :trip="trip"
+        :can-edit="canEditMeals"
+      />
+
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» появится вместе
-        с Ф7: сейчас готовы «Гостевая» и «Участники».
+        с Ф7: сейчас готовы «Гостевая», «Участники» и «Питание».
       </p>
 
       <!-- Вкладки: на телефоне снизу, под большим пальцем. Перенос строк —

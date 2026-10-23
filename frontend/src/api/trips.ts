@@ -11,6 +11,9 @@ import type {
   TripListQuery,
   TripListResponse,
   TripMessage,
+  TripMealForm,
+  TripMealKind,
+  TripMealPlan,
   TripParticipant,
   TripRequest,
   TripTabPermission,
@@ -195,10 +198,13 @@ export async function listParticipants(tripId: string): Promise<TripParticipant[
 export async function setMyStatus(
   tripId: string,
   status: ParticipantStatus,
+  eatsSeparately?: boolean,
 ): Promise<TripParticipant> {
   return apiFetch<TripParticipant>(`/trips/${tripId}/participants/me`, {
     method: 'PATCH',
-    body: JSON.stringify({ status }),
+    body: JSON.stringify(
+      eatsSeparately === undefined ? { status } : { status, eatsSeparately },
+    ),
   })
 }
 
@@ -299,5 +305,94 @@ export async function sendTripMessage(
   return apiFetch<TripMessage>(`/trips/${tripId}/messages`, {
     method: 'POST',
     body: JSON.stringify({ kind, body }),
+  })
+}
+
+// ─────────────────────── питание похода ───────────────────────
+
+/** GET /api/trips/:id/meal-plan — раскладка и фасовка целиком. */
+export async function fetchMealPlan(tripId: string): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`/trips/${tripId}/meal-plan`)
+}
+
+/** Общий путь приёма: `/trips/:id/meals/:day/:kind`. */
+function mealPath(tripId: string, dayIndex: number, kind: TripMealKind): string {
+  return `/trips/${tripId}/meals/${dayIndex}/${kind}`
+}
+
+/** PUT .../form — готовка или перекус. */
+export async function setMealForm(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  form: TripMealForm,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`${mealPath(tripId, dayIndex, kind)}/form`, {
+    method: 'PUT',
+    body: JSON.stringify({ form }),
+  })
+}
+
+/** POST .../dishes — поставить своё блюдо. */
+export async function addMealDish(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  dishId: string,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`${mealPath(tripId, dayIndex, kind)}/dishes`, {
+    method: 'POST',
+    body: JSON.stringify({ dishId }),
+  })
+}
+
+/** DELETE .../dishes/:dishId — убрать блюдо. */
+export async function removeMealDish(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  dishId: string,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `${mealPath(tripId, dayIndex, kind)}/dishes/${dishId}`,
+    { method: 'DELETE' },
+  )
+}
+
+/** PUT .../lines/:productId — ручная строка (абсолютная). */
+export async function setMealLine(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  productId: number,
+  amount: number,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `${mealPath(tripId, dayIndex, kind)}/lines/${productId}`,
+    { method: 'PUT', body: JSON.stringify({ amount }) },
+  )
+}
+
+/** DELETE .../lines/:productId — убрать ручную строку. */
+export async function removeMealLine(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  productId: number,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `${mealPath(tripId, dayIndex, kind)}/lines/${productId}`,
+    { method: 'DELETE' },
+  )
+}
+
+/** DELETE .../ — убрать приём целиком. */
+export async function removeMeal(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(mealPath(tripId, dayIndex, kind), {
+    method: 'DELETE',
   })
 }

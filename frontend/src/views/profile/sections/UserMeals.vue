@@ -47,8 +47,10 @@ const isCreating = ref(false)
 /** Какое блюдо ждёт подтверждения удаления. */
 const confirmingDeleteId = ref<string | null>(null)
 
-/** Черновик состава по каждому блюду: выбранный продукт и количество. */
-const drafts = ref<Record<string, { product: Product | null; amount: string }>>({})
+/** Черновик состава по каждому блюду: продукт, количество и мясной флаг. */
+const drafts = ref<
+  Record<string, { product: Product | null; amount: string; isMeat: boolean }>
+>({})
 
 /** Что сейчас в полёте: id блюда или строки состава. */
 const pendingId = ref<string | null>(null)
@@ -63,8 +65,12 @@ function recalc(dish: Dish) {
 }
 
 /** Черновик состава: заводим на каждое блюдо сразу, чтобы шаблон его видел. */
-function draftOf(dish: Dish): { product: Product | null; amount: string } {
-  drafts.value[dish.id] ??= { product: null, amount: '' }
+function draftOf(dish: Dish): {
+  product: Product | null
+  amount: string
+  isMeat: boolean
+} {
+  drafts.value[dish.id] ??= { product: null, amount: '', isMeat: false }
 
   return drafts.value[dish.id]!
 }
@@ -184,10 +190,15 @@ async function addRow(dish: Dish) {
   error.value = null
 
   try {
-    const ingredient = await addIngredient(dish.id, draft.product.id, amount)
+    const ingredient = await addIngredient(
+      dish.id,
+      draft.product.id,
+      amount,
+      draft.isMeat,
+    )
     dish.ingredients.push(ingredient)
     recalc(dish)
-    drafts.value[dish.id] = { product: null, amount: '' }
+    drafts.value[dish.id] = { product: null, amount: '', isMeat: false }
   } catch (cause) {
     error.value = messageOf(cause, 'Не удалось добавить продукт.')
   } finally {
@@ -357,6 +368,14 @@ onMounted(load)
           >
             <span class="text-sm text-text" data-test="ingredient-name">
               {{ ingredient.product.name }}
+              <span
+                v-if="ingredient.isMeat"
+                class="ml-1 rounded-full border border-border px-1.5 py-0.5 text-[10px] text-muted"
+                data-test="ingredient-meat"
+                title="В походе посчитается на едоков без вегетарианцев"
+              >
+                мясное
+              </span>
             </span>
 
             <div class="flex items-center gap-1">
@@ -423,6 +442,15 @@ onMounted(load)
             <span class="text-xs text-muted">
               {{ drafts[dish.id]?.product ? PRODUCT_UNIT_LABELS[drafts[dish.id]!.product!.unit] : '—' }}
             </span>
+            <label class="flex items-center gap-1 text-xs text-muted" title="Мясное: в походе считается без вегетарианцев">
+              <input
+                v-model="drafts[dish.id]!.isMeat"
+                type="checkbox"
+                class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                data-test="ingredient-meat-input"
+              />
+              мясное
+            </label>
             <button
               type="submit"
               :disabled="pendingId === dish.id || !drafts[dish.id]?.product"
