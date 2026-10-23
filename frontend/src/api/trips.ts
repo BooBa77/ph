@@ -3,6 +3,7 @@ import type {
   ChatKind,
   CreateTripRequest,
   GuestTrip,
+  MealAllocationInput,
   ParticipantDecision,
   ParticipantStatus,
   RoleOption,
@@ -394,5 +395,64 @@ export async function removeMeal(
 ): Promise<TripMealPlan> {
   return apiFetch<TripMealPlan>(mealPath(tripId, dayIndex, kind), {
     method: 'DELETE',
+  })
+}
+
+// ─────────────────────── фасовка ───────────────────────
+
+/** POST /api/trips/:id/meal-packages — новый пакет «Пакет N». */
+export async function createMealPackage(tripId: string): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`/trips/${tripId}/meal-packages`, {
+    method: 'POST',
+  })
+}
+
+/** PATCH /api/trips/:id/meal-packages/:packageId — имя и/или фактический вес. */
+export async function updateMealPackage(
+  tripId: string,
+  packageId: string,
+  patch: { name?: string; weightActualGrams?: number | null },
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `/trips/${tripId}/meal-packages/${packageId}`,
+    { method: 'PATCH', body: JSON.stringify(patch) },
+  )
+}
+
+/** DELETE /api/trips/:id/meal-packages/:packageId — доли уходят каскадом. */
+export async function removeMealPackage(
+  tripId: string,
+  packageId: string,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `/trips/${tripId}/meal-packages/${packageId}`,
+    { method: 'DELETE' },
+  )
+}
+
+/** PUT .../allocations/:productId — доли строки списком (заменяют прежние). */
+export async function setMealAllocations(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  productId: number,
+  allocations: MealAllocationInput[],
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `${mealPath(tripId, dayIndex, kind)}/allocations/${productId}`,
+    { method: 'PUT', body: JSON.stringify({ allocations }) },
+  )
+}
+
+/** PUT .../kulek — кулёк приёма: включить или выключить. */
+export async function setMealKulek(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  enabled: boolean,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`${mealPath(tripId, dayIndex, kind)}/kulek`, {
+    method: 'PUT',
+    body: JSON.stringify({ enabled }),
   })
 }

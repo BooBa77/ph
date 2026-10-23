@@ -21,6 +21,11 @@ const mocks = vi.hoisted(() => ({
   setMealLine: vi.fn(),
   removeMealLine: vi.fn(),
   setMyStatus: vi.fn(),
+  createMealPackage: vi.fn(),
+  updateMealPackage: vi.fn(),
+  removeMealPackage: vi.fn(),
+  setMealAllocations: vi.fn(),
+  setMealKulek: vi.fn(),
   listDishes: vi.fn(),
   searchProducts: vi.fn(),
 }))
@@ -33,6 +38,11 @@ vi.mock('@/api/trips', () => ({
   setMealLine: mocks.setMealLine,
   removeMealLine: mocks.removeMealLine,
   setMyStatus: mocks.setMyStatus,
+  createMealPackage: mocks.createMealPackage,
+  updateMealPackage: mocks.updateMealPackage,
+  removeMealPackage: mocks.removeMealPackage,
+  setMealAllocations: mocks.setMealAllocations,
+  setMealKulek: mocks.setMealKulek,
 }))
 
 vi.mock('@/api/meals', () => ({
@@ -184,6 +194,11 @@ describe('TripMeals', () => {
     mocks.setMealLine.mockResolvedValue(current)
     mocks.removeMealLine.mockResolvedValue(current)
     mocks.setMyStatus.mockResolvedValue({})
+    mocks.createMealPackage.mockResolvedValue(current)
+    mocks.updateMealPackage.mockResolvedValue(current)
+    mocks.removeMealPackage.mockResolvedValue(current)
+    mocks.setMealAllocations.mockResolvedValue(current)
+    mocks.setMealKulek.mockResolvedValue(current)
     mocks.listDishes.mockResolvedValue([
       {
         id: 'd2',
@@ -258,6 +273,68 @@ describe('TripMeals', () => {
   it('показывает пакеты и их расчётный вес', async () => {
     const wrapper = await mountMeals()
 
-    expect(wrapper.find('[data-test="packages"]').text()).toContain('Пакет 1')
+    const name = wrapper.find('[data-test="package-name"]').element as HTMLInputElement
+    expect(name.value).toBe('Пакет 1')
+    expect(wrapper.find('[data-test="packages"]').text()).toContain('расчёт')
+  })
+
+  it('новый пакет создаётся кнопкой', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="package-add"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createMealPackage).toHaveBeenCalledWith('7')
+  })
+
+  it('строку раскладывают по пакетам фиксированной долей', async () => {
+    const wrapper = await mountMeals()
+
+    // Строка не расфасована — это видно цветом и подписью.
+    expect(wrapper.find('[data-test="meal-unallocated"]').text()).toContain('160')
+
+    await wrapper.find('[data-test="meal-allocate-1"]').trigger('click')
+    await wrapper.find('[data-test="alloc-amount-p1"]').setValue('100')
+    await wrapper.find('[data-test="alloc-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
+      { packageId: 'p1', amount: 100, isElastic: false },
+    ])
+  })
+
+  it('«всё» раскладывает строку целиком', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="meal-allocate-1"]').trigger('click')
+    await wrapper.find('[data-test="alloc-elastic-p1"]').setValue(true)
+    await wrapper.find('[data-test="alloc-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
+      { packageId: 'p1', amount: 0, isElastic: true },
+    ])
+  })
+
+  it('кулёк приёма включается кнопкой', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="meal-kulek-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMealKulek).toHaveBeenCalledWith('7', 1, 'breakfast', true)
+  })
+
+  it('фактический вес пакета сохраняется', async () => {
+    const wrapper = await mountMeals()
+
+    const input = wrapper.find('[data-test="package-weight"]')
+    await input.setValue('500')
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(mocks.updateMealPackage).toHaveBeenCalledWith('7', 'p1', {
+      weightActualGrams: 500,
+    })
   })
 })

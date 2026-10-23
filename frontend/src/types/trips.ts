@@ -576,6 +576,13 @@ export interface TripMealAllocation {
   isElastic: boolean
 }
 
+/** Доля, которую отправляют на сервер: не больше одной эластичной. */
+export interface MealAllocationInput {
+  packageId: string
+  amount: number
+  isElastic?: boolean
+}
+
 /** Ингредиент блюда в раскладке — на человека. */
 export interface TripMealDishIngredient {
   productId: number

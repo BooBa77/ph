@@ -5,12 +5,17 @@ import { ApiError } from '@/api/errors'
 import { listDishes } from '@/api/meals'
 import {
   addMealDish,
+  createMealPackage,
   fetchMealPlan,
   removeMealDish,
   removeMealLine,
+  removeMealPackage,
+  setMealAllocations,
   setMealForm,
+  setMealKulek,
   setMealLine,
   setMyStatus,
+  updateMealPackage,
 } from '@/api/trips'
 import ProductPicker from '@/components/ui/ProductPicker.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -25,6 +30,7 @@ import {
   type TripMeal,
   type TripMealForm,
   type TripMealKind,
+  type TripMealPackage,
   type TripMealPlan,
   type TripMealProduct,
 } from '@/types/trips'
@@ -298,6 +304,167 @@ async function toggleSeparate() {
   })
 }
 
+// ─── фасовка: пакеты и доли ───
+
+/** Строка раскладки, у которой открыт выбор пакетов. */
+const allocationRow = ref<string | null>(null)
+/** Черновики долей: ключ строки → пакет → количество и «всё». */
+const allocationDrafts = ref<
+  Record<string, Record<string, { amount: string; isElastic: boolean }>>
+>({})
+const confirmingPackageId = ref<string | null>(null)
+
+/** Обычные пакеты: кулёк в списках долей не участвует. */
+const normalPackages = computed(() =>
+  (plan.value?.packages ?? []).filter((pack) => pack.kind === 'normal'),
+)
+
+function kulekOf(meal: TripMeal): TripMealPackage | undefined {
+  return plan.value?.packages.find(
+    (pack) => pack.kind === 'kulek' && pack.mealId === meal.id,
+  )
+}
+
+function allocationKey(
+  dayIndex: number,
+  kind: TripMealKind,
+  productId: number,
+): string {
+  return `${mealKey(dayIndex, kind)}:${productId}`
+}
+
+function openAllocations(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+): void {
+  const key = allocationKey(dayIndex, kind, product.productId)
+  if (allocationRow.value === key) {
+    allocationRow.value = null
+
+    return
+  }
+
+  const draft: Record<string, { amount: string; isElastic: boolean }> = {}
+  for (const pack of normalPackages.value) {
+    const share = product.allocations.find((row) => row.packageId === pack.id)
+    draft[pack.id] = {
+      amount: share && !share.isElastic ? String(share.amount) : '',
+      isElastic: share?.isElastic ?? false,
+    }
+  }
+
+  allocationDrafts.value[key] = draft
+  allocationRow.value = key
+}
+
+function setAllocationAmount(
+  key: string,
+  packageId: string,
+  event: Event,
+): void {
+  const draft = allocationDrafts.value[key]?.[packageId]
+  if (draft) draft.amount = (event.target as HTMLInputElement).value
+}
+
+/** «Всё» — одна на строку: выбор снимает остальные доли. */
+function toggleElastic(key: string, packageId: string): void {
+  const draft = allocationDrafts.value[key]
+  if (!draft) return
+
+  const next = !draft[packageId]?.isElastic
+  for (const id of Object.keys(draft)) {
+    const row = draft[id]
+    if (!row) continue
+
+    row.isElastic = id === packageId ? next : false
+    if (next && id === packageId) row.amount = ''
+  }
+}
+
+function saveAllocations(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+): void {
+  const key = allocationKey(dayIndex, kind, product.productId)
+  const draft = allocationDrafts.value[key] ?? {}
+
+  // Выбрали «всё» — шлём только её: остальные доли этим и снимаются.
+  const elastic = Object.entries(draft).filter(([, row]) => row.isElastic)
+  const allocations =
+    elastic.length > 0
+      ? elastic.map(([packageId]) => ({
+          packageId,
+          amount: 0,
+          isElastic: true,
+        }))
+      : Object.entries(draft)
+          .map(([packageId, row]) => ({
+            packageId,
+            amount: Number(row.amount),
+            isElastic: false,
+          }))
+          .filter((row) => Number.isInteger(row.amount) && row.amount > 0)
+
+  void run(`${key}:alloc`, async () => {
+    const next = await setMealAllocations(
+      props.trip.id,
+      dayIndex,
+      kind,
+      product.productId,
+      allocations,
+    )
+    allocationRow.value = null
+
+    return next
+  })
+}
+
+/** Сколько строки осталось не в пакетах. */
+function unallocated(product: TripMealProduct): number {
+  const packed = product.allocations.reduce((sum, row) => sum + row.amount, 0)
+
+  return Math.max(0, product.amount - packed)
+}
+
+function toggleKulek(meal: TripMeal): void {
+  const kulek = kulekOf(meal)
+
+  void run(`${meal.id}:kulek`, () =>
+    setMealKulek(props.trip.id, meal.dayIndex, meal.kind, !kulek),
+  )
+}
+
+function addPackage(): void {
+  void run('package:add', () => createMealPackage(props.trip.id))
+}
+
+function savePackageName(pack: TripMealPackage, event: Event): void {
+  const name = (event.target as HTMLInputElement).value.trim()
+  if (!name || name === pack.name) return
+
+  void run(`${pack.id}:name`, () =>
+    updateMealPackage(props.trip.id, pack.id, { name }),
+  )
+}
+
+function savePackageWeight(pack: TripMealPackage, event: Event): void {
+  const raw = (event.target as HTMLInputElement).value.trim()
+  const grams = raw === '' ? null : Number(raw)
+  if (grams !== null && (!Number.isInteger(grams) || grams <= 0)) return
+
+  void run(`${pack.id}:weight`, () =>
+    updateMealPackage(props.trip.id, pack.id, { weightActualGrams: grams }),
+  )
+}
+
+function removePackage(pack: TripMealPackage): void {
+  confirmingPackageId.value = null
+
+  void run(`${pack.id}:delete`, () => removeMealPackage(props.trip.id, pack.id))
+}
+
 onMounted(() => {
   void load()
   void loadDishes()
@@ -378,6 +545,25 @@ onMounted(() => {
               </header>
 
               <template v-if="mealOf(day.index, kind)">
+                <button
+                  v-if="canEdit"
+                  type="button"
+                  class="w-full cursor-pointer rounded-lg border px-2 py-1 text-xs transition-colors"
+                  :class="
+                    kulekOf(mealOf(day.index, kind)!)
+                      ? 'border-primary font-medium text-primary'
+                      : 'border-border text-muted hover:text-text'
+                  "
+                  :data-test="`meal-kulek-${day.index}-${kind}`"
+                  @click="toggleKulek(mealOf(day.index, kind)!)"
+                >
+                  {{
+                    kulekOf(mealOf(day.index, kind)!)
+                      ? `Кулёк включён: ${kulekOf(mealOf(day.index, kind)!)!.name}`
+                      : 'Кулёк'
+                  }}
+                </button>
+
                 <div v-if="canEdit" class="flex gap-1" data-test="meal-form">
                   <button
                     v-for="form in TRIP_MEAL_FORMS"
@@ -426,7 +612,8 @@ onMounted(() => {
                   <li
                     v-for="product in mealOf(day.index, kind)!.products"
                     :key="product.productId"
-                    class="flex flex-wrap items-baseline gap-2 text-sm text-text"
+                    class="flex flex-wrap items-baseline gap-2 text-sm"
+                    :class="unallocated(product) > 0 ? 'text-amber-700' : 'text-text'"
                     data-test="meal-product"
                   >
                     <span>{{ product.name }}</span>
@@ -440,6 +627,22 @@ onMounted(() => {
                     <span v-if="product.allocations.length" class="text-xs text-muted">
                       {{ productPackages(product) }}
                     </span>
+                    <span
+                      v-if="unallocated(product) > 0"
+                      class="text-xs"
+                      data-test="meal-unallocated"
+                    >
+                      не расфасовано: {{ formatProductAmount(unallocated(product), product.unit) }}
+                    </span>
+                    <button
+                      v-if="canEdit && !kulekOf(mealOf(day.index, kind)!)"
+                      type="button"
+                      class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
+                      :data-test="`meal-allocate-${product.productId}`"
+                      @click="openAllocations(day.index, kind, product)"
+                    >
+                      разложить
+                    </button>
                     <button
                       v-if="canEdit && product.manualAmount > 0"
                       type="button"
@@ -449,6 +652,63 @@ onMounted(() => {
                     >
                       убрать ручную
                     </button>
+
+                    <div
+                      v-if="allocationRow === allocationKey(day.index, kind, product.productId)"
+                      class="w-full rounded-lg border border-border bg-field p-2"
+                      data-test="allocation-editor"
+                    >
+                      <p class="mb-1 text-xs text-muted">
+                        Нерасфасовано:
+                        {{ formatProductAmount(unallocated(product), product.unit) }}
+                      </p>
+
+                      <div
+                        v-for="pack in normalPackages"
+                        :key="pack.id"
+                        class="flex items-center gap-2 text-xs"
+                      >
+                        <span class="w-24 text-muted">{{ pack.name }}</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="1"
+                          :value="allocationDrafts[allocationKey(day.index, kind, product.productId)]?.[pack.id]?.amount"
+                          :disabled="allocationDrafts[allocationKey(day.index, kind, product.productId)]?.[pack.id]?.isElastic"
+                          class="w-16 rounded border border-border bg-surface px-1 py-0.5 text-text focus:border-primary focus:outline-none disabled:opacity-50"
+                          :data-test="`alloc-amount-${pack.id}`"
+                          @input="setAllocationAmount(allocationKey(day.index, kind, product.productId), pack.id, $event)"
+                        />
+                        <label class="flex items-center gap-1 text-muted">
+                          <input
+                            type="checkbox"
+                            :checked="allocationDrafts[allocationKey(day.index, kind, product.productId)]?.[pack.id]?.isElastic"
+                            :data-test="`alloc-elastic-${pack.id}`"
+                            @change="toggleElastic(allocationKey(day.index, kind, product.productId), pack.id)"
+                          />
+                          всё
+                        </label>
+                      </div>
+
+                      <div class="mt-1 flex gap-1">
+                        <button
+                          type="button"
+                          class="cursor-pointer rounded border border-primary bg-primary px-2 py-0.5 text-xs text-white disabled:opacity-50"
+                          :disabled="busy !== null"
+                          data-test="alloc-save"
+                          @click="saveAllocations(day.index, kind, product)"
+                        >
+                          Сохранить
+                        </button>
+                        <button
+                          type="button"
+                          class="cursor-pointer rounded border border-border px-2 py-0.5 text-xs text-muted"
+                          @click="allocationRow = null"
+                        >
+                          Отмена
+                        </button>
+                      </div>
+                    </div>
                   </li>
                 </ul>
 
@@ -517,7 +777,18 @@ onMounted(() => {
 
       <!-- Фасовка: пакеты -->
       <div class="flex flex-col gap-2" data-test="packages">
-        <h2 class="text-sm text-muted">Пакеты</h2>
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="text-sm text-muted">Пакеты</h2>
+          <button
+            v-if="canEdit"
+            type="button"
+            class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
+            data-test="package-add"
+            @click="addPackage"
+          >
+            Добавить пакет
+          </button>
+        </div>
 
         <p v-if="plan.packages.length === 0" class="text-sm text-muted" data-test="packages-empty">
           Пакетов пока нет.
@@ -527,15 +798,83 @@ onMounted(() => {
           <li
             v-for="pack in plan.packages"
             :key="pack.id"
-            class="flex flex-wrap items-baseline justify-between gap-2 rounded-xl border border-border bg-surface p-3 text-sm"
+            class="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 text-sm"
             data-test="package"
           >
-            <span class="text-text">
-              {{ pack.name }}
-              <span v-if="pack.kind === 'kulek'" class="text-xs text-muted">кулёк</span>
+            <input
+              v-if="canEdit && pack.kind !== 'kulek'"
+              :value="pack.name"
+              type="text"
+              maxlength="60"
+              class="w-32 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none"
+              data-test="package-name"
+              @change="savePackageName(pack, $event)"
+            />
+            <span v-else class="text-text">{{ pack.name }}</span>
+
+            <span v-if="pack.kind === 'kulek'" class="text-xs text-muted">кулёк</span>
+            <span class="text-xs text-muted">
+              расчёт: {{ formatWeight(pack.weightEstimatedGrams) }}
             </span>
+
+            <label v-if="canEdit" class="flex items-center gap-1 text-xs text-muted">
+              факт:
+              <input
+                type="number"
+                min="1"
+                step="1"
+                :value="pack.weightActualGrams ?? ''"
+                placeholder="—"
+                class="w-20 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
+                data-test="package-weight"
+                @change="savePackageWeight(pack, $event)"
+              />
+              г
+            </label>
+            <span v-else-if="pack.weightActualGrams !== null" class="text-xs text-muted">
+              факт: {{ formatWeight(pack.weightActualGrams) }}
+            </span>
+
+            <span
+              v-if="pack.weightActualStale"
+              class="text-xs text-amber-700"
+              data-test="package-stale"
+            >
+              перевесить
+            </span>
+
             <span class="text-xs text-muted">{{ pack.items.length }} строк</span>
-            <span class="text-xs text-muted">{{ formatWeight(pack.weightEstimatedGrams) }}</span>
+
+            <template v-if="canEdit">
+              <template v-if="confirmingPackageId === pack.id">
+                <span class="text-xs text-muted">Удалить?</span>
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-lg border border-red-600 px-2 py-0.5 text-xs text-red-600 transition-colors hover:bg-red-600 hover:text-white"
+                  data-test="package-delete-confirm"
+                  @click="removePackage(pack)"
+                >
+                  Да
+                </button>
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:text-text"
+                  data-test="package-delete-cancel"
+                  @click="confirmingPackageId = null"
+                >
+                  Нет
+                </button>
+              </template>
+              <button
+                v-else
+                type="button"
+                class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
+                data-test="package-delete"
+                @click="confirmingPackageId = pack.id"
+              >
+                Удалить
+              </button>
+            </template>
           </li>
         </ul>
       </div>
