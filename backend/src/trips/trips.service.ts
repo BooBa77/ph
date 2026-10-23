@@ -284,7 +284,14 @@ export class TripsService {
       // Типы только что вставлены — читать их обратно из базы незачем.
       trip.activityTypeIds = activityTypeIds;
 
-      return TripResponseDto.from(trip);
+      // Варианты читаем из базы: форме правки они нужны, чтобы смена
+      // готовности не стирала введённую продолжительность.
+      const dateVariants = await manager.find(TripDateVariant, {
+        where: { tripId: trip.id },
+        order: { id: 'ASC' },
+      });
+
+      return TripResponseDto.from(trip, dateVariants);
     });
   }
 
@@ -323,7 +330,12 @@ export class TripsService {
     // Типы похода живут в связке — подтягиваем перед отдачей наружу.
     await this.fillTypes(this.dataSource.manager, [trip]);
 
-    return TripResponseDto.from(trip);
+    const dateVariants = await this.dataSource.manager.find(TripDateVariant, {
+      where: { tripId: trip.id },
+      order: { id: 'ASC' },
+    });
+
+    return TripResponseDto.from(trip, dateVariants);
   }
 
   /**
@@ -1190,7 +1202,7 @@ export class TripsService {
        */
       if (status === 'idea' && previousStatus !== 'idea') {
         throw new BadRequestException(
-          'Вернуться в мечту нельзя: поход уже готовится — выберите «Планирую»',
+          'Поход уже запланирован, назад пути нет',
         );
       }
 
@@ -1316,7 +1328,14 @@ export class TripsService {
       // типов их не меняет, и ответ должен показать то, что реально лежит.
       await this.fillTypes(manager, [saved]);
 
-      return TripResponseDto.from(saved);
+      // Ответ несёт варианты: форма правки инициализирует ими черновики,
+      // иначе смена готовности теряла бы продолжительность.
+      const savedVariants = await manager.find(TripDateVariant, {
+        where: { tripId: saved.id },
+        order: { id: 'ASC' },
+      });
+
+      return TripResponseDto.from(saved, savedVariants);
     });
   }
 

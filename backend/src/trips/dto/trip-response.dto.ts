@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 
+import type { TripDateVariant } from '../entities/trip-date-variant.entity';
 import type { Trip } from '../entities/trip.entity';
 import type { TripStatus, TripVisibility } from '../trip.types';
 
@@ -52,6 +53,48 @@ export class TripGoalDto {
  * именно сериализует `Date` промежуточный слой, и фронт получает ровно то,
  * что покажет.
  */
+/**
+ * Вариант прогноза дат — одна возможная дата старта и продолжительность.
+ *
+ * Отдаётся в ответе похода, чтобы форма правки знала, что уже введено.
+ * Без этого смена готовности с «Мечты» на «Планирую» показывала пустую
+ * продолжительность и отправка стирала бы её (`tabs.md` §7).
+ */
+export class TripDateVariantDto {
+  @ApiProperty({ description: 'Год или null', example: 2027, nullable: true })
+  year: number | null;
+
+  @ApiProperty({ description: 'Месяц или null', example: 6, nullable: true })
+  month: number | null;
+
+  @ApiProperty({
+    description: 'Конкретное число месяца или null',
+    example: 5,
+    nullable: true,
+  })
+  day: number | null;
+
+  @ApiProperty({
+    description: 'Продолжительность в днях или null',
+    example: 5,
+    nullable: true,
+  })
+  durationDays: number | null;
+
+  @ApiProperty({ description: 'Запас вверх: «5–7 дней» — 5 и 2', example: 0 })
+  durationDelta: number;
+
+  static from(variant: TripDateVariant): TripDateVariantDto {
+    return {
+      year: variant.year,
+      month: variant.month,
+      day: variant.day,
+      durationDays: variant.durationDays,
+      durationDelta: variant.durationDelta,
+    };
+  }
+}
+
 export class TripResponseDto {
   @ApiProperty({ description: 'Id похода', example: '1' })
   id: string;
@@ -162,6 +205,13 @@ export class TripResponseDto {
   actualFinishedAt: string | null;
 
   @ApiProperty({
+    description:
+      'Прогноз дат: варианты старта и продолжительность. Форме правки нужны, иначе смена готовности теряла бы введённое',
+    type: () => [TripDateVariantDto],
+  })
+  dateVariants: TripDateVariantDto[];
+
+  @ApiProperty({
     description: 'Коммерческий поход: организатор зарабатывает',
     example: false,
   })
@@ -202,7 +252,10 @@ export class TripResponseDto {
   })
   updatedAt: string;
 
-  static from(trip: Trip): TripResponseDto {
+  static from(
+    trip: Trip,
+    dateVariants: TripDateVariant[] = [],
+  ): TripResponseDto {
     return {
       id: trip.id,
       organizerUserId: trip.organizerUserId,
@@ -228,6 +281,9 @@ export class TripResponseDto {
       endsAt: trip.endsAt?.toISOString() ?? null,
       actualStartedAt: trip.actualStartedAt?.toISOString() ?? null,
       actualFinishedAt: trip.actualFinishedAt?.toISOString() ?? null,
+      dateVariants: dateVariants.map((variant) =>
+        TripDateVariantDto.from(variant),
+      ),
       isCommercial: trip.isCommercial,
       isOfficial: trip.isOfficial,
       priceRub: trip.priceRub,
