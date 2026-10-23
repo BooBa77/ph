@@ -19,7 +19,9 @@ import {
   SetMealFormDto,
   SetMealKulekDto,
   SetMealLineDto,
+  TripMealCheckListDto,
   TripMealPlanDto,
+  UpdateMealCheckDto,
   UpdateMealPackageDto,
 } from './dto/trip-meal.dto';
 import type { TripMealKind } from './trip.types';
@@ -224,5 +226,31 @@ export class TripMealsController {
       kind,
       dto.enabled,
     );
+  }
+
+  // ─────────────────────────── чек-лист покупок ───────────────────────────
+
+  /** Чек-лист: проекция раскладки и отметки. */
+  @Get(':id/meal-checks')
+  @ApiOperation({ summary: 'Чек-лист покупок' })
+  @ApiOkResponse({ type: TripMealCheckListDto })
+  async getChecklist(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripMealCheckListDto> {
+    return this.tripMeals.getChecklist(authUser.id, id);
+  }
+
+  /** Отметки чек-листа: куплено, домашнее, сколько куплено. Любой участник. */
+  @Put(':id/meal-checks/:productId')
+  @ApiOperation({ summary: 'Отметка чек-листа' })
+  @ApiOkResponse({ type: TripMealCheckListDto })
+  async updateCheck(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('productId', ParseIntPipe) productId: number,
+    @Body() dto: UpdateMealCheckDto,
+  ): Promise<TripMealCheckListDto> {
+    return this.tripMeals.updateCheck(authUser.id, id, productId, dto);
   }
 }

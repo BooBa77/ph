@@ -84,6 +84,23 @@ describe('Питание похода (e2e)', () => {
     return response.body as Record<string, unknown>;
   }
 
+  async function readChecks(token: string): Promise<
+    Array<{
+      productId: number;
+      name: string;
+      needAmount: number;
+      isBought: boolean;
+      isHome: boolean;
+      boughtAmount: number | null;
+      boughtByName: string | null;
+      isOrphaned: boolean;
+    }>
+  > {
+    const response = await call('get', `/api/trips/${tripId}/meal-checks`, token).expect(200);
+
+    return response.body.checks as never;
+  }
+
   function productOf(
     plan: Record<string, unknown>,
     name: string,
@@ -660,6 +677,92 @@ describe('Питание похода (e2e)', () => {
     await call('post', `/api/trips/${tripId}/meal-packages`, strangerToken).expect(403);
   });
 
+  it('чек-лист — проекция раскладки: продукт и «надо»', async () => {
+    const checks = await readChecks(organizerToken);
+    const gram = checks.find((row) => row.productId === gramId)!;
+
+    expect(gram.name).toBe(gramName);
+    expect(gram.needAmount).toBeGreaterThan(0);
+    expect(gram.isBought).toBe(false);
+    expect(gram.isOrphaned).toBe(false);
+  });
+
+  it('отметку ставит любой участник, без роли «Питание»', async () => {
+    // Снимаем роль завхоза: остаётся просто участник.
+    await call(
+      'put',
+      `/api/trips/${tripId}/participants/${memberId}/roles`,
+      organizerToken,
+    )
+      .send({ roleCodes: [] })
+      .expect(200);
+
+    const response = await call(
+      'put',
+      `/api/trips/${tripId}/meal-checks/${gramId}`,
+      memberToken,
+    )
+      .send({ isBought: true, boughtAmount: 600 })
+      .expect(200);
+
+    const gram = (response.body.checks as Array<Record<string, unknown>>).find(
+      (row) => row.productId === gramId,
+    )!;
+    expect(gram).toMatchObject({ isBought: true, boughtAmount: 600 });
+    expect(gram.boughtByName).toBeTruthy();
+  });
+
+  it('«домашнее» — отдельная отметка, строка остаётся', async () => {
+    const response = await call(
+      'put',
+      `/api/trips/${tripId}/meal-checks/${canId}`,
+      organizerToken,
+    )
+      .send({ isHome: true })
+      .expect(200);
+
+    const can = (response.body.checks as Array<Record<string, unknown>>).find(
+      (row) => row.productId === canId,
+    )!;
+    expect(can).toMatchObject({ isHome: true, isOrphaned: false });
+    expect(can.needAmount).toBeGreaterThan(0);
+  });
+
+  it('продукт ушёл из плана, но куплен — строка остаётся', async () => {
+    await call(
+      'put',
+      `/api/trips/${tripId}/meal-checks/${canId}`,
+      organizerToken,
+    )
+      .send({ isBought: true, boughtAmount: 2 })
+      .expect(200);
+
+    // Убираем тушёнку из раскладки: блюда дня 2 и дня 3.
+    await call(
+      'delete',
+      `/api/trips/${tripId}/meals/2/breakfast/dishes/${organizerDishId}`,
+      organizerToken,
+    ).expect(200);
+    await call(
+      'delete',
+      `/api/trips/${tripId}/meals/3/breakfast/dishes/${organizerDishId}`,
+      organizerToken,
+    ).expect(200);
+
+    const checks = await readChecks(organizerToken);
+    const can = checks.find((row) => row.productId === canId)!;
+
+    expect(can).toMatchObject({
+      isBought: true,
+      needAmount: 0,
+      isOrphaned: true,
+    });
+  });
+
+  it('посторонний не видит чек-лист', async () => {
+    await call('get', `/api/trips/${tripId}/meal-checks`, strangerToken).expect(403);
+  });
+
   it('у мечты раскладки нет', async () => {
     const idea = await call('post', '/api/trips', organizerToken)
       .send({ goalObjectId: Number(objectId), status: 'idea' })
@@ -667,5 +770,6 @@ describe('Питание похода (e2e)', () => {
     ideaTripId = idea.body.id as string;
 
     await call('get', `/api/trips/${ideaTripId}/meal-plan`, organizerToken).expect(400);
+    await call('get', `/api/trips/${ideaTripId}/meal-checks`, organizerToken).expect(400);
   });
 });

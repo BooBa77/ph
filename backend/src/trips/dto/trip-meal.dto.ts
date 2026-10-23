@@ -357,3 +357,91 @@ export class SetMealKulekDto {
   @IsBoolean({ message: 'Кулёк — true или false' })
   enabled: boolean;
 }
+
+// ─────────────────────── чек-лист покупок ───────────────────────
+
+/** Строка чек-листа: продукт раскладки и его отметки. */
+export class TripMealCheckDto {
+  @ApiProperty({ description: 'Id продукта', example: 7 })
+  productId: number;
+
+  @ApiProperty({ description: 'Название', example: 'Крупа гречневая' })
+  name: string;
+
+  @ApiProperty({ description: 'Единица', enum: PRODUCT_UNITS })
+  unit: ProductUnit;
+
+  @ApiProperty({ description: 'Вес единицы, граммы', example: 1 })
+  weightPerUnitGrams: number;
+
+  @ApiProperty({ description: 'Сколько надо по раскладке', example: 600 })
+  needAmount: number;
+
+  @ApiProperty({ description: 'Сколько это в граммах', example: 600 })
+  needGrams: number;
+
+  @ApiProperty({ description: 'Куплено', example: false })
+  isBought: boolean;
+
+  @ApiProperty({
+    description: 'Домашнее: покупать не нужно, но строка остаётся',
+    example: false,
+  })
+  isHome: boolean;
+
+  @ApiProperty({
+    description: 'Сколько куплено фактически',
+    nullable: true,
+    example: 600,
+  })
+  boughtAmount: number | null;
+
+  @ApiProperty({ description: 'Кто отметил покупку', nullable: true })
+  boughtByName: string | null;
+
+  @ApiProperty({ description: 'Когда отметили', nullable: true })
+  boughtAt: string | null;
+
+  @ApiProperty({
+    description: 'Продукт ушёл из раскладки, но куплен — строка осталась',
+    example: false,
+  })
+  isOrphaned: boolean;
+}
+
+export class TripMealCheckListDto {
+  @ApiProperty({ description: 'Чек-лист', type: [TripMealCheckDto] })
+  checks: TripMealCheckDto[];
+}
+
+/** Тело `PUT /api/trips/:id/meal-checks/:productId`. */
+export class UpdateMealCheckDto {
+  @ApiProperty({
+    description: 'Куплено. Не задано — не трогаем',
+    required: false,
+    example: true,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Отметка «куплено» — true или false' })
+  isBought?: boolean;
+
+  @ApiProperty({
+    description: 'Домашнее. Не задано — не трогаем',
+    required: false,
+    example: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Отметка «домашнее» — true или false' })
+  isHome?: boolean;
+
+  @ApiProperty({
+    description: 'Сколько куплено фактически. null — сбросить',
+    required: false,
+    nullable: true,
+    example: 600,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Купленное количество — целое число' })
+  @Min(0, { message: 'Купленное количество не может быть отрицательным' })
+  boughtAmount?: number | null;
+}

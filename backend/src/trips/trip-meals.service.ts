@@ -13,6 +13,8 @@ import { Product } from '../meals/entities/product.entity';
 import {
   TripEatersDto,
   TripMealAllocationDto,
+  TripMealCheckDto,
+  TripMealCheckListDto,
   TripMealDishDto,
   TripMealDto,
   TripMealPackageDto,
@@ -22,6 +24,7 @@ import {
 } from './dto/trip-meal.dto';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
 import { TripMealAllocation } from './entities/trip-meal-allocation.entity';
+import { TripMealCheck } from './entities/trip-meal-check.entity';
 import { TripMealDish } from './entities/trip-meal-dish.entity';
 import { TripMealLine } from './entities/trip-meal-line.entity';
 import { TripMealPackage } from './entities/trip-meal-package.entity';
@@ -609,6 +612,161 @@ export class TripMealsService {
       { id: In(ids) },
       { weightActualStale: true },
     );
+  }
+
+  // ─────────────────────────── чек-лист покупок ───────────────────────────
+
+  /**
+   * Чек-лист — живая проекция раскладки плюс отметки.
+   *
+   * Строки берутся из плана (с «надо» по вегетарианцам), отметки — из
+   * `trip_meal_checks` и не сбрасываются при правке плана. Продукт ушёл
+   * из плана, но куплен — остаётся строкой с `isOrphaned`: вычеркнуть
+   * купленное значит потерять его из виду.
+   */
+  async getChecklist(
+    userId: string,
+    id: number,
+  ): Promise<TripMealCheckListDto> {
+    const plan = await this.getPlan(userId, id);
+    const manager = this.dataSource.manager;
+
+    const need = new Map<
+      number,
+      {
+        productId: number;
+        name: string;
+        unit: Product['unit'];
+        weightPerUnitGrams: number;
+        needAmount: number;
+      }
+    >();
+
+    for (const meal of plan.meals) {
+      for (const product of meal.products) {
+        const row = need.get(product.productId) ?? {
+          productId: product.productId,
+          name: product.name,
+          unit: product.unit,
+          weightPerUnitGrams: product.weightPerUnitGrams,
+          needAmount: 0,
+        };
+        row.needAmount += product.amount;
+        need.set(product.productId, row);
+      }
+    }
+
+    const checks = await manager.find(TripMealCheck, {
+      where: { tripId: String(id) },
+      relations: { buyer: true },
+    });
+    const checkByProduct = new Map(
+      checks.map((check) => [check.productId, check]),
+    );
+
+    const rows: TripMealCheckDto[] = [...need.values()].map((product) => {
+      const check = checkByProduct.get(product.productId);
+
+      return {
+        productId: product.productId,
+        name: product.name,
+        unit: product.unit,
+        weightPerUnitGrams: product.weightPerUnitGrams,
+        needAmount: product.needAmount,
+        needGrams: product.needAmount * product.weightPerUnitGrams,
+        isBought: check?.isBought ?? false,
+        isHome: check?.isHome ?? false,
+        boughtAmount: check?.boughtAmount ?? null,
+        boughtByName: check?.buyer?.displayName ?? null,
+        boughtAt: check?.boughtAt?.toISOString() ?? null,
+        isOrphaned: false,
+      };
+    });
+
+    const orphaned = checks.filter(
+      (check) => check.isBought && !need.has(check.productId),
+    );
+    if (orphaned.length > 0) {
+      const products = await manager.find(Product, {
+        where: { id: In(orphaned.map((check) => check.productId)) },
+      });
+
+      for (const check of orphaned) {
+        const product = products.find((row) => row.id === check.productId);
+        if (!product) continue;
+
+        rows.push({
+          productId: product.id,
+          name: product.name,
+          unit: product.unit,
+          weightPerUnitGrams: product.weightPerUnitGrams,
+          needAmount: 0,
+          needGrams: 0,
+          isBought: true,
+          isHome: check.isHome,
+          boughtAmount: check.boughtAmount,
+          boughtByName: check.buyer?.displayName ?? null,
+          boughtAt: check.boughtAt?.toISOString() ?? null,
+          isOrphaned: true,
+        });
+      }
+    }
+
+    rows.sort((left, right) => left.name.localeCompare(right.name));
+
+    return { checks: rows };
+  }
+
+  /**
+   * Отметки чек-листа: куплено, домашнее, сколько куплено.
+   *
+   * Ставит **любой участник** (решение заказчика): покупка — общее дело,
+   * и роль завхоза для галочки не нужна. Продукт обязан быть в раскладке:
+   * чек-лист растёт только вместе с планом, «куплено сверх» заводят
+   * ручной строкой в приёме.
+   */
+  async updateCheck(
+    userId: string,
+    id: number,
+    productId: number,
+    dto: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
+  ): Promise<TripMealCheckListDto> {
+    const plan = await this.getPlan(userId, id);
+    const inPlan = plan.meals.some((meal) =>
+      meal.products.some((product) => product.productId === productId),
+    );
+    if (!inPlan) {
+      throw new BadRequestException(
+        'Этого продукта нет в раскладке — добавьте строку в приём',
+      );
+    }
+
+    const manager = this.dataSource.manager;
+    const tripId = String(id);
+
+    let row = await manager.findOne(TripMealCheck, {
+      where: { tripId, productId },
+    });
+    if (!row) {
+      row = manager.create(TripMealCheck, { tripId, productId });
+    }
+
+    if (dto.isBought !== undefined) {
+      row.isBought = dto.isBought;
+      row.boughtBy = dto.isBought ? userId : null;
+      row.boughtAt = dto.isBought ? new Date() : null;
+    }
+    if (dto.isHome !== undefined) {
+      row.isHome = dto.isHome;
+    }
+    if (dto.boughtAmount !== undefined) {
+      row.boughtAmount = dto.boughtAmount;
+    }
+    row.updatedBy = userId;
+
+    await manager.save(row);
+
+    return this.getChecklist(userId, id);
   }
 
   // ─────────────────────────── доступ ───────────────────────────
