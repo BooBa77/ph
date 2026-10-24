@@ -307,12 +307,6 @@ async function toggleSeparate() {
 
 // ─── фасовка: пакеты и доли ───
 
-/** Строка раскладки, у которой открыт выбор пакетов. */
-const allocationRow = ref<string | null>(null)
-/** Черновики долей: ключ строки → пакет → количество и «всё». */
-const allocationDrafts = ref<
-  Record<string, Record<string, { amount: string; isElastic: boolean }>>
->({})
 const confirmingPackageId = ref<string | null>(null)
 
 /** Обычные пакеты: кулёк в списках долей не участвует. */
@@ -326,107 +320,91 @@ function kulekOf(meal: TripMeal): TripMealPackage | undefined {
   )
 }
 
-function allocationKey(
-  dayIndex: number,
-  kind: TripMealKind,
-  productId: number,
-): string {
-  return `${mealKey(dayIndex, kind)}:${productId}`
+/** Сколько продукта лежит в этом пакете. */
+function allocationAmount(product: TripMealProduct, pack: TripMealPackage): number {
+  return product.allocations.find((row) => row.packageId === pack.id)?.amount ?? 0
 }
 
-function openAllocations(
+function isElasticOf(product: TripMealProduct, pack: TripMealPackage): boolean {
+  return product.allocations.some(
+    (row) => row.packageId === pack.id && row.isElastic,
+  )
+}
+
+/** Всего разложено по пакетам. */
+function allocatedOf(product: TripMealProduct): number {
+  return product.allocations.reduce((sum, row) => sum + row.amount, 0)
+}
+
+/** Насколько пакеты превысили рецепт — лишнее можно убрать. */
+function overAllocated(product: TripMealProduct): number {
+  return Math.max(0, allocatedOf(product) - product.amount)
+}
+
+function saveShares(
   dayIndex: number,
   kind: TripMealKind,
   product: TripMealProduct,
+  rows: Array<{ packageId: string; amount: number; isElastic: boolean }>,
 ): void {
-  const key = allocationKey(dayIndex, kind, product.productId)
-  if (allocationRow.value === key) {
-    allocationRow.value = null
-
-    return
-  }
-
-  const draft: Record<string, { amount: string; isElastic: boolean }> = {}
-  for (const pack of normalPackages.value) {
-    const share = product.allocations.find((row) => row.packageId === pack.id)
-    draft[pack.id] = {
-      amount: share && !share.isElastic ? String(share.amount) : '',
-      isElastic: share?.isElastic ?? false,
-    }
-  }
-
-  allocationDrafts.value[key] = draft
-  allocationRow.value = key
+  void run(`${product.productId}:alloc`, () =>
+    setMealAllocations(props.trip.id, dayIndex, kind, product.productId, rows),
+  )
 }
 
-function setAllocationAmount(
-  key: string,
-  packageId: string,
+/** Положили в пакет другое количество, в том числе больше рецепта. */
+function updateAllocation(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+  pack: TripMealPackage,
   event: Event,
 ): void {
-  const draft = allocationDrafts.value[key]?.[packageId]
-  if (draft) draft.amount = (event.target as HTMLInputElement).value
+  const amount = Number((event.target as HTMLInputElement).value)
+  if (!Number.isInteger(amount) || amount < 0) return
+
+  const rows = normalPackages.value.map((row) => {
+    const share = product.allocations.find((item) => item.packageId === row.id)
+
+    return {
+      packageId: row.id,
+      amount: row.id === pack.id ? amount : (share?.amount ?? 0),
+      isElastic: share?.isElastic ?? false,
+    }
+  })
+
+  saveShares(dayIndex, kind, product, rows)
 }
 
 /** «Всё» — одна на строку: выбор снимает остальные доли. */
-function toggleElastic(key: string, packageId: string): void {
-  const draft = allocationDrafts.value[key]
-  if (!draft) return
+function toggleAllocationElastic(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+  pack: TripMealPackage,
+): void {
+  const next = !isElasticOf(product, pack)
 
-  const next = !draft[packageId]?.isElastic
-  for (const id of Object.keys(draft)) {
-    const row = draft[id]
-    if (!row) continue
+  const rows = normalPackages.value.map((row) => {
+    const share = product.allocations.find((item) => item.packageId === row.id)
 
-    row.isElastic = id === packageId ? next : false
-    if (next && id === packageId) row.amount = ''
-  }
+    return {
+      packageId: row.id,
+      amount: row.id === pack.id && next ? 0 : (share?.amount ?? 0),
+      isElastic: row.id === pack.id ? next : false,
+    }
+  })
+
+  saveShares(dayIndex, kind, product, rows)
 }
 
-function saveAllocations(
+/** «Убрать лишнее»: доли снимаются, пакеты снова пустые. */
+function resetOverAllocations(
   dayIndex: number,
   kind: TripMealKind,
   product: TripMealProduct,
 ): void {
-  const key = allocationKey(dayIndex, kind, product.productId)
-  const draft = allocationDrafts.value[key] ?? {}
-
-  // Выбрали «всё» — шлём только её: остальные доли этим и снимаются.
-  const elastic = Object.entries(draft).filter(([, row]) => row.isElastic)
-  const allocations =
-    elastic.length > 0
-      ? elastic.map(([packageId]) => ({
-          packageId,
-          amount: 0,
-          isElastic: true,
-        }))
-      : Object.entries(draft)
-          .map(([packageId, row]) => ({
-            packageId,
-            amount: Number(row.amount),
-            isElastic: false,
-          }))
-          .filter((row) => Number.isInteger(row.amount) && row.amount > 0)
-
-  void run(`${key}:alloc`, async () => {
-    const next = await setMealAllocations(
-      props.trip.id,
-      dayIndex,
-      kind,
-      product.productId,
-      allocations,
-    )
-    allocationRow.value = null
-
-    return next
-  })
-}
-
-/** Сколько строки осталось не в пакетах. */
-function unallocated(product: TripMealProduct): number {
-  const packed = product.allocations.reduce((sum, row) => sum + row.amount, 0)
-
-  return Math.max(0, product.amount - packed)
+  saveShares(dayIndex, kind, product, [])
 }
 
 function toggleKulek(meal: TripMeal): void {
@@ -692,8 +670,7 @@ onMounted(() => {
                   <li
                     v-for="product in mealOf(day.index, kind)!.products"
                     :key="product.productId"
-                    class="flex flex-wrap items-baseline gap-2 text-sm"
-                    :class="unallocated(product) > 0 ? 'text-amber-700' : 'text-text'"
+                    class="flex flex-wrap items-baseline gap-2 text-sm text-text"
                     data-test="meal-product"
                   >
                     <span>{{ product.name }}</span>
@@ -708,15 +685,6 @@ onMounted(() => {
                       {{ productPackages(product) }}
                     </span>
                     <button
-                      v-if="canEdit && !kulekOf(mealOf(day.index, kind)!)"
-                      type="button"
-                      class="cursor-pointer rounded text-xs text-muted underline transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
-                      :data-test="`meal-allocate-${product.productId}`"
-                      @click="openAllocations(day.index, kind, product)"
-                    >
-                      разложить по пакетам
-                    </button>
-                    <button
                       v-if="canEdit && product.manualAmount > 0"
                       type="button"
                       class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
@@ -727,60 +695,49 @@ onMounted(() => {
                     </button>
 
                     <div
-                      v-if="allocationRow === allocationKey(day.index, kind, product.productId)"
-                      class="w-full rounded-lg border border-border bg-field p-2"
-                      data-test="allocation-editor"
+                      v-if="canEdit && normalPackages.length > 0"
+                      class="mt-1 flex w-full flex-col gap-1 rounded-lg border border-border/60 bg-field/60 p-2"
+                      :data-test="`product-packs-${product.productId}`"
                     >
-                      <p class="mb-1 text-xs text-muted">
-                        Остаток вне пакетов:
-                        {{ formatProductAmount(unallocated(product), product.unit) }}
-                      </p>
-
                       <div
                         v-for="pack in normalPackages"
                         :key="pack.id"
                         class="flex items-center gap-2 text-xs"
                       >
-                        <span class="w-24 text-muted">{{ pack.name }}</span>
+                        <span class="w-20 text-muted">{{ pack.name }}</span>
                         <input
                           type="number"
                           min="0"
                           step="1"
-                          :value="allocationDrafts[allocationKey(day.index, kind, product.productId)]?.[pack.id]?.amount"
-                          :disabled="allocationDrafts[allocationKey(day.index, kind, product.productId)]?.[pack.id]?.isElastic"
+                          :value="allocationAmount(product, pack)"
+                          :disabled="isElasticOf(product, pack)"
                           class="w-16 rounded border border-border bg-surface px-1 py-0.5 text-text focus:border-primary focus:outline-none disabled:opacity-50"
                           :data-test="`alloc-amount-${pack.id}`"
-                          @input="setAllocationAmount(allocationKey(day.index, kind, product.productId), pack.id, $event)"
+                          @change="updateAllocation(day.index, kind, product, pack, $event)"
                         />
                         <label class="flex items-center gap-1 text-muted">
                           <input
                             type="checkbox"
-                            :checked="allocationDrafts[allocationKey(day.index, kind, product.productId)]?.[pack.id]?.isElastic"
+                            :checked="isElasticOf(product, pack)"
                             :data-test="`alloc-elastic-${pack.id}`"
-                            @change="toggleElastic(allocationKey(day.index, kind, product.productId), pack.id)"
+                            @change="toggleAllocationElastic(day.index, kind, product, pack)"
                           />
                           всё
                         </label>
                       </div>
 
-                      <div class="mt-1 flex gap-1">
+                      <p v-if="overAllocated(product) > 0" class="text-xs text-amber-700">
+                        сверх рецепта:
+                        {{ formatProductAmount(overAllocated(product), product.unit) }}
                         <button
                           type="button"
-                          class="cursor-pointer rounded border border-primary bg-primary px-2 py-0.5 text-xs text-white disabled:opacity-50"
-                          :disabled="busy !== null"
-                          data-test="alloc-save"
-                          @click="saveAllocations(day.index, kind, product)"
+                          class="ml-1 cursor-pointer underline"
+                          :data-test="`alloc-over-reset-${product.productId}`"
+                          @click="resetOverAllocations(day.index, kind, product)"
                         >
-                          Сохранить
+                          убрать лишнее
                         </button>
-                        <button
-                          type="button"
-                          class="cursor-pointer rounded border border-border px-2 py-0.5 text-xs text-muted"
-                          @click="allocationRow = null"
-                        >
-                          Отмена
-                        </button>
-                      </div>
+                      </p>
                     </div>
                   </li>
                   </ul>
