@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
@@ -312,13 +312,17 @@ function productById(meal: TripMeal, productId: number): TripMealProduct | undef
 
 /** Значение селекта «кол-во»: пусто, «всё» или число. */
 function allocAmountValue(product: TripMealProduct | undefined): string {
-  const share = product?.allocations[0]
+  const share = normalShare(product)
   if (!share) return ''
 
   return share.isElastic ? 'all' : String(share.amount)
 }
 
 /** Сколько вариантов в селекте «кол-во»: от 1 до количества по рецепту. */
+function normalShare(product: TripMealProduct | undefined) {
+  return product?.allocations.find((row) => normalPackages.value.some((pack) => pack.id === row.packageId))
+}
+
 function amountOptions(product: TripMealProduct | undefined): number[] {
   return Array.from(
     { length: Math.max(product?.amount ?? 0, 1) },
@@ -775,7 +779,7 @@ onMounted(() => {
                   >
                     <div class="flex gap-1 md:col-start-2">
                       <select
-                        :value="productById(mealOf(day.index, kind)!, ingredient.productId)?.allocations[0]?.packageId ?? ''"
+                        :value="normalShare(productById(mealOf(day.index, kind)!, ingredient.productId))?.packageId ?? ''"
                         :data-test="`ing-pack-${dish.dishId}-${ingredient.productId}`"
                         class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
                         @change="setIngredientPack(day.index, kind, ingredient.productId, $event)"
@@ -881,7 +885,7 @@ onMounted(() => {
                       <template v-if="canEdit && normalPackages.length > 0">
                         <div class="flex gap-1" :data-test="`product-packs-${product.productId}`">
                           <select
-                            :value="product.allocations[0]?.packageId ?? ''"
+                            :value="normalShare(product)?.packageId ?? ''"
                             :data-test="`alloc-pack-${product.productId}`"
                             class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
                             @change="setAllocationPack(day.index, kind, product, $event)"
@@ -894,7 +898,7 @@ onMounted(() => {
                           </select>
                           <select
                             :value="allocAmountValue(product)"
-                            :disabled="!product.allocations[0]"
+                            :disabled="!normalShare(product)"
                             :data-test="`alloc-amount-${product.productId}`"
                             class="rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
                             @change="setAllocationAmount2(day.index, kind, product, $event)"

@@ -352,9 +352,10 @@ export class TripMealsService {
         where: { mealId: meal.id, kind: 'kulek' },
       });
       if (kulek) {
-        throw new BadRequestException(
-          'Приём упакован в кулёк — доли меняются вместе с кульком',
-        );
+        // Ручная фасовка расформировывает кулёк: доли уходят, остаётся
+        // «не расфасовано» — раскладывать заново, как хочет завхоз.
+        await manager.delete(TripMealAllocation, { packageId: kulek.id });
+        await manager.delete(TripMealPackage, { id: kulek.id });
       }
 
       const productIds = await this.mealProductIds(manager, meal);
@@ -547,13 +548,19 @@ export class TripMealsService {
     for (const productId of productIds) {
       if (have.has(productId)) continue;
 
-      await manager.insert(TripMealAllocation, {
-        mealId: meal.id,
-        productId,
-        packageId: pack.id,
-        amount: 0,
-        isElastic: true,
-      });
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(TripMealAllocation)
+        .values({
+          mealId: meal.id,
+          productId,
+          packageId: pack.id,
+          amount: 0,
+          isElastic: true,
+        })
+        .orIgnore()
+        .execute();
     }
   }
 
