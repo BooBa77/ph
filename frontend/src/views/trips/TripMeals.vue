@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
@@ -101,12 +101,6 @@ const me = computed(
     ) ?? null,
 )
 
-const packageNames = computed<Record<string, string>>(() =>
-  Object.fromEntries(
-    (plan.value?.packages ?? []).map((pack) => [pack.id, pack.name]),
-  ),
-)
-
 const start = computed(() =>
   props.trip.startsAt ? new Date(props.trip.startsAt) : null,
 )
@@ -167,15 +161,6 @@ function toggleDishIngredient(
       excluded,
     ),
   )
-}
-
-function productPackages(product: TripMealProduct): string {
-  return product.allocations
-    .map(
-      (share) =>
-        `${packageNames.value[share.packageId] ?? 'Пакет'} ${formatProductAmount(share.amount, product.unit)}`,
-    )
-    .join(', ')
 }
 
 async function load() {
@@ -320,14 +305,19 @@ function kulekOf(meal: TripMeal): TripMealPackage | undefined {
   )
 }
 
-/** Сколько продукта лежит в этом пакете. */
-function allocationAmount(product: TripMealProduct, pack: TripMealPackage): number {
-  return product.allocations.find((row) => row.packageId === pack.id)?.amount ?? 0
+/** Значение селекта «кол-во»: пусто, «всё» или число. */
+function allocAmountValue(product: TripMealProduct): string {
+  const share = product.allocations[0]
+  if (!share) return ''
+
+  return share.isElastic ? 'all' : String(share.amount)
 }
 
-function isElasticOf(product: TripMealProduct, pack: TripMealPackage): boolean {
-  return product.allocations.some(
-    (row) => row.packageId === pack.id && row.isElastic,
+/** Сколько вариантов в селекте «кол-во»: от 1 до количества по рецепту. */
+function amountOptions(product: TripMealProduct): number[] {
+  return Array.from(
+    { length: Math.max(product.amount, 1) },
+    (_, index) => index + 1,
   )
 }
 
@@ -380,50 +370,51 @@ function saveShares(
   )
 }
 
-/** Положили в пакет другое количество, в том числе больше рецепта. */
-function updateAllocation(
+/** Выбрали пакет: доля переезжает в него, количество сохраняется. */
+function setAllocationPack(
   dayIndex: number,
   kind: TripMealKind,
   product: TripMealProduct,
-  pack: TripMealPackage,
   event: Event,
 ): void {
-  const amount = Number((event.target as HTMLInputElement).value)
-  if (!Number.isInteger(amount) || amount < 0) return
+  const packageId = (event.target as HTMLSelectElement).value
+  if (!packageId) return
 
-  const rows = normalPackages.value.map((row) => {
-    const share = product.allocations.find((item) => item.packageId === row.id)
-
-    return {
-      packageId: row.id,
-      amount: row.id === pack.id ? amount : (share?.amount ?? 0),
+  const share = product.allocations[0]
+  saveShares(dayIndex, kind, product, [
+    {
+      packageId,
+      amount: share?.amount ?? 0,
       isElastic: share?.isElastic ?? false,
-    }
-  })
-
-  saveShares(dayIndex, kind, product, rows)
+    },
+  ])
 }
 
-/** «Всё» — одна на строку: выбор снимает остальные доли. */
-function toggleAllocationElastic(
+/** Выбрали количество или «всё»: доля сохраняется сразу. */
+function setAllocationAmount2(
   dayIndex: number,
   kind: TripMealKind,
   product: TripMealProduct,
-  pack: TripMealPackage,
+  event: Event,
 ): void {
-  const next = !isElasticOf(product, pack)
+  const share = product.allocations[0]
+  if (!share) return
 
-  const rows = normalPackages.value.map((row) => {
-    const share = product.allocations.find((item) => item.packageId === row.id)
+  const value = (event.target as HTMLSelectElement).value
+  if (value === 'all') {
+    saveShares(dayIndex, kind, product, [
+      { packageId: share.packageId, amount: 0, isElastic: true },
+    ])
 
-    return {
-      packageId: row.id,
-      amount: row.id === pack.id && next ? 0 : (share?.amount ?? 0),
-      isElastic: row.id === pack.id ? next : false,
-    }
-  })
+    return
+  }
 
-  saveShares(dayIndex, kind, product, rows)
+  const amount = Number(value)
+  if (!Number.isInteger(amount) || amount <= 0) return
+
+  saveShares(dayIndex, kind, product, [
+    { packageId: share.packageId, amount, isElastic: false },
+  ])
 }
 
 /** Убрать остаток из плана: убавка на «разложено минус рецепт». */
@@ -610,10 +601,10 @@ onMounted(() => {
             <article
               v-for="kind in day.kinds"
               :key="kind"
-              class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
+              class="grid gap-2 rounded-xl border border-border bg-surface p-3 md:grid-cols-[12rem_1fr] md:items-start md:gap-x-4"
               :data-test="`meal-${day.index}-${kind}`"
             >
-              <header class="flex flex-col gap-1">
+              <header class="flex flex-col gap-1 md:col-start-1">
                 <span class="text-sm font-medium text-text">
                   {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
                 </span>
@@ -638,7 +629,7 @@ onMounted(() => {
 
               <template v-if="mealOf(day.index, kind)">
 
-                <div v-if="canEdit" class="flex gap-1" data-test="meal-form">
+                <div v-if="canEdit" class="flex flex-wrap gap-1 md:col-start-1" data-test="meal-form">
                   <button
                     v-for="form in TRIP_MEAL_FORMS"
                     :key="form"
@@ -657,7 +648,7 @@ onMounted(() => {
                   </button>
                 </div>
 
-                <div class="grid gap-4 md:grid-cols-2">
+                <div class="flex flex-col gap-3 md:col-start-2 md:row-span-2">
                   <section class="flex flex-col gap-1">
                     <h4 class="text-xs uppercase tracking-wide text-muted">Блюда</h4>
                     <ul class="flex flex-col gap-1">
@@ -727,81 +718,77 @@ onMounted(() => {
                     <span v-if="product.isMeat" class="text-xs text-muted">
                       мясное · {{ meatPortion }}
                     </span>
-                    <span v-if="product.manualAmount > 0" class="text-xs text-muted">ручная</span>
-                    <span v-if="product.allocations.length" class="text-xs text-muted">
-                      {{ productPackages(product) }}
-                    </span>
                     <button
-                      v-if="canEdit && product.manualAmount > 0"
+                      v-if="canEdit"
                       type="button"
-                      class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
+                      class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
+                      title="Убрать продукт"
                       :data-test="`meal-line-remove-${product.productId}`"
                       @click="removeLine(day.index, kind, product.productId)"
                     >
-                      убрать ручную
+                      ×
                     </button>
 
                     <div
                       v-if="canEdit && normalPackages.length > 0"
-                      class="mt-1 flex w-full flex-col gap-1 rounded-lg border border-border/60 bg-field/60 p-2"
+                      class="mt-1 flex w-full flex-wrap items-center gap-1 text-xs"
                       :data-test="`product-packs-${product.productId}`"
                     >
-                      <div
-                        v-for="pack in normalPackages"
-                        :key="pack.id"
-                        class="flex items-center gap-2 text-xs"
+                      <select
+                        :value="product.allocations[0]?.packageId ?? ''"
+                        :data-test="`alloc-pack-${product.productId}`"
+                        class="rounded border border-border bg-field px-1 py-0.5 text-text"
+                        @change="setAllocationPack(day.index, kind, product, $event)"
                       >
-                        <span class="w-20 text-muted">{{ pack.name }}</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          :value="allocationAmount(product, pack)"
-                          :disabled="isElasticOf(product, pack)"
-                          class="w-16 rounded border border-border bg-surface px-1 py-0.5 text-text focus:border-primary focus:outline-none disabled:opacity-50"
-                          :data-test="`alloc-amount-${pack.id}`"
-                          @change="updateAllocation(day.index, kind, product, pack, $event)"
-                        />
-                        <label class="flex items-center gap-1 text-muted">
-                          <input
-                            type="checkbox"
-                            :checked="isElasticOf(product, pack)"
-                            :data-test="`alloc-elastic-${pack.id}`"
-                            @change="toggleAllocationElastic(day.index, kind, product, pack)"
-                          />
-                          всё
-                        </label>
-                      </div>
+                        <option value="" disabled>выберите пакет</option>
+                        <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
+                          {{ pack.name }}
+                        </option>
+                      </select>
 
-                      <p v-if="overAllocated(product) > 0" class="text-xs text-amber-700">
+                      <select
+                        :value="allocAmountValue(product)"
+                        :disabled="!product.allocations[0]"
+                        :data-test="`alloc-amount-${product.productId}`"
+                        class="rounded border border-border bg-field px-1 py-0.5 text-text disabled:opacity-50"
+                        @change="setAllocationAmount2(day.index, kind, product, $event)"
+                      >
+                        <option value="" disabled>кол-во</option>
+                        <option value="all">всё</option>
+                        <option v-for="n in amountOptions(product)" :key="n" :value="String(n)">
+                          {{ n }}
+                        </option>
+                      </select>
+
+                      <span v-if="overAllocated(product) > 0" class="text-amber-700">
                         сверх рецепта:
                         {{ formatProductAmount(overAllocated(product), product.unit) }}
                         <button
                           type="button"
-                          class="ml-1 cursor-pointer underline"
+                          class="cursor-pointer underline"
                           :data-test="`alloc-over-reset-${product.productId}`"
                           @click="resetOverAllocations(day.index, kind, product)"
                         >
                           убрать лишнее
                         </button>
-                      </p>
+                      </span>
 
-                      <p
+                      <span
                         v-if="allocatedOf(product) > 0 && product.amount > allocatedOf(product)"
-                        class="text-xs text-amber-700"
+                        class="text-amber-700"
                         data-test="meal-leftover"
                       >
                         остаток:
                         {{ formatProductAmount(product.amount - allocatedOf(product), product.unit) }}
                         <button
                           type="button"
-                          class="ml-1 cursor-pointer underline"
+                          class="cursor-pointer underline"
                           :data-test="`meal-leftover-drop-${product.productId}`"
                           @click="dropLeftover(day.index, kind, product)"
                         >
                           убрать
                         </button>
-                      </p>
+                      </span>
                     </div>
                   </li>
                   </ul>

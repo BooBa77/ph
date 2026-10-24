@@ -1,4 +1,4 @@
-import { createPinia, setActivePinia } from 'pinia'
+﻿import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -264,7 +264,23 @@ describe('TripMeals', () => {
     mocks.createMealPackage.mockResolvedValue(current)
     mocks.updateMealPackage.mockResolvedValue(current)
     mocks.removeMealPackage.mockResolvedValue(current)
-    mocks.setMealAllocations.mockResolvedValue(current)
+    mocks.setMealAllocations.mockImplementation(
+      async (
+        _tripId: string,
+        _day: number,
+        _kind: string,
+        productId: number,
+        rows: Array<{ packageId: string; amount: number; isElastic: boolean }>,
+      ) => {
+        const next = current
+        const product = next.meals[0]?.products.find(
+          (row) => row.productId === productId,
+        )
+        if (product) product.allocations = rows
+
+        return next
+      },
+    )
     mocks.setMealDishExclusions.mockResolvedValue(current)
     mocks.setMealKulek.mockResolvedValue(current)
     mocks.fetchMealChecks.mockResolvedValue(checks())
@@ -367,7 +383,8 @@ describe('TripMeals', () => {
     // Продукт есть в списке; фасовка — в пакетах.
     expect(wrapper.find('[data-test="meal-products"]').text()).toContain('Крупа')
 
-    await wrapper.find('[data-test="alloc-amount-p1"]').setValue('100')
+    await wrapper.find('[data-test="alloc-pack-1"]').setValue('p1')
+    await wrapper.find('[data-test="alloc-amount-1"]').setValue('100')
     await flushPromises()
 
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
@@ -378,7 +395,8 @@ describe('TripMeals', () => {
   it('«всё» раскладывает строку целиком', async () => {
     const wrapper = await mountMeals()
 
-    await wrapper.find('[data-test="alloc-elastic-p1"]').setValue(true)
+    await wrapper.find('[data-test="alloc-pack-1"]').setValue('p1')
+    await wrapper.find('[data-test="alloc-amount-1"]').setValue('all')
     await flushPromises()
 
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
