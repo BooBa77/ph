@@ -381,10 +381,10 @@ describe('TripMeals', () => {
     const wrapper = await mountMeals()
 
     // Продукт есть в списке; фасовка — в пакетах.
-    expect(wrapper.find('[data-test="meal-products"]').text()).toContain('Крупа')
+    expect(wrapper.find('[data-test="meal-products"]').text()).not.toContain('Крупа')
 
-    await wrapper.find('[data-test="alloc-pack-1"]').setValue('p1')
-    await wrapper.find('[data-test="alloc-amount-1"]').setValue('100')
+    await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p1')
+    await wrapper.find('[data-test="ing-amount-d1-1"]').setValue('100')
     await flushPromises()
 
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
@@ -395,8 +395,8 @@ describe('TripMeals', () => {
   it('«всё» раскладывает строку целиком', async () => {
     const wrapper = await mountMeals()
 
-    await wrapper.find('[data-test="alloc-pack-1"]').setValue('p1')
-    await wrapper.find('[data-test="alloc-amount-1"]').setValue('all')
+    await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p1')
+    await wrapper.find('[data-test="ing-amount-d1-1"]').setValue('all')
     await flushPromises()
 
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [

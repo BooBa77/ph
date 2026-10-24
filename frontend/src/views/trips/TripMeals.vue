@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
@@ -234,7 +234,7 @@ function chooseLineProduct(key: string, product: Product) {
 
 /** Рецепты, которых ещё нет в этом приёме: выбранные не предлагаем. */
 function dishesFor(meal: TripMeal | undefined): Dish[] {
-  if (!meal) return []
+  if (!meal) return dishes.value
 
   return dishes.value.filter(
     (dish) => !meal.dishes.some((row) => row.dishId === String(dish.id)),
@@ -634,9 +634,30 @@ onMounted(() => {
             >
               <!-- Строка 1: приём | фасовка | блюда -->
               <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
-                <span class="text-sm font-medium text-text md:col-start-1">
-                  {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
-                </span>
+                <div class="flex flex-col items-start gap-1">
+                  <span class="text-sm font-medium text-text">
+                    {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
+                  </span>
+
+                  <div v-if="canEdit" class="flex flex-col items-start gap-1" data-test="meal-form">
+                    <button
+                      v-for="form in TRIP_MEAL_FORMS"
+                      :key="form"
+                      type="button"
+                      class="cursor-pointer rounded-lg border px-2 py-1 text-xs transition-colors disabled:opacity-60"
+                      :class="
+                        mealOf(day.index, kind)?.form === form
+                          ? 'border-primary font-medium text-primary'
+                          : 'border-border text-muted hover:text-text'
+                      "
+                      :disabled="busy === `${mealOf(day.index, kind)?.id}:form`"
+                      :data-test="`meal-form-${form}`"
+                      @click="mealOf(day.index, kind) && changeForm(mealOf(day.index, kind)!, form)"
+                    >
+                      {{ TRIP_MEAL_FORM_LABELS[form] }}
+                    </button>
+                  </div>
+                </div>
 
                 <div class="flex flex-col gap-1 md:col-start-2">
                   <span class="text-xs uppercase tracking-wide text-muted">Фасовка</span>
@@ -810,7 +831,7 @@ onMounted(() => {
                 <!-- Строки продуктов: пара фасовки + продукт -->
                 <ul class="flex flex-col gap-1" data-test="meal-products">
                   <li
-                    v-for="product in mealOf(day.index, kind)!.products"
+                    v-for="product in mealOf(day.index, kind)!.products.filter((row) => row.manualAmount > 0)"
                     :key="product.productId"
                     class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
                     data-test="meal-product"
@@ -896,25 +917,6 @@ onMounted(() => {
               </template>
 
               <p v-else class="text-sm text-muted" data-test="meal-empty">Пусто</p>
-
-              <div v-if="canEdit" class="flex flex-col gap-1 md:col-start-1" data-test="meal-form">
-                <button
-                  v-for="form in TRIP_MEAL_FORMS"
-                  :key="form"
-                  type="button"
-                  class="cursor-pointer rounded-lg border px-2 py-1 text-xs transition-colors disabled:opacity-60"
-                  :class="
-                    mealOf(day.index, kind)?.form === form
-                      ? 'border-primary font-medium text-primary'
-                      : 'border-border text-muted hover:text-text'
-                  "
-                  :disabled="busy === `${mealOf(day.index, kind)?.id}:form`"
-                  :data-test="`meal-form-${form}`"
-                  @click="mealOf(day.index, kind) && changeForm(mealOf(day.index, kind)!, form)"
-                >
-                  {{ TRIP_MEAL_FORM_LABELS[form] }}
-                </button>
-              </div>
             </article>
           </div>
         </section>
