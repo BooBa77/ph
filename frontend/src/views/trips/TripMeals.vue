@@ -412,17 +412,43 @@ function setAllocationPack(
   product: TripMealProduct,
   event: Event,
 ): void {
-  const packageId = (event.target as HTMLSelectElement).value
-  if (!packageId) return
+  const value = (event.target as HTMLSelectElement).value
+  if (!value) return
 
   const share = product.allocations[0]
-  saveShares(dayIndex, kind, product, [
-    {
-      packageId,
-      amount: share?.amount ?? 0,
-      isElastic: share?.isElastic ?? false,
-    },
-  ])
+  const amount = share?.amount ?? 0
+  const isElastic = share?.isElastic ?? false
+
+  if (value === '__new__') {
+    void (async () => {
+      const key = `${product.productId}:new-pack`
+      if (busy.value === key) return
+      busy.value = key
+      error.value = null
+
+      try {
+        const next = await createMealPackage(props.trip.id)
+        const pack = next.packages[next.packages.length - 1]
+        plan.value = pack
+          ? await setMealAllocations(
+              props.trip.id,
+              dayIndex,
+              kind,
+              product.productId,
+              [{ packageId: pack.id, amount, isElastic }],
+            )
+          : next
+      } catch (cause) {
+        error.value = messageOf(cause, 'Не удалось создать пакет')
+      } finally {
+        busy.value = null
+      }
+    })()
+
+    return
+  }
+
+  saveShares(dayIndex, kind, product, [{ packageId: value, amount, isElastic }])
 }
 
 /** Выбрали количество или «всё»: доля сохраняется сразу. */
@@ -726,21 +752,22 @@ onMounted(() => {
                         <select
                           :value="productById(mealOf(day.index, kind)!, ingredient.productId)?.allocations[0]?.packageId ?? ''"
                           :data-test="`ing-pack-${dish.dishId}-${ingredient.productId}`"
-                          class="w-20 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                          class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
                           @change="setIngredientPack(day.index, kind, ingredient.productId, $event)"
                         >
-                          <option value="" disabled>выберите пакет</option>
-                          <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
+                          <option value="" disabled></option>
+                          <option value="__new__">новый пакет</option>
+<option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
                             {{ pack.name }}
                           </option>
                         </select>
                         <select
                           :value="allocAmountValue(productById(mealOf(day.index, kind)!, ingredient.productId))"
                           :data-test="`ing-amount-${dish.dishId}-${ingredient.productId}`"
-                          class="rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                          class="w-16 shrink-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
                           @change="setIngredientAmount(day.index, kind, ingredient.productId, $event)"
                         >
-                          <option value="" disabled>кол-во</option>
+                          <option value="" disabled></option>
                           <option value="all">всё</option>
                           <option
                             v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId))"
@@ -846,11 +873,12 @@ onMounted(() => {
                           <select
                             :value="product.allocations[0]?.packageId ?? ''"
                             :data-test="`alloc-pack-${product.productId}`"
-                            class="w-20 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                            class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
                             @change="setAllocationPack(day.index, kind, product, $event)"
                           >
-                            <option value="" disabled>выберите пакет</option>
-                            <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
+                            <option value="" disabled></option>
+                            <option value="__new__">новый пакет</option>
+<option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
                               {{ pack.name }}
                             </option>
                           </select>
@@ -861,7 +889,7 @@ onMounted(() => {
                             class="rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
                             @change="setAllocationAmount2(day.index, kind, product, $event)"
                           >
-                            <option value="" disabled>кол-во</option>
+                            <option value="" disabled></option>
                             <option value="all">всё</option>
                             <option v-for="n in amountOptions(product)" :key="n" :value="String(n)">
                               {{ n }}
