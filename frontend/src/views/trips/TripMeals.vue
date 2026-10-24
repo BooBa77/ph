@@ -305,20 +305,55 @@ function kulekOf(meal: TripMeal): TripMealPackage | undefined {
   )
 }
 
+/** Строка продукта приёма по продукту рецепта. */
+function productById(meal: TripMeal, productId: number): TripMealProduct | undefined {
+  return meal.products.find((product) => product.productId === productId)
+}
+
 /** Значение селекта «кол-во»: пусто, «всё» или число. */
-function allocAmountValue(product: TripMealProduct): string {
-  const share = product.allocations[0]
+function allocAmountValue(product: TripMealProduct | undefined): string {
+  const share = product?.allocations[0]
   if (!share) return ''
 
   return share.isElastic ? 'all' : String(share.amount)
 }
 
 /** Сколько вариантов в селекте «кол-во»: от 1 до количества по рецепту. */
-function amountOptions(product: TripMealProduct): number[] {
+function amountOptions(product: TripMealProduct | undefined): number[] {
   return Array.from(
-    { length: Math.max(product.amount, 1) },
+    { length: Math.max(product?.amount ?? 0, 1) },
     (_, index) => index + 1,
   )
+}
+
+/** Пакет для ингредиента блюда: фасовка той же строки продукта. */
+function setIngredientPack(
+  dayIndex: number,
+  kind: TripMealKind,
+  productId: number,
+  event: Event,
+): void {
+  const meal = mealOf(dayIndex, kind)
+  if (!meal) return
+  const product = productById(meal, productId)
+  if (!product) return
+
+  setAllocationPack(dayIndex, kind, product, event)
+}
+
+/** Количество для ингредиента блюда. */
+function setIngredientAmount(
+  dayIndex: number,
+  kind: TripMealKind,
+  productId: number,
+  event: Event,
+): void {
+  const meal = mealOf(dayIndex, kind)
+  if (!meal) return
+  const product = productById(meal, productId)
+  if (!product) return
+
+  setAllocationAmount2(dayIndex, kind, product, event)
 }
 
 /** Всего разложено по пакетам. */
@@ -436,14 +471,7 @@ function dropLeftover(
   )
 }
 
-/** «Убрать лишнее»: доли снимаются, пакеты снова пустые. */
-function resetOverAllocations(
-  dayIndex: number,
-  kind: TripMealKind,
-  product: TripMealProduct,
-): void {
-  saveShares(dayIndex, kind, product, [])
-}
+
 
 function toggleKulek(meal: TripMeal): void {
   const kulek = kulekOf(meal)
@@ -601,65 +629,113 @@ onMounted(() => {
             <article
               v-for="kind in day.kinds"
               :key="kind"
-              class="grid gap-2 rounded-xl border border-border bg-surface p-3 md:grid-cols-[12rem_1fr] md:items-start md:gap-x-4"
+              class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
               :data-test="`meal-${day.index}-${kind}`"
             >
-              <header class="flex flex-col gap-1 md:col-start-1">
-                <span class="text-sm font-medium text-text">
+              <!-- Строка 1: приём | фасовка | блюда -->
+              <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
+                <span class="text-sm font-medium text-text md:col-start-1">
                   {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
                 </span>
-                <button
-                  v-if="canEdit && mealOf(day.index, kind)"
-                  type="button"
-                  class="cursor-pointer text-xs transition-colors"
-                  :class="
-                    kulekOf(mealOf(day.index, kind)!)
-                      ? 'font-medium text-primary'
-                      : 'text-muted underline hover:text-text'
-                  "
-                  :data-test="`meal-kulek-${day.index}-${kind}`"
-                  @click="toggleKulek(mealOf(day.index, kind)!)"
-                >
-                  <template v-if="kulekOf(mealOf(day.index, kind)!)">кулёк собран</template>
-                  <template v-else>
-                    <span class="hidden sm:inline">всё </span>в отдельный кулёк
-                  </template>
-                </button>
-              </header>
 
-              <template v-if="mealOf(day.index, kind)">
-
-                <div v-if="canEdit" class="flex flex-wrap gap-1 md:col-start-1" data-test="meal-form">
+                <div class="flex flex-col gap-1 md:col-start-2">
+                  <span class="text-xs uppercase tracking-wide text-muted">Фасовка</span>
                   <button
-                    v-for="form in TRIP_MEAL_FORMS"
-                    :key="form"
+                    v-if="canEdit && mealOf(day.index, kind)"
                     type="button"
-                    class="cursor-pointer rounded-lg border px-2 py-1 text-xs transition-colors disabled:opacity-60"
+                    class="cursor-pointer text-left text-xs transition-colors"
                     :class="
-                      mealOf(day.index, kind)!.form === form
-                        ? 'border-primary font-medium text-primary'
-                        : 'border-border text-muted hover:text-text'
+                      kulekOf(mealOf(day.index, kind)!)
+                        ? 'font-medium text-primary'
+                        : 'text-muted underline hover:text-text'
                     "
-                    :disabled="busy === `${mealOf(day.index, kind)!.id}:form`"
-                    :data-test="`meal-form-${form}`"
-                    @click="changeForm(mealOf(day.index, kind)!, form)"
+                    :data-test="`meal-kulek-${day.index}-${kind}`"
+                    @click="toggleKulek(mealOf(day.index, kind)!)"
                   >
-                    {{ TRIP_MEAL_FORM_LABELS[form] }}
+                    <template v-if="kulekOf(mealOf(day.index, kind)!)">кулёк собран</template>
+                    <template v-else>всё в отдельный кулёк</template>
                   </button>
                 </div>
 
-                <div class="flex flex-col gap-3 md:col-start-2 md:row-span-2">
-                  <section class="flex flex-col gap-1">
-                    <h4 class="text-xs uppercase tracking-wide text-muted">Блюда</h4>
-                    <ul class="flex flex-col gap-1">
-                  <li
-                    v-for="dish in mealOf(day.index, kind)!.dishes"
-                    :key="dish.dishId"
-                    class="flex flex-col gap-1 text-sm text-text"
-                    data-test="meal-dish"
-                  >
+                <div v-if="canEdit" class="flex flex-col gap-1 md:col-start-3">
+                  <span class="text-xs uppercase tracking-wide text-muted">Блюда</span>
+                  <div class="flex gap-1">
+                    <select
+                      v-model="dishDrafts[mealKey(day.index, kind)]"
+                      class="w-full rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
+                      :data-test="`meal-dish-select-${day.index}-${kind}`"
+                    >
+                      <option value="" disabled hidden>Выберите рецепт блюда</option>
+                      <option v-for="dish in dishesFor(mealOf(day.index, kind))" :key="dish.id" :value="dish.id">
+                        {{ dish.title }}
+                      </option>
+                    </select>
+                    <button
+                      type="button"
+                      class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary disabled:opacity-50"
+                      :disabled="!dishDraft(mealKey(day.index, kind)) || busy !== null"
+                      :data-test="`meal-dish-add-${day.index}-${kind}`"
+                      @click="addDish(day.index, kind)"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <template v-if="mealOf(day.index, kind)">
+                <!-- Строки блюд: пары фасовки слева, блюдо справа -->
+                <div
+                  v-for="dish in mealOf(day.index, kind)!.dishes"
+                  :key="dish.dishId"
+                  class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                  data-test="meal-dish"
+                >
+                  <div class="flex flex-col gap-1 md:col-start-2">
+                    <div
+                      v-for="ingredient in dish.ingredients"
+                      :key="ingredient.productId"
+                      class="flex flex-col gap-0.5"
+                    >
+                      <div class="flex gap-1 text-[10px] uppercase leading-none text-muted">
+                        <span class="w-20">в пакет</span>
+                        <span>КОЛ-ВО</span>
+                      </div>
+                      <div class="flex gap-1">
+                        <select
+                          :value="productById(mealOf(day.index, kind)!, ingredient.productId)?.allocations[0]?.packageId ?? ''"
+                          :data-test="`ing-pack-${dish.dishId}-${ingredient.productId}`"
+                          class="w-20 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                          @change="setIngredientPack(day.index, kind, ingredient.productId, $event)"
+                        >
+                          <option value="" disabled>выберите пакет</option>
+                          <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
+                            {{ pack.name }}
+                          </option>
+                        </select>
+                        <select
+                          :value="allocAmountValue(productById(mealOf(day.index, kind)!, ingredient.productId))"
+                          :data-test="`ing-amount-${dish.dishId}-${ingredient.productId}`"
+                          class="rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                          @change="setIngredientAmount(day.index, kind, ingredient.productId, $event)"
+                        >
+                          <option value="" disabled>кол-во</option>
+                          <option value="all">всё</option>
+                          <option
+                            v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId))"
+                            :key="n"
+                            :value="String(n)"
+                          >
+                            {{ n }}
+                          </option>
+                        </select>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="flex flex-col gap-1 md:col-start-3">
                     <span class="flex items-start justify-between gap-2">
-                      <span class="font-medium">{{ dish.title }}</span>
+                      <span class="font-medium text-text">{{ dish.title }}</span>
                       <button
                         v-if="canEdit"
                         type="button"
@@ -683,11 +759,6 @@ onMounted(() => {
                             : 'border-border text-text hover:border-primary'
                         "
                         :disabled="!canEdit"
-                        :title="
-                          dish.excludedProductIds.includes(ingredient.productId)
-                            ? 'Вернуть ингредиент'
-                            : 'Убрать из этого приёма'
-                        "
                         :data-test="`dish-ing-${dish.dishId}-${ingredient.productId}`"
                         @click="toggleDishIngredient(day.index, kind, dish, ingredient.productId)"
                       >
@@ -698,102 +769,126 @@ onMounted(() => {
                         </span>
                       </button>
                     </span>
-                  </li>
-                    </ul>
-                  </section>
+                  </div>
+                </div>
 
-                  <section class="flex flex-col gap-1">
-                    <h4 class="text-xs uppercase tracking-wide text-muted">Продукты</h4>
-                    <ul class="flex flex-col gap-1" data-test="meal-products">
+                <!-- Строка продуктов: заголовок и форма добавления -->
+                <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
+                  <div class="md:col-start-3">
+                    <span class="text-xs uppercase tracking-wide text-muted">Продукты</span>
+
+                    <div v-if="canEdit" class="flex flex-col" data-test="meal-add">
+                      <ProductPicker
+                        :product="lineDraft(mealKey(day.index, kind)).product"
+                        class="[&_input]:rounded-b-none"
+                        @select="chooseLineProduct(mealKey(day.index, kind), $event)"
+                      />
+                      <div class="flex items-center gap-1">
+                        <input
+                          v-model="lineDraft(mealKey(day.index, kind)).amount"
+                          type="number"
+                          min="1"
+                          step="1"
+                          placeholder="кол-во"
+                          class="-mt-px w-20 shrink-0 rounded-t-none rounded-b-lg border border-border bg-field px-2 py-1.5 text-xs text-text focus:border-primary focus:outline-none"
+                          :data-test="`meal-line-amount-${day.index}-${kind}`"
+                        />
+                        <button
+                          type="button"
+                          class="ml-auto shrink-0 cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+                          :disabled="!lineReady(mealKey(day.index, kind)) || busy !== null"
+                          :data-test="`meal-line-add-${day.index}-${kind}`"
+                          @click="addLine(day.index, kind)"
+                        >
+                          Добавить
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Строки продуктов: пара фасовки + продукт -->
+                <ul class="flex flex-col gap-1" data-test="meal-products">
                   <li
                     v-for="product in mealOf(day.index, kind)!.products"
                     :key="product.productId"
-                    class="flex flex-wrap items-baseline gap-2 text-sm text-text"
+                    class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
                     data-test="meal-product"
                   >
-                    <span>{{ product.name }}</span>
-                    <span class="text-xs text-muted">
-                      {{ formatProductAmount(product.amount, product.unit) }}
-                    </span>
-                    <span v-if="product.isMeat" class="text-xs text-muted">
-                      мясное · {{ meatPortion }}
-                    </span>
-                    <button
-                      v-if="canEdit"
-                      type="button"
-                      class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
-                      title="Убрать продукт"
-                      :data-test="`meal-line-remove-${product.productId}`"
-                      @click="removeLine(day.index, kind, product.productId)"
-                    >
-                      ×
-                    </button>
-
-                    <div
-                      v-if="canEdit && normalPackages.length > 0"
-                      class="mt-1 flex w-full flex-wrap items-center gap-1 text-xs"
-                      :data-test="`product-packs-${product.productId}`"
-                    >
-                      <select
-                        :value="product.allocations[0]?.packageId ?? ''"
-                        :data-test="`alloc-pack-${product.productId}`"
-                        class="rounded border border-border bg-field px-1 py-0.5 text-text"
-                        @change="setAllocationPack(day.index, kind, product, $event)"
-                      >
-                        <option value="" disabled>выберите пакет</option>
-                        <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
-                          {{ pack.name }}
-                        </option>
-                      </select>
-
-                      <select
-                        :value="allocAmountValue(product)"
-                        :disabled="!product.allocations[0]"
-                        :data-test="`alloc-amount-${product.productId}`"
-                        class="rounded border border-border bg-field px-1 py-0.5 text-text disabled:opacity-50"
-                        @change="setAllocationAmount2(day.index, kind, product, $event)"
-                      >
-                        <option value="" disabled>кол-во</option>
-                        <option value="all">всё</option>
-                        <option v-for="n in amountOptions(product)" :key="n" :value="String(n)">
-                          {{ n }}
-                        </option>
-                      </select>
-
-                      <span v-if="overAllocated(product) > 0" class="text-amber-700">
-                        сверх рецепта:
-                        {{ formatProductAmount(overAllocated(product), product.unit) }}
-                        <button
-                          type="button"
-                          class="cursor-pointer underline"
-                          :data-test="`alloc-over-reset-${product.productId}`"
-                          @click="resetOverAllocations(day.index, kind, product)"
+                    <div class="flex flex-col gap-0.5 md:col-start-2">
+                      <template v-if="canEdit && normalPackages.length > 0">
+                        <div class="flex gap-1 text-[10px] uppercase leading-none text-muted">
+                          <span class="w-20">в пакет</span>
+                          <span>КОЛ-ВО</span>
+                        </div>
+                        <div class="flex gap-1" :data-test="`product-packs-${product.productId}`">
+                          <select
+                            :value="product.allocations[0]?.packageId ?? ''"
+                            :data-test="`alloc-pack-${product.productId}`"
+                            class="w-20 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                            @change="setAllocationPack(day.index, kind, product, $event)"
+                          >
+                            <option value="" disabled>выберите пакет</option>
+                            <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
+                              {{ pack.name }}
+                            </option>
+                          </select>
+                          <select
+                            :value="allocAmountValue(product)"
+                            :disabled="!product.allocations[0]"
+                            :data-test="`alloc-amount-${product.productId}`"
+                            class="rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
+                            @change="setAllocationAmount2(day.index, kind, product, $event)"
+                          >
+                            <option value="" disabled>кол-во</option>
+                            <option value="all">всё</option>
+                            <option v-for="n in amountOptions(product)" :key="n" :value="String(n)">
+                              {{ n }}
+                            </option>
+                          </select>
+                        </div>
+                        <span v-if="overAllocated(product) > 0" class="text-xs text-amber-700">
+                          сверх рецепта: {{ formatProductAmount(overAllocated(product), product.unit) }}
+                        </span>
+                        <span
+                          v-if="allocatedOf(product) > 0 && product.amount > allocatedOf(product)"
+                          class="text-xs text-amber-700"
+                          data-test="meal-leftover"
                         >
-                          убрать лишнее
-                        </button>
-                      </span>
+                          остаток: {{ formatProductAmount(product.amount - allocatedOf(product), product.unit) }}
+                          <button
+                            type="button"
+                            class="cursor-pointer underline"
+                            :data-test="`meal-leftover-drop-${product.productId}`"
+                            @click="dropLeftover(day.index, kind, product)"
+                          >
+                            убрать
+                          </button>
+                        </span>
+                      </template>
+                    </div>
 
-                      <span
-                        v-if="allocatedOf(product) > 0 && product.amount > allocatedOf(product)"
-                        class="text-amber-700"
-                        data-test="meal-leftover"
-                      >
-                        остаток:
-                        {{ formatProductAmount(product.amount - allocatedOf(product), product.unit) }}
-                        <button
-                          type="button"
-                          class="cursor-pointer underline"
-                          :data-test="`meal-leftover-drop-${product.productId}`"
-                          @click="dropLeftover(day.index, kind, product)"
-                        >
-                          убрать
-                        </button>
+                    <div class="flex flex-wrap items-baseline gap-2 text-sm text-text md:col-start-3">
+                      <span>{{ product.name }}</span>
+                      <span class="text-xs text-muted">
+                        {{ formatProductAmount(product.amount, product.unit) }}
                       </span>
+                      <span v-if="product.isMeat" class="text-xs text-muted">
+                        мясное · {{ meatPortion }}
+                      </span>
+                      <button
+                        v-if="canEdit"
+                        type="button"
+                        class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
+                        title="Убрать продукт"
+                        :data-test="`meal-line-remove-${product.productId}`"
+                        @click="removeLine(day.index, kind, product.productId)"
+                      >
+                        ×
+                      </button>
                     </div>
                   </li>
-                  </ul>
-                  </section>
-                </div>
+                </ul>
 
                 <p class="text-xs text-muted" data-test="meal-weight">
                   {{ formatWeight(mealOf(day.index, kind)!.weightGrams) }}
@@ -802,58 +897,23 @@ onMounted(() => {
 
               <p v-else class="text-sm text-muted" data-test="meal-empty">Пусто</p>
 
-              <div v-if="canEdit" class="mt-auto flex flex-col gap-2" data-test="meal-add">
-                <div class="flex gap-1">
-                  <select
-                    v-model="dishDrafts[mealKey(day.index, kind)]"
-                    class="w-full rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
-                    :data-test="`meal-dish-select-${day.index}-${kind}`"
-                  >
-                    <option value="" disabled hidden>Выберите рецепт блюда</option>
-                    <option v-for="dish in dishesFor(mealOf(day.index, kind))" :key="dish.id" :value="dish.id">
-                      {{ dish.title }}
-                    </option>
-                  </select>
-                  <button
-                    type="button"
-                    class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary disabled:opacity-50"
-                    :disabled="!dishDraft(mealKey(day.index, kind)) || busy !== null"
-                    :data-test="`meal-dish-add-${day.index}-${kind}`"
-                    @click="addDish(day.index, kind)"
-                  >
-                    +
-                  </button>
-                </div>
-
-                <div class="flex flex-col">
-                  <ProductPicker
-                    :product="lineDraft(mealKey(day.index, kind)).product"
-                    class="[&_input]:rounded-b-none"
-                    @select="chooseLineProduct(mealKey(day.index, kind), $event)"
-                  />
-
-                  <div class="flex items-center gap-1">
-                    <input
-                      v-model="lineDraft(mealKey(day.index, kind)).amount"
-                      type="number"
-                      min="1"
-                      step="1"
-                      placeholder="кол-во"
-                      class="-mt-px w-20 shrink-0 rounded-t-none rounded-b-lg border border-border bg-field px-2 py-1.5 text-xs text-text focus:border-primary focus:outline-none"
-                      :data-test="`meal-line-amount-${day.index}-${kind}`"
-                    />
-
-                    <button
-                      type="button"
-                      class="ml-auto shrink-0 cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-                      :disabled="!lineReady(mealKey(day.index, kind)) || busy !== null"
-                      :data-test="`meal-line-add-${day.index}-${kind}`"
-                      @click="addLine(day.index, kind)"
-                    >
-                      Добавить
-                    </button>
-                  </div>
-                </div>
+              <div v-if="canEdit" class="flex flex-col gap-1 md:col-start-1" data-test="meal-form">
+                <button
+                  v-for="form in TRIP_MEAL_FORMS"
+                  :key="form"
+                  type="button"
+                  class="cursor-pointer rounded-lg border px-2 py-1 text-xs transition-colors disabled:opacity-60"
+                  :class="
+                    mealOf(day.index, kind)?.form === form
+                      ? 'border-primary font-medium text-primary'
+                      : 'border-border text-muted hover:text-text'
+                  "
+                  :disabled="busy === `${mealOf(day.index, kind)?.id}:form`"
+                  :data-test="`meal-form-${form}`"
+                  @click="mealOf(day.index, kind) && changeForm(mealOf(day.index, kind)!, form)"
+                >
+                  {{ TRIP_MEAL_FORM_LABELS[form] }}
+                </button>
               </div>
             </article>
           </div>
