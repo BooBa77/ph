@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
@@ -683,10 +683,14 @@ onMounted(() => {
                       {{ TRIP_MEAL_FORM_LABELS[form] }}
                     </button>
                   </div>
+
+                  <p class="text-xs text-muted" data-test="meal-weight">
+                    {{ formatWeight(mealOf(day.index, kind)?.weightGrams ?? 0) }}
+                  </p>
                 </div>
 
                 <div class="flex flex-col gap-1 md:col-start-2">
-                  <span class="text-xs uppercase tracking-wide text-muted">Фасовка</span>
+                  <span class="text-xs uppercase tracking-wide text-muted">Фасовка · в пакет / КОЛ-ВО</span>
                   <button
                     v-if="canEdit && mealOf(day.index, kind)"
                     type="button"
@@ -744,10 +748,7 @@ onMounted(() => {
                       :key="ingredient.productId"
                       class="flex flex-col gap-0.5"
                     >
-                      <div class="flex gap-1 text-[10px] uppercase leading-none text-muted">
-                        <span class="w-20">в пакет</span>
-                        <span>КОЛ-ВО</span>
-                      </div>
+
                       <div class="flex gap-1">
                         <select
                           :value="productById(mealOf(day.index, kind)!, ingredient.productId)?.allocations[0]?.packageId ?? ''"
@@ -865,10 +866,6 @@ onMounted(() => {
                   >
                     <div class="flex flex-col gap-0.5 md:col-start-2">
                       <template v-if="canEdit && normalPackages.length > 0">
-                        <div class="flex gap-1 text-[10px] uppercase leading-none text-muted">
-                          <span class="w-20">в пакет</span>
-                          <span>КОЛ-ВО</span>
-                        </div>
                         <div class="flex gap-1" :data-test="`product-packs-${product.productId}`">
                           <select
                             :value="product.allocations[0]?.packageId ?? ''"
@@ -918,7 +915,7 @@ onMounted(() => {
                     </div>
 
                     <div class="flex flex-wrap items-baseline gap-2 text-sm text-text md:col-start-3">
-                      <span>{{ product.name }}</span>
+                      <span class="font-medium">{{ product.name }}</span>
                       <span class="text-xs text-muted">
                         {{ formatProductAmount(product.amount, product.unit) }}
                       </span>
@@ -939,9 +936,7 @@ onMounted(() => {
                   </li>
                 </ul>
 
-                <p class="text-xs text-muted" data-test="meal-weight">
-                  {{ formatWeight(mealOf(day.index, kind)!.weightGrams) }}
-                </p>
+
               </template>
 
               <p v-else class="text-sm text-muted" data-test="meal-empty">Пусто</p>
@@ -988,8 +983,14 @@ onMounted(() => {
             <span v-else class="text-text">{{ pack.name }}</span>
 
             <span v-if="pack.kind === 'kulek'" class="text-xs text-muted">кулёк</span>
+
+            <ul v-if="pack.items.length" class="flex w-full flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted">
+              <li v-for="item in pack.items" :key="item.mealId + String(item.productId)">
+                {{ item.name }} — {{ formatWeight(item.weightGrams) }}
+              </li>
+            </ul>
             <span class="text-xs text-muted">
-              расчёт: {{ formatWeight(pack.weightEstimatedGrams) }}
+              расчётно: {{ formatWeight(pack.weightEstimatedGrams) }}
             </span>
 
             <label v-if="canEdit" class="flex items-center gap-1 text-xs text-muted">
@@ -1015,10 +1016,8 @@ onMounted(() => {
               class="text-xs text-amber-700"
               data-test="package-stale"
             >
-              перевесить
+              требуется перевзвесить пакет
             </span>
-
-            <span class="text-xs text-muted">{{ pack.items.length }} строк</span>
 
             <template v-if="canEdit">
               <template v-if="confirmingPackageId === pack.id">
@@ -1071,7 +1070,7 @@ onMounted(() => {
           data-test="checklist-toggle"
           @click="toggleChecklist"
         >
-          {{ checksOpen ? 'Скрыть чек-лист' : 'Чек-лист покупок' }}
+          {{ checksOpen ? 'Скрыть список покупок' : 'Список покупок' }}
         </button>
 
         <template v-if="checksOpen">
