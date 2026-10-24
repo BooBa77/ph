@@ -27,7 +27,7 @@ import { TripMeal } from './trip-meal.entity';
  */
 @Entity('trip_meal_lines')
 @Index('UQ_trip_meal_lines', ['mealId', 'productId'], { unique: true })
-@Check('chk_trip_meal_lines_amount', '"amount" > 0')
+@Check('chk_trip_meal_lines_amount', '"amount" <> 0')
 export class TripMealLine {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: string;
@@ -52,7 +52,7 @@ export class TripMealLine {
   })
   product: Product;
 
-  /** Количество в единицах продукта: граммы, штуки, банки. */
+  /** Количество: положительное — добавили, отрицательное — убрали. */
   @Column({ type: 'int' })
   amount: number;
 

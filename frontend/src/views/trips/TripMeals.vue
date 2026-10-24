@@ -426,6 +426,25 @@ function toggleAllocationElastic(
   saveShares(dayIndex, kind, product, rows)
 }
 
+/** Убрать остаток из плана: убавка на «разложено минус рецепт». */
+function dropLeftover(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+): void {
+  const reduction = allocatedOf(product) - product.recipeAmount
+
+  void run(`${product.productId}:leftover`, () =>
+    setMealLine(
+      props.trip.id,
+      dayIndex,
+      kind,
+      product.productId,
+      reduction,
+    ),
+  )
+}
+
 /** «Убрать лишнее»: доли снимаются, пакеты снова пустые. */
 function resetOverAllocations(
   dayIndex: number,
@@ -764,6 +783,23 @@ onMounted(() => {
                           @click="resetOverAllocations(day.index, kind, product)"
                         >
                           убрать лишнее
+                        </button>
+                      </p>
+
+                      <p
+                        v-if="allocatedOf(product) > 0 && product.amount > allocatedOf(product)"
+                        class="text-xs text-amber-700"
+                        data-test="meal-leftover"
+                      >
+                        остаток:
+                        {{ formatProductAmount(product.amount - allocatedOf(product), product.unit) }}
+                        <button
+                          type="button"
+                          class="ml-1 cursor-pointer underline"
+                          :data-test="`meal-leftover-drop-${product.productId}`"
+                          @click="dropLeftover(day.index, kind, product)"
+                        >
+                          убрать
                         </button>
                       </p>
                     </div>

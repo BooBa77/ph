@@ -8,6 +8,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  NotEquals,
   Matches,
   MaxLength,
   Min,
@@ -300,9 +301,12 @@ export class AddMealDishDto {
 
 /** Тело `PUT /api/trips/:id/meals/:day/:kind/lines/:productId`. */
 export class SetMealLineDto {
-  @ApiProperty({ description: 'Количество в единицах продукта', example: 600 })
+  @ApiProperty({
+    description: 'Количество: плюс — добавили, минус — убрали',
+    example: 600,
+  })
   @IsInt({ message: 'Количество должно быть целым числом единиц' })
-  @Min(1, { message: 'Количество должно быть больше нуля' })
+  @NotEquals(0, { message: 'Количество не может быть нулём' })
   amount: number;
 }
 
