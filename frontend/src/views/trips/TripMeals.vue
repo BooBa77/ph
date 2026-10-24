@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
@@ -245,6 +245,15 @@ function chooseLineProduct(key: string, product: Product) {
   const draft = lineDraft(key)
   draft.product = product
   draft.amount = ''
+}
+
+/** Рецепты, которых ещё нет в этом приёме: выбранные не предлагаем. */
+function dishesFor(meal: TripMeal | undefined): Dish[] {
+  if (!meal) return []
+
+  return dishes.value.filter(
+    (dish) => !meal.dishes.some((row) => row.dishId === String(dish.id)),
+  )
 }
 
 function lineReady(key: string): boolean {
@@ -520,7 +529,7 @@ onMounted(() => {
           <h2 class="text-sm text-muted">Едоки</h2>
 
           <p class="text-sm text-text" data-test="eaters-counts">
-          Едоков в общей раскладке — {{ plan.eaters.total }}
+          в общей раскладке — {{ plan.eaters.total }}
           (М-{{ plan.eaters.men }}, Ж-{{ plan.eaters.women }}),
           <template v-if="plan.eaters.vegetarians === 0">вегетарианцев нет</template>
           <template v-else>вегетарианцев {{ plan.eaters.vegetarians }}</template>
@@ -552,7 +561,7 @@ onMounted(() => {
               data-test="eats-separately"
               @change="toggleSeparate"
             />
-            Буду питаться отдельно
+            Я буду питаться отдельно
           </label>
         </div>
       </div>
@@ -697,16 +706,16 @@ onMounted(() => {
                       class="text-xs"
                       data-test="meal-unallocated"
                     >
-                      не расфасовано: {{ formatProductAmount(unallocated(product), product.unit) }}
+                      остаток вне пакетов: {{ formatProductAmount(unallocated(product), product.unit) }}
                     </span>
                     <button
                       v-if="canEdit && !kulekOf(mealOf(day.index, kind)!)"
                       type="button"
-                      class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
+                      class="cursor-pointer rounded text-xs text-muted underline transition-colors hover:text-text focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-primary"
                       :data-test="`meal-allocate-${product.productId}`"
                       @click="openAllocations(day.index, kind, product)"
                     >
-                      разложить
+                      разложить по пакетам
                     </button>
                     <button
                       v-if="canEdit && product.manualAmount > 0"
@@ -724,7 +733,7 @@ onMounted(() => {
                       data-test="allocation-editor"
                     >
                       <p class="mb-1 text-xs text-muted">
-                        Нерасфасовано:
+                        Остаток вне пакетов:
                         {{ formatProductAmount(unallocated(product), product.unit) }}
                       </p>
 
@@ -792,7 +801,7 @@ onMounted(() => {
                     :data-test="`meal-dish-select-${day.index}-${kind}`"
                   >
                     <option value="" disabled hidden>Выберите рецепт блюда</option>
-                    <option v-for="dish in dishes" :key="dish.id" :value="dish.id">
+                    <option v-for="dish in dishesFor(mealOf(day.index, kind))" :key="dish.id" :value="dish.id">
                       {{ dish.title }}
                     </option>
                   </select>
@@ -807,33 +816,34 @@ onMounted(() => {
                   </button>
                 </div>
 
-                <div class="flex items-start gap-2">
-                  <div class="min-w-0 flex-1">
-                    <ProductPicker
-                      :product="lineDraft(mealKey(day.index, kind)).product"
-                      @select="chooseLineProduct(mealKey(day.index, kind), $event)"
-                    />
-                  </div>
-
-                  <input
-                    v-model="lineDraft(mealKey(day.index, kind)).amount"
-                    type="number"
-                    min="1"
-                    step="1"
-                    placeholder="кол-во"
-                    class="w-20 shrink-0 rounded-lg border border-border bg-field px-2 py-1.5 text-xs text-text focus:border-primary focus:outline-none"
-                    :data-test="`meal-line-amount-${day.index}-${kind}`"
+                <div class="flex flex-col">
+                  <ProductPicker
+                    :product="lineDraft(mealKey(day.index, kind)).product"
+                    class="[&_input]:rounded-b-none"
+                    @select="chooseLineProduct(mealKey(day.index, kind), $event)"
                   />
 
-                  <button
-                    type="button"
-                    class="shrink-0 cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-                    :disabled="!lineReady(mealKey(day.index, kind)) || busy !== null"
-                    :data-test="`meal-line-add-${day.index}-${kind}`"
-                    @click="addLine(day.index, kind)"
-                  >
-                    Добавить
-                  </button>
+                  <div class="flex items-center gap-1">
+                    <input
+                      v-model="lineDraft(mealKey(day.index, kind)).amount"
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="кол-во"
+                      class="-mt-px w-20 shrink-0 rounded-t-none rounded-b-lg border border-border bg-field px-2 py-1.5 text-xs text-text focus:border-primary focus:outline-none"
+                      :data-test="`meal-line-amount-${day.index}-${kind}`"
+                    />
+
+                    <button
+                      type="button"
+                      class="ml-auto shrink-0 cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+                      :disabled="!lineReady(mealKey(day.index, kind)) || busy !== null"
+                      :data-test="`meal-line-add-${day.index}-${kind}`"
+                      @click="addLine(day.index, kind)"
+                    >
+                      Добавить
+                    </button>
+                  </div>
                 </div>
               </div>
             </article>

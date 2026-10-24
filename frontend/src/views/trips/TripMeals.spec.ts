@@ -153,6 +153,15 @@ function plan(): TripMealPlan {
         ],
         weightGrams: 160,
       },
+      {
+        id: 'm2',
+        dayIndex: 1,
+        kind: 'lunch',
+        form: 'cook',
+        dishes: [],
+        products: [],
+        weightGrams: 0,
+      },
     ],
     packages: [
       {
@@ -280,7 +289,7 @@ describe('TripMeals', () => {
   it('показывает едоков с полом, вегетарианцами и аллергиями', async () => {
     const wrapper = await mountMeals()
 
-    expect(wrapper.find('[data-test="eaters-counts"]').text()).toContain('Едоков в общей раскладке')
+    expect(wrapper.find('[data-test="eaters-counts"]').text()).toContain('в общей раскладке')
     expect(wrapper.find('[data-test="eaters-counts"]').text()).toContain('вегетарианцев 1')
     expect(wrapper.find('[data-test="eaters-list"]').text()).toContain('Вегетарианка')
     expect(wrapper.find('[data-test="eaters-list"]').text()).toContain('орехи')
