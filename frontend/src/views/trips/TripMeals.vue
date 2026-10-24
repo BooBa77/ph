@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
@@ -739,51 +739,11 @@ onMounted(() => {
                 <div
                   v-for="dish in mealOf(day.index, kind)!.dishes"
                   :key="dish.dishId"
-                  class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                  class="flex flex-col gap-1"
                   data-test="meal-dish"
                 >
-                  <div class="flex flex-col gap-1 md:col-start-2">
-                    <div
-                      v-for="ingredient in dish.ingredients"
-                      :key="ingredient.productId"
-                      class="flex flex-col gap-0.5"
-                    >
-
-                      <div class="flex gap-1">
-                        <select
-                          :value="productById(mealOf(day.index, kind)!, ingredient.productId)?.allocations[0]?.packageId ?? ''"
-                          :data-test="`ing-pack-${dish.dishId}-${ingredient.productId}`"
-                          class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
-                          @change="setIngredientPack(day.index, kind, ingredient.productId, $event)"
-                        >
-                          <option value="" disabled></option>
-                          <option value="__new__">новый пакет</option>
-<option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
-                            {{ pack.name }}
-                          </option>
-                        </select>
-                        <select
-                          :value="allocAmountValue(productById(mealOf(day.index, kind)!, ingredient.productId))"
-                          :data-test="`ing-amount-${dish.dishId}-${ingredient.productId}`"
-                          class="w-16 shrink-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
-                          @change="setIngredientAmount(day.index, kind, ingredient.productId, $event)"
-                        >
-                          <option value="" disabled></option>
-                          <option value="all">всё</option>
-                          <option
-                            v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId))"
-                            :key="n"
-                            :value="String(n)"
-                          >
-                            {{ n }}
-                          </option>
-                        </select>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div class="flex flex-col gap-1 md:col-start-3">
-                    <span class="flex items-start justify-between gap-2">
+                  <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
+                    <div class="flex items-start justify-between gap-2 md:col-start-3">
                       <span class="font-medium text-text">{{ dish.title }}</span>
                       <button
                         v-if="canEdit"
@@ -794,12 +754,58 @@ onMounted(() => {
                       >
                         убрать
                       </button>
-                    </span>
+                    </div>
+                  </div>
 
-                    <span class="flex flex-wrap gap-1">
+                  <div
+                    v-if="dish.ingredients.length"
+                    class="grid gap-x-4 text-[10px] uppercase leading-none text-muted md:grid-cols-[9rem_12rem_1fr]"
+                  >
+                    <span class="hidden md:col-start-1 md:block"></span>
+                    <span class="flex gap-1 md:col-start-2">
+                      <span class="flex-1">в пакет</span>
+                      <span class="w-16 text-center">КОЛ-ВО</span>
+                    </span>
+                  </div>
+
+                  <div
+                    v-for="ingredient in dish.ingredients"
+                    :key="ingredient.productId"
+                    class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                  >
+                    <div class="flex gap-1 md:col-start-2">
+                      <select
+                        :value="productById(mealOf(day.index, kind)!, ingredient.productId)?.allocations[0]?.packageId ?? ''"
+                        :data-test="`ing-pack-${dish.dishId}-${ingredient.productId}`"
+                        class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                        @change="setIngredientPack(day.index, kind, ingredient.productId, $event)"
+                      >
+                        <option value="" disabled></option>
+                        <option value="__new__">новый пакет</option>
+                        <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
+                          {{ pack.name }}
+                        </option>
+                      </select>
+                      <select
+                        :value="allocAmountValue(productById(mealOf(day.index, kind)!, ingredient.productId))"
+                        :data-test="`ing-amount-${dish.dishId}-${ingredient.productId}`"
+                        class="w-16 shrink-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                        @change="setIngredientAmount(day.index, kind, ingredient.productId, $event)"
+                      >
+                        <option value="" disabled></option>
+                        <option value="all">всё</option>
+                        <option
+                          v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId))"
+                          :key="n"
+                          :value="String(n)"
+                        >
+                          {{ n }}
+                        </option>
+                      </select>
+                    </div>
+
+                    <div class="md:col-start-3">
                       <button
-                        v-for="ingredient in dish.ingredients"
-                        :key="ingredient.productId"
                         type="button"
                         class="rounded-full border px-2 py-0.5 text-xs transition-colors"
                         :class="
@@ -817,7 +823,7 @@ onMounted(() => {
                           {{ dish.excludedProductIds.includes(ingredient.productId) ? '+' : '×' }}
                         </span>
                       </button>
-                    </span>
+                    </div>
                   </div>
                 </div>
 
@@ -856,11 +862,18 @@ onMounted(() => {
                   </div>
                 </div>
 
+                <div class="grid gap-x-4 text-[10px] uppercase leading-none text-muted md:grid-cols-[9rem_12rem_1fr]">
+                  <span class="hidden md:col-start-1 md:block"></span>
+                  <span class="flex gap-1 md:col-start-2">
+                    <span class="flex-1">в пакет</span>
+                    <span class="w-16 text-center">КОЛ-ВО</span>
+                  </span>
+                </div>
+
                 <!-- Строки продуктов: пара фасовки + продукт -->
                 <ul class="flex flex-col gap-1" data-test="meal-products">
-                  <li
-                    v-for="product in mealOf(day.index, kind)!.products.filter((row) => row.manualAmount > 0)"
-                    :key="product.productId"
+                  <template v-for="product in mealOf(day.index, kind)!.products.filter((row) => row.manualAmount > 0)" :key="product.productId">
+                    <li
                     class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
                     data-test="meal-product"
                   >
@@ -905,7 +918,7 @@ onMounted(() => {
                           <button
                             type="button"
                             class="cursor-pointer underline"
-                            :data-test="`meal-leftover-drop-${product.productId}`"
+                            :data-test="'meal-leftover-drop-' + product.productId"
                             @click="dropLeftover(day.index, kind, product)"
                           >
                             убрать
@@ -933,7 +946,26 @@ onMounted(() => {
                         ×
                       </button>
                     </div>
-                  </li>
+                    </li>
+
+                    <li
+                      v-if="allocatedOf(product) > 0 && product.amount > allocatedOf(product)"
+                      class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                      data-test="meal-leftover-row"
+                    >
+                      <div class="flex items-center gap-2 text-sm text-amber-700 md:col-start-3">
+                        <span>остаток: {{ formatProductAmount(product.amount - allocatedOf(product), product.unit) }}</span>
+                        <button
+                          type="button"
+                          class="cursor-pointer underline"
+                          :data-test="'meal-leftover-drop-' + product.productId"
+                          @click="dropLeftover(day.index, kind, product)"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </li>
+                  </template>
                 </ul>
 
 
@@ -971,84 +1003,93 @@ onMounted(() => {
             class="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-3 text-sm"
             data-test="package"
           >
-            <input
-              v-if="canEdit && pack.kind !== 'kulek'"
-              :value="pack.name"
-              type="text"
-              maxlength="60"
-              class="w-32 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none"
-              data-test="package-name"
-              @change="savePackageName(pack, $event)"
-            />
-            <span v-else class="text-text">{{ pack.name }}</span>
+            <div class="flex w-full flex-wrap items-center gap-2">
+              <input
+                v-if="canEdit && pack.kind !== 'kulek'"
+                :value="pack.name"
+                type="text"
+                maxlength="60"
+                class="w-32 rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none"
+                data-test="package-name"
+                @change="savePackageName(pack, $event)"
+              />
+              <span v-else class="text-text">{{ pack.name }}</span>
 
-            <span v-if="pack.kind === 'kulek'" class="text-xs text-muted">кулёк</span>
+              <span v-if="pack.kind === 'kulek'" class="text-xs text-muted">кулёк</span>
 
-            <ul v-if="pack.items.length" class="flex w-full flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted">
-              <li v-for="item in pack.items" :key="item.mealId + String(item.productId)">
+              <template v-if="canEdit">
+                <template v-if="confirmingPackageId === pack.id">
+                  <span class="text-xs text-muted">Удалить?</span>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-lg border border-red-600 px-2 py-0.5 text-xs text-red-600"
+                    data-test="package-delete-confirm"
+                    @click="removePackage(pack)"
+                  >
+                    Да
+                  </button>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted"
+                    data-test="package-delete-cancel"
+                    @click="confirmingPackageId = null"
+                  >
+                    Нет
+                  </button>
+                </template>
+                <button
+                  v-else
+                  type="button"
+                  class="ml-auto cursor-pointer text-xs text-muted underline"
+                  data-test="package-delete"
+                  @click="confirmingPackageId = pack.id"
+                >
+                  Удалить
+                </button>
+              </template>
+            </div>
+
+            <div class="flex w-full flex-wrap items-center gap-2">
+              <span class="text-xs text-muted">
+                расчётно: {{ formatWeight(pack.weightEstimatedGrams) }}
+              </span>
+
+              <label v-if="canEdit" class="flex items-center gap-1 text-xs text-muted">
+                факт:
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  :value="pack.weightActualGrams ?? ''"
+                  placeholder="—"
+                  class="w-20 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
+                  data-test="package-weight"
+                  @change="savePackageWeight(pack, $event)"
+                />
+                г
+              </label>
+              <span v-else-if="pack.weightActualGrams !== null" class="text-xs text-muted">
+                факт: {{ formatWeight(pack.weightActualGrams) }}
+              </span>
+
+              <span
+                v-if="pack.weightActualStale"
+                class="text-xs text-amber-700"
+                data-test="package-stale"
+              >
+                требуется перевзвесить пакет
+              </span>
+            </div>
+
+            <ul v-if="pack.items.length" class="w-full border-t border-border pt-2">
+              <li
+                v-for="item in pack.items"
+                :key="item.mealId + String(item.productId)"
+                class="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted"
+              >
                 {{ item.name }} — {{ formatWeight(item.weightGrams) }}
               </li>
             </ul>
-            <span class="text-xs text-muted">
-              расчётно: {{ formatWeight(pack.weightEstimatedGrams) }}
-            </span>
-
-            <label v-if="canEdit" class="flex items-center gap-1 text-xs text-muted">
-              факт:
-              <input
-                type="number"
-                min="1"
-                step="1"
-                :value="pack.weightActualGrams ?? ''"
-                placeholder="—"
-                class="w-20 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
-                data-test="package-weight"
-                @change="savePackageWeight(pack, $event)"
-              />
-              г
-            </label>
-            <span v-else-if="pack.weightActualGrams !== null" class="text-xs text-muted">
-              факт: {{ formatWeight(pack.weightActualGrams) }}
-            </span>
-
-            <span
-              v-if="pack.weightActualStale"
-              class="text-xs text-amber-700"
-              data-test="package-stale"
-            >
-              требуется перевзвесить пакет
-            </span>
-
-            <template v-if="canEdit">
-              <template v-if="confirmingPackageId === pack.id">
-                <span class="text-xs text-muted">Удалить?</span>
-                <button
-                  type="button"
-                  class="cursor-pointer rounded-lg border border-red-600 px-2 py-0.5 text-xs text-red-600 transition-colors hover:bg-red-600 hover:text-white"
-                  data-test="package-delete-confirm"
-                  @click="removePackage(pack)"
-                >
-                  Да
-                </button>
-                <button
-                  type="button"
-                  class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:text-text"
-                  data-test="package-delete-cancel"
-                  @click="confirmingPackageId = null"
-                >
-                  Нет
-                </button>
-              </template>
-              <button
-                v-else
-                type="button"
-                class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
-                data-test="package-delete"
-                @click="confirmingPackageId = pack.id"
-              >
-                Удалить
-              </button>
-            </template>
           </li>
         </ul>
 
