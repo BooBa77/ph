@@ -341,6 +341,34 @@ function overAllocated(product: TripMealProduct): number {
   return Math.max(0, allocatedOf(product) - product.amount)
 }
 
+/** Нерасфасованное: продукты, которых пакеты не добрали. */
+const unpackedRows = computed(() => {
+  const rows: Array<{
+    key: string
+    meal: string
+    name: string
+    left: number
+    unit: TripMealProduct['unit']
+  }> = []
+
+  for (const meal of plan.value?.meals ?? []) {
+    for (const product of meal.products) {
+      const left = product.amount - allocatedOf(product)
+      if (left <= 0) continue
+
+      rows.push({
+        key: `${meal.id}:${product.productId}`,
+        meal: `${TRIP_MEAL_CODES[meal.kind]} ${TRIP_MEAL_LABELS[meal.kind]}`,
+        name: product.name,
+        left,
+        unit: product.unit,
+      })
+    }
+  }
+
+  return rows
+})
+
 function saveShares(
   dayIndex: number,
   kind: TripMealKind,
@@ -911,6 +939,15 @@ onMounted(() => {
             </template>
           </li>
         </ul>
+
+        <div v-if="unpackedRows.length" class="flex flex-col gap-1" data-test="unpacked">
+          <p class="text-xs text-muted">Не расфасовано:</p>
+          <ul class="flex flex-col gap-0.5">
+            <li v-for="row in unpackedRows" :key="row.key" class="text-xs text-muted">
+              {{ row.meal }} · {{ row.name }} — {{ formatProductAmount(row.left, row.unit) }}
+            </li>
+          </ul>
+        </div>
       </div>
 
       <!-- Чек-лист покупок: живая проекция раскладки -->
