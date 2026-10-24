@@ -364,8 +364,8 @@ describe('TripMeals', () => {
   it('строку раскладывают по пакетам фиксированной долей', async () => {
     const wrapper = await mountMeals()
 
-    // Строка не расфасована — это видно цветом и подписью.
-    expect(wrapper.find('[data-test="meal-unallocated"]').text()).toContain('160')
+    // Продукт есть в списке; фасовка — в пакетах.
+    expect(wrapper.find('[data-test="meal-products"]').text()).toContain('Крупа')
 
     await wrapper.find('[data-test="meal-allocate-1"]').trigger('click')
     await wrapper.find('[data-test="alloc-amount-p1"]').setValue('100')

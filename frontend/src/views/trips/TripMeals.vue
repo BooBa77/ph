@@ -581,14 +581,14 @@ onMounted(() => {
             <span v-if="day.date" class="text-muted"> · {{ day.date }}</span>
           </h3>
 
-          <div class="grid gap-3 md:grid-cols-3">
+          <div class="flex flex-col gap-3">
             <article
               v-for="kind in day.kinds"
               :key="kind"
               class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
               :data-test="`meal-${day.index}-${kind}`"
             >
-              <header class="flex flex-wrap items-baseline justify-between gap-2">
+              <header class="flex flex-col gap-1">
                 <span class="text-sm font-medium text-text">
                   {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
                 </span>
@@ -632,7 +632,10 @@ onMounted(() => {
                   </button>
                 </div>
 
-                <ul class="flex flex-col gap-1">
+                <div class="grid gap-4 md:grid-cols-2">
+                  <section class="flex flex-col gap-1">
+                    <h4 class="text-xs uppercase tracking-wide text-muted">Блюда</h4>
+                    <ul class="flex flex-col gap-1">
                   <li
                     v-for="dish in mealOf(day.index, kind)!.dishes"
                     :key="dish.dishId"
@@ -680,9 +683,12 @@ onMounted(() => {
                       </button>
                     </span>
                   </li>
-                </ul>
+                    </ul>
+                  </section>
 
-                <ul class="flex flex-col gap-1" data-test="meal-products">
+                  <section class="flex flex-col gap-1">
+                    <h4 class="text-xs uppercase tracking-wide text-muted">Продукты</h4>
+                    <ul class="flex flex-col gap-1" data-test="meal-products">
                   <li
                     v-for="product in mealOf(day.index, kind)!.products"
                     :key="product.productId"
@@ -700,13 +706,6 @@ onMounted(() => {
                     <span v-if="product.manualAmount > 0" class="text-xs text-muted">ручная</span>
                     <span v-if="product.allocations.length" class="text-xs text-muted">
                       {{ productPackages(product) }}
-                    </span>
-                    <span
-                      v-if="unallocated(product) > 0"
-                      class="text-xs"
-                      data-test="meal-unallocated"
-                    >
-                      остаток вне пакетов: {{ formatProductAmount(unallocated(product), product.unit) }}
                     </span>
                     <button
                       v-if="canEdit && !kulekOf(mealOf(day.index, kind)!)"
@@ -784,7 +783,9 @@ onMounted(() => {
                       </div>
                     </div>
                   </li>
-                </ul>
+                  </ul>
+                  </section>
+                </div>
 
                 <p class="text-xs text-muted" data-test="meal-weight">
                   {{ formatWeight(mealOf(day.index, kind)!.weightGrams) }}
