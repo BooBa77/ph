@@ -1080,7 +1080,7 @@ onMounted(() => {
               <span v-if="pack.kind === 'kulek'" class="text-xs text-muted">кулёк</span>
 
               <template v-if="canEdit">
-                <template v-if="confirmingPackageId === pack.id">
+                <template v-if="confirmingPackageId === pack.id && pack.items.length > 0">
                   <span class="text-xs text-muted">Удалить?</span>
                   <button
                     type="button"
@@ -1104,7 +1104,11 @@ onMounted(() => {
                   type="button"
                   class="ml-auto cursor-pointer text-xs text-muted underline"
                   data-test="package-delete"
-                  @click="confirmingPackageId = pack.id"
+                  @click="
+                    pack.items.length === 0
+                      ? removePackage(pack)
+                      : (confirmingPackageId = pack.id)
+                  "
                 >
                   Удалить
                 </button>
