@@ -840,6 +840,7 @@ onMounted(() => {
                     <div v-if="canEdit" class="flex flex-col" data-test="meal-add">
                       <ProductPicker
                         :product="lineDraft(mealKey(day.index, kind)).product"
+                        :trip-id="trip.id"
                         class="[&_input]:rounded-b-none"
                         @select="chooseLineProduct(mealKey(day.index, kind), $event)"
                       />

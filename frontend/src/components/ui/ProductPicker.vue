@@ -25,6 +25,8 @@ const props = withDefaults(
     placeholder?: string
     /** Выбранный продукт: поле показывает его и сбрасывается вместе с ним. */
     product?: Product | null
+    /** Поход: свои продукты заводятся только в его рамках. */
+    tripId?: string
   }>(),
   { placeholder: 'Введите название продукта', product: null },
 )
@@ -60,7 +62,7 @@ async function search() {
   error.value = null
 
   try {
-    options.value = await searchProducts(text)
+    options.value = await searchProducts(text, props.tripId)
   } catch {
     error.value = 'Не удалось загрузить справочник'
     options.value = []

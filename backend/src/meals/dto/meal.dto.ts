@@ -235,4 +235,14 @@ export class CreateProductDto {
   })
   @IsIn(PRODUCT_UNITS, { message: 'Такой единицы нет в справочнике' })
   unit: ProductUnit;
+
+  @ApiProperty({
+    description: 'Вес единицы в граммах (для своего продукта похода)',
+    required: false,
+    example: 0,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Вес единицы — целое число грамм' })
+  @Min(0, { message: 'Вес единицы не может быть отрицательным' })
+  weightPerUnitGrams?: number;
 }

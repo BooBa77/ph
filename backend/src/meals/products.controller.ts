@@ -24,15 +24,21 @@ export class ProductsController {
   @Get()
   @ApiOperation({ summary: 'Поиск продукта в справочнике' })
   @ApiOkResponse({ type: ProductListDto })
-  async search(@Query() query: ProductSearchQueryDto): Promise<ProductListDto> {
-    return this.mealsService.searchProducts(query.search);
+  async search(
+    @Query() query: ProductSearchQueryDto,
+    @Query('tripId') tripId?: string,
+  ): Promise<ProductListDto> {
+    return this.mealsService.searchProducts(query.search, tripId);
   }
 
   /** Свой продукт: вес единицы 0, граммы по нему не считаются. */
   @Post()
   @ApiOperation({ summary: 'Добавить свой продукт' })
   @ApiCreatedResponse({ type: ProductDto })
-  async create(@Body() dto: CreateProductDto): Promise<ProductDto> {
-    return this.mealsService.createProduct(dto);
+  async create(
+    @Body() dto: CreateProductDto,
+    @Query('tripId') tripId?: string,
+  ): Promise<ProductDto> {
+    return this.mealsService.createProduct(dto, tripId);
   }
 }

@@ -15,7 +15,7 @@ import type { Dish, DishIngredient, Product, ProductUnit } from '@/types/meals'
  * отвечает пустым списком, и это правильно: справочник не листают,
  * его ищут.
  */
-export async function searchProducts(search: string): Promise<Product[]> {
+export async function searchProducts(search: string, tripId?: string): Promise<Product[]> {
   const response = await apiFetch<{ products: Product[] }>(
     `/products?search=${encodeURIComponent(search)}`,
   )
@@ -88,11 +88,17 @@ export async function deleteIngredient(ingredientId: string): Promise<void> {
 }
 
 /** POST /products — свой продукт с нулевым весом. */
-export async function createProduct(payload: {
-  name: string
-  unit: ProductUnit
-}): Promise<Product> {
-  return apiFetch<Product>('/products', {
+export async function createProduct(
+  payload: {
+    name: string
+    unit: ProductUnit
+    weightPerUnitGrams?: number
+  },
+  tripId?: string,
+): Promise<Product> {
+  const query = tripId ? `?tripId=${encodeURIComponent(tripId)}` : ''
+
+  return apiFetch<Product>(`/products${query}`, {
     method: 'POST',
     body: JSON.stringify(payload),
   })
