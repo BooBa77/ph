@@ -405,6 +405,36 @@ describe('TripMeals', () => {
     expect(wrapper.find('[data-test="eats-separately"]').exists()).toBe(true)
   })
 
+  it('иконка в углу плашки сворачивает выбор блюда и продукта', async () => {
+    const wrapper = await mountMeals()
+
+    expect(wrapper.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="meal-line-amount-1-breakfast"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="meal-add-toggle-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    // Поля выбора спрятаны, результат приёма — на месте.
+    expect(wrapper.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="meal-line-amount-1-breakfast"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="meal-1-breakfast"]').text()).toContain('Каша')
+
+    await wrapper.find('[data-test="meal-add-toggle-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(true)
+  })
+
+  it('у пустого приёма иконки свёртывания нет', async () => {
+    const wrapper = await mountMeals()
+
+    // День 2, ужин — пустая плашка: скрывать нечего, там только форма.
+    expect(wrapper.find('[data-test="meal-add-toggle-2-dinner"]').exists()).toBe(false)
+    // Без права правки иконки тоже нет: полей добавления нет вовсе.
+    const guest = await mountMeals(false)
+    expect(guest.find('[data-test="meal-add-toggle-1-breakfast"]').exists()).toBe(false)
+  })
+
   it('флаг «питаюсь отдельно» ставится через PATCH и перечитывает раскладку', async () => {
     const wrapper = await mountMeals()
 
