@@ -398,6 +398,31 @@ describe('Питание похода (e2e)', () => {
     });
   });
 
+  it('свой продукт заводится в походе и в справочник не попадает', async () => {
+    const name = `Трава-${Date.now()}`;
+
+    const response = await addLine(1, 'breakfast', name, 40).expect(200);
+    const products = productOf(response.body as Record<string, unknown>, name);
+    const createdId = await tripProductId(name);
+
+    expect(products).toMatchObject({ amount: 40, manualAmount: 40 });
+
+    // Продукт похода: справочник о нём не знает.
+    const catalog = await call(
+      'get',
+      `/api/products?search=${encodeURIComponent(name)}`,
+      organizerToken,
+    ).expect(200);
+    expect(catalog.body.products).toEqual([]);
+
+    // Убираем за собой: дальше тест про пустой приём, лишняя строка мешает.
+    await call(
+      'delete',
+      `/api/trips/${tripId}/meals/1/breakfast/lines/${createdId}`,
+      organizerToken,
+    ).expect(200);
+  });
+
   it('форма приёма: перекус вместо готовки', async () => {
     const response = await call(
       'put',
