@@ -120,6 +120,31 @@ function toggleEdit(key: string): void {
   editHidden.value[key] = !isEditHidden(key)
 }
 
+/**
+ * Все существующие приёмы свёрнуты — тогда иконка «все» показывает
+ * разворот, а не повторное свёртывание. Считаем по приёмам из плана:
+ * пустые плашки иконки не имеют и в счёт не идут.
+ */
+const allCollapsed = computed(() => {
+  const keys = (plan.value?.meals ?? []).map((meal) =>
+    mealKey(meal.dayIndex, meal.kind),
+  )
+
+  return keys.length > 0 && keys.every((key) => isEditHidden(key))
+})
+
+/** Свернуть или развернуть все плашки разом — со своего места на странице. */
+function toggleAll(): void {
+  const next = !allCollapsed.value
+  const hidden = { ...editHidden.value }
+
+  for (const meal of plan.value?.meals ?? []) {
+    hidden[mealKey(meal.dayIndex, meal.kind)] = next
+  }
+
+  editHidden.value = hidden
+}
+
 /** Кто из смотрящих — едок (для флага «питаюсь отдельно»). */
 const me = computed(
   () =>
@@ -739,50 +764,108 @@ onMounted(() => {
               :data-test="`meal-${day.index}-${kind}`"
             >
               <!--
-                Свернуть плашку до результата. Кнопка живёт в углу плашки,
-                а не в скрываемых полях: свёрнутая колонка исчезает вместе
-                с кнопкой, и развернуть приём было бы нечем.
+                Две кнопки в углу плашки: двойной шеврон — все плашки разом,
+                одинарный — эта. Живут в углу, а не в скрываемых полях:
+                свёрнутая колонка исчезает вместе с кнопкой, и развернуть
+                приём было бы нечем.
               -->
-              <button
+              <div
                 v-if="canEdit && mealOf(day.index, kind)"
-                type="button"
-                class="absolute right-1.5 top-1.5 flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
-                :aria-expanded="!isEditHidden(mealKey(day.index, kind))"
-                :aria-label="
-                  isEditHidden(mealKey(day.index, kind))
-                    ? 'Показать поля приёма'
-                    : 'Свернуть поля приёма'
-                "
-                :title="
-                  isEditHidden(mealKey(day.index, kind))
-                    ? 'Показать поля приёма'
-                    : 'Свернуть поля приёма'
-                "
-                :data-test="`meal-add-toggle-${day.index}-${kind}`"
-                @click="toggleEdit(mealKey(day.index, kind))"
+                class="absolute right-1.5 top-1.5 flex items-center gap-1"
+                data-test="meal-toggles"
               >
-                <svg
-                  viewBox="0 0 16 16"
-                  class="h-3 w-3"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.6"
-                  aria-hidden="true"
+                <button
+                  type="button"
+                  class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
+                  :aria-expanded="!allCollapsed"
+                  :aria-label="
+                    allCollapsed
+                      ? 'Развернуть все приёмы'
+                      : 'Свернуть все приёмы'
+                  "
+                  :title="
+                    allCollapsed
+                      ? 'Развернуть все приёмы'
+                      : 'Свернуть все приёмы'
+                  "
+                  :data-test="`meals-collapse-all-${day.index}-${kind}`"
+                  @click="toggleAll"
                 >
-                  <path
-                    v-if="isEditHidden(mealKey(day.index, kind))"
-                    d="M4 6l4 4 4-4"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                  <path
-                    v-else
-                    d="M4 10l4-4 4 4"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </button>
+                  <svg
+                    viewBox="0 0 16 16"
+                    class="h-3 w-3"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    aria-hidden="true"
+                  >
+                    <template v-if="allCollapsed">
+                      <path
+                        d="M3 7l5 5 5-5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                      <path
+                        d="M3 2l5 5 5-5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </template>
+                    <template v-else>
+                      <path
+                        d="M3 9l5-5 5 5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                      <path
+                        d="M3 14l5-5 5 5"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </template>
+                  </svg>
+                </button>
+
+                <button
+                  type="button"
+                  class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
+                  :aria-expanded="!isEditHidden(mealKey(day.index, kind))"
+                  :aria-label="
+                    isEditHidden(mealKey(day.index, kind))
+                      ? 'Показать поля приёма'
+                      : 'Свернуть поля приёма'
+                  "
+                  :title="
+                    isEditHidden(mealKey(day.index, kind))
+                      ? 'Показать поля приёма'
+                      : 'Свернуть поля приёма'
+                  "
+                  :data-test="`meal-add-toggle-${day.index}-${kind}`"
+                  @click="toggleEdit(mealKey(day.index, kind))"
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    class="h-3 w-3"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    aria-hidden="true"
+                  >
+                    <path
+                      v-if="isEditHidden(mealKey(day.index, kind))"
+                      d="M4 6l4 4 4-4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      v-else
+                      d="M4 10l4-4 4 4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+              </div>
 
               <!-- Строка 1: приём | фасовка | блюда -->
               <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
@@ -850,7 +933,7 @@ onMounted(() => {
 
                 <div
                   v-if="canEdit && !isEditHidden(mealKey(day.index, kind))"
-                  class="flex flex-col gap-1 pr-6 md:col-start-3"
+                  class="flex flex-col gap-1 pr-12 md:col-start-3"
                 >
                   <span class="text-xs uppercase tracking-wide text-muted">Блюда</span>
                   <div class="flex flex-col gap-1">

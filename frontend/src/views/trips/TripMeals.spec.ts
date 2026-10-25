@@ -445,6 +445,34 @@ describe('TripMeals', () => {
     expect(guest.find('[data-test="meal-add-toggle-1-breakfast"]').exists()).toBe(false)
   })
 
+  it('двойной шеврон сворачивает и разворачивает все плашки', async () => {
+    const wrapper = await mountMeals()
+    const card = (key: string) => wrapper.find(`[data-test="meal-${key}"]`)
+    const all = () => wrapper.find('[data-test="meals-collapse-all-1-breakfast"]')
+
+    // Приёмы с данными: завтрак и обед первого дня.
+    expect(card('1-breakfast').find('[data-test="meal-form"]').exists()).toBe(true)
+    expect(card('1-lunch').find('[data-test="meal-form"]').exists()).toBe(true)
+
+    await all().trigger('click')
+    await flushPromises()
+
+    expect(card('1-breakfast').find('[data-test="meal-form"]').exists()).toBe(false)
+    expect(card('1-lunch').find('[data-test="meal-form"]').exists()).toBe(false)
+    expect(card('1-breakfast').find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
+    // Пустая плашка осталась с формой: результата в ней нет, скрывать нечего.
+    expect(card('2-dinner').find('[data-test="meal-add"]').exists()).toBe(true)
+    // Иконка теперь предлагает разворот.
+    expect(all().attributes('title')).toBe('Развернуть все приёмы')
+
+    await all().trigger('click')
+    await flushPromises()
+
+    expect(card('1-breakfast').find('[data-test="meal-form"]').exists()).toBe(true)
+    expect(card('1-lunch').find('[data-test="meal-form"]').exists()).toBe(true)
+    expect(all().attributes('title')).toBe('Свернуть все приёмы')
+  })
+
   it('флаг «питаюсь отдельно» ставится через PATCH и перечитывает раскладку', async () => {
     const wrapper = await mountMeals()
 
