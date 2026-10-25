@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
@@ -6,7 +6,6 @@ import { listDishes } from '@/api/meals'
 import {
   addMealDish,
   createMealPackage,
-  fetchMealChecks,
   fetchMealPlan,
   removeMealDish,
   removeMealLine,
@@ -18,11 +17,11 @@ import {
   addMealLine,
   setMealLine,
   setMyStatus,
-  updateMealCheck,
   updateMealPackage,
 } from '@/api/trips'
 import ProductPicker from '@/components/ui/ProductPicker.vue'
 import TripChat from '@/views/trips/TripChat.vue'
+import TripMealShoppingModal from '@/views/trips/TripMealShoppingModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   TRIP_MEAL_CODES,
@@ -32,7 +31,6 @@ import {
   TRIP_MEAL_LABELS,
   type Trip,
   type TripMeal,
-  type TripMealCheck,
   type TripMealDish,
   type TripMealForm,
   type TripMealKind,
@@ -593,49 +591,14 @@ function removePackage(pack: TripMealPackage): void {
   void run(`${pack.id}:delete`, () => removeMealPackage(props.trip.id, pack.id))
 }
 
-// ─── чек-лист покупок ───
+// ─── список покупок ───
 
-const checks = ref<TripMealCheck[] | null>(null)
-const checksOpen = ref(false)
-
-function toggleChecklist(): void {
-  checksOpen.value = !checksOpen.value
-
-  if (checksOpen.value && checks.value === null) {
-    void loadChecks()
-  }
-}
-
-async function loadChecks(): Promise<void> {
-  try {
-    checks.value = await fetchMealChecks(props.trip.id)
-  } catch (problem) {
-    error.value = messageOf(problem, 'Не удалось загрузить чек-лист')
-  }
-}
-
-async function patchCheck(
-  check: TripMealCheck,
-  patch: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
-): Promise<void> {
-  try {
-    checks.value = await updateMealCheck(props.trip.id, check.productId, patch)
-  } catch (problem) {
-    error.value = messageOf(problem, 'Не удалось сохранить отметку')
-  }
-}
-
-function toggleCheck(check: TripMealCheck, field: 'isBought' | 'isHome'): void {
-  void patchCheck(check, { [field]: !check[field] })
-}
-
-function setCheckAmount(check: TripMealCheck, event: Event): void {
-  const raw = (event.target as HTMLInputElement).value.trim()
-  const amount = raw === '' ? null : Number(raw)
-  if (amount !== null && (!Number.isInteger(amount) || amount < 0)) return
-
-  void patchCheck(check, { boughtAmount: amount })
-}
+/**
+ * «Список покупок» — модалка, а не раздел страницы: в него заглядывают,
+ * чтобы сходить в магазин, и он не должен растягивать раскладку. Содержимое
+ * грузит сама модалка при открытии — об этом знает `TripMealShoppingModal`.
+ */
+const shoppingOpen = ref(false)
 
 onMounted(() => {
   void load()
@@ -661,6 +624,17 @@ onMounted(() => {
           <template v-if="plan.eaters.vegetarians === 0">вегетарианцев нет</template>
           <template v-else>вегетарианцев {{ plan.eaters.vegetarians }}</template>
           </p>
+
+          <!-- Список покупок — наверху: за ним идут перед закупкой, а не
+               после того, как пролистали всю раскладку -->
+          <button
+            type="button"
+            class="ml-auto cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
+            data-test="checklist-toggle"
+            @click="shoppingOpen = true"
+          >
+            Список покупок
+          </button>
         </div>
 
         <ul class="flex flex-col gap-1" data-test="eaters-list">
@@ -693,9 +667,10 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Раскладка по дням -->
-      <div class="flex flex-col gap-4">
-        <h2 class="text-sm text-muted">Раскладка</h2>
+      <!-- Раскладка по дням. <details>: длинную раскладку хочется свернуть,
+           не уходя со вкладки; содержимое остаётся на своих местах -->
+      <details open class="group flex flex-col gap-4" data-test="schedule">
+        <summary class="cursor-pointer select-none text-sm text-muted">Раскладка</summary>
 
         <section
           v-for="day in days"
@@ -767,7 +742,7 @@ onMounted(() => {
 
                 <div v-if="canEdit" class="flex flex-col gap-1 md:col-start-3">
                   <span class="text-xs uppercase tracking-wide text-muted">Блюда</span>
-                  <div class="flex gap-1">
+                  <div class="flex flex-col gap-1">
                     <select
                       v-model="dishDrafts[mealKey(day.index, kind)]"
                       @change="addDish(day.index, kind)"
@@ -1037,14 +1012,14 @@ onMounted(() => {
             </article>
           </div>
         </section>
-      </div>
+      </details>
 
-      <!-- Фасовка: пакеты -->
-      <div class="flex flex-col gap-2" data-test="packages">
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <h2 class="text-sm text-muted">Пакеты</h2>
+      <!-- Фасовка: пакеты. Свёртывается так же, как раскладка -->
+      <details open class="flex flex-col gap-2" data-test="packages">
+        <summary class="cursor-pointer select-none text-sm text-muted">Пакеты</summary>
+
+        <div v-if="canEdit" class="flex flex-wrap items-center justify-end gap-2">
           <button
-            v-if="canEdit"
             type="button"
             class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
             data-test="package-add"
@@ -1172,85 +1147,14 @@ onMounted(() => {
             </li>
           </ul>
         </div>
-      </div>
+      </details>
 
-      <!-- Чек-лист покупок: живая проекция раскладки -->
-      <div class="flex flex-col gap-2" data-test="checklist">
-        <button
-          type="button"
-          class="w-full cursor-pointer rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text transition-colors hover:border-primary"
-          data-test="checklist-toggle"
-          @click="toggleChecklist"
-        >
-          {{ checksOpen ? 'Скрыть список покупок' : 'Список покупок' }}
-        </button>
-
-        <template v-if="checksOpen">
-          <p v-if="checks === null" class="text-sm text-muted" data-test="checklist-loading">
-            Загружаем чек-лист…
-          </p>
-
-          <p v-else-if="checks.length === 0" class="text-sm text-muted" data-test="checklist-empty">
-            В раскладке пока нет продуктов.
-          </p>
-
-          <ul v-else class="flex flex-col gap-2">
-            <li
-              v-for="check in checks"
-              :key="check.productId"
-              class="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-2 text-sm"
-              :class="check.isOrphaned ? 'text-muted' : 'text-text'"
-              data-test="check-row"
-            >
-              <span>{{ check.name }}</span>
-              <span class="text-xs text-muted">
-                надо: {{ formatProductAmount(check.needAmount, check.unit) }}
-              </span>
-              <span v-if="check.isOrphaned" class="text-xs text-muted">нет в плане</span>
-
-              <label class="flex items-center gap-1 text-xs text-muted">
-                <input
-                  type="checkbox"
-                  :checked="check.isBought"
-                  class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
-                  data-test="check-bought"
-                  @change="toggleCheck(check, 'isBought')"
-                />
-                куплено
-              </label>
-
-              <label class="flex items-center gap-1 text-xs text-muted">
-                <input
-                  type="checkbox"
-                  :checked="check.isHome"
-                  class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
-                  data-test="check-home"
-                  @change="toggleCheck(check, 'isHome')"
-                />
-                домашнее
-              </label>
-
-              <label class="flex items-center gap-1 text-xs text-muted">
-                куплено:
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  :value="check.boughtAmount ?? ''"
-                  placeholder="—"
-                  class="w-16 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
-                  data-test="check-amount"
-                  @change="setCheckAmount(check, $event)"
-                />
-              </label>
-
-              <span v-if="check.boughtByName" class="text-xs text-muted">
-                купил(а): {{ check.boughtByName }}
-              </span>
-            </li>
-          </ul>
-        </template>
-      </div>
+      <!-- Список покупок: модалка, содержимое грузит она сама -->
+      <TripMealShoppingModal
+        v-if="shoppingOpen"
+        :trip-id="trip.id"
+        @close="shoppingOpen = false"
+      />
 
       <!-- Чат питания: обсуждение раскладки и закупки -->
       <TripChat :trip-id="trip.id" kind="trip_meals" />

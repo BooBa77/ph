@@ -1,4 +1,4 @@
-﻿import { createPinia, setActivePinia } from 'pinia'
+import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -445,16 +445,38 @@ describe('TripMeals', () => {
     })
   })
 
-  it('чек-лист открывается кнопкой: проекция и отметки', async () => {
+  it('чек-лист открывается модалкой: проекция и отметки', async () => {
     const wrapper = await mountMeals()
+
+    // До открытия списка запроса нет: содержимое грузится кнопкой.
+    expect(mocks.fetchMealChecks).not.toHaveBeenCalled()
 
     await wrapper.find('[data-test="checklist-toggle"]').trigger('click')
     await flushPromises()
 
     expect(mocks.fetchMealChecks).toHaveBeenCalledWith('7')
+    expect(wrapper.find('[data-test="checklist"]').attributes('role')).toBe('dialog')
     expect(wrapper.findAll('[data-test="check-row"]')).toHaveLength(3)
     expect(wrapper.text()).toContain('надо')
     expect(wrapper.text()).toContain('купил(а): Вегетарианка')
+  })
+
+  it('список покупок закрывается кнопкой и по Escape', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="checklist-toggle"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="checklist"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="checklist-close"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="checklist"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="checklist-toggle"]').trigger('click')
+    await flushPromises()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    await flushPromises()
+    expect(wrapper.find('[data-test="checklist"]').exists()).toBe(false)
   })
 
   it('отметка «куплено» ставится любым участником', async () => {
@@ -478,5 +500,21 @@ describe('TripMeals', () => {
     await flushPromises()
 
     expect(wrapper.text()).toContain('нет в плане')
+  })
+
+  it('раскладка и пакеты свёрнуты в details и раскрыты по умолчанию', async () => {
+    const wrapper = await mountMeals()
+
+    const sections = wrapper.findAll('details')
+    expect(sections).toHaveLength(2)
+    expect(sections[0]!.attributes('open')).toBeDefined()
+    expect(sections[1]!.attributes('open')).toBeDefined()
+
+    expect(wrapper.find('[data-test="schedule"] summary').text()).toBe('Раскладка')
+    expect(wrapper.find('[data-test="packages"] summary').text()).toBe('Пакеты')
+
+    // Содержимое осталось внутри своих секций.
+    expect(sections[0]!.findAll('[data-test="meal-day"]')).toHaveLength(2)
+    expect(sections[1]!.findAll('[data-test="package"]')).toHaveLength(1)
   })
 })
