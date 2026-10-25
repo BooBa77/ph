@@ -780,7 +780,7 @@ onMounted(() => {
                       </option>
                     </select>
                 <!-- Строка продуктов: заголовок и форма добавления -->
-                <div class="mt-3 flex flex-col gap-2">
+                <div class="flex flex-col gap-2">
                   <div>
                     <span class="text-xs uppercase tracking-wide text-muted">Продукты</span>
 
