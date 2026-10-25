@@ -1,4 +1,4 @@
-﻿import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 import type { ProductUnit } from '../meal.types';
@@ -219,6 +219,20 @@ export class ProductSearchQueryDto {
   @IsString({ message: 'Строка поиска должна быть строкой' })
   @MaxLength(120, { message: 'Строка поиска не должна превышать 120 символов' })
   search?: string;
+
+  /**
+   * Поход: в выдачу попадают и его собственные продукты.
+   *
+   * Объявлено здесь, а не только в `@Query('tripId')`: глобальная
+   * валидация с `forbidNonWhitelisted` иначе отвечает 400 на сам параметр.
+   */
+  @ApiProperty({
+    description: 'Id похода: добавить в выдачу его продукты',
+    required: false,
+  })
+  @IsOptional()
+  @IsString({ message: 'Id похода — строка' })
+  tripId?: string;
 }
 
 /** Свой продукт: «шоколад», «бабушкино варенье». Вес единицы — 0. */

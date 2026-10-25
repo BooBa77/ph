@@ -1,4 +1,4 @@
-﻿import { apiFetch } from '@/api/client'
+import { apiFetch } from '@/api/client'
 import type { Dish, DishIngredient, Product, ProductUnit } from '@/types/meals'
 
 /**
@@ -9,15 +9,22 @@ import type { Dish, DishIngredient, Product, ProductUnit } from '@/types/meals'
  */
 
 /**
- * GET /api/products?search=
+ * GET /api/products?search=&tripId=
  *
  * Поиск по подстроке названия. Пустая строка уходит как есть — бэкенд
  * отвечает пустым списком, и это правильно: справочник не листают,
  * его ищут.
+ *
+ * Походные продукты («экзотика» группы) видны только участникам похода,
+ * поэтому tripId передаётся и в поиск, и в создание.
  */
-export async function searchProducts(search: string, tripId?: string): Promise<Product[]> {
+export async function searchProducts(
+  search: string,
+  tripId?: string,
+): Promise<Product[]> {
+  const trip = tripId ? `&tripId=${encodeURIComponent(tripId)}` : ''
   const response = await apiFetch<{ products: Product[] }>(
-    `/products?search=${encodeURIComponent(search)}`,
+    `/products?search=${encodeURIComponent(search)}${trip}`,
   )
   return response.products
 }

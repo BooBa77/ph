@@ -814,4 +814,38 @@ describe('Питание похода (e2e)', () => {
     await call('get', `/api/trips/${ideaTripId}/meal-plan`, organizerToken).expect(400);
     await call('get', `/api/trips/${ideaTripId}/meal-checks`, organizerToken).expect(400);
   });
+
+  it('продукт похода живёт только в своём походе', async () => {
+    const created = await call('post', `/api/products?tripId=${tripId}`, organizerToken)
+      .send({ name: 'Экзотика', unit: 'piece', weightPerUnitGrams: 0 })
+      .expect(201);
+    const productId = created.body.id as number;
+
+    const mine = await call(
+      'get',
+      `/api/products?search=${encodeURIComponent('Экзотика')}&tripId=${tripId}`,
+      organizerToken,
+    ).expect(200);
+    expect((mine.body.products as Array<{ id: number }>).map((p) => p.id)).toContain(productId);
+
+    // Без tripId — только справочник: продукт похода туда не попадает.
+    const global = await call(
+      'get',
+      `/api/products?search=${encodeURIComponent('Экзотика')}`,
+      organizerToken,
+    ).expect(200);
+    expect((global.body.products as Array<{ id: number }>).map((p) => p.id)).not.toContain(
+      productId,
+    );
+
+    // Чужой поход продукт не видит.
+    const other = await call(
+      'get',
+      `/api/products?search=${encodeURIComponent('Экзотика')}&tripId=0`,
+      organizerToken,
+    ).expect(200);
+    expect((other.body.products as Array<{ id: number }>).map((p) => p.id)).not.toContain(
+      productId,
+    );
+  });
 });
