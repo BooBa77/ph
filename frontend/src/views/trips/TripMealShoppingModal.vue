@@ -2,7 +2,12 @@
 import { onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
-import { fetchMealChecks, updateMealCheck } from '@/api/trips'
+import {
+  fetchMealChecks,
+  fetchMyMealChecks,
+  updateMealCheck,
+  updateMyMealCheck,
+} from '@/api/trips'
 import type { TripMealCheck } from '@/types/trips'
 import { formatProductAmount } from '@/types/meals'
 
@@ -19,16 +24,26 @@ import { formatProductAmount } from '@/types/meals'
  * у него нет, если его не открыли. Заодно его состояние не живёт в
  * «Питании» и не сбрасывается при правках раскладки.
  *
+ * **Списков два.** `personal` переключает общий список завхоза на личный
+ * участника: строки (и отметки) разные, экран один — две копии модалки
+ * разошлись бы разметкой и поведением.
+ *
  * Модалка — как у календаря: затемнение, Escape, клик мимо карточки.
  * Данные грузятся один раз; отметки правятся по месту, ответ бэкенда
  * заменяет список целиком.
  */
-const props = defineProps<{ tripId: string }>()
+const props = defineProps<{
+  tripId: string
+  /** Личный список участника, который питается отдельно. */
+  personal?: boolean
+}>()
 
 const emit = defineEmits<{
   /** Пользователь закрыл модалку. */
   close: []
 }>()
+
+const title = props.personal ? 'Мой список покупок' : 'Список покупок'
 
 const checks = ref<TripMealCheck[] | null>(null)
 const error = ref<string | null>(null)
@@ -39,7 +54,9 @@ function messageOf(cause: unknown, fallback: string): string {
 
 async function load(): Promise<void> {
   try {
-    checks.value = await fetchMealChecks(props.tripId)
+    checks.value = props.personal
+      ? await fetchMyMealChecks(props.tripId)
+      : await fetchMealChecks(props.tripId)
   } catch (problem) {
     error.value = messageOf(problem, 'Не удалось загрузить список покупок')
   }
@@ -52,7 +69,9 @@ async function patchCheck(
   error.value = null
 
   try {
-    checks.value = await updateMealCheck(props.tripId, check.productId, patch)
+    checks.value = props.personal
+      ? await updateMyMealCheck(props.tripId, check.productId, patch)
+      : await updateMealCheck(props.tripId, check.productId, patch)
   } catch (problem) {
     error.value = messageOf(problem, 'Не удалось сохранить отметку')
   }
@@ -98,7 +117,7 @@ onBeforeUnmount(() => {
       class="flex max-h-[85vh] w-full max-w-lg flex-col gap-3 rounded-2xl bg-surface p-4 shadow-xl"
     >
       <div class="flex items-baseline justify-between gap-2">
-        <h2 id="shopping-title" class="text-lg font-semibold text-text">Список покупок</h2>
+        <h2 id="shopping-title" class="text-lg font-semibold text-text">{{ title }}</h2>
 
         <button
           type="button"

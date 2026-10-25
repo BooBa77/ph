@@ -1,4 +1,4 @@
-﻿import { apiFetch } from '@/api/client'
+import { apiFetch } from '@/api/client'
 import type {
   ChatKind,
   CreateTripRequest,
@@ -513,4 +513,149 @@ export async function setMealDishExclusions(
     `${mealPath(tripId, dayIndex, kind)}/dishes/${dishId}/exclusions`,
     { method: 'PUT', body: JSON.stringify({ productIds }) },
   )
+}
+
+// ─────────────────────── моя еда: отдельное питание ───────────────────────
+
+/**
+ * Личная еда участника, который питается отдельно.
+ *
+ * Отдельные адреса, а не флаг в общих: сервер всегда берёт владельца из
+ * токена, поэтому чужой личный слой попросить нечем. Списков два — общий
+ * и свой, — и они не пересекаются.
+ */
+function myMealPath(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+): string {
+  return `/trips/${tripId}/my-meals/${dayIndex}/${kind}`
+}
+
+/** GET /api/trips/:id/my-meal-plan — личная раскладка и фасовка. */
+export async function fetchMyMealPlan(tripId: string): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`/trips/${tripId}/my-meal-plan`)
+}
+
+/** POST .../my-meals/:day/:kind/dishes — блюдо в личный приём. */
+export async function addMyMealDish(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  dishId: string,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`${myMealPath(tripId, dayIndex, kind)}/dishes`, {
+    method: 'POST',
+    body: JSON.stringify({ dishId }),
+  })
+}
+
+/** DELETE .../my-meals/:day/:kind/dishes/:dishId — убрать блюдо. */
+export async function removeMyMealDish(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  dishId: string,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `${myMealPath(tripId, dayIndex, kind)}/dishes/${dishId}`,
+    { method: 'DELETE' },
+  )
+}
+
+/** POST .../my-meals/:day/:kind/lines — продукт в личный приём. */
+export async function addMyMealLine(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  payload: { amount: number; name?: string; catalogProductId?: number },
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`${myMealPath(tripId, dayIndex, kind)}/lines`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
+/** DELETE .../my-meals/:day/:kind/lines/:productId — убрать строку. */
+export async function removeMyMealLine(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  productId: number,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `${myMealPath(tripId, dayIndex, kind)}/lines/${productId}`,
+    { method: 'DELETE' },
+  )
+}
+
+/** PUT .../my-meals/:day/:kind/allocations/:productId — доли по своим пакетам. */
+export async function setMyMealAllocations(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  productId: number,
+  allocations: MealAllocationInput[],
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `${myMealPath(tripId, dayIndex, kind)}/allocations/${productId}`,
+    { method: 'PUT', body: JSON.stringify({ allocations }) },
+  )
+}
+
+/** POST /api/trips/:id/my-meal-packages — новый личный пакет. */
+export async function createMyMealPackage(
+  tripId: string,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`/trips/${tripId}/my-meal-packages`, {
+    method: 'POST',
+  })
+}
+
+/** PATCH /api/trips/:id/my-meal-packages/:packageId — имя и/или вес. */
+export async function updateMyMealPackage(
+  tripId: string,
+  packageId: string,
+  patch: { name?: string; weightActualGrams?: number | null },
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `/trips/${tripId}/my-meal-packages/${packageId}`,
+    { method: 'PATCH', body: JSON.stringify(patch) },
+  )
+}
+
+/** DELETE /api/trips/:id/my-meal-packages/:packageId — доли уходят каскадом. */
+export async function removeMyMealPackage(
+  tripId: string,
+  packageId: string,
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `/trips/${tripId}/my-meal-packages/${packageId}`,
+    { method: 'DELETE' },
+  )
+}
+
+/** GET /api/trips/:id/my-meal-checks — мой список покупок. */
+export async function fetchMyMealChecks(
+  tripId: string,
+): Promise<TripMealCheck[]> {
+  const response = await apiFetch<{ checks: TripMealCheck[] }>(
+    `/trips/${tripId}/my-meal-checks`,
+  )
+
+  return response.checks
+}
+
+/** PUT /api/trips/:id/my-meal-checks/:productId — отметка личного списка. */
+export async function updateMyMealCheck(
+  tripId: string,
+  productId: number,
+  patch: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
+): Promise<TripMealCheck[]> {
+  const response = await apiFetch<{ checks: TripMealCheck[] }>(
+    `/trips/${tripId}/my-meal-checks/${productId}`,
+    { method: 'PUT', body: JSON.stringify(patch) },
+  )
+
+  return response.checks
 }

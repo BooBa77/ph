@@ -22,6 +22,7 @@ import {
 import ProductPicker from '@/components/ui/ProductPicker.vue'
 import TripChat from '@/views/trips/TripChat.vue'
 import TripMealShoppingModal from '@/views/trips/TripMealShoppingModal.vue'
+import TripMyMeals from '@/views/trips/TripMyMeals.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   TRIP_MEAL_CODES,
@@ -105,6 +106,23 @@ const me = computed(
       (person) => person.userId === auth.user?.id,
     ) ?? null,
 )
+
+/**
+ * Блюда, которые уже стоят в общей раскладке.
+ *
+ * Их можно взять в свою еду: рецепт группы — общий, даже если книга
+ * рецептов у каждого своя. Поэтому личный слой не прячет то, что готовит
+ * весь поход.
+ */
+const sharedDishes = computed(() => {
+  const rows = new Map<string, string>()
+
+  for (const meal of plan.value?.meals ?? []) {
+    for (const dish of meal.dishes) rows.set(dish.dishId, dish.title)
+  }
+
+  return [...rows].map(([dishId, title]) => ({ dishId, title }))
+})
 
 const start = computed(() =>
   props.trip.startsAt ? new Date(props.trip.startsAt) : null,
@@ -666,6 +684,15 @@ onMounted(() => {
           </label>
         </div>
       </div>
+
+      <!-- Моя еда: личный слой того, кто питается отдельно -->
+      <TripMyMeals
+        v-if="me?.eatsSeparately"
+        :trip-id="trip.id"
+        :days="days"
+        :dishes="dishes"
+        :shared-dishes="sharedDishes"
+      />
 
       <!-- Раскладка по дням. <details>: длинную раскладку хочется свернуть,
            не уходя со вкладки; содержимое остаётся на своих местах -->

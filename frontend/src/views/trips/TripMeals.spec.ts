@@ -33,6 +33,17 @@ const mocks = vi.hoisted(() => ({
   sendTripMessage: vi.fn(),
   listDishes: vi.fn(),
   searchProducts: vi.fn(),
+  fetchMyMealPlan: vi.fn(),
+  addMyMealDish: vi.fn(),
+  removeMyMealDish: vi.fn(),
+  addMyMealLine: vi.fn(),
+  removeMyMealLine: vi.fn(),
+  setMyMealAllocations: vi.fn(),
+  createMyMealPackage: vi.fn(),
+  updateMyMealPackage: vi.fn(),
+  removeMyMealPackage: vi.fn(),
+  fetchMyMealChecks: vi.fn(),
+  updateMyMealCheck: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
@@ -53,6 +64,17 @@ vi.mock('@/api/trips', () => ({
   updateMealCheck: mocks.updateMealCheck,
   listTripMessages: mocks.listTripMessages,
   sendTripMessage: mocks.sendTripMessage,
+  fetchMyMealPlan: mocks.fetchMyMealPlan,
+  addMyMealDish: mocks.addMyMealDish,
+  removeMyMealDish: mocks.removeMyMealDish,
+  addMyMealLine: mocks.addMyMealLine,
+  removeMyMealLine: mocks.removeMyMealLine,
+  setMyMealAllocations: mocks.setMyMealAllocations,
+  createMyMealPackage: mocks.createMyMealPackage,
+  updateMyMealPackage: mocks.updateMyMealPackage,
+  removeMyMealPackage: mocks.removeMyMealPackage,
+  fetchMyMealChecks: mocks.fetchMyMealChecks,
+  updateMyMealCheck: mocks.updateMyMealCheck,
 }))
 
 vi.mock('@/api/meals', () => ({
@@ -311,6 +333,29 @@ describe('TripMeals', () => {
       },
     ])
     mocks.searchProducts.mockResolvedValue([])
+    mocks.fetchMyMealPlan.mockResolvedValue({
+      dayCount: 2,
+      eaters: {
+        total: 1,
+        men: 0,
+        women: 1,
+        vegetarians: 1,
+        people: [
+          {
+            userId: ORGANIZER,
+            displayName: 'Организатор',
+            avatarUrl: null,
+            gender: 'm',
+            isVegetarian: false,
+            allergies: null,
+            eatsSeparately: true,
+          },
+        ],
+      },
+      meals: [],
+      packages: [],
+    })
+    mocks.fetchMyMealChecks.mockResolvedValue([])
   })
 
   it('показывает едоков с полом, вегетарианцами и аллергиями', async () => {
@@ -368,6 +413,24 @@ describe('TripMeals', () => {
 
     expect(mocks.setMyStatus).toHaveBeenCalledWith('7', 'going', true)
     expect(mocks.fetchMealPlan).toHaveBeenCalledTimes(2)
+  })
+
+  it('без флага «питаюсь отдельно» личной еды нет', async () => {
+    const wrapper = await mountMeals()
+
+    expect(wrapper.find('[data-test="my-meals"]').exists()).toBe(false)
+    expect(mocks.fetchMyMealPlan).not.toHaveBeenCalled()
+  })
+
+  it('«Моя еда» появляется у того, кто питается отдельно', async () => {
+    const current = plan()
+    current.eaters.people[0]!.eatsSeparately = true
+    mocks.fetchMealPlan.mockResolvedValue(current)
+
+    const wrapper = await mountMeals()
+
+    expect(wrapper.find('[data-test="my-meals"]').exists()).toBe(true)
+    expect(mocks.fetchMyMealPlan).toHaveBeenCalledWith('7')
   })
 
   it('показывает пакеты и их расчётный вес', async () => {
