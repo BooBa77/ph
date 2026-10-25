@@ -313,7 +313,7 @@ function productById(meal: TripMeal, productId: number): TripMealProduct | undef
 /** Значение селекта «кол-во»: пусто, «всё» или число. */
 function allocAmountValue(product: TripMealProduct | undefined): string {
   const share = normalShare(product)
-  if (!share) return ''
+  if (!share) return 'all'
 
   return share.isElastic ? 'all' : String(share.amount)
 }

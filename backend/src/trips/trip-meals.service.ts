@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -540,13 +540,15 @@ export class TripMealsService {
     pack: TripMealPackage,
   ): Promise<void> {
     const productIds = await this.mealProductIds(manager, meal);
-    const existing = await manager.find(TripMealAllocation, {
-      where: { mealId: meal.id, packageId: pack.id },
+
+    // Всё, что лежало в других пакетах, переезжает в кулёк: продукт
+    // схлопывается в одну долю, а не остаётся размазанным по пакетам.
+    await manager.delete(TripMealAllocation, {
+      mealId: meal.id,
+      packageId: Not(pack.id),
     });
-    const have = new Set(existing.map((row) => row.productId));
 
     for (const productId of productIds) {
-      if (have.has(productId)) continue;
 
       await manager
         .createQueryBuilder()
@@ -975,11 +977,9 @@ export class TripMealsService {
       where: { mealId },
     });
     const lines = await manager.count(TripMealLine, { where: { mealId } });
-    const packages = await manager.count(TripMealPackage, {
-      where: { mealId },
-    });
-
-    if (dishes === 0 && lines === 0 && packages === 0) {
+    if (dishes === 0 && lines === 0) {
+      // Пустой приём не должен висеть из-за кулька: пакеты уходят с ним.
+      await manager.delete(TripMealPackage, { mealId });
       await manager.delete(TripMeal, { id: mealId });
     }
   }
