@@ -578,6 +578,8 @@ describe('TripMeals', () => {
     const amount = () =>
       wrapper.find('[data-test="ing-amount-d1-1"]').element as HTMLSelectElement
 
+    // У строки без пакета количество — «всё», а не максимальное число.
+    expect(amount().value).toBe('all')
     expect(amount().disabled).toBe(true)
 
     await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p1')
@@ -643,6 +645,11 @@ describe('TripMeals', () => {
     expect(second.text()).toContain('Крупа')
     expect(second.text()).toContain('60 г')
     expect(second.text()).not.toContain('остаток')
+    // «Равна родителю»: та же обводка и тот же крестик исключения.
+    const chip = second.find('[data-test="dish-ing-d1-1-2"]')
+    expect(chip.classes()).toContain('rounded-full')
+    expect(chip.classes()).toContain('border')
+    expect(chip.text()).toContain('×')
     // Поля те же: выбор пакета (включая «новый пакет») и количество.
     expect(
       second.find('[data-test="ing-pack-d1-1-2"]').text(),
@@ -677,6 +684,12 @@ describe('TripMeals', () => {
     })
 
     const wrapper = await mountMeals()
+
+    // У нового продукта количество — «всё» и заблокировано.
+    const fresh = wrapper.find('[data-test="alloc-amount-2"]')
+      .element as HTMLSelectElement
+    expect(fresh.value).toBe('all')
+    expect(fresh.disabled).toBe(true)
 
     // 150 из 200 в пакет — остаток 50 встаёт второй такой же строкой.
     await wrapper.find('[data-test="alloc-pack-2"]').setValue('p1')

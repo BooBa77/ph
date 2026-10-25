@@ -15,7 +15,6 @@ import {
   setMealForm,
   setMealKulek,
   addMealLine,
-  setMealLine,
   setMyStatus,
   updateMealPackage,
 } from '@/api/trips'
@@ -495,9 +494,12 @@ function packRows(product: TripMealProduct | undefined): PackRow[] {
   return rows
 }
 
-/** Значение селекта «кол-во» у строки: «всё» у эластичной, иначе число. */
+/** Значение селекта «кол-во»: «всё» у эластичной доли и у строки без пакета. */
 function amountValue(row: PackRow): string {
-  return row.isElastic ? 'all' : String(row.amount)
+  // У строки без пакета количество — это весь её остаток, то есть «всё».
+  // Показывать там число значило бы предлагать выбрать его меньше, хотя
+  // без пакета выбор ни на что не влияет.
+  return row.isElastic || row.isFree ? 'all' : String(row.amount)
 }
 
 /** Сколько вариантов в селекте «кол-во»: от 1 до количества по рецепту. */
@@ -757,29 +759,8 @@ const unpackedRows = computed(() => {
     }
   }
 
-  return rows
+    return rows
 })
-
-/** Свести план к разложенному: убавка на «разложено минус рецепт». */
-function dropLeftover(
-  dayIndex: number,
-  kind: TripMealKind,
-  product: TripMealProduct,
-): void {
-  const reduction = allocatedOf(product) - product.recipeAmount
-
-  void run(`${product.productId}:leftover`, () =>
-    setMealLine(
-      props.trip.id,
-      dayIndex,
-      kind,
-      product.productId,
-      reduction,
-    ),
-  )
-}
-
-
 
 function toggleKulek(meal: TripMeal): void {
   const kulek = kulekOf(meal)
@@ -1236,8 +1217,12 @@ onMounted(() => {
                       </div>
 
                       <div class="md:col-start-3">
+                        <!--
+                          Строка остатка выглядит ровно как родитель: та же
+                          обводка, то же «×» (исключение ингредиента),
+                          только вес — свой.
+                        -->
                         <button
-                          v-if="row.position === 0"
                           type="button"
                           class="rounded-full border px-2 py-0.5 text-xs transition-colors"
                           :class="
@@ -1246,23 +1231,19 @@ onMounted(() => {
                               : 'border-border text-text hover:border-primary'
                           "
                           :disabled="!canEdit"
-                          :data-test="`dish-ing-${dish.dishId}-${ingredient.productId}`"
+                          :data-test="shareTest('dish-ing', dish.dishId + '-' + ingredient.productId, row)"
                           @click="toggleDishIngredient(day.index, kind, dish, ingredient.productId)"
                         >
                           {{ ingredient.name }}
-                          {{ formatProductAmount(ingredient.amount, ingredient.unit) }}
+                          {{
+                            row.position === 0
+                              ? formatProductAmount(ingredient.amount, ingredient.unit)
+                              : formatProductAmount(row.amount, ingredient.unit)
+                          }}
                           <span v-if="canEdit">
                             {{ dish.excludedProductIds.includes(ingredient.productId) ? '+' : '×' }}
                           </span>
                         </button>
-
-                        <!-- Остаток — такая же строка, только с другим весом -->
-                        <span v-else class="text-sm text-text">
-                          {{ ingredient.name }}
-                          <span class="text-xs text-muted">
-                            {{ formatProductAmount(row.amount, ingredient.unit) }}
-                          </span>
-                        </span>
                       </div>
                     </div>
                   </template>
@@ -1325,24 +1306,10 @@ onMounted(() => {
                             </select>
                           </div>
                           <span
-                            v-if="
-                              row.position === 0 &&
-                              allocatedOf(product) > 0 &&
-                              allocatedOf(product) !== product.amount
-                            "
-                            class="text-xs"
+                            v-if="row.position === 0 && overAllocated(product) > 0"
+                            class="text-xs text-amber-700"
                           >
-                            <span v-if="overAllocated(product) > 0" class="text-amber-700">
-                              сверх рецепта: {{ formatProductAmount(overAllocated(product), product.unit) }}
-                            </span>
-                            <button
-                              type="button"
-                              class="cursor-pointer text-muted underline"
-                              :data-test="`meal-alloc-accept-${product.productId}`"
-                              @click="dropLeftover(day.index, kind, product)"
-                            >
-                              вписать в план
-                            </button>
+                            сверх рецепта: {{ formatProductAmount(overAllocated(product), product.unit) }}
                           </span>
                         </template>
                       </div>
