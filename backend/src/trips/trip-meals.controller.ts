@@ -1,4 +1,4 @@
-﻿import {
+import {
   HttpCode,
   Body,
   Controller,
@@ -51,7 +51,7 @@ export class TripMealsController {
     @CurrentUser() authUser: AuthUser,
     @Param('id', ParseIntPipe) id: number,
   ): Promise<TripMealPlanDto> {
-    return this.tripMeals.getPlan(authUser.id, id);
+    return this.tripMeals.getPlan(authUser.id, id, null);
   }
 
   /** Форма приёма: готовка или перекус. */
@@ -65,7 +65,7 @@ export class TripMealsController {
     @Param('kind') kind: TripMealKind,
     @Body() dto: SetMealFormDto,
   ): Promise<TripMealPlanDto> {
-    return this.tripMeals.setForm(authUser.id, id, dayIndex, kind, dto.form);
+    return this.tripMeals.setForm(authUser.id, id, null, dayIndex, kind, dto.form);
   }
 
   /** Поставить своё блюдо в приём. */
@@ -79,7 +79,7 @@ export class TripMealsController {
     @Param('kind') kind: TripMealKind,
     @Body() dto: AddMealDishDto,
   ): Promise<TripMealPlanDto> {
-    return this.tripMeals.addDish(authUser.id, id, dayIndex, kind, dto.dishId);
+    return this.tripMeals.addDish(authUser.id, id, null, dayIndex, kind, dto.dishId);
   }
 
   /** Убрать блюдо из приёма. */
@@ -93,7 +93,7 @@ export class TripMealsController {
     @Param('kind') kind: TripMealKind,
     @Param('dishId') dishId: string,
   ): Promise<TripMealPlanDto> {
-    return this.tripMeals.removeDish(authUser.id, id, dayIndex, kind, dishId);
+    return this.tripMeals.removeDish(authUser.id, id, null, dayIndex, kind, dishId);
   }
 
   /** Исключить ингредиенты блюда в этом приёме: «лук не любим». */
@@ -111,6 +111,7 @@ export class TripMealsController {
     return this.tripMeals.setDishExclusions(
       authUser.id,
       id,
+      null,
       dayIndex,
       kind,
       dishId,
@@ -133,6 +134,7 @@ export class TripMealsController {
     return this.tripMeals.setLine(
       authUser.id,
       id,
+      null,
       dayIndex,
       kind,
       productId,
@@ -157,7 +159,7 @@ export class TripMealsController {
     @Param('kind') kind: TripMealKind,
     @Body() dto: AddMealLineDto,
   ): Promise<TripMealPlanDto> {
-    return this.tripMeals.addLineByName(authUser.id, id, dayIndex, kind, dto);
+    return this.tripMeals.addLineByName(authUser.id, id, null, dayIndex, kind, dto);
   }
 
   /** Убрать ручную строку. */
@@ -174,6 +176,7 @@ export class TripMealsController {
     return this.tripMeals.removeLine(
       authUser.id,
       id,
+      null,
       dayIndex,
       kind,
       productId,
@@ -190,7 +193,7 @@ export class TripMealsController {
     @Param('dayIndex', ParseIntPipe) dayIndex: number,
     @Param('kind') kind: TripMealKind,
   ): Promise<TripMealPlanDto> {
-    return this.tripMeals.removeMeal(authUser.id, id, dayIndex, kind);
+    return this.tripMeals.removeMeal(authUser.id, id, null, dayIndex, kind);
   }
 
   // ─────────────────────────── фасовка ───────────────────────────
@@ -203,7 +206,7 @@ export class TripMealsController {
     @CurrentUser() authUser: AuthUser,
     @Param('id', ParseIntPipe) id: number,
   ): Promise<TripMealPlanDto> {
-    return this.tripMeals.createPackage(authUser.id, id);
+    return this.tripMeals.createPackage(authUser.id, id, null);
   }
 
   /** Имя пакета и фактический вес после взвешивания. */
@@ -216,7 +219,7 @@ export class TripMealsController {
     @Param('packageId') packageId: string,
     @Body() dto: UpdateMealPackageDto,
   ): Promise<TripMealPlanDto> {
-    return this.tripMeals.updatePackage(authUser.id, id, packageId, dto);
+    return this.tripMeals.updatePackage(authUser.id, id, null, packageId, dto);
   }
 
   /** Удаление пакета: его доли уходят каскадом. */
@@ -228,7 +231,7 @@ export class TripMealsController {
     @Param('id', ParseIntPipe) id: number,
     @Param('packageId') packageId: string,
   ): Promise<TripMealPlanDto> {
-    return this.tripMeals.removePackage(authUser.id, id, packageId);
+    return this.tripMeals.removePackage(authUser.id, id, null, packageId);
   }
 
   /** Доли строки раскладки по пакетам: список заменяет прежние. */
@@ -246,6 +249,7 @@ export class TripMealsController {
     return this.tripMeals.setAllocations(
       authUser.id,
       id,
+      null,
       dayIndex,
       kind,
       productId,
@@ -267,6 +271,7 @@ export class TripMealsController {
     return this.tripMeals.setKulek(
       authUser.id,
       id,
+      null,
       dayIndex,
       kind,
       dto.enabled,
@@ -283,7 +288,7 @@ export class TripMealsController {
     @CurrentUser() authUser: AuthUser,
     @Param('id', ParseIntPipe) id: number,
   ): Promise<TripMealCheckListDto> {
-    return this.tripMeals.getChecklist(authUser.id, id);
+    return this.tripMeals.getChecklist(authUser.id, id, null);
   }
 
   /** Отметки чек-листа: куплено, домашнее, сколько куплено. Любой участник. */
@@ -296,6 +301,6 @@ export class TripMealsController {
     @Param('productId', ParseIntPipe) productId: number,
     @Body() dto: UpdateMealCheckDto,
   ): Promise<TripMealCheckListDto> {
-    return this.tripMeals.updateCheck(authUser.id, id, productId, dto);
+    return this.tripMeals.updateCheck(authUser.id, id, null, productId, dto);
   }
 }

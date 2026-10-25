@@ -1,4 +1,4 @@
-﻿import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
@@ -116,6 +116,13 @@ describe('Питание похода (e2e)', () => {
     return response.body as Record<string, unknown>;
   }
 
+  /** Личная еда: свой слой у того, кто питается отдельно. */
+  async function readMyPlan(token: string): Promise<Record<string, unknown>> {
+    const response = await call('get', `/api/trips/${tripId}/my-meal-plan`, token).expect(200);
+
+    return response.body as Record<string, unknown>;
+  }
+
   async function readChecks(token: string): Promise<
     Array<{
       productId: number;
@@ -129,6 +136,22 @@ describe('Питание похода (e2e)', () => {
     }>
   > {
     const response = await call('get', `/api/trips/${tripId}/meal-checks`, token).expect(200);
+
+    return response.body.checks as never;
+  }
+
+  /** Личный чек-лист: проекция личной раскладки и свои отметки. */
+  async function readMyChecks(token: string): Promise<
+    Array<{
+      productId: number;
+      name: string;
+      needAmount: number;
+      isBought: boolean;
+      boughtAmount: number | null;
+      isOrphaned: boolean;
+    }>
+  > {
+    const response = await call('get', `/api/trips/${tripId}/my-meal-checks`, token).expect(200);
 
     return response.body.checks as never;
   }
@@ -902,5 +925,253 @@ describe('Питание похода (e2e)', () => {
     expect((other.body.products as Array<{ id: number }>).map((p) => p.id)).not.toContain(
       productId,
     );
+  });
+
+  /**
+   * Автономное питание: у участника с флагом «питаюсь отдельно» своя еда.
+   *
+   * На этом отрезке участница (member) уже помечена отдельной и ролей
+   * не имеет: общую раскладку она только читает. Её личный слой —
+   * отдельный набор приёмов, продуктов, пакетов и отметок, который
+   * не видит даже организатор с правом «Питание».
+   */
+  describe('автономное питание', () => {
+    const myProductName = `e2e-личное-${Date.now()}`;
+    let myProductId: number;
+    let extraDishId: string;
+
+    it('личная раскладка начинается пустой и считается на одного', async () => {
+      const plan = await readMyPlan(memberToken);
+
+      expect(plan.meals).toEqual([]);
+      expect(plan.packages).toEqual([]);
+      expect(plan.eaters).toMatchObject({
+        total: 1,
+        men: 0,
+        women: 1,
+        vegetarians: 1,
+      });
+    });
+
+    it('участник ведёт свою еду, общая раскладка не меняется', async () => {
+      const before = await readPlan(organizerToken);
+
+      const response = await call(
+        'post',
+        `/api/trips/${tripId}/my-meals/1/dinner/lines`,
+        memberToken,
+      )
+        .send({ name: myProductName, amount: 300 })
+        .expect(200);
+
+      const meal = (response.body.meals as Array<{
+        dayIndex: number;
+        kind: string;
+        products: Array<{
+          productId: number;
+          name: string;
+          amount: number;
+          manualAmount: number;
+        }>;
+      }>).find((row) => row.dayIndex === 1 && row.kind === 'dinner')!;
+
+      expect(meal.products).toHaveLength(1);
+      expect(meal.products[0]).toMatchObject({
+        name: myProductName,
+        amount: 300,
+        manualAmount: 300,
+      });
+      myProductId = meal.products[0].productId;
+
+      // Общая раскладка от личной строки не дрогнула.
+      const after = await readPlan(organizerToken);
+      expect(after.meals).toEqual(before.meals);
+    });
+
+    it('личная строка не попадает в общий чек-лист, а в своём — есть', async () => {
+      const common = await readChecks(organizerToken);
+      expect(common.some((row) => row.productId === myProductId)).toBe(false);
+
+      const mine = await readMyChecks(memberToken);
+      const row = mine.find((entry) => entry.productId === myProductId)!;
+      expect(row).toMatchObject({ name: myProductName, needAmount: 300 });
+    });
+
+    it('отметка в личном списке не отмечает общий', async () => {
+      const marked = await call(
+        'put',
+        `/api/trips/${tripId}/my-meal-checks/${myProductId}`,
+        memberToken,
+      )
+        .send({ isBought: true, boughtAmount: 300 })
+        .expect(200);
+
+      expect(
+        (marked.body.checks as Array<Record<string, unknown>>).find(
+          (row) => row.productId === myProductId,
+        ),
+      ).toMatchObject({ isBought: true, boughtAmount: 300 });
+
+      const common = await readChecks(organizerToken);
+      expect(common.some((row) => row.productId === myProductId)).toBe(false);
+    });
+
+    it('личный продукт не ставится в общую раскладку', async () => {
+      // Завхоз правит общий слой, но чужой личный продукт туда не тянет.
+      await call(
+        'put',
+        `/api/trips/${tripId}/meals/1/dinner/lines/${myProductId}`,
+        organizerToken,
+      )
+        .send({ amount: 100 })
+        .expect(400);
+    });
+
+    it('общее блюдо из раскладки берётся в личный приём', async () => {
+      // Возвращаем блюдо организатора в общую раскладку: оно снова «общее».
+      await call(
+        'post',
+        `/api/trips/${tripId}/meals/4/lunch/dishes`,
+        organizerToken,
+      )
+        .send({ dishId: organizerDishId })
+        .expect(201);
+
+      const response = await call(
+        'post',
+        `/api/trips/${tripId}/my-meals/1/breakfast/dishes`,
+        memberToken,
+      )
+        .send({ dishId: organizerDishId })
+        .expect(201);
+
+      const meal = (response.body.meals as Array<{
+        dayIndex: number;
+        kind: string;
+        dishes: Array<{ dishId: string }>;
+        products: Array<{ name: string; amount: number }>;
+      }>).find((row) => row.dayIndex === 1 && row.kind === 'breakfast')!;
+
+      expect(meal.dishes.map((row) => row.dishId)).toContain(organizerDishId);
+
+      // Количества — на одного: 80, а не 80 × 2. Мясное у вегетарианки — 0.
+      expect(meal.products.find((row) => row.name === gramName)).toMatchObject({
+        amount: 80,
+      });
+      expect(meal.products.find((row) => row.name === canName)).toMatchObject({
+        amount: 0,
+      });
+    });
+
+    it('чужое блюдо вне раскладки в личный приём не ставится', async () => {
+      const extra = await call('post', '/api/dishes', organizerToken)
+        .send({ title: `e2e-лишнее-${Date.now()}` })
+        .expect(201);
+      extraDishId = extra.body.id as string;
+
+      await call(
+        'post',
+        `/api/trips/${tripId}/my-meals/2/lunch/dishes`,
+        memberToken,
+      )
+        .send({ dishId: extraDishId })
+        .expect(403);
+    });
+
+    it('личный пакет не занимает имя общего', async () => {
+      const common = packagesOf(await readPlan(organizerToken));
+      expect(common.map((row) => row.name)).toContain('Пакет 1');
+
+      const created = await call(
+        'post',
+        `/api/trips/${tripId}/my-meal-packages`,
+        memberToken,
+      ).expect(201);
+
+      // Своя нумерация снова с единицы: «Пакет 1» есть в обоих слоях.
+      expect(
+        packagesOf(created.body as Record<string, unknown>).map((row) => row.name),
+      ).toContain('Пакет 1');
+
+      // Общие пакеты не задвоились и не переименовались.
+      expect(packagesOf(await readPlan(organizerToken))).toHaveLength(
+        common.length,
+      );
+    });
+
+    it('доли личной строки — только в личные пакеты', async () => {
+      const commonPack = packagesOf(await readPlan(organizerToken))[0]!;
+
+      await call(
+        'put',
+        `/api/trips/${tripId}/my-meals/1/dinner/allocations/${myProductId}`,
+        memberToken,
+      )
+        .send({
+          allocations: [
+            { packageId: commonPack.id, amount: 100, isElastic: false },
+          ],
+        })
+        .expect(400);
+
+      const mine = packagesOf(await readMyPlan(memberToken));
+      const myPack = mine[0]!;
+
+      const response = await call(
+        'put',
+        `/api/trips/${tripId}/my-meals/1/dinner/allocations/${myProductId}`,
+        memberToken,
+      )
+        .send({
+          allocations: [{ packageId: myPack.id, amount: 100, isElastic: false }],
+        })
+        .expect(200);
+
+      const meal = (response.body.meals as Array<{
+        dayIndex: number;
+        kind: string;
+        products: Array<{
+          productId: number;
+          allocations: Array<{
+            packageId: string;
+            amount: number;
+            isElastic: boolean;
+          }>;
+        }>;
+      }>).find((row) => row.dayIndex === 1 && row.kind === 'dinner')!;
+      const product = meal.products.find(
+        (row) => row.productId === myProductId,
+      )!;
+
+      expect(product.allocations).toEqual([
+        { packageId: myPack.id, amount: 100, isElastic: false },
+      ]);
+      expect(
+        packagesOf(response.body as Record<string, unknown>).find(
+          (row) => row.id === myPack.id,
+        )!.items,
+      ).toHaveLength(1);
+    });
+
+    it('завхоз видит только свою личную еду', async () => {
+      const own = await readMyPlan(organizerToken);
+
+      // У организатора своей личной еды нет: чужая к нему не приходит.
+      expect(own.meals).toEqual([]);
+      expect(await readMyChecks(organizerToken)).toEqual([]);
+    });
+
+    it('посторонний не видит личную раскладку', async () => {
+      await call('get', `/api/trips/${tripId}/my-meal-plan`, strangerToken).expect(403);
+      await call('get', `/api/trips/${tripId}/my-meal-checks`, strangerToken).expect(403);
+    });
+
+    it('у мечты личной раскладки нет', async () => {
+      await call(
+        'get',
+        `/api/trips/${ideaTripId}/my-meal-plan`,
+        organizerToken,
+      ).expect(400);
+    });
   });
 });

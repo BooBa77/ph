@@ -1,4 +1,4 @@
-﻿import {
+import {
   Check,
   Column,
   CreateDateColumn,
@@ -24,10 +24,21 @@ import { Trip } from './trip.entity';
  * `bought_by` — кто отметил покупку (чек-лист отвечает на «кто купил»);
  * `updated_by` — кто менял последним, включая «домашнее». Пользователи
  * `SET NULL`: строка переживает удаление аккаунта.
+ *
+ * **`eaterUserId` — чей чек-лист.** NULL — общий список завхоза; uuid —
+ * личный список участника, который питается отдельно. Списков поэтому
+ * два, и они не мешают друг другу: купленная в общий список «Гречка»
+ * не отмечает личную гречку того же имени (разные продукты — разные
+ * строки).
  */
 @Entity('trip_meal_checks')
 @Index('UQ_trip_meal_checks_product', ['tripId', 'productId'], {
   unique: true,
+  where: '"eater_user_id" IS NULL',
+})
+@Index('UQ_trip_meal_checks_personal', ['tripId', 'eaterUserId', 'productId'], {
+  unique: true,
+  where: '"eater_user_id" IS NOT NULL',
 })
 @Check(
   'chk_trip_meal_checks_amount',
@@ -46,6 +57,17 @@ export class TripMealCheck {
     foreignKeyConstraintName: 'FK_trip_meal_checks_trip',
   })
   trip: Trip;
+
+  /** Чей это список; NULL — общий чек-лист похода. */
+  @Column({ name: 'eater_user_id', type: 'uuid', nullable: true })
+  eaterUserId: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({
+    name: 'eater_user_id',
+    foreignKeyConstraintName: 'FK_trip_meal_checks_eater',
+  })
+  eater: User | null;
 
   @Column({ name: 'product_id', type: 'int' })
   productId: number;

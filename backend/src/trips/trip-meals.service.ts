@@ -1,11 +1,19 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, In, IsNull, Not, type EntityManager } from 'typeorm';
+import {
+  DataSource,
+  In,
+  IsNull,
+  Not,
+  type EntityManager,
+  type FindOperator,
+  type FindOptionsWhere,
+} from 'typeorm';
 
 import { DishIngredient } from '../meals/entities/dish-ingredient.entity';
 import type { ProductUnit } from '../meals/meal.types';
@@ -43,6 +51,16 @@ import { TripsService } from './trips.service';
 
 const DAY_MS = 86_400_000;
 
+/**
+ * Чей слой еды: `null` — общая раскладка похода, uuid — личная еда
+ * участника, который питается отдельно.
+ *
+ * Один и тот же код собирает оба слоя: правила раскладки, фасовки и
+ * кулька одинаковые, разница только в том, чьи приёмы, пакеты, продукты
+ * и отметки чек-листа читаются. Два набора копий однажды разошлись бы.
+ */
+type MealOwner = string | null;
+
 /** Строка продукта, собранная из рецептов и ручных строк одного приёма. */
 interface ProductRow {
   product: Product;
@@ -77,11 +95,19 @@ export class TripMealsService {
   ) {}
 
   /** Раскладка и фасовка целиком. */
-  async getPlan(userId: string, id: number): Promise<TripMealPlanDto> {
+  async getPlan(
+    userId: string,
+    id: number,
+    owner: MealOwner = null,
+  ): Promise<TripMealPlanDto> {
     const trip = await this.trips.getVisibleTrip(userId, id);
     const manager = this.dataSource.manager;
 
     await this.assertParticipant(manager, userId, trip);
+    // Личная еда — личное дело: чужой слой не читает даже завхоз.
+    if (owner !== null && owner !== userId) {
+      throw new ForbiddenException('Личная еда участника видна только ему');
+    }
 
     if (trip.status === 'idea') {
       throw new BadRequestException(
@@ -98,9 +124,12 @@ export class TripMealsService {
       );
     }
 
-    const eaters = await this.loadEaters(manager, trip);
-    const meals = await this.loadMeals(manager, trip, eaters);
-    const packages = await this.loadPackages(manager, trip, meals);
+    const eaters =
+      owner === null
+        ? await this.loadEaters(manager, trip)
+        : await this.loadOwnerEater(manager, trip, owner);
+    const meals = await this.loadMeals(manager, trip, eaters, owner);
+    const packages = await this.loadPackages(manager, trip, meals, owner);
 
     return { dayCount, eaters, meals, packages };
   }
@@ -109,29 +138,39 @@ export class TripMealsService {
   async setForm(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
     form: TripMealForm,
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
+    await this.mutate(userId, id, owner, async (manager, trip) => {
       await this.assertSlot(manager, trip, dayIndex, kind);
-      const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind);
+      const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind, owner);
       meal.form = form;
       await manager.save(meal);
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
-  /** Поставить своё блюдо в приём. */
+  /**
+   * Поставить блюдо в приём.
+   *
+   * В общую раскладку — только своё блюдо: чужие не видны никому.
+   * В личную — своё или **общее**, то есть блюдо, которое уже стоит
+   * в общей раскладке похода: участник, питающийся отдельно, берёт
+   * рецепт у группы, а не заводит его заново. Остальные чужие блюда
+   * не ставятся — 403, как и в общей раскладке.
+   */
   async addDish(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
     dishId: string,
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
+    await this.mutate(userId, id, owner, async (manager, trip) => {
       await this.assertSlot(manager, trip, dayIndex, kind);
 
       const dish = await manager.findOne(Dish, { where: { id: dishId } });
@@ -139,37 +178,44 @@ export class TripMealsService {
         throw new NotFoundException('Блюдо не найдено');
       }
       if (dish.ownerUserId !== userId) {
-        throw new ForbiddenException(
-          'В раскладку можно ставить только свои блюда: чужие не видны никому',
-        );
+        const shared =
+          owner !== null &&
+          (await this.isDishInCommonPlan(manager, trip.id, dishId));
+        if (!shared) {
+          throw new ForbiddenException(
+            'В раскладку можно ставить только свои блюда: чужие не видны никому',
+          );
+        }
       }
 
-      const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind);
+      const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind, owner);
       const exists = await manager.exists(TripMealDish, {
         where: { mealId: meal.id, dishId },
       });
       if (!exists) {
         await manager.insert(TripMealDish, { mealId: meal.id, dishId });
         // Ингредиенты блюда живут в справочнике, а план похода — автономен:
-        // копируем их в поход, иначе блюдо нечего фасовать.
-        await this.materializeDishProducts(manager, trip.id, [dishId]);
+        // копируем их в поход, иначе блюдо нечего фасовать. В личной еде
+        // копии личные: чужая раскладка от них не меняется.
+        await this.materializeDishProducts(manager, trip.id, [dishId], owner);
         await this.syncKulekForMeal(manager, meal);
       }
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   /** Убрать блюдо из приёма. */
   async removeDish(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
     dishId: string,
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
-      const meal = await this.findMeal(manager, trip.id, dayIndex, kind);
+    await this.mutate(userId, id, owner, async (manager, trip) => {
+      const meal = await this.findMeal(manager, trip.id, dayIndex, kind, owner);
       if (!meal) return;
 
       await manager.delete(TripMealDish, { mealId: meal.id, dishId });
@@ -178,19 +224,20 @@ export class TripMealsService {
       await this.cleanupMeal(manager, meal.id);
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   /** Ручная строка: «хлеб 600 г» — абсолютная, без мясного флага. */
   async setLine(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
     productId: number,
     amount: number,
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
+    await this.mutate(userId, id, owner, async (manager, trip) => {
       await this.assertSlot(manager, trip, dayIndex, kind);
 
       const product = await manager.findOne(TripProduct, {
@@ -199,8 +246,13 @@ export class TripMealsService {
       if (!product) {
         throw new BadRequestException('Такого продукта нет в этом походе');
       }
+      if (!this.productAllowed(product, owner)) {
+        throw new BadRequestException(
+          'Личный продукт другого участника в план не поставить',
+        );
+      }
 
-      const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind);
+      const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind, owner);
       const line = await manager.findOne(TripMealLine, {
         where: { mealId: meal.id, productId },
       });
@@ -219,7 +271,7 @@ export class TripMealsService {
       await this.syncKulekForMeal(manager, meal);
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   /**
@@ -233,6 +285,7 @@ export class TripMealsService {
   async addLineByName(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
     dto: {
@@ -243,7 +296,7 @@ export class TripMealsService {
       weightPerUnitGrams?: number;
     },
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
+    await this.mutate(userId, id, owner, async (manager, trip) => {
       await this.assertSlot(manager, trip, dayIndex, kind);
 
       let sample: {
@@ -279,8 +332,13 @@ export class TripMealsService {
         );
       }
 
-      const product = await this.ensureTripProduct(manager, trip.id, sample);
-      const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind);
+      const product = await this.ensureTripProduct(
+        manager,
+        trip.id,
+        sample,
+        owner,
+      );
+      const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind, owner);
       const line = await manager.findOne(TripMealLine, {
         where: { mealId: meal.id, productId: product.id },
       });
@@ -299,19 +357,20 @@ export class TripMealsService {
       await this.syncKulekForMeal(manager, meal);
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   /** Убрать ручную строку. */
   async removeLine(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
     productId: number,
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
-      const meal = await this.findMeal(manager, trip.id, dayIndex, kind);
+    await this.mutate(userId, id, owner, async (manager, trip) => {
+      const meal = await this.findMeal(manager, trip.id, dayIndex, kind, owner);
       if (!meal) return;
 
       await manager.delete(TripMealLine, { mealId: meal.id, productId });
@@ -320,24 +379,25 @@ export class TripMealsService {
       await this.cleanupMeal(manager, meal.id);
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   /** Убрать приём целиком. */
   async removeMeal(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
-      const meal = await this.findMeal(manager, trip.id, dayIndex, kind);
+    await this.mutate(userId, id, owner, async (manager, trip) => {
+      const meal = await this.findMeal(manager, trip.id, dayIndex, kind, owner);
       if (meal) {
         await manager.delete(TripMeal, { id: meal.id });
       }
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   // ─────────────────────────── фасовка ───────────────────────────
@@ -346,28 +406,34 @@ export class TripMealsService {
    * Новый пакет. Имя по умолчанию «Пакет N»; пустой пакет создать можно —
    * завхоз заводит тару заранее.
    */
-  async createPackage(userId: string, id: number): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
-      const name = await this.nextPackageName(manager, trip.id);
+  async createPackage(
+    userId: string,
+    id: number,
+    owner: MealOwner = null,
+  ): Promise<TripMealPlanDto> {
+    await this.mutate(userId, id, owner, async (manager, trip) => {
+      const name = await this.nextPackageName(manager, trip.id, owner);
       await manager.insert(TripMealPackage, {
         tripId: trip.id,
         name,
         kind: 'normal',
+        eaterUserId: owner,
       });
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   /** Имя пакета и фактический вес после взвешивания. */
   async updatePackage(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     packageId: string,
     dto: { name?: string; weightActualGrams?: number | null },
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
-      const pack = await this.findPackage(manager, trip.id, packageId);
+    await this.mutate(userId, id, owner, async (manager, trip) => {
+      const pack = await this.findPackage(manager, trip.id, packageId, owner);
 
       if (dto.name !== undefined) {
         const name = dto.name.trim();
@@ -376,7 +442,11 @@ export class TripMealsService {
         }
         if (name !== pack.name) {
           const clash = await manager.exists(TripMealPackage, {
-            where: { tripId: trip.id, name },
+            where: {
+              tripId: trip.id,
+              name,
+              eaterUserId: this.layerOf(owner),
+            },
           });
           if (clash) {
             throw new ConflictException('Пакет с таким именем уже есть');
@@ -394,21 +464,22 @@ export class TripMealsService {
       await manager.save(pack);
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   /** Удаление пакета обнуляет его доли: они уходят каскадом. */
   async removePackage(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     packageId: string,
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
-      const pack = await this.findPackage(manager, trip.id, packageId);
+    await this.mutate(userId, id, owner, async (manager, trip) => {
+      const pack = await this.findPackage(manager, trip.id, packageId, owner);
       await manager.delete(TripMealPackage, { id: pack.id });
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   /**
@@ -422,13 +493,14 @@ export class TripMealsService {
   async setAllocations(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
     productId: number,
     allocations: { packageId: string; amount: number; isElastic?: boolean }[],
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
-      const meal = await this.findMeal(manager, trip.id, dayIndex, kind);
+    await this.mutate(userId, id, owner, async (manager, trip) => {
+      const meal = await this.findMeal(manager, trip.id, dayIndex, kind, owner);
       if (!meal) {
         throw new NotFoundException('В приёме пока нет строк');
       }
@@ -456,11 +528,21 @@ export class TripMealsService {
       const rows = allocations;
       const packageIds = [...new Set(rows.map((row) => row.packageId))];
       if (packageIds.length > 0) {
+        // Пакет того же слоя: общая строка не уезжает в личную тару
+        // и наоборот, иначе пакет участника повис бы на общей еде.
         const packs = await manager.find(TripMealPackage, {
-          where: { id: In(packageIds), tripId: trip.id },
+          where: {
+            id: In(packageIds),
+            tripId: trip.id,
+            eaterUserId: this.layerOf(owner),
+          },
         });
         if (packs.length !== packageIds.length) {
-          throw new BadRequestException('Пакет не из этого похода');
+          throw new BadRequestException(
+            owner === null
+              ? 'Пакет не из этого похода'
+              : 'Пакет из чужого списка',
+          );
         }
       }
 
@@ -487,7 +569,7 @@ export class TripMealsService {
       ]);
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   /**
@@ -500,14 +582,15 @@ export class TripMealsService {
   async setKulek(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
     enabled: boolean,
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
+    await this.mutate(userId, id, owner, async (manager, trip) => {
       const meal = enabled
-        ? await this.upsertMeal(manager, trip.id, dayIndex, kind)
-        : await this.findMeal(manager, trip.id, dayIndex, kind);
+        ? await this.upsertMeal(manager, trip.id, dayIndex, kind, owner)
+        : await this.findMeal(manager, trip.id, dayIndex, kind, owner);
       if (!meal) return;
 
       const kulek = await manager.findOne(TripMealPackage, {
@@ -519,7 +602,11 @@ export class TripMealsService {
 
         const base = this.kulekName(dayIndex, kind);
         const clash = await manager.exists(TripMealPackage, {
-          where: { tripId: trip.id, name: base },
+          where: {
+            tripId: trip.id,
+            name: base,
+            eaterUserId: this.layerOf(owner),
+          },
         });
         const pack = await manager.save(
           manager.create(TripMealPackage, {
@@ -527,6 +614,7 @@ export class TripMealsService {
             name: clash ? `${base} (${meal.id})` : base,
             kind: 'kulek',
             mealId: meal.id,
+            eaterUserId: owner,
           }),
         );
         await this.syncKulek(manager, meal, pack);
@@ -536,16 +624,21 @@ export class TripMealsService {
       }
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   private async findPackage(
     manager: EntityManager,
     tripId: string,
     packageId: string,
+    owner: MealOwner,
   ): Promise<TripMealPackage> {
     const pack = await manager.findOne(TripMealPackage, {
-      where: { id: packageId, tripId },
+      where: {
+        id: packageId,
+        tripId,
+        eaterUserId: this.layerOf(owner),
+      },
     });
     if (!pack) {
       throw new NotFoundException('Пакет не найден');
@@ -557,9 +650,10 @@ export class TripMealsService {
   private async nextPackageName(
     manager: EntityManager,
     tripId: string,
+    owner: MealOwner,
   ): Promise<string> {
     const rows = await manager.find(TripMealPackage, {
-      where: { tripId },
+      where: { tripId, eaterUserId: this.layerOf(owner) },
       select: { name: true },
     });
 
@@ -611,7 +705,11 @@ export class TripMealsService {
 
     // Рецепт ссылается на справочник, а план — на продукт похода: пара
     // «справочник → поход» строится по имени, имена там одинаковые.
-    const idByName = await this.tripProductIdsByName(manager, meal.tripId);
+    const idByName = await this.tripProductIdsByName(
+      manager,
+      meal.tripId,
+      meal.eaterUserId,
+    );
 
     const fromDishes = ingredients
       .map((ingredient) => idByName.get(ingredient.product.name))
@@ -621,14 +719,30 @@ export class TripMealsService {
     return [...new Set([...fromDishes, ...lines.map((line) => line.productId)])];
   }
 
-  /** Карта «имя продукта → id продукта похода». */
+  /**
+   * Карта «имя продукта → id продукта похода» для слоя.
+   *
+   * В личном слое видно и общее: свой продукт с тем же именем важнее
+   * общего — так личная «Гречка» не путается с общей.
+   */
   private async tripProductIdsByName(
     manager: EntityManager,
     tripId: string,
+    owner: MealOwner,
   ): Promise<Map<string, number>> {
-    const products = await manager.find(TripProduct, { where: { tripId } });
+    const products = await manager.find(TripProduct, {
+      where: this.productScope(tripId, owner),
+    });
 
-    return new Map(products.map((product) => [product.name, product.id]));
+    const map = new Map<string, number>();
+    for (const product of products) {
+      if (product.ownerUserId === null) map.set(product.name, product.id);
+    }
+    for (const product of products) {
+      if (product.ownerUserId !== null) map.set(product.name, product.id);
+    }
+
+    return map;
   }
 
   /**
@@ -636,21 +750,34 @@ export class TripMealsService {
    *
    * Это и есть «скопировать, а не сослаться»: имя, единица и вес
    * переписываются в поход, дальше справочник ему не указ.
+   *
+   * В личном слое сначала ищется свой продукт того же имени, потом общий:
+   * «Гречка» не должна раздваиваться на два мешка в одном рюкзаке.
    */
   private async ensureTripProduct(
     manager: EntityManager,
     tripId: string,
     sample: { name: string; unit: ProductUnit; weightPerUnitGrams: number },
+    owner: MealOwner,
   ): Promise<TripProduct> {
     const name = sample.name.trim();
+
     const existing = await manager.findOne(TripProduct, {
-      where: { tripId, name },
+      where: { tripId, name, ownerUserId: this.layerOf(owner) },
     });
     if (existing) return existing;
+
+    if (owner !== null) {
+      const common = await manager.findOne(TripProduct, {
+        where: { tripId, name, ownerUserId: IsNull() },
+      });
+      if (common) return common;
+    }
 
     return manager.save(
       manager.create(TripProduct, {
         tripId,
+        ownerUserId: owner,
         name,
         unit: sample.unit,
         weightPerUnitGrams: sample.weightPerUnitGrams,
@@ -663,6 +790,7 @@ export class TripMealsService {
     manager: EntityManager,
     tripId: string,
     dishIds: string[],
+    owner: MealOwner,
   ): Promise<void> {
     if (dishIds.length === 0) return;
 
@@ -672,11 +800,16 @@ export class TripMealsService {
     });
 
     for (const ingredient of ingredients) {
-      await this.ensureTripProduct(manager, tripId, {
-        name: ingredient.product.name,
-        unit: ingredient.product.unit,
-        weightPerUnitGrams: ingredient.product.weightPerUnitGrams,
-      });
+      await this.ensureTripProduct(
+        manager,
+        tripId,
+        {
+          name: ingredient.product.name,
+          unit: ingredient.product.unit,
+          weightPerUnitGrams: ingredient.product.weightPerUnitGrams,
+        },
+        owner,
+      );
     }
   }
 
@@ -793,13 +926,14 @@ export class TripMealsService {
   async setDishExclusions(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     dayIndex: number,
     kind: TripMealKind,
     dishId: string,
     productIds: number[],
   ): Promise<TripMealPlanDto> {
-    await this.mutate(userId, id, async (manager, trip) => {
-      const meal = await this.findMeal(manager, trip.id, dayIndex, kind);
+    await this.mutate(userId, id, owner, async (manager, trip) => {
+      const meal = await this.findMeal(manager, trip.id, dayIndex, kind, owner);
       if (!meal) {
         throw new NotFoundException('В приёме пока нет блюд');
       }
@@ -815,7 +949,11 @@ export class TripMealsService {
         where: { dishId },
         relations: { product: true },
       });
-      const idByName = await this.tripProductIdsByName(manager, trip.id);
+      const idByName = await this.tripProductIdsByName(
+        manager,
+        trip.id,
+        owner,
+      );
       const allowed = new Set(
         ingredients
           .map((ingredient) => idByName.get(ingredient.product.name))
@@ -840,7 +978,7 @@ export class TripMealsService {
       await this.markMealPackagesStale(manager, meal.id);
     });
 
-    return this.getPlan(userId, id);
+    return this.getPlan(userId, id, owner);
   }
 
   // ─────────────────────────── чек-лист покупок ───────────────────────────
@@ -852,12 +990,17 @@ export class TripMealsService {
    * `trip_meal_checks` и не сбрасываются при правке плана. Продукт ушёл
    * из плана, но куплен — остаётся строкой с `isOrphaned`: вычеркнуть
    * купленное значит потерять его из виду.
+   *
+   * Списков два: общий (`owner` = null) и личный у того, кто питается
+   * отдельно. Они не пересекаются: отметка в общем не отмечает личную
+   * строку того же продукта.
    */
   async getChecklist(
     userId: string,
     id: number,
+    owner: MealOwner = null,
   ): Promise<TripMealCheckListDto> {
-    const plan = await this.getPlan(userId, id);
+    const plan = await this.getPlan(userId, id, owner);
     const manager = this.dataSource.manager;
 
     const need = new Map<
@@ -886,7 +1029,7 @@ export class TripMealsService {
     }
 
     const checks = await manager.find(TripMealCheck, {
-      where: { tripId: String(id) },
+      where: { tripId: String(id), eaterUserId: this.layerOf(owner) },
       relations: { buyer: true },
     });
     const checkByProduct = new Map(
@@ -925,7 +1068,9 @@ export class TripMealsService {
 
       for (const check of orphaned) {
         const product = products.find((row) => row.id === check.productId);
-        if (!product) continue;
+        // Продукт чужого слоя в этом списке не показываем: личное
+        // не протекает в общий чек-лист и наоборот.
+        if (!product || !this.productAllowed(product, owner)) continue;
 
         rows.push({
           productId: product.id,
@@ -956,14 +1101,18 @@ export class TripMealsService {
    * и роль завхоза для галочки не нужна. Продукт обязан быть в раскладке:
    * чек-лист растёт только вместе с планом, «куплено сверх» заводят
    * ручной строкой в приёме.
+   *
+   * В личном списке — только сам едок: отметить чужую личную строку
+   * нельзя, её даже не видно.
    */
   async updateCheck(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     productId: number,
     dto: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
   ): Promise<TripMealCheckListDto> {
-    const plan = await this.getPlan(userId, id);
+    const plan = await this.getPlan(userId, id, owner);
     const inPlan = plan.meals.some((meal) =>
       meal.products.some((product) => product.productId === productId),
     );
@@ -977,10 +1126,14 @@ export class TripMealsService {
     const tripId = String(id);
 
     let row = await manager.findOne(TripMealCheck, {
-      where: { tripId, productId },
+      where: { tripId, productId, eaterUserId: this.layerOf(owner) },
     });
     if (!row) {
-      row = manager.create(TripMealCheck, { tripId, productId });
+      row = manager.create(TripMealCheck, {
+        tripId,
+        productId,
+        eaterUserId: owner,
+      });
     }
 
     if (dto.isBought !== undefined) {
@@ -998,7 +1151,7 @@ export class TripMealsService {
 
     await manager.save(row);
 
-    return this.getChecklist(userId, id);
+    return this.getChecklist(userId, id, owner);
   }
 
   // ─────────────────────────── доступ ───────────────────────────
@@ -1019,21 +1172,87 @@ export class TripMealsService {
     }
   }
 
+  /**
+   * Правка слоя.
+   *
+   * Общую раскладку правит тот, кому роль дала «Питание» (завхоз,
+   * организатор). Личную — только её владелец: завхоз распоряжается общим
+   * котлом, а не чужим рюкзаком.
+   */
   private async mutate(
     userId: string,
     id: number,
+    owner: MealOwner = null,
     work: (manager: EntityManager, trip: Trip) => Promise<void>,
   ): Promise<void> {
     const trip = await this.trips.getVisibleTrip(userId, id);
 
-    const canEdit = await this.trips.canEditTab(userId, trip, 'meals');
-    if (!canEdit) {
-      throw new ForbiddenException('Раскладку правит завхоз или организатор');
+    if (owner === null) {
+      const canEdit = await this.trips.canEditTab(userId, trip, 'meals');
+      if (!canEdit) {
+        throw new ForbiddenException('Раскладку правит завхоз или организатор');
+      }
+    } else if (owner !== userId) {
+      throw new ForbiddenException(
+        'Личную еду правит только тот, кто её ведёт',
+      );
     }
 
     await this.dataSource.transaction(async (manager) => {
+      if (owner !== null) {
+        await this.assertParticipant(manager, userId, trip);
+      }
       await work(manager, trip);
     });
+  }
+
+  // ─────────────────────────── слои еды ───────────────────────────
+
+  /**
+   * Значение колонки-владельца для запросов и вставок.
+   *
+   * `null` в `where` TypeORM пропускает — «найди где угодно», поэтому
+   * общий слой ищется через `IsNull()`, а не через голый `null`.
+   */
+  private layerOf(owner: MealOwner): string | FindOperator<string> {
+    return owner === null ? IsNull() : owner;
+  }
+
+  /** Продукты, видимые слою: общие всегда, свои — только владельцу. */
+  private productScope(
+    tripId: string,
+    owner: MealOwner,
+  ): FindOptionsWhere<TripProduct>[] {
+    const scope: FindOptionsWhere<TripProduct>[] = [
+      { tripId, ownerUserId: IsNull() },
+    ];
+    if (owner !== null) scope.push({ tripId, ownerUserId: owner });
+
+    return scope;
+  }
+
+  /** Личный продукт чужого участника в план не поставить. */
+  private productAllowed(product: TripProduct, owner: MealOwner): boolean {
+    return product.ownerUserId === null || product.ownerUserId === owner;
+  }
+
+  /**
+   * Блюдо стоит в общей раскладке похода — значит, оно «общее»:
+   * участник с отдельным питанием берёт его в свой план, не заводя
+   * рецепт заново.
+   */
+  private async isDishInCommonPlan(
+    manager: EntityManager,
+    tripId: string,
+    dishId: string,
+  ): Promise<boolean> {
+    return manager
+      .createQueryBuilder(TripMealDish, 'mealDish')
+      .innerJoin(TripMeal, 'meal', 'meal.id = mealDish.mealId')
+      .where('meal.tripId = :tripId', { tripId })
+      .andWhere('meal.eaterUserId IS NULL')
+      .andWhere('mealDish.dishId = :dishId', { dishId })
+      .getExists();
   }
 
   // ─────────────────────────── дни и приёмы ───────────────────────────
@@ -1099,9 +1318,15 @@ export class TripMealsService {
     tripId: string,
     dayIndex: number,
     kind: TripMealKind,
+    owner: MealOwner,
   ): Promise<TripMeal | null> {
     return manager.findOne(TripMeal, {
-      where: { tripId, dayIndex, kind },
+      where: {
+        tripId,
+        dayIndex,
+        kind,
+        eaterUserId: this.layerOf(owner),
+      },
     });
   }
 
@@ -1110,12 +1335,24 @@ export class TripMealsService {
     tripId: string,
     dayIndex: number,
     kind: TripMealKind,
+    owner: MealOwner,
   ): Promise<TripMeal> {
-    const existing = await this.findMeal(manager, tripId, dayIndex, kind);
+    const existing = await this.findMeal(
+      manager,
+      tripId,
+      dayIndex,
+      kind,
+      owner,
+    );
     if (existing) return existing;
 
     return manager.save(
-      manager.create(TripMeal, { tripId, dayIndex, kind }),
+      manager.create(TripMeal, {
+        tripId,
+        dayIndex,
+        kind,
+        eaterUserId: owner,
+      }),
     );
   }
 
@@ -1172,13 +1409,56 @@ export class TripMealsService {
     };
   }
 
+  /**
+   * Едоки личного слоя: сам владелец.
+   *
+   * Количества в личной еде считаются на одного человека, поэтому
+   * «едоков» ровно столько, сколько он за собой признаёт: вегетарианец
+   * получает мясные ингредиенты с нулём — та же формула, что и в общем
+   * слое, только состав из одного человека.
+   */
+  private async loadOwnerEater(
+    manager: EntityManager,
+    trip: Trip,
+    owner: string,
+  ): Promise<TripEatersDto> {
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId: trip.id, userId: owner, status: 'going' },
+      relations: { user: true },
+    });
+    if (!participant) {
+      throw new BadRequestException(
+        'Личная еда доступна только идущим в поход',
+      );
+    }
+
+    const person = {
+      userId: participant.userId,
+      displayName: participant.user?.displayName ?? 'Неизвестный',
+      avatarUrl: participant.user?.avatarUrl ?? null,
+      gender: participant.user?.gender ?? 'm',
+      isVegetarian: participant.user?.isVegetarian ?? false,
+      allergies: participant.user?.allergies ?? null,
+      eatsSeparately: participant.eatsSeparately,
+    };
+
+    return {
+      total: 1,
+      men: person.gender === 'm' ? 1 : 0,
+      women: person.gender === 'f' ? 1 : 0,
+      vegetarians: person.isVegetarian ? 1 : 0,
+      people: [person],
+    };
+  }
+
   private async loadMeals(
     manager: EntityManager,
     trip: Trip,
     eaters: TripEatersDto,
+    owner: MealOwner,
   ): Promise<TripMealDto[]> {
     const meals = await manager.find(TripMeal, {
-      where: { tripId: trip.id },
+      where: { tripId: trip.id, eaterUserId: this.layerOf(owner) },
       order: { dayIndex: 'ASC', kind: 'ASC' },
     });
     if (meals.length === 0) return [];
@@ -1205,12 +1485,21 @@ export class TripMealsService {
     });
 
     // План живёт продуктами похода; справочник нужен только в рецептах.
+    // В личном слое видно и общее: своё имя важнее общего.
     const tripProducts = await manager.find(TripProduct, {
-      where: { tripId: trip.id },
+      where: this.productScope(trip.id, owner),
     });
-    const tripProductsByName = new Map(
-      tripProducts.map((product) => [product.name, product]),
-    );
+    const tripProductsByName = new Map<string, TripProduct>();
+    for (const product of tripProducts) {
+      if (product.ownerUserId === null) {
+        tripProductsByName.set(product.name, product);
+      }
+    }
+    for (const product of tripProducts) {
+      if (product.ownerUserId !== null) {
+        tripProductsByName.set(product.name, product);
+      }
+    }
 
     const allocations = await manager.find(TripMealAllocation, {
       where: { mealId: In(mealIds) },
@@ -1391,9 +1680,10 @@ export class TripMealsService {
     manager: EntityManager,
     trip: Trip,
     meals: TripMealDto[],
+    owner: MealOwner,
   ): Promise<TripMealPackageDto[]> {
     const packages = await manager.find(TripMealPackage, {
-      where: { tripId: trip.id },
+      where: { tripId: trip.id, eaterUserId: this.layerOf(owner) },
       order: { id: 'ASC' },
     });
     if (packages.length === 0) return [];

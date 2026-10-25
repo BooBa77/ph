@@ -11,6 +11,7 @@ import {
 } from 'typeorm';
 
 import { sqlValues } from '../../users/sport-experience.types';
+import { User } from '../../users/entities/user.entity';
 import {
   TRIP_MEAL_PACKAGE_KINDS,
   type TripMealPackageKind,
@@ -32,9 +33,21 @@ import { Trip } from './trip.entity';
  * **Вес фактический** — после контрольного взвешивания. Если содержимое
  * менялось после, `weight_actual_stale` просит перевесить; в «Рюкзаках»
  * до перевешивания берётся расчётный вес.
+ *
+ * **`eaterUserId` — чья тара.** NULL — общие пакеты похода; uuid — пакеты
+ * личной еды. Имя уникально внутри слоя: «Пакет 1» участника не занимает
+ * имя общего пакета, но и не смешивается с чужими — частичные индексы.
  */
 @Entity('trip_meal_packages')
-@Index('UQ_trip_meal_packages_name', ['tripId', 'name'], { unique: true })
+@Index('UQ_trip_meal_packages_name', ['tripId', 'name'], {
+  unique: true,
+  where: '"eater_user_id" IS NULL',
+})
+@Index(
+  'UQ_trip_meal_packages_personal_name',
+  ['tripId', 'eaterUserId', 'name'],
+  { unique: true, where: '"eater_user_id" IS NOT NULL' },
+)
 @Index('IDX_trip_meal_packages_trip', ['tripId', 'id'])
 @Check(
   'chk_trip_meal_packages_kind',
@@ -58,6 +71,17 @@ export class TripMealPackage {
     foreignKeyConstraintName: 'FK_trip_meal_packages_trip',
   })
   trip: Trip;
+
+  /** Чьи это пакеты; NULL — общие. */
+  @Column({ name: 'eater_user_id', type: 'uuid', nullable: true })
+  eaterUserId: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({
+    name: 'eater_user_id',
+    foreignKeyConstraintName: 'FK_trip_meal_packages_eater',
+  })
+  eater: User | null;
 
   @Column({ type: 'varchar', length: 60 })
   name: string;

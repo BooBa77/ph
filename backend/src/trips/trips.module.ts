@@ -1,4 +1,4 @@
-﻿import { Module } from '@nestjs/common';
+import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
@@ -28,6 +28,7 @@ import { TripsController } from './trips.controller';
 import { TripsService } from './trips.service';
 import { TripMealsController } from './trip-meals.controller';
 import { TripMealsService } from './trip-meals.service';
+import { TripMyMealsController } from './trip-my-meals.controller';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
 import { MessageActionsController } from './message-actions.controller';
@@ -76,6 +77,7 @@ import { ObjectsService } from './objects.service';
   controllers: [
     TripsController,
     TripMealsController,
+    TripMyMealsController,
     ObjectsController,
     MessageActionsController,
     ConversationsController,
