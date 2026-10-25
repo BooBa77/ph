@@ -100,21 +100,24 @@ function lineDraft(key: string): {
 }
 
 /**
- * Свёрнутые формы добавления: ключ приёма → скрыть выбор блюда и продукта.
+ * Свёрнутая плашка: «только результат».
  *
- * Когда приём уже собран, три поля выбора занимают половину плашки, и
- * разглядывать результат мешает именно они. Состояние живёт в памяти
- * вкладки: это режим просмотра на минуту, а не настройка, которую надо
- * запоминать между заходами.
+ * Прячем всё, что нужно в момент сборки и мешает в момент просмотра:
+ * кнопки формы приёма (готовка/перекус), колонку «ФАСОВКА по пакетам»
+ * с кульком и выбор блюда с продуктом. Остаются название приёма, его вес,
+ * блюда с составом и строки продуктов — по ним и видно, что человек ест.
+ *
+ * Состояние живёт в памяти вкладки: это режим просмотра на минуту, а не
+ * настройка, которую надо запоминать между заходами.
  */
-const addHidden = ref<Record<string, boolean>>({})
+const editHidden = ref<Record<string, boolean>>({})
 
-function isAddHidden(key: string): boolean {
-  return addHidden.value[key] === true
+function isEditHidden(key: string): boolean {
+  return editHidden.value[key] === true
 }
 
-function toggleAdd(key: string): void {
-  addHidden.value[key] = !isAddHidden(key)
+function toggleEdit(key: string): void {
+  editHidden.value[key] = !isEditHidden(key)
 }
 
 /** Кто из смотрящих — едок (для флага «питаюсь отдельно»). */
@@ -736,27 +739,27 @@ onMounted(() => {
               :data-test="`meal-${day.index}-${kind}`"
             >
               <!--
-                Свернуть выбор блюда и продукта. Кнопка живёт в углу плашки,
-                а не в колонке формы: свёрнутая колонка исчезает вместе
+                Свернуть плашку до результата. Кнопка живёт в углу плашки,
+                а не в скрываемых полях: свёрнутая колонка исчезает вместе
                 с кнопкой, и развернуть приём было бы нечем.
               -->
               <button
                 v-if="canEdit && mealOf(day.index, kind)"
                 type="button"
                 class="absolute right-1.5 top-1.5 flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
-                :aria-expanded="!isAddHidden(mealKey(day.index, kind))"
+                :aria-expanded="!isEditHidden(mealKey(day.index, kind))"
                 :aria-label="
-                  isAddHidden(mealKey(day.index, kind))
-                    ? 'Показать выбор блюда и продукта'
-                    : 'Скрыть выбор блюда и продукта'
+                  isEditHidden(mealKey(day.index, kind))
+                    ? 'Показать поля приёма'
+                    : 'Свернуть поля приёма'
                 "
                 :title="
-                  isAddHidden(mealKey(day.index, kind))
-                    ? 'Показать выбор блюда и продукта'
-                    : 'Скрыть выбор блюда и продукта'
+                  isEditHidden(mealKey(day.index, kind))
+                    ? 'Показать поля приёма'
+                    : 'Свернуть поля приёма'
                 "
                 :data-test="`meal-add-toggle-${day.index}-${kind}`"
-                @click="toggleAdd(mealKey(day.index, kind))"
+                @click="toggleEdit(mealKey(day.index, kind))"
               >
                 <svg
                   viewBox="0 0 16 16"
@@ -767,7 +770,7 @@ onMounted(() => {
                   aria-hidden="true"
                 >
                   <path
-                    v-if="isAddHidden(mealKey(day.index, kind))"
+                    v-if="isEditHidden(mealKey(day.index, kind))"
                     d="M4 6l4 4 4-4"
                     stroke-linecap="round"
                     stroke-linejoin="round"
@@ -783,12 +786,23 @@ onMounted(() => {
 
               <!-- Строка 1: приём | фасовка | блюда -->
               <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
-                <div class="flex flex-col items-start gap-1">
+                <div
+                  class="flex"
+                  :class="
+                    isEditHidden(mealKey(day.index, kind))
+                      ? 'flex-row flex-wrap items-baseline gap-2'
+                      : 'flex-col items-start gap-1'
+                  "
+                >
                   <span class="text-sm font-medium text-text">
                     {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
                   </span>
 
-                  <div v-if="canEdit" class="flex flex-col items-start gap-1" data-test="meal-form">
+                  <div
+                    v-if="canEdit && !isEditHidden(mealKey(day.index, kind))"
+                    class="flex flex-col items-start gap-1"
+                    data-test="meal-form"
+                  >
                     <button
                       v-for="form in TRIP_MEAL_FORMS"
                       :key="form"
@@ -812,7 +826,10 @@ onMounted(() => {
                   </p>
                 </div>
 
-                <div class="flex flex-col gap-1 md:col-start-2">
+                <div
+                  v-if="!isEditHidden(mealKey(day.index, kind))"
+                  class="flex flex-col gap-1 md:col-start-2"
+                >
                   <span class="text-xs uppercase tracking-wide text-muted">ФАСОВКА по пакетам</span>
                   <button
                     v-if="canEdit && mealOf(day.index, kind)"
@@ -832,7 +849,7 @@ onMounted(() => {
                 </div>
 
                 <div
-                  v-if="canEdit && !isAddHidden(mealKey(day.index, kind))"
+                  v-if="canEdit && !isEditHidden(mealKey(day.index, kind))"
                   class="flex flex-col gap-1 pr-6 md:col-start-3"
                 >
                   <span class="text-xs uppercase tracking-wide text-muted">Блюда</span>

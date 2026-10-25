@@ -405,24 +405,34 @@ describe('TripMeals', () => {
     expect(wrapper.find('[data-test="eats-separately"]').exists()).toBe(true)
   })
 
-  it('иконка в углу плашки сворачивает выбор блюда и продукта', async () => {
+  it('иконка в углу плашки сворачивает её до результата', async () => {
     const wrapper = await mountMeals()
 
-    expect(wrapper.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="meal-line-amount-1-breakfast"]').exists()).toBe(true)
+    const card = () => wrapper.find('[data-test="meal-1-breakfast"]')
+
+    expect(card().find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(true)
+    expect(card().find('[data-test="meal-line-amount-1-breakfast"]').exists()).toBe(true)
+    expect(card().find('[data-test="meal-form"]').exists()).toBe(true)
+    expect(card().find('[data-test="meal-kulek-1-breakfast"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="meal-add-toggle-1-breakfast"]').trigger('click')
     await flushPromises()
 
-    // Поля выбора спрятаны, результат приёма — на месте.
-    expect(wrapper.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="meal-line-amount-1-breakfast"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="meal-1-breakfast"]').text()).toContain('Каша')
+    // Поля сборки спрятаны: выбор блюда и продукта, форма приёма, фасовка.
+    expect(card().find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
+    expect(card().find('[data-test="meal-line-amount-1-breakfast"]').exists()).toBe(false)
+    expect(card().find('[data-test="meal-form"]').exists()).toBe(false)
+    expect(card().find('[data-test="meal-kulek-1-breakfast"]').exists()).toBe(false)
+    // Результат на месте: название приёма, вес, блюдо.
+    expect(card().text()).toContain('Завтрак')
+    expect(card().find('[data-test="meal-weight"]').exists()).toBe(true)
+    expect(card().text()).toContain('Каша')
 
     await wrapper.find('[data-test="meal-add-toggle-1-breakfast"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(true)
+    expect(card().find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(true)
+    expect(card().find('[data-test="meal-form"]').exists()).toBe(true)
   })
 
   it('у пустого приёма иконки свёртывания нет', async () => {
