@@ -409,6 +409,36 @@ function packLabel(pack: TripMealPackage): string {
   return pack.kind === 'kulek' ? `${pack.name} · кулёк` : pack.name
 }
 
+/** Строка кулька: количество у него всегда «всё», менять нечего. */
+function isKulekRow(meal: TripMeal | undefined, row: PackRow): boolean {
+  return Boolean(
+    meal &&
+      packsFor(meal).some(
+        (pack) => pack.kind === 'kulek' && pack.id === row.packageId,
+      ),
+  )
+}
+
+/**
+ * Пакеты в списке этой строки.
+ *
+ * Кулёк виден только там, где он и так стоит: в чужих строках его нет.
+ * Причина техническая: любая правка долей расформировывает кулёк (правило
+ * «ручная фасовка отменяет кулёк»), и если бы его можно было выбрать
+ * из обычной строки, запрос пришёл бы с пакетом, которого уже нет, —
+ * бэкенд ответил бы 400. Собрать всё в кулёк по-прежнему кнопка
+ * «всё в отдельный кулёк».
+ */
+function packOptions(
+  meal: TripMeal | undefined,
+  row: PackRow,
+): TripMealPackage[] {
+  const packs = normalPackages.value
+  const kulek = meal ? kulekOf(meal) : undefined
+
+  return kulek && kulek.id === row.packageId ? [...packs, kulek] : packs
+}
+
 /** Строка продукта приёма по продукту рецепта. */
 function productById(meal: TripMeal, productId: number): TripMealProduct | undefined {
   return meal.products.find((product) => product.productId === productId)
@@ -628,7 +658,8 @@ function setRowAmount(
   row: PackRow,
   event: Event,
 ): void {
-  if (row.isFree) return
+  // У кулька количество всегда «всё»: любая правка долей его расформирует.
+  if (row.isFree || isKulekRow(mealOf(dayIndex, kind), row)) return
 
   const value = (event.target as HTMLSelectElement).value
   if (!value) return
@@ -1178,7 +1209,7 @@ onMounted(() => {
                           <option value="" disabled></option>
                           <option value="__new__">новый пакет</option>
                           <option
-                            v-for="pack in packsFor(mealOf(day.index, kind))"
+                            v-for="pack in packOptions(mealOf(day.index, kind), row)"
                             :key="pack.id"
                             :value="pack.id"
                           >
@@ -1187,7 +1218,7 @@ onMounted(() => {
                         </select>
                         <select
                           :value="amountValue(row)"
-                          :disabled="row.isFree"
+                          :disabled="row.isFree || isKulekRow(mealOf(day.index, kind), row)"
                           :data-test="shareTest('ing-amount', dish.dishId + '-' + ingredient.productId, row)"
                           class="w-16 shrink-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
                           @change="setIngredientAmount(day.index, kind, ingredient.productId, row, $event)"
@@ -1272,7 +1303,7 @@ onMounted(() => {
                               <option value="" disabled></option>
                               <option value="__new__">новый пакет</option>
                               <option
-                                v-for="pack in packsFor(mealOf(day.index, kind))"
+                                v-for="pack in packOptions(mealOf(day.index, kind), row)"
                                 :key="pack.id"
                                 :value="pack.id"
                               >
@@ -1281,7 +1312,7 @@ onMounted(() => {
                             </select>
                             <select
                               :value="amountValue(row)"
-                              :disabled="row.isFree"
+                              :disabled="row.isFree || isKulekRow(mealOf(day.index, kind), row)"
                               :data-test="shareTest('alloc-amount', String(product.productId), row)"
                               class="rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
                               @change="setRowAmount(day.index, kind, product, row, $event)"

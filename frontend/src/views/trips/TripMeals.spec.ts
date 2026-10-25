@@ -611,7 +611,8 @@ describe('TripMeals', () => {
     expect(wrapper.find('[data-test="ing-pack-d1-1"]').text()).toContain('1з · кулёк')
     expect(pack().value).toBe('pk')
     expect(amount().value).toBe('all')
-    expect(amount().disabled).toBe(false)
+    // У кулька количество всегда «всё»: правка расформировала бы его.
+    expect(amount().disabled).toBe(true)
 
     // Другой пакет расформировывает кулёк — без подтверждения, как решили.
     await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p2')
@@ -620,6 +621,8 @@ describe('TripMeals', () => {
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
       { packageId: 'p2', amount: 0, isElastic: true },
     ])
+    // Кулёк больше не пакет этой строки — и в списке его нет.
+    expect(wrapper.find('[data-test="ing-pack-d1-1"]').text()).not.toContain('кулёк')
   })
 
   it('остаток — такая же строка с другим весом и своим пакетом', async () => {
@@ -656,6 +659,49 @@ describe('TripMeals', () => {
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
       { packageId: 'p1', amount: 100, isElastic: false },
       { packageId: 'p2', amount: 60, isElastic: false },
+    ])
+  })
+
+  it('остаток продукта — такая же строка без подписи остатка', async () => {
+    currentPlan.meals[0]!.products.push({
+      productId: 2,
+      name: 'Хлеб',
+      unit: 'g',
+      weightPerUnitGrams: 1,
+      recipeAmount: 0,
+      manualAmount: 200,
+      amount: 200,
+      isMeat: false,
+      fromDishes: [],
+      allocations: [],
+    })
+
+    const wrapper = await mountMeals()
+
+    // 150 из 200 в пакет — остаток 50 встаёт второй такой же строкой.
+    await wrapper.find('[data-test="alloc-pack-2"]').setValue('p1')
+    await flushPromises()
+    await wrapper.find('[data-test="alloc-amount-2"]').setValue('150')
+    await flushPromises()
+
+    const second = wrapper.find('[data-test="meal-product-2-1"]')
+
+    expect(second.exists()).toBe(true)
+    expect(second.text()).toContain('Хлеб')
+    expect(second.text()).toContain('50 г')
+    expect(second.text()).not.toContain('остаток')
+    expect(second.find('[data-test="alloc-pack-2-2"]').text()).toContain('новый пакет')
+    expect(
+      (second.find('[data-test="alloc-amount-2-2"]').element as HTMLSelectElement)
+        .disabled,
+    ).toBe(true)
+
+    await second.find('[data-test="alloc-pack-2-2"]').setValue('p2')
+    await flushPromises()
+
+    expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 2, [
+      { packageId: 'p1', amount: 150, isElastic: false },
+      { packageId: 'p2', amount: 50, isElastic: false },
     ])
   })
 
