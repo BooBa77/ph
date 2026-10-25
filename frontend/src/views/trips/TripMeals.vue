@@ -779,13 +779,9 @@ onMounted(() => {
                         {{ dish.title }}
                       </option>
                     </select>
-                  </div>
-                </div>
-              </div>
-
-                              <!-- Строка продуктов: заголовок и форма добавления -->
-                <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
-                  <div class="md:col-start-3">
+                <!-- Строка продуктов: заголовок и форма добавления -->
+                <div class="mt-3 flex flex-col gap-2">
+                  <div>
                     <span class="text-xs uppercase tracking-wide text-muted">Продукты</span>
 
                     <div v-if="canEdit" class="flex flex-col" data-test="meal-add">
@@ -821,7 +817,11 @@ onMounted(() => {
                   </div>
                 </div>
 
-<template v-if="mealOf(day.index, kind)">
+                  </div>
+                </div>
+              </div>
+
+              <template v-if="mealOf(day.index, kind)">
                 <!-- Строки блюд: пары фасовки слева, блюдо справа -->
                 <div
                   v-for="dish in mealOf(day.index, kind)!.dishes"
@@ -1009,10 +1009,13 @@ onMounted(() => {
 
                       <div class="flex items-center gap-2 text-sm text-amber-700 md:col-start-3">
                         <span class="font-medium">{{ product.name }}</span>
-                        <span class="text-xs">
-                          {{ formatProductAmount(product.amount - allocatedOf(product), product.unit) }}
-                          — остаток
+                        <span
+                          class="w-16 shrink-0 rounded border border-border bg-field px-1 py-0.5 text-center text-xs text-text"
+                          data-test="meal-leftover-amount"
+                        >
+                          {{ product.amount - allocatedOf(product) }}
                         </span>
+                        <span class="text-xs text-muted">{{ product.unit }}</span>
                         <button
                           v-if="canEdit"
                           type="button"
