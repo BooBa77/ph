@@ -172,7 +172,18 @@ function plan(): TripMealPlan {
         weightActualGrams: null,
         weightActualStale: false,
         weightEstimatedGrams: 0,
-        items: [],
+        items: [
+          {
+            mealId: 'm1',
+            dayIndex: 1,
+            kind: 'breakfast',
+            productId: 1,
+            name: 'Крупа',
+            amount: 160,
+            isElastic: false,
+            weightGrams: 160,
+          },
+        ],
       },
     ],
   }

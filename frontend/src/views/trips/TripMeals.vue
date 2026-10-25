@@ -313,7 +313,7 @@ function productById(meal: TripMeal, productId: number): TripMealProduct | undef
 /** Значение селекта «кол-во»: пусто, «всё» или число. */
 function allocAmountValue(product: TripMealProduct | undefined): string {
   const share = normalShare(product)
-  if (!share) return 'all'
+  if (!share || share.amount === 0) return 'all'
 
   return share.isElastic ? 'all' : String(share.amount)
 }
@@ -387,7 +387,7 @@ const unpackedRows = computed(() => {
 
       rows.push({
         key: `${meal.id}:${product.productId}`,
-        meal: `${TRIP_MEAL_CODES[meal.kind]} ${TRIP_MEAL_LABELS[meal.kind]}`,
+        meal: `${meal.dayIndex}${TRIP_MEAL_CODES[meal.kind]} ${TRIP_MEAL_LABELS[meal.kind]}`,
         name: product.name,
         left,
         unit: product.unit,
@@ -694,7 +694,7 @@ onMounted(() => {
                 </div>
 
                 <div class="flex flex-col gap-1 md:col-start-2">
-                  <span class="text-xs uppercase tracking-wide text-muted">Фасовка · в пакет / КОЛ-ВО</span>
+                  <span class="text-xs uppercase tracking-wide text-muted">ФАСОВКА по пакетам</span>
                   <button
                     v-if="canEdit && mealOf(day.index, kind)"
                     type="button"
@@ -866,7 +866,10 @@ onMounted(() => {
                   </div>
                 </div>
 
-                <div class="grid gap-x-4 text-[10px] uppercase leading-none text-muted md:grid-cols-[9rem_12rem_1fr]">
+                <div
+                  v-if="mealOf(day.index, kind)!.products.some((row) => row.manualAmount > 0)"
+                  class="grid gap-x-4 text-[10px] uppercase leading-none text-muted md:grid-cols-[9rem_12rem_1fr]"
+                >
                   <span class="hidden md:col-start-1 md:block"></span>
                   <span class="flex gap-1 md:col-start-2">
                     <span class="flex-1">в пакет</span>
@@ -1053,7 +1056,10 @@ onMounted(() => {
               </template>
             </div>
 
-            <div class="flex w-full flex-wrap items-center gap-2">
+            <div
+              v-if="pack.items.length"
+              class="flex w-full flex-wrap items-center gap-2"
+            >
               <span class="text-xs text-muted">
                 расчётно: {{ formatWeight(pack.weightEstimatedGrams) }}
               </span>
@@ -1084,6 +1090,8 @@ onMounted(() => {
                 требуется перевзвесить пакет
               </span>
             </div>
+
+            <p v-else class="w-full text-xs text-muted">пустой</p>
 
             <ul v-if="pack.items.length" class="w-full border-t border-border pt-2">
               <li
