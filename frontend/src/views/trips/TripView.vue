@@ -9,6 +9,7 @@ import { useAuthStore } from '@/stores/auth'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
 import TripMeals from '@/views/trips/TripMeals.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
+import TripTabIcon from '@/components/trips/TripTabIcon.vue'
 import {
   TRIP_TAB_LABELS,
   TRIP_VISIBILITY_LABELS,
@@ -274,7 +275,7 @@ async function toggleRecruitment() {
           v-for="item in displayTabs"
           :key="item.code"
           type="button"
-          class="-mb-px cursor-pointer border-b-2 bg-transparent px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          class="-mb-px flex cursor-pointer items-center gap-1.5 border-b-2 bg-transparent px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           :class="
             activeTab === item.code
               ? 'border-primary font-medium text-primary'
@@ -285,6 +286,7 @@ async function toggleRecruitment() {
           :data-test="`tab-${item.code}`"
           @click="activeTab = item.code"
         >
+          <span class="h-4 w-4 shrink-0"><TripTabIcon :name="item.code" /></span>
           {{ item.label }}
         </button>
       </nav>
@@ -319,7 +321,7 @@ async function toggleRecruitment() {
           v-for="item in displayTabs"
           :key="item.code"
           type="button"
-          class="flex cursor-pointer items-center justify-center border-t-2 bg-transparent px-1 py-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+          class="flex cursor-pointer flex-col items-center justify-center gap-0.5 border-t-2 bg-transparent px-1 py-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40"
           :class="
             activeTab === item.code
               ? 'border-primary font-medium text-primary'
@@ -329,6 +331,7 @@ async function toggleRecruitment() {
           :data-test="`tab-mobile-${item.code}`"
           @click="activeTab = item.code"
         >
+          <span class="h-4 w-4 shrink-0"><TripTabIcon :name="item.code" /></span>
           {{ item.label }}
         </button>
       </nav>
