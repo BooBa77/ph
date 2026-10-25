@@ -627,6 +627,26 @@ describe('TripMeals', () => {
     expect(wrapper.find('[data-test="ing-pack-d1-1"]').text()).not.toContain('кулёк')
   })
 
+  it('у строки кулька нет крестика: его можно только расформировать', async () => {
+    currentPlan.packages.push({
+      id: 'pk',
+      name: '1з',
+      kind: 'kulek',
+      mealId: 'm1',
+      weightActualGrams: null,
+      weightActualStale: false,
+      weightEstimatedGrams: 160,
+      items: [],
+    })
+    currentPlan.meals[0]!.products[0]!.allocations = [
+      { packageId: 'pk', amount: 160, isElastic: true },
+    ]
+
+    const wrapper = await mountMeals()
+
+    expect(wrapper.find('[data-test="ing-action-d1-1-0"]').exists()).toBe(false)
+  })
+
   it('остаток — такая же строка с другим весом и своим пакетом', async () => {
     const wrapper = await mountMeals()
 
@@ -780,7 +800,53 @@ describe('TripMeals', () => {
     expect(mocks.removeMealDish).not.toHaveBeenCalled()
   })
 
-  it('крестик остатка продукта убирает продукт', async () => {
+  it('крестик остатка продукта ужимает план до разложенного, а не убирает продукт', async () => {
+    currentPlan.meals[0]!.products.push({
+      productId: 2,
+      name: 'Хлеб',
+      unit: 'g',
+      weightPerUnitGrams: 1,
+      recipeAmount: 0,
+      manualAmount: 200,
+      amount: 200,
+      isMeat: false,
+      fromDishes: [],
+      allocations: [],
+    })
+
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="alloc-pack-2"]').setValue('p1')
+    await flushPromises()
+    await wrapper.find('[data-test="alloc-amount-2"]').setValue('150')
+    await flushPromises()
+
+    // Остаток 50 не нужен: план ужимается до 150, строка остатка исчезает.
+    await wrapper.find('[data-test="meal-line-remove-2-2"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 2, 150)
+    expect(mocks.removeMealLine).not.toHaveBeenCalled()
+  })
+
+  it('крестик остатка ингредиента ужимает план, а не убирает ингредиент', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p1')
+    await flushPromises()
+    await wrapper.find('[data-test="ing-amount-d1-1"]').setValue('100')
+    await flushPromises()
+
+    await wrapper.find('[data-test="ing-action-d1-1-1"]').trigger('click')
+    await flushPromises()
+
+    // Разложено 100 из рецепта 160: убавка -60, ингредиент остаётся.
+    expect(mocks.setMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 1, -60)
+    expect(mocks.setMealDishExclusions).not.toHaveBeenCalled()
+    expect(mocks.removeMealDish).not.toHaveBeenCalled()
+  })
+
+  it('крестик единственной строки продукта убирает продукт', async () => {
     currentPlan.meals[0]!.products.push({
       productId: 2,
       name: 'Хлеб',

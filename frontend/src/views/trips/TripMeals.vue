@@ -15,6 +15,7 @@ import {
   setMealForm,
   setMealKulek,
   addMealLine,
+  setMealLine,
   setMyStatus,
   updateMealPackage,
 } from '@/api/trips'
@@ -778,7 +779,7 @@ function removeShareRow(
   saveShares(dayIndex, kind, product, shares)
 }
 
-/** Крестик строки продукта: у доли — только эта доля, у остатка — продукт. */
+/** Крестик строки продукта: у доли — только эта доля, у остатка — остаток. */
 function removeProductRow(
   dayIndex: number,
   kind: TripMealKind,
@@ -786,12 +787,37 @@ function removeProductRow(
   row: PackRow,
 ): void {
   if (row.isFree) {
-    removeLine(dayIndex, kind, product.productId)
+    // «Остаток не берём»: план ужимается до разложенного, и строка остатка
+    // исчезает. Если не разложено ничего, ужимать некуда — убираем продукт.
+    if (allocatedOf(product) > 0) {
+      dropRest(dayIndex, kind, product)
+    } else {
+      removeLine(dayIndex, kind, product.productId)
+    }
 
     return
   }
 
   removeShareRow(dayIndex, kind, product, row)
+}
+
+/**
+ * Убрать строку остатка: план ужимается до разложенного.
+ *
+ * Убавка на «разложено минус рецепт» — та же ручная строка, что когда-то
+ * жила под кнопкой «убрать лишнее», только теперь она означает ровно то,
+ * что человек сделал: остаток не нужен, в плане остаётся фасовка.
+ */
+function dropRest(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+): void {
+  const reduction = allocatedOf(product) - product.recipeAmount
+
+  void run(`${product.productId}:rest`, () =>
+    setMealLine(props.trip.id, dayIndex, kind, product.productId, reduction),
+  )
 }
 
 /** Крестик строки ингредиента: у доли — эта доля, у остатка — исключение. */
@@ -818,7 +844,14 @@ function ingredientAction(
     return
   }
 
-  // Свободная строка — это сам ингредиент: убираем его из приёма.
+  // Свободная строка: остаток не берём (план ужмётся до разложенного),
+  // а если не разложено ничего — убираем ингредиент из приёма.
+  if (product && allocatedOf(product) > 0) {
+    dropRest(dayIndex, kind, product)
+
+    return
+  }
+
   toggleDishIngredient(dayIndex, kind, dish, ingredient.productId)
 }
 
@@ -994,10 +1027,10 @@ onMounted(() => {
            желтоватый фон — чтобы переход к разделу читался глазами -->
       <details
         open
-        class="group flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-3"
+        class="group flex flex-col gap-4 rounded-2xl border border-amber-300 bg-amber-100 p-3"
         data-test="schedule"
       >
-        <summary class="cursor-pointer select-none text-sm text-amber-800">Раскладка</summary>
+        <summary class="cursor-pointer select-none text-sm text-amber-900">Раскладка</summary>
 
         <section
           v-for="day in days"
@@ -1349,13 +1382,15 @@ onMounted(() => {
                         </span>
 
                         <button
-                          v-if="canEdit"
+                          v-if="canEdit && !isKulekRow(mealOf(day.index, kind), row)"
                           type="button"
                           class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
                           :title="
                             dish.excludedProductIds.includes(ingredient.productId)
                               ? 'Вернуть ингредиент'
-                              : 'Убрать строку'
+                              : row.isFree
+                                ? 'Убрать остаток'
+                                : 'Убрать строку'
                           "
                           :data-test="`ing-action-${dish.dishId}-${ingredient.productId}-${row.position}`"
                           @click="ingredientAction(day.index, kind, dish, ingredient, row)"
@@ -1444,10 +1479,10 @@ onMounted(() => {
                           мясное · {{ meatPortion }}
                         </span>
                         <button
-                          v-if="canEdit"
+                          v-if="canEdit && !isKulekRow(mealOf(day.index, kind), row)"
                           type="button"
                           class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
-                          :title="row.isFree ? 'Убрать продукт' : 'Убрать долю из пакета'"
+                          :title="row.isFree ? 'Убрать остаток' : 'Убрать долю из пакета'"
                           :data-test="shareTest('meal-line-remove', String(product.productId), row)"
                           @click="removeProductRow(day.index, kind, product, row)"
                         >
@@ -1471,10 +1506,10 @@ onMounted(() => {
            фиолетовый фон отличает её от раскладки -->
       <details
         open
-        class="flex flex-col gap-2 rounded-2xl border border-violet-200 bg-violet-50/70 p-3"
+        class="flex flex-col gap-3 rounded-2xl border border-violet-300 bg-violet-100 p-3"
         data-test="packages"
       >
-        <summary class="cursor-pointer select-none text-sm text-violet-800">Пакеты</summary>
+        <summary class="cursor-pointer select-none text-sm text-violet-900">Пакеты</summary>
 
         <div v-if="canEdit" class="flex flex-wrap items-center justify-end gap-2">
           <button
@@ -1491,7 +1526,7 @@ onMounted(() => {
           Пакетов пока нет.
         </p>
 
-        <ul v-else class="flex flex-col gap-2">
+        <ul v-else class="mt-1 flex flex-col gap-2">
           <li
             v-for="pack in plan.packages"
             :key="pack.id"
@@ -1597,7 +1632,7 @@ onMounted(() => {
           </li>
         </ul>
 
-        <div v-if="unpackedRows.length" class="flex flex-col gap-1" data-test="unpacked">
+        <div v-if="unpackedRows.length" class="mt-1 flex flex-col gap-1" data-test="unpacked">
           <p class="text-xs text-muted">Не расфасовано:</p>
           <ul class="flex flex-col gap-0.5">
             <li v-for="row in unpackedRows" :key="row.key" class="text-xs text-muted">
