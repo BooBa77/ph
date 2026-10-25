@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onUnmounted, ref, watch } from 'vue'
 
 import { createProduct, searchProducts } from '@/api/meals'
@@ -103,7 +103,7 @@ onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
 })
 
-/** Свой продукт: вес единицы 0, граммы по нему не считаются. */
+/** Свой продукт: только в походе, в справочник не пишется. */
 async function createCustom() {
   const name = query.value.trim()
   if (name.length === 0) return
@@ -112,7 +112,12 @@ async function createCustom() {
   error.value = null
 
   try {
-    choose(await createProduct({ name, unit: 'piece' }))
+    choose(
+      await createProduct(
+        { name, unit: 'piece', weightPerUnitGrams: 0 },
+        props.tripId,
+      ),
+    )
   } catch (cause) {
     error.value =
       cause instanceof Error ? cause.message : 'Не удалось добавить продукт'
@@ -128,6 +133,24 @@ function choose(product: Product) {
   options.value = []
 }
 
+/**
+ * Enter: выбрать первое совпадение, а если совпадений нет — завести свой
+ * продукт похода. Кнопка под полем делает то же самое, но Enter не зависит
+ * от того, дотянулась ли мышь до разметки.
+ */
+function submit() {
+  const first = options.value[0]
+  if (first) {
+    choose(first)
+
+    return
+  }
+
+  if (query.value.trim().length > 0 && !isCreating.value) {
+    void createCustom()
+  }
+}
+
 
 </script>
 
@@ -139,6 +162,7 @@ function choose(product: Product) {
       :placeholder="props.placeholder"
       class="w-full rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors focus:border-primary focus:outline-none"
       data-test="product-search"
+      @keydown.enter.prevent="submit"
     />
 
     <p v-if="error" class="text-xs text-red-600">{{ error }}</p>
