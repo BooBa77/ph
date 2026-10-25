@@ -603,7 +603,7 @@ onMounted(() => {
           <h2 class="text-sm text-muted">Едоки</h2>
 
           <p class="text-sm text-text" data-test="eaters-counts">
-          в общей раскладке — {{ plan.eaters.total }}
+          {{ plan.eaters.total }} в общей раскладке
           (М-{{ plan.eaters.men }}, Ж-{{ plan.eaters.women }}),
           <template v-if="plan.eaters.vegetarians === 0">вегетарианцев нет</template>
           <template v-else>вегетарианцев {{ plan.eaters.vegetarians }}</template>
@@ -688,7 +688,7 @@ onMounted(() => {
                     </button>
                   </div>
 
-                  <p class="text-xs text-muted" data-test="meal-weight">
+                  <p v-if="mealOf(day.index, kind) && mealOf(day.index, kind)!.weightGrams > 0" class="text-xs text-muted" data-test="meal-weight">
                     {{ formatWeight(mealOf(day.index, kind)?.weightGrams ?? 0) }}
                   </p>
                 </div>
@@ -717,6 +717,7 @@ onMounted(() => {
                   <div class="flex gap-1">
                     <select
                       v-model="dishDrafts[mealKey(day.index, kind)]"
+                      @change="addDish(day.index, kind)"
                       class="w-full rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
                       :data-test="`meal-dish-select-${day.index}-${kind}`"
                     >
