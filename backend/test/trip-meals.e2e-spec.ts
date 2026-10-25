@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+﻿import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import request from 'supertest';
@@ -66,6 +66,38 @@ describe('Питание похода (e2e)', () => {
       token: verified.body.accessToken as string,
       id: verified.body.user.id as string,
     };
+  }
+
+  const tripProductIds = new Map<string, number>();
+
+  /** Id продукта похода по имени: план ссылается на свои продукты. */
+  async function tripProductId(name: string): Promise<number> {
+    const cached = tripProductIds.get(name);
+    if (cached !== undefined) return cached;
+
+    const plan = await readPlan(organizerToken);
+    const meals = plan.meals as Array<{
+      products: Array<{ productId: number; name: string }>;
+    }>;
+
+    for (const meal of meals) {
+      const product = meal.products.find((row) => row.name === name);
+      if (product) {
+        tripProductIds.set(name, product.productId);
+        return product.productId;
+      }
+    }
+
+    throw new Error(`Продукта «${name}» нет в плане похода`);
+  }
+
+  /** Ручная строка по названию: продукт похода заводится или копируется сам. */
+  function addLine(day: number, kind: string, name: string, amount: number) {
+    return call(
+      'post',
+      `/api/trips/${tripId}/meals/${day}/${kind}/lines`,
+      organizerToken,
+    ).send({ name, amount });
   }
 
   function call(
@@ -355,13 +387,7 @@ describe('Питание похода (e2e)', () => {
   });
 
   it('ручная строка абсолютная и складывается с рецептом', async () => {
-    const response = await call(
-      'put',
-      `/api/trips/${tripId}/meals/1/breakfast/lines/${gramId}`,
-      organizerToken,
-    )
-      .send({ amount: 200 })
-      .expect(200);
+    const response = await addLine(1, 'breakfast', gramName, 200).expect(200);
 
     const plan = response.body as Record<string, unknown>;
 
@@ -474,7 +500,7 @@ describe('Питание похода (e2e)', () => {
 
     await call(
       'delete',
-      `/api/trips/${tripId}/meals/1/breakfast/lines/${gramId}`,
+      `/api/trips/${tripId}/meals/1/breakfast/lines/${await tripProductId(gramName)}`,
       organizerToken,
     ).expect(200);
 
@@ -518,7 +544,7 @@ describe('Питание похода (e2e)', () => {
 
     const response = await call(
       'put',
-      `/api/trips/${tripId}/meals/2/breakfast/allocations/${gramId}`,
+      `/api/trips/${tripId}/meals/2/breakfast/allocations/${await tripProductId(gramName)}`,
       organizerToken,
     )
       .send({
@@ -565,7 +591,7 @@ describe('Питание похода (e2e)', () => {
     // Содержимое поменяли — пакет просит перевесить.
     await call(
       'put',
-      `/api/trips/${tripId}/meals/2/breakfast/allocations/${gramId}`,
+      `/api/trips/${tripId}/meals/2/breakfast/allocations/${await tripProductId(gramName)}`,
       organizerToken,
     )
       .send({
@@ -603,7 +629,7 @@ describe('Питание похода (e2e)', () => {
     // Так это делает интерфейс: выбрав «всё», остальные доли снимаются.
     const response = await call(
       'put',
-      `/api/trips/${tripId}/meals/2/breakfast/allocations/${gramId}`,
+      `/api/trips/${tripId}/meals/2/breakfast/allocations/${await tripProductId(gramName)}`,
       organizerToken,
     )
       .send({
@@ -627,7 +653,7 @@ describe('Питание похода (e2e)', () => {
       `/api/trips/${tripId}/meals/2/breakfast/dishes/${organizerDishId}/exclusions`,
       organizerToken,
     )
-      .send({ productIds: [canId] })
+      .send({ productIds: [await tripProductId(canName)] })
       .expect(200);
 
     const plan = excluded.body as {
@@ -642,7 +668,7 @@ describe('Питание похода (e2e)', () => {
       (row) => row.dayIndex === 2 && row.kind === 'breakfast',
     )!;
 
-    expect(meal.dishes[0].excludedProductIds).toEqual([canId]);
+    expect(meal.dishes[0].excludedProductIds).toEqual([await tripProductId(canName)]);
     // Убранный ингредиент исчез из строк приёма.
     expect(meal.products.some((row) => row.name === canName)).toBe(false);
 
@@ -721,7 +747,8 @@ describe('Питание похода (e2e)', () => {
 
   it('чек-лист — проекция раскладки: продукт и «надо»', async () => {
     const checks = await readChecks(organizerToken);
-    const gram = checks.find((row) => row.productId === gramId)!;
+    const gramTripId = await tripProductId(gramName);
+    const gram = checks.find((row) => row.productId === gramTripId)!;
 
     expect(gram.name).toBe(gramName);
     expect(gram.needAmount).toBeGreaterThan(0);
@@ -739,16 +766,17 @@ describe('Питание похода (e2e)', () => {
       .send({ roleCodes: [] })
       .expect(200);
 
+    const gramTripId = await tripProductId(gramName);
     const response = await call(
       'put',
-      `/api/trips/${tripId}/meal-checks/${gramId}`,
+      `/api/trips/${tripId}/meal-checks/${gramTripId}`,
       memberToken,
     )
       .send({ isBought: true, boughtAmount: 600 })
       .expect(200);
 
     const gram = (response.body.checks as Array<Record<string, unknown>>).find(
-      (row) => row.productId === gramId,
+      (row) => row.productId === gramTripId,
     )!;
     expect(gram).toMatchObject({ isBought: true, boughtAmount: 600 });
     expect(gram.boughtByName).toBeTruthy();
@@ -757,14 +785,15 @@ describe('Питание похода (e2e)', () => {
   it('«домашнее» — отдельная отметка, строка остаётся', async () => {
     const response = await call(
       'put',
-      `/api/trips/${tripId}/meal-checks/${canId}`,
+      `/api/trips/${tripId}/meal-checks/${await tripProductId(canName)}`,
       organizerToken,
     )
       .send({ isHome: true })
       .expect(200);
 
+    const canTripId = await tripProductId(canName);
     const can = (response.body.checks as Array<Record<string, unknown>>).find(
-      (row) => row.productId === canId,
+      (row) => row.productId === canTripId,
     )!;
     expect(can).toMatchObject({ isHome: true, isOrphaned: false });
     expect(can.needAmount).toBeGreaterThan(0);
@@ -773,7 +802,7 @@ describe('Питание похода (e2e)', () => {
   it('продукт ушёл из плана, но куплен — строка остаётся', async () => {
     await call(
       'put',
-      `/api/trips/${tripId}/meal-checks/${canId}`,
+      `/api/trips/${tripId}/meal-checks/${await tripProductId(canName)}`,
       organizerToken,
     )
       .send({ isBought: true, boughtAmount: 2 })
@@ -792,7 +821,8 @@ describe('Питание похода (e2e)', () => {
     ).expect(200);
 
     const checks = await readChecks(organizerToken);
-    const can = checks.find((row) => row.productId === canId)!;
+    const canTripId = await tripProductId(canName);
+    const can = checks.find((row) => row.productId === canTripId)!;
 
     expect(can).toMatchObject({
       isBought: true,

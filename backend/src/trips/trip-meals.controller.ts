@@ -1,4 +1,5 @@
-import {
+﻿import {
+  HttpCode,
   Body,
   Controller,
   Delete,
@@ -18,6 +19,7 @@ import {
   SetMealAllocationsDto,
   SetMealFormDto,
   SetMealKulekDto,
+  AddMealLineDto,
   SetMealLineDto,
   SetDishExclusionsDto,
   TripMealCheckListDto,
@@ -136,6 +138,26 @@ export class TripMealsController {
       productId,
       dto.amount,
     );
+  }
+
+  /**
+   * Добавить продукт по названию: из справочника копией или свой.
+   *
+   * Отдельный POST, потому что продукт похода мог ещё не существовать:
+   * находка-или-создание и строка приёма — одна операция для пользователя.
+   */
+  @Post(':id/meals/:dayIndex/:kind/lines')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Добавить продукт в приём по названию' })
+  @ApiOkResponse({ type: TripMealPlanDto })
+  async addLineByName(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('dayIndex', ParseIntPipe) dayIndex: number,
+    @Param('kind') kind: TripMealKind,
+    @Body() dto: AddMealLineDto,
+  ): Promise<TripMealPlanDto> {
+    return this.tripMeals.addLineByName(authUser.id, id, dayIndex, kind, dto);
   }
 
   /** Убрать ручную строку. */

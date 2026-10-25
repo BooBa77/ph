@@ -1,4 +1,4 @@
-import {
+﻿import {
   Check,
   Column,
   CreateDateColumn,
@@ -11,7 +11,7 @@ import {
 } from 'typeorm';
 
 import { User } from '../../users/entities/user.entity';
-import { Product } from '../../meals/entities/product.entity';
+import { TripProduct } from './trip-product.entity';
 import { Trip } from './trip.entity';
 
 /**
@@ -50,12 +50,12 @@ export class TripMealCheck {
   @Column({ name: 'product_id', type: 'int' })
   productId: number;
 
-  @ManyToOne(() => Product, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => TripProduct, { onDelete: 'RESTRICT' })
   @JoinColumn({
     name: 'product_id',
     foreignKeyConstraintName: 'FK_trip_meal_checks_product',
   })
-  product: Product;
+  product: TripProduct;
 
   @Column({ name: 'is_bought', type: 'boolean', default: false })
   isBought: boolean;

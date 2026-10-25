@@ -1,4 +1,4 @@
-import {
+﻿import {
   Column,
   CreateDateColumn,
   Entity,
@@ -8,7 +8,7 @@ import {
   PrimaryGeneratedColumn,
 } from 'typeorm';
 
-import { Product } from '../../meals/entities/product.entity';
+import { TripProduct } from './trip-product.entity';
 import { TripMealDish } from './trip-meal-dish.entity';
 
 /**
@@ -39,12 +39,12 @@ export class TripMealDishExclusion {
   @Column({ name: 'product_id', type: 'int' })
   productId: number;
 
-  @ManyToOne(() => Product, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => TripProduct, { onDelete: 'RESTRICT' })
   @JoinColumn({
     name: 'product_id',
     foreignKeyConstraintName: 'FK_trip_meal_dish_exclusions_product',
   })
-  product: Product;
+  product: TripProduct;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

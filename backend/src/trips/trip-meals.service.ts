@@ -5,9 +5,10 @@
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, In, Not, type EntityManager } from 'typeorm';
+import { DataSource, In, IsNull, Not, type EntityManager } from 'typeorm';
 
 import { DishIngredient } from '../meals/entities/dish-ingredient.entity';
+import type { ProductUnit } from '../meals/meal.types';
 import { Dish } from '../meals/entities/dish.entity';
 import { Product } from '../meals/entities/product.entity';
 import {
@@ -31,6 +32,7 @@ import { TripMealLine } from './entities/trip-meal-line.entity';
 import { TripMealPackage } from './entities/trip-meal-package.entity';
 import { TripMeal } from './entities/trip-meal.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
+import { TripProduct } from './entities/trip-product.entity';
 import { Trip } from './entities/trip.entity';
 import {
   TRIP_MEAL_KINDS,
@@ -148,6 +150,9 @@ export class TripMealsService {
       });
       if (!exists) {
         await manager.insert(TripMealDish, { mealId: meal.id, dishId });
+        // Ингредиенты блюда живут в справочнике, а план похода — автономен:
+        // копируем их в поход, иначе блюдо нечего фасовать.
+        await this.materializeDishProducts(manager, trip.id, [dishId]);
         await this.syncKulekForMeal(manager, meal);
       }
     });
@@ -188,11 +193,11 @@ export class TripMealsService {
     await this.mutate(userId, id, async (manager, trip) => {
       await this.assertSlot(manager, trip, dayIndex, kind);
 
-      const product = await manager.findOne(Product, {
-        where: { id: productId },
+      const product = await manager.findOne(TripProduct, {
+        where: { id: productId, tripId: trip.id },
       });
       if (!product) {
-        throw new BadRequestException('Такого продукта нет в справочнике');
+        throw new BadRequestException('Такого продукта нет в этом походе');
       }
 
       const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind);
@@ -208,6 +213,86 @@ export class TripMealsService {
           mealId: meal.id,
           productId,
           amount,
+        });
+      }
+
+      await this.syncKulekForMeal(manager, meal);
+    });
+
+    return this.getPlan(userId, id);
+  }
+
+  /**
+   * Добавить продукт в приём по названию.
+   *
+   * Справочник — только источник подсказок: выбрали «тушёнку» — её имя,
+   * единица и вес копируются в поход; ввели «траву» — в походе появляется
+   * свой продукт, справочник не трогаем. Один вызов вместо «создай
+   * продукт, потом поставь строку».
+   */
+  async addLineByName(
+    userId: string,
+    id: number,
+    dayIndex: number,
+    kind: TripMealKind,
+    dto: {
+      amount: number;
+      name?: string;
+      catalogProductId?: number;
+      unit?: ProductUnit;
+      weightPerUnitGrams?: number;
+    },
+  ): Promise<TripMealPlanDto> {
+    await this.mutate(userId, id, async (manager, trip) => {
+      await this.assertSlot(manager, trip, dayIndex, kind);
+
+      let sample: {
+        name: string;
+        unit: ProductUnit;
+        weightPerUnitGrams: number;
+      } | null = null;
+
+      if (dto.catalogProductId !== undefined) {
+        const catalog = await manager.findOne(Product, {
+          where: { id: dto.catalogProductId, tripId: IsNull() },
+        });
+        if (!catalog) {
+          throw new BadRequestException('Такого продукта нет в справочнике');
+        }
+
+        sample = {
+          name: catalog.name,
+          unit: catalog.unit,
+          weightPerUnitGrams: catalog.weightPerUnitGrams,
+        };
+      } else if (dto.name && dto.name.trim().length > 0) {
+        sample = {
+          name: dto.name.trim(),
+          unit: dto.unit ?? 'piece',
+          weightPerUnitGrams: dto.weightPerUnitGrams ?? 0,
+        };
+      }
+
+      if (!sample) {
+        throw new BadRequestException(
+          'Нужно название продукта или продукт из справочника',
+        );
+      }
+
+      const product = await this.ensureTripProduct(manager, trip.id, sample);
+      const meal = await this.upsertMeal(manager, trip.id, dayIndex, kind);
+      const line = await manager.findOne(TripMealLine, {
+        where: { mealId: meal.id, productId: product.id },
+      });
+
+      if (line) {
+        line.amount = dto.amount;
+        await manager.save(line);
+      } else {
+        await manager.insert(TripMealLine, {
+          mealId: meal.id,
+          productId: product.id,
+          amount: dto.amount,
         });
       }
 
@@ -509,6 +594,7 @@ export class TripMealsService {
     const ingredients = dishIds.length
       ? await manager.find(DishIngredient, {
           where: { dishId: In(dishIds) },
+          relations: { product: true },
         })
       : [];
     const mealDishIds = dishes.map((row) => row.id);
@@ -523,14 +609,75 @@ export class TripMealsService {
       where: { mealId: meal.id },
     });
 
-    return [
-      ...new Set([
-        ...ingredients
-          .filter((ingredient) => !excluded.has(ingredient.productId))
-          .map((ingredient) => ingredient.productId),
-        ...lines.map((line) => line.productId),
-      ]),
-    ];
+    // Рецепт ссылается на справочник, а план — на продукт похода: пара
+    // «справочник → поход» строится по имени, имена там одинаковые.
+    const idByName = await this.tripProductIdsByName(manager, meal.tripId);
+
+    const fromDishes = ingredients
+      .map((ingredient) => idByName.get(ingredient.product.name))
+      .filter((productId): productId is number => productId !== undefined)
+      .filter((productId) => !excluded.has(productId));
+
+    return [...new Set([...fromDishes, ...lines.map((line) => line.productId)])];
+  }
+
+  /** Карта «имя продукта → id продукта похода». */
+  private async tripProductIdsByName(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<Map<string, number>> {
+    const products = await manager.find(TripProduct, { where: { tripId } });
+
+    return new Map(products.map((product) => [product.name, product.id]));
+  }
+
+  /**
+   * Продукт похода по образцу справочника.
+   *
+   * Это и есть «скопировать, а не сослаться»: имя, единица и вес
+   * переписываются в поход, дальше справочник ему не указ.
+   */
+  private async ensureTripProduct(
+    manager: EntityManager,
+    tripId: string,
+    sample: { name: string; unit: ProductUnit; weightPerUnitGrams: number },
+  ): Promise<TripProduct> {
+    const name = sample.name.trim();
+    const existing = await manager.findOne(TripProduct, {
+      where: { tripId, name },
+    });
+    if (existing) return existing;
+
+    return manager.save(
+      manager.create(TripProduct, {
+        tripId,
+        name,
+        unit: sample.unit,
+        weightPerUnitGrams: sample.weightPerUnitGrams,
+      }),
+    );
+  }
+
+  /** Ингредиенты блюда переезжают в поход копиями, когда блюдо ставят в приём. */
+  private async materializeDishProducts(
+    manager: EntityManager,
+    tripId: string,
+    dishIds: string[],
+  ): Promise<void> {
+    if (dishIds.length === 0) return;
+
+    const ingredients = await manager.find(DishIngredient, {
+      where: { dishId: In(dishIds) },
+      relations: { product: true },
+    });
+
+    for (const ingredient of ingredients) {
+      await this.ensureTripProduct(manager, tripId, {
+        name: ingredient.product.name,
+        unit: ingredient.product.unit,
+        weightPerUnitGrams: ingredient.product.weightPerUnitGrams,
+      });
+    }
   }
 
   /** Эластичные доли кулька на продукты, которых в нём ещё нет. */
@@ -666,9 +813,13 @@ export class TripMealsService {
 
       const ingredients = await manager.find(DishIngredient, {
         where: { dishId },
+        relations: { product: true },
       });
+      const idByName = await this.tripProductIdsByName(manager, trip.id);
       const allowed = new Set(
-        ingredients.map((ingredient) => ingredient.productId),
+        ingredients
+          .map((ingredient) => idByName.get(ingredient.product.name))
+          .filter((productId): productId is number => productId !== undefined),
       );
       const unique = [...new Set(productIds)];
       if (unique.some((productId) => !allowed.has(productId))) {
@@ -765,8 +916,11 @@ export class TripMealsService {
       (check) => check.isBought && !need.has(check.productId),
     );
     if (orphaned.length > 0) {
-      const products = await manager.find(Product, {
-        where: { id: In(orphaned.map((check) => check.productId)) },
+      const products = await manager.find(TripProduct, {
+        where: {
+          id: In(orphaned.map((check) => check.productId)),
+          tripId: String(id),
+        },
       });
 
       for (const check of orphaned) {
@@ -1050,6 +1204,14 @@ export class TripMealsService {
       relations: { product: true },
     });
 
+    // План живёт продуктами похода; справочник нужен только в рецептах.
+    const tripProducts = await manager.find(TripProduct, {
+      where: { tripId: trip.id },
+    });
+    const tripProductsByName = new Map(
+      tripProducts.map((product) => [product.name, product]),
+    );
+
     const allocations = await manager.find(TripMealAllocation, {
       where: { mealId: In(mealIds) },
     });
@@ -1082,6 +1244,7 @@ export class TripMealsService {
         allocations: allocations.filter((row) => row.mealId === meal.id),
         exclusionsByDish,
         eaters,
+        tripProductsByName,
       }),
     );
   }
@@ -1095,6 +1258,7 @@ export class TripMealsService {
       allocations: TripMealAllocation[];
       exclusionsByDish: Map<string, Set<number>>;
       eaters: TripEatersDto;
+      tripProductsByName: Map<string, TripProduct>;
     },
   ): TripMealDto {
     const products = new Map<number, ProductRow>();
@@ -1105,39 +1269,51 @@ export class TripMealsService {
       const ingredients = data.ingredientsByDish.get(Number(dish.id)) ?? [];
       const excluded = data.exclusionsByDish.get(row.id) ?? new Set<number>();
 
+      // Ингредиент рецепта ссылается на справочник; в плане он живёт
+      // продуктом похода с тем же именем.
+      const rows = ingredients
+        .map((ingredient) => ({
+          ingredient,
+          product: data.tripProductsByName.get(ingredient.product.name),
+        }))
+        .filter(
+          (row): row is { ingredient: DishIngredient; product: TripProduct } =>
+            row.product !== undefined,
+        );
+
       dishDtos.push({
         dishId: dish.id,
         title: dish.title,
-        ingredients: ingredients.map((ingredient) => ({
-          productId: ingredient.productId,
-          name: ingredient.product.name,
-          unit: ingredient.product.unit,
+        ingredients: rows.map(({ ingredient, product }) => ({
+          productId: product.id,
+          name: product.name,
+          unit: product.unit,
           amount: ingredient.amount,
           isMeat: ingredient.isMeat,
         })),
         excludedProductIds: [...excluded],
       });
 
-      for (const ingredient of ingredients) {
-        if (excluded.has(ingredient.productId)) continue;
+      for (const { ingredient, product } of rows) {
+        if (excluded.has(product.id)) continue;
 
         const portion = ingredient.isMeat
           ? Math.max(0, data.eaters.total - data.eaters.vegetarians)
           : data.eaters.total;
         const recipeAmount = ingredient.amount * portion;
 
-        const product = products.get(ingredient.productId) ?? {
-          product: ingredient.product,
+        const row = products.get(product.id) ?? {
+          product,
           recipeAmount: 0,
           manualAmount: 0,
           isMeat: false,
           fromDishes: new Set<string>(),
         };
 
-        product.recipeAmount += recipeAmount;
-        product.isMeat = product.isMeat || ingredient.isMeat;
-        product.fromDishes.add(dish.title);
-        products.set(ingredient.productId, product);
+        row.recipeAmount += recipeAmount;
+        row.isMeat = row.isMeat || ingredient.isMeat;
+        row.fromDishes.add(dish.title);
+        products.set(product.id, row);
       }
     }
 

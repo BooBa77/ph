@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+﻿import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -297,6 +297,56 @@ export class AddMealDishDto {
   @IsString({ message: 'Блюдо должно быть id' })
   @Matches(/^\d+$/, { message: 'Блюдо должно быть id' })
   dishId: string;
+}
+
+/**
+ * Тело `POST /api/trips/:id/meals/:day/:kind/lines`.
+ *
+ * Либо `catalogProductId` (продукт справочника копируется в поход), либо
+ * `name` (свой продукт этого похода). Ссылки на справочник в плане нет.
+ */
+export class AddMealLineDto {
+  @ApiProperty({ description: 'Количество', example: 1 })
+  @IsInt({ message: 'Количество — целое число' })
+  @Min(1, { message: 'Количество должно быть больше нуля' })
+  amount: number;
+
+  @ApiProperty({
+    description: 'Название своего продукта похода',
+    required: false,
+    example: 'Трава',
+  })
+  @IsOptional()
+  @IsString({ message: 'Название продукта — строка' })
+  @MaxLength(120, { message: 'Название длиннее 120 символов' })
+  name?: string;
+
+  @ApiProperty({
+    description: 'Id продукта справочника: скопировать в поход',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Id продукта — целое число' })
+  @Min(1)
+  catalogProductId?: number;
+
+  @ApiProperty({
+    description: 'Единица своего продукта',
+    required: false,
+    enum: PRODUCT_UNITS,
+  })
+  @IsOptional()
+  @IsIn(PRODUCT_UNITS, { message: 'Такой единицы нет в справочнике' })
+  unit?: ProductUnit;
+
+  @ApiProperty({
+    description: 'Вес единицы своего продукта, граммы',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Вес единицы — целое число грамм' })
+  @Min(0, { message: 'Вес единицы не может быть отрицательным' })
+  weightPerUnitGrams?: number;
 }
 
 /** Тело `PUT /api/trips/:id/meals/:day/:kind/lines/:productId`. */

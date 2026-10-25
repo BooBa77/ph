@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+﻿import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
@@ -11,6 +11,7 @@ import { Role } from './entities/role.entity';
 import { RoleTabPermission } from './entities/role-tab-permission.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
 import { TripMealAllocation } from './entities/trip-meal-allocation.entity';
+import { TripProduct } from './entities/trip-product.entity';
 import { TripMealCheck } from './entities/trip-meal-check.entity';
 import { TripMealDishExclusion } from './entities/trip-meal-dish-exclusion.entity';
 import { TripMealDish } from './entities/trip-meal-dish.entity';
@@ -56,6 +57,7 @@ import { ObjectsService } from './objects.service';
       TripMealDish,
       TripMealLine,
       TripMealPackage,
+      TripProduct,
       TripMealAllocation,
       TripMealCheck,
       TripMealDishExclusion,

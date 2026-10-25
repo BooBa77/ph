@@ -1,4 +1,4 @@
-import {
+﻿import {
   Check,
   Column,
   CreateDateColumn,
@@ -10,7 +10,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
-import { Product } from '../../meals/entities/product.entity';
+import { TripProduct } from './trip-product.entity';
 import { TripMeal } from './trip-meal.entity';
 import { TripMealPackage } from './trip-meal-package.entity';
 
@@ -55,12 +55,12 @@ export class TripMealAllocation {
   @Column({ name: 'product_id', type: 'int' })
   productId: number;
 
-  @ManyToOne(() => Product, { onDelete: 'RESTRICT' })
+  @ManyToOne(() => TripProduct, { onDelete: 'RESTRICT' })
   @JoinColumn({
     name: 'product_id',
     foreignKeyConstraintName: 'FK_trip_meal_allocations_product',
   })
-  product: Product;
+  product: TripProduct;
 
   @Column({ name: 'package_id', type: 'bigint' })
   packageId: string;
