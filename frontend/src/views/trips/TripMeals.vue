@@ -121,28 +121,35 @@ function toggleEdit(key: string): void {
 }
 
 /**
- * Все существующие приёмы свёрнуты — тогда иконка «все» показывает
- * разворот, а не повторное свёртывание. Считаем по приёмам из плана:
- * пустые плашки иконки не имеют и в счёт не идут.
+ * Ключи всех плашек раскладки: дни × приёмы.
+ *
+ * Считаем по дням, а не по заполненным приёмам: сворачивать нужно и пустые
+ * плашки — с автономным питанием их стало заметно больше, и листать
+ * полотно пустых форм тоже утомительно.
  */
-const allCollapsed = computed(() => {
-  const keys = (plan.value?.meals ?? []).map((meal) =>
-    mealKey(meal.dayIndex, meal.kind),
-  )
+const slotKeys = computed(() =>
+  days.value.flatMap((day) =>
+    day.kinds.map((kind) => mealKey(day.index, kind)),
+  ),
+)
 
-  return keys.length > 0 && keys.every((key) => isEditHidden(key))
-})
+/**
+ * Все плашки свёрнуты — тогда иконка «все» показывает разворот, а не
+ * повторное свёртывание.
+ */
+const allCollapsed = computed(
+  () =>
+    slotKeys.value.length > 0 &&
+    slotKeys.value.every((key) => isEditHidden(key)),
+)
 
 /** Свернуть или развернуть все плашки разом — со своего места на странице. */
 function toggleAll(): void {
   const next = !allCollapsed.value
-  const hidden = { ...editHidden.value }
 
-  for (const meal of plan.value?.meals ?? []) {
-    hidden[mealKey(meal.dayIndex, meal.kind)] = next
-  }
-
-  editHidden.value = hidden
+  editHidden.value = Object.fromEntries(
+    slotKeys.value.map((key) => [key, next]),
+  )
 }
 
 /** Кто из смотрящих — едок (для флага «питаюсь отдельно»). */
@@ -373,7 +380,7 @@ async function toggleSeparate() {
 
 const confirmingPackageId = ref<string | null>(null)
 
-/** Обычные пакеты: кулёк в списках долей не участвует. */
+/** Обычные пакеты: кулёк в списках чужих приёмов не участвует. */
 const normalPackages = computed(() =>
   (plan.value?.packages ?? []).filter((pack) => pack.kind === 'normal'),
 )
@@ -384,24 +391,86 @@ function kulekOf(meal: TripMeal): TripMealPackage | undefined {
   )
 }
 
+/**
+ * Пакеты, видимые в списках этого приёма: обычные плюс кулёк этого приёма.
+ *
+ * Кулёк — тара одного приёма, поэтому в чужих списках его нет. А в своём
+ * он честно стоит в списке: иначе, собрав всё в кулёк, человек видел бы
+ * пустые поля выбора пакета и не понимал, куда делась фасовка.
+ */
+function packsFor(meal: TripMeal | undefined): TripMealPackage[] {
+  const kulek = meal ? kulekOf(meal) : undefined
+
+  return kulek ? [...normalPackages.value, kulek] : normalPackages.value
+}
+
+/** Подпись пакета в списке: у кулька видно, что это он. */
+function packLabel(pack: TripMealPackage): string {
+  return pack.kind === 'kulek' ? `${pack.name} · кулёк` : pack.name
+}
+
 /** Строка продукта приёма по продукту рецепта. */
 function productById(meal: TripMeal, productId: number): TripMealProduct | undefined {
   return meal.products.find((product) => product.productId === productId)
 }
 
-/** Значение селекта «кол-во»: пусто, «всё» или число. */
-function allocAmountValue(product: TripMealProduct | undefined): string {
-  const share = normalShare(product)
-  if (!share || share.amount === 0) return 'all'
+/**
+ * Строка фасовки: доля продукта в пакете или ещё не разложенный остаток.
+ *
+ * Остаток — **такая же строка**, только без пакета: тот же выбор пакета,
+ * то же «кол-во», название и вес. Никаких подписей «остаток» и цвета:
+ * человек видит две одинаковые строки продукта с разными весами и кладёт
+ * каждую в свою тару.
+ */
+interface PackRow {
+  /** Позиция строки у продукта: 0 — первая, по ней строится id. */
+  position: number
+  /** Доля в `product.allocations`; −1 у остатка. */
+  index: number
+  key: string
+  packageId: string
+  amount: number
+  isElastic: boolean
+  /** Пакета ещё нет — поле количества заблокировано, как у продуктов. */
+  isFree: boolean
+}
 
-  return share.isElastic ? 'all' : String(share.amount)
+/** Доли продукта плюс (если есть) строка остатка. */
+function packRows(product: TripMealProduct | undefined): PackRow[] {
+  if (!product) return []
+
+  const rows: PackRow[] = product.allocations.map((share, index) => ({
+    position: index,
+    index,
+    key: `${product.productId}:${index}:${share.packageId}`,
+    packageId: share.packageId,
+    amount: share.amount,
+    isElastic: share.isElastic,
+    isFree: false,
+  }))
+
+  const left = leftoverOf(product)
+  if (rows.length === 0 || left > 0) {
+    rows.push({
+      position: rows.length,
+      index: -1,
+      key: `${product.productId}:left`,
+      packageId: '',
+      amount: rows.length === 0 ? product.amount : left,
+      isElastic: false,
+      isFree: true,
+    })
+  }
+
+  return rows
+}
+
+/** Значение селекта «кол-во» у строки: «всё» у эластичной, иначе число. */
+function amountValue(row: PackRow): string {
+  return row.isElastic ? 'all' : String(row.amount)
 }
 
 /** Сколько вариантов в селекте «кол-во»: от 1 до количества по рецепту. */
-function normalShare(product: TripMealProduct | undefined) {
-  return product?.allocations.find((row) => normalPackages.value.some((pack) => pack.id === row.packageId))
-}
-
 function amountOptions(product: TripMealProduct | undefined): number[] {
   return Array.from(
     { length: Math.max(product?.amount ?? 0, 1) },
@@ -409,11 +478,187 @@ function amountOptions(product: TripMealProduct | undefined): number[] {
   )
 }
 
-/** Пакет для ингредиента блюда: фасовка той же строки продукта. */
+/** data-test строки: у первой — прежний, у остальных — с номером строки. */
+function shareTest(prefix: string, base: string, row: PackRow): string {
+  return row.position === 0
+    ? `${prefix}-${base}`
+    : `${prefix}-${base}-${row.position + 1}`
+}
+
+function currentShares(
+  product: TripMealProduct,
+): Array<{ packageId: string; amount: number; isElastic: boolean }> {
+  return product.allocations.map((share) => ({
+    packageId: share.packageId,
+    amount: share.amount,
+    isElastic: share.isElastic,
+  }))
+}
+
+/**
+ * Нормализация перед сохранением: один пакет — одна доля, «всё» — одна
+ * на продукт.
+ *
+ * Две строки одного пакета бэкенд не примет (уникальный индекс), а это
+ * легко получить, перетасовав строки между пакетами. Лучше сложить самому,
+ * чем показать человеку 400.
+ */
+function normalizedShares(
+  rows: Array<{ packageId: string; amount: number; isElastic: boolean }>,
+): Array<{ packageId: string; amount: number; isElastic: boolean }> {
+  const merged = new Map<string, { amount: number; isElastic: boolean }>()
+
+  for (const row of rows) {
+    if (!row.packageId) continue
+    const existing = merged.get(row.packageId)
+    if (!existing) {
+      merged.set(row.packageId, {
+        amount: row.isElastic ? 0 : row.amount,
+        isElastic: row.isElastic,
+      })
+      continue
+    }
+    existing.isElastic = existing.isElastic || row.isElastic
+    existing.amount = existing.isElastic ? 0 : existing.amount + row.amount
+  }
+
+  let elasticSeen = false
+
+  return [...merged].map(([packageId, share]) => {
+    const isElastic = share.isElastic && !elasticSeen
+    if (isElastic) elasticSeen = true
+
+    return { packageId, amount: isElastic ? 0 : share.amount, isElastic }
+  })
+}
+
+function saveShares(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+  rows: Array<{ packageId: string; amount: number; isElastic: boolean }>,
+): void {
+  void run(`${product.productId}:alloc`, () =>
+    setMealAllocations(
+      props.trip.id,
+      dayIndex,
+      kind,
+      product.productId,
+      normalizedShares(rows),
+    ),
+  )
+}
+
+/** Новый пакет прямо из строки: создаём и сразу кладём в него долю. */
+async function saveWithNewPack(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+  build: (
+    packageId: string,
+  ) => Array<{ packageId: string; amount: number; isElastic: boolean }>,
+): Promise<void> {
+  const key = `${product.productId}:new-pack`
+  if (busy.value === key) return
+
+  busy.value = key
+  error.value = null
+
+  try {
+    const next = await createMealPackage(props.trip.id)
+    const pack = next.packages[next.packages.length - 1]
+    plan.value = pack
+      ? await setMealAllocations(
+          props.trip.id,
+          dayIndex,
+          kind,
+          product.productId,
+          normalizedShares(build(pack.id)),
+        )
+      : next
+  } catch (cause) {
+    error.value = messageOf(cause, 'Не удалось создать пакет')
+  } finally {
+    busy.value = null
+  }
+}
+
+/**
+ * Выбрали пакет в строке: доля переезжает, остальные доли стоят.
+ *
+ * Остаток (строка без пакета) становится новой долей. Если выбрали кулёк
+ * другого приёма — его здесь нет в списке, поэтому случай не возникает.
+ */
+function setRowPack(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+  row: PackRow,
+  event: Event,
+): void {
+  const value = (event.target as HTMLSelectElement).value
+  if (!value) return
+
+  const apply = (packageId: string) => {
+    const shares = currentShares(product)
+    if (row.isFree) {
+      shares.push({ packageId, amount: row.amount, isElastic: false })
+    } else {
+      const share = shares[row.index]
+      if (share) share.packageId = packageId
+    }
+
+    return shares
+  }
+
+  if (value === '__new__') {
+    void saveWithNewPack(dayIndex, kind, product, apply)
+
+    return
+  }
+
+  saveShares(dayIndex, kind, product, apply(value))
+}
+
+/** Выбрали количество: «всё» делает долю эластичной, число — фиксированной. */
+function setRowAmount(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+  row: PackRow,
+  event: Event,
+): void {
+  if (row.isFree) return
+
+  const value = (event.target as HTMLSelectElement).value
+  if (!value) return
+
+  const shares = currentShares(product)
+  const share = shares[row.index]
+  if (!share) return
+
+  if (value === 'all') {
+    share.amount = 0
+    share.isElastic = true
+    saveShares(dayIndex, kind, product, shares)
+
+    return
+  }
+
+  const amount = Number(value)
+  if (!Number.isInteger(amount) || amount <= 0) return
+
+  share.amount = amount
+  share.isElastic = false
+  saveShares(dayIndex, kind, product, shares)
+}
+
+/** Фасовка ингредиента блюда — та же строка продукта приёма. */
 function setIngredientPack(
   dayIndex: number,
   kind: TripMealKind,
   productId: number,
+  row: PackRow,
   event: Event,
 ): void {
   const meal = mealOf(dayIndex, kind)
@@ -421,14 +666,14 @@ function setIngredientPack(
   const product = productById(meal, productId)
   if (!product) return
 
-  setAllocationPack(dayIndex, kind, product, event)
+  setRowPack(dayIndex, kind, product, row, event)
 }
 
-/** Количество для ингредиента блюда. */
 function setIngredientAmount(
   dayIndex: number,
   kind: TripMealKind,
   productId: number,
+  row: PackRow,
   event: Event,
 ): void {
   const meal = mealOf(dayIndex, kind)
@@ -436,12 +681,19 @@ function setIngredientAmount(
   const product = productById(meal, productId)
   if (!product) return
 
-  setAllocationAmount2(dayIndex, kind, product, event)
+  setRowAmount(dayIndex, kind, product, row, event)
 }
 
 /** Всего разложено по пакетам. */
 function allocatedOf(product: TripMealProduct): number {
   return product.allocations.reduce((sum, row) => sum + row.amount, 0)
+}
+
+/** Сколько ещё не разложено: остаток — такая же строка, только без пакета. */
+function leftoverOf(product: TripMealProduct | undefined): number {
+  if (!product) return 0
+
+  return Math.max(0, product.amount - allocatedOf(product))
 }
 
 /** Насколько пакеты превысили рецепт — лишнее можно убрать. */
@@ -477,127 +729,7 @@ const unpackedRows = computed(() => {
   return rows
 })
 
-function saveShares(
-  dayIndex: number,
-  kind: TripMealKind,
-  product: TripMealProduct,
-  rows: Array<{ packageId: string; amount: number; isElastic: boolean }>,
-): void {
-  void run(`${product.productId}:alloc`, () =>
-    setMealAllocations(props.trip.id, dayIndex, kind, product.productId, rows),
-  )
-}
-
-/** Выбрали пакет: доля переезжает в него, количество сохраняется. */
-function setAllocationPack(
-  dayIndex: number,
-  kind: TripMealKind,
-  product: TripMealProduct,
-  event: Event,
-): void {
-  const value = (event.target as HTMLSelectElement).value
-  if (!value) return
-
-  const share = product.allocations[0]
-  const amount = share?.amount ?? 0
-  const isElastic = share?.isElastic ?? false
-
-  if (value === '__new__') {
-    void (async () => {
-      const key = `${product.productId}:new-pack`
-      if (busy.value === key) return
-      busy.value = key
-      error.value = null
-
-      try {
-        const next = await createMealPackage(props.trip.id)
-        const pack = next.packages[next.packages.length - 1]
-        plan.value = pack
-          ? await setMealAllocations(
-              props.trip.id,
-              dayIndex,
-              kind,
-              product.productId,
-              [{ packageId: pack.id, amount, isElastic }],
-            )
-          : next
-      } catch (cause) {
-        error.value = messageOf(cause, 'Не удалось создать пакет')
-      } finally {
-        busy.value = null
-      }
-    })()
-
-    return
-  }
-
-  saveShares(dayIndex, kind, product, [{ packageId: value, amount, isElastic }])
-}
-
-/** Выбрали количество или «всё»: доля сохраняется сразу. */
-function setAllocationAmount2(
-  dayIndex: number,
-  kind: TripMealKind,
-  product: TripMealProduct,
-  event: Event,
-): void {
-  const share = product.allocations[0]
-  if (!share) return
-
-  const value = (event.target as HTMLSelectElement).value
-  if (value === 'all') {
-    saveShares(dayIndex, kind, product, [
-      { packageId: share.packageId, amount: 0, isElastic: true },
-    ])
-
-    return
-  }
-
-  const amount = Number(value)
-  if (!Number.isInteger(amount) || amount <= 0) return
-
-  saveShares(dayIndex, kind, product, [
-    { packageId: share.packageId, amount, isElastic: false },
-  ])
-}
-
-/**
- * Остаток в пакет: это обычная доля, просто её вносят отдельной строкой.
- *
- * Сыр 1000 г, в пакет ушло 800 — остаток 200 можно положить в другой
- * пакет той же строкой, без «остаток: 200» в подписи.
- */
-function assignLeftover(
-  dayIndex: number,
-  kind: TripMealKind,
-  product: TripMealProduct,
-  event: Event,
-): void {
-  const select = event.target as HTMLSelectElement
-  const packageId = select.value
-  select.value = ''
-
-  const leftover = product.amount - allocatedOf(product)
-  if (!packageId || leftover <= 0) return
-
-  // Доли заменяются целиком: уже разложенное надо перенести, иначе
-  // 800 г из первого пакета пропадут от одной правки остатка.
-  const rows = product.allocations
-    .filter((share) => !share.isElastic)
-    .map((share) => ({
-      packageId: share.packageId,
-      amount: share.amount,
-      isElastic: false,
-    }))
-
-  const existing = rows.find((row) => row.packageId === packageId)
-  if (existing) existing.amount += leftover
-  else rows.push({ packageId, amount: leftover, isElastic: false })
-
-  saveShares(dayIndex, kind, product, rows)
-}
-
-/** Убрать остаток из плана: убавка на «разложено минус рецепт». */
+/** Свести план к разложенному: убавка на «разложено минус рецепт». */
 function dropLeftover(
   dayIndex: number,
   kind: TripMealKind,
@@ -764,16 +896,58 @@ onMounted(() => {
               :data-test="`meal-${day.index}-${kind}`"
             >
               <!--
-                Две кнопки в углу плашки: двойной шеврон — все плашки разом,
-                одинарный — эта. Живут в углу, а не в скрываемых полях:
+                Две кнопки в углу плашки: одинарный шеврон — эта плашка,
+                двойной — все разом. Живут в углу, а не в скрываемых полях:
                 свёрнутая колонка исчезает вместе с кнопкой, и развернуть
-                приём было бы нечем.
+                приём было бы нечем. Есть и у пустых плашек: с автономным
+                питанием их стало больше, и полотно пустых форм тоже
+                хочется свернуть.
               -->
               <div
-                v-if="canEdit && mealOf(day.index, kind)"
+                v-if="canEdit"
                 class="absolute right-1.5 top-1.5 flex items-center gap-1"
                 data-test="meal-toggles"
               >
+                <button
+                  type="button"
+                  class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
+                  :aria-expanded="!isEditHidden(mealKey(day.index, kind))"
+                  :aria-label="
+                    isEditHidden(mealKey(day.index, kind))
+                      ? 'Показать поля приёма'
+                      : 'Свернуть поля приёма'
+                  "
+                  :title="
+                    isEditHidden(mealKey(day.index, kind))
+                      ? 'Показать поля приёма'
+                      : 'Свернуть поля приёма'
+                  "
+                  :data-test="`meal-add-toggle-${day.index}-${kind}`"
+                  @click="toggleEdit(mealKey(day.index, kind))"
+                >
+                  <svg
+                    viewBox="0 0 16 16"
+                    class="h-3 w-3"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.6"
+                    aria-hidden="true"
+                  >
+                    <path
+                      v-if="isEditHidden(mealKey(day.index, kind))"
+                      d="M4 6l4 4 4-4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                    <path
+                      v-else
+                      d="M4 10l4-4 4 4"
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                    />
+                  </svg>
+                </button>
+
                 <button
                   type="button"
                   class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
@@ -823,46 +997,6 @@ onMounted(() => {
                         stroke-linejoin="round"
                       />
                     </template>
-                  </svg>
-                </button>
-
-                <button
-                  type="button"
-                  class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
-                  :aria-expanded="!isEditHidden(mealKey(day.index, kind))"
-                  :aria-label="
-                    isEditHidden(mealKey(day.index, kind))
-                      ? 'Показать поля приёма'
-                      : 'Свернуть поля приёма'
-                  "
-                  :title="
-                    isEditHidden(mealKey(day.index, kind))
-                      ? 'Показать поля приёма'
-                      : 'Свернуть поля приёма'
-                  "
-                  :data-test="`meal-add-toggle-${day.index}-${kind}`"
-                  @click="toggleEdit(mealKey(day.index, kind))"
-                >
-                  <svg
-                    viewBox="0 0 16 16"
-                    class="h-3 w-3"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                    aria-hidden="true"
-                  >
-                    <path
-                      v-if="isEditHidden(mealKey(day.index, kind))"
-                      d="M4 6l4 4 4-4"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      v-else
-                      d="M4 10l4-4 4 4"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
                   </svg>
                 </button>
               </div>
@@ -1024,63 +1158,83 @@ onMounted(() => {
                     </span>
                   </div>
 
-                  <div
+                  <template
                     v-for="ingredient in dish.ingredients"
                     :key="ingredient.productId"
-                    class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
                   >
-                    <div class="flex gap-1 md:col-start-2">
-                      <select
-                        :value="normalShare(productById(mealOf(day.index, kind)!, ingredient.productId))?.packageId ?? ''"
-                        :data-test="`ing-pack-${dish.dishId}-${ingredient.productId}`"
-                        class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
-                        @change="setIngredientPack(day.index, kind, ingredient.productId, $event)"
-                      >
-                        <option value="" disabled></option>
-                        <option value="__new__">новый пакет</option>
-                        <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
-                          {{ pack.name }}
-                        </option>
-                      </select>
-                      <select
-                        :value="allocAmountValue(productById(mealOf(day.index, kind)!, ingredient.productId))"
-                        :data-test="`ing-amount-${dish.dishId}-${ingredient.productId}`"
-                        class="w-16 shrink-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
-                        @change="setIngredientAmount(day.index, kind, ingredient.productId, $event)"
-                      >
-                        <option value="" disabled></option>
-                        <option value="all">всё</option>
-                        <option
-                          v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId))"
-                          :key="n"
-                          :value="String(n)"
+                    <div
+                      v-for="row in packRows(productById(mealOf(day.index, kind)!, ingredient.productId))"
+                      :key="row.key"
+                      class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                      :data-test="`ing-row-${dish.dishId}-${ingredient.productId}-${row.position}`"
+                    >
+                      <div class="flex gap-1 md:col-start-2">
+                        <select
+                          :value="row.packageId"
+                          :data-test="shareTest('ing-pack', dish.dishId + '-' + ingredient.productId, row)"
+                          class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                          @change="setIngredientPack(day.index, kind, ingredient.productId, row, $event)"
                         >
-                          {{ n }}
-                        </option>
-                      </select>
-                    </div>
+                          <option value="" disabled></option>
+                          <option value="__new__">новый пакет</option>
+                          <option
+                            v-for="pack in packsFor(mealOf(day.index, kind))"
+                            :key="pack.id"
+                            :value="pack.id"
+                          >
+                            {{ packLabel(pack) }}
+                          </option>
+                        </select>
+                        <select
+                          :value="amountValue(row)"
+                          :disabled="row.isFree"
+                          :data-test="shareTest('ing-amount', dish.dishId + '-' + ingredient.productId, row)"
+                          class="w-16 shrink-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
+                          @change="setIngredientAmount(day.index, kind, ingredient.productId, row, $event)"
+                        >
+                          <option value="" disabled></option>
+                          <option value="all">всё</option>
+                          <option
+                            v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId))"
+                            :key="n"
+                            :value="String(n)"
+                          >
+                            {{ n }}
+                          </option>
+                        </select>
+                      </div>
 
-                    <div class="md:col-start-3">
-                      <button
-                        type="button"
-                        class="rounded-full border px-2 py-0.5 text-xs transition-colors"
-                        :class="
-                          dish.excludedProductIds.includes(ingredient.productId)
-                            ? 'border-dashed border-border text-muted line-through'
-                            : 'border-border text-text hover:border-primary'
-                        "
-                        :disabled="!canEdit"
-                        :data-test="`dish-ing-${dish.dishId}-${ingredient.productId}`"
-                        @click="toggleDishIngredient(day.index, kind, dish, ingredient.productId)"
-                      >
-                        {{ ingredient.name }}
-                        {{ formatProductAmount(ingredient.amount, ingredient.unit) }}
-                        <span v-if="canEdit">
-                          {{ dish.excludedProductIds.includes(ingredient.productId) ? '+' : '×' }}
+                      <div class="md:col-start-3">
+                        <button
+                          v-if="row.position === 0"
+                          type="button"
+                          class="rounded-full border px-2 py-0.5 text-xs transition-colors"
+                          :class="
+                            dish.excludedProductIds.includes(ingredient.productId)
+                              ? 'border-dashed border-border text-muted line-through'
+                              : 'border-border text-text hover:border-primary'
+                          "
+                          :disabled="!canEdit"
+                          :data-test="`dish-ing-${dish.dishId}-${ingredient.productId}`"
+                          @click="toggleDishIngredient(day.index, kind, dish, ingredient.productId)"
+                        >
+                          {{ ingredient.name }}
+                          {{ formatProductAmount(ingredient.amount, ingredient.unit) }}
+                          <span v-if="canEdit">
+                            {{ dish.excludedProductIds.includes(ingredient.productId) ? '+' : '×' }}
+                          </span>
+                        </button>
+
+                        <!-- Остаток — такая же строка, только с другим весом -->
+                        <span v-else class="text-sm text-text">
+                          {{ ingredient.name }}
+                          <span class="text-xs text-muted">
+                            {{ formatProductAmount(row.amount, ingredient.unit) }}
+                          </span>
                         </span>
-                      </button>
+                      </div>
                     </div>
-                  </div>
+                  </template>
                 </div>
 
                 <div
@@ -1096,101 +1250,90 @@ onMounted(() => {
 
                 <!-- Строки продуктов: пара фасовки + продукт -->
                 <ul class="flex flex-col gap-1" data-test="meal-products">
-                  <template v-for="product in mealOf(day.index, kind)!.products.filter((row) => row.manualAmount > 0)" :key="product.productId">
-                    <li
-                    class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
-                    data-test="meal-product"
+                  <template
+                    v-for="product in mealOf(day.index, kind)!.products.filter((row) => row.manualAmount > 0)"
+                    :key="product.productId"
                   >
-                    <div class="flex flex-col gap-0.5 md:col-start-2">
-                      <template v-if="canEdit && normalPackages.length > 0">
-                        <div class="flex gap-1" :data-test="`product-packs-${product.productId}`">
-                          <select
-                            :value="normalShare(product)?.packageId ?? ''"
-                            :data-test="`alloc-pack-${product.productId}`"
-                            class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
-                            @change="setAllocationPack(day.index, kind, product, $event)"
-                          >
-                            <option value="" disabled></option>
-                            <option value="__new__">новый пакет</option>
-<option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
-                              {{ pack.name }}
-                            </option>
-                          </select>
-                          <select
-                            :value="allocAmountValue(product)"
-                            :disabled="!normalShare(product)"
-                            :data-test="`alloc-amount-${product.productId}`"
-                            class="rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
-                            @change="setAllocationAmount2(day.index, kind, product, $event)"
-                          >
-                            <option value="" disabled></option>
-                            <option value="all">всё</option>
-                            <option v-for="n in amountOptions(product)" :key="n" :value="String(n)">
-                              {{ n }}
-                            </option>
-                          </select>
-                        </div>
-                        <span v-if="overAllocated(product) > 0" class="text-xs text-amber-700">
-                          сверх рецепта: {{ formatProductAmount(overAllocated(product), product.unit) }}
-                        </span>
-                      </template>
-                    </div>
-
-                    <div class="flex flex-wrap items-baseline gap-2 text-sm text-text md:col-start-3">
-                      <span class="font-medium">{{ product.name }}</span>
-                      <span class="text-xs text-muted">
-                        {{ formatProductAmount(product.amount, product.unit) }}
-                      </span>
-                      <span v-if="product.isMeat" class="text-xs text-muted">
-                        мясное · {{ meatPortion }}
-                      </span>
-                      <button
-                        v-if="canEdit"
-                        type="button"
-                        class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
-                        title="Убрать продукт"
-                        :data-test="`meal-line-remove-${product.productId}`"
-                        @click="removeLine(day.index, kind, product.productId)"
-                      >
-                        ×
-                      </button>
-                    </div>
-                    </li>
-
                     <li
-                      v-if="allocatedOf(product) > 0 && product.amount > allocatedOf(product)"
+                      v-for="row in packRows(product)"
+                      :key="row.key"
                       class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
-                      data-test="meal-leftover-row"
+                      :data-test="`meal-product-${product.productId}-${row.position}`"
                     >
-                      <div v-if="canEdit" class="flex gap-1 md:col-start-2">
-                        <select
-                          :value="''"
-                          class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
-                          :data-test="`leftover-pack-${product.productId}`"
-                          @change="assignLeftover(day.index, kind, product, $event)"
-                        >
-                          <option value="" disabled>в пакет</option>
-                          <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
-                            {{ pack.name }}
-                          </option>
-                        </select>
+                      <div class="flex flex-col gap-0.5 md:col-start-2">
+                        <template v-if="canEdit && packsFor(mealOf(day.index, kind)).length > 0">
+                          <div class="flex gap-1" :data-test="`product-packs-${product.productId}`">
+                            <select
+                              :value="row.packageId"
+                              :data-test="shareTest('alloc-pack', String(product.productId), row)"
+                              class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                              @change="setRowPack(day.index, kind, product, row, $event)"
+                            >
+                              <option value="" disabled></option>
+                              <option value="__new__">новый пакет</option>
+                              <option
+                                v-for="pack in packsFor(mealOf(day.index, kind))"
+                                :key="pack.id"
+                                :value="pack.id"
+                              >
+                                {{ packLabel(pack) }}
+                              </option>
+                            </select>
+                            <select
+                              :value="amountValue(row)"
+                              :disabled="row.isFree"
+                              :data-test="shareTest('alloc-amount', String(product.productId), row)"
+                              class="rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
+                              @change="setRowAmount(day.index, kind, product, row, $event)"
+                            >
+                              <option value="" disabled></option>
+                              <option value="all">всё</option>
+                              <option v-for="n in amountOptions(product)" :key="n" :value="String(n)">
+                                {{ n }}
+                              </option>
+                            </select>
+                          </div>
+                          <span
+                            v-if="
+                              row.position === 0 &&
+                              allocatedOf(product) > 0 &&
+                              allocatedOf(product) !== product.amount
+                            "
+                            class="text-xs"
+                          >
+                            <span v-if="overAllocated(product) > 0" class="text-amber-700">
+                              сверх рецепта: {{ formatProductAmount(overAllocated(product), product.unit) }}
+                            </span>
+                            <button
+                              type="button"
+                              class="cursor-pointer text-muted underline"
+                              :data-test="`meal-alloc-accept-${product.productId}`"
+                              @click="dropLeftover(day.index, kind, product)"
+                            >
+                              вписать в план
+                            </button>
+                          </span>
+                        </template>
                       </div>
 
-                      <div class="flex items-center gap-2 text-sm text-amber-700 md:col-start-3">
+                      <div class="flex flex-wrap items-baseline gap-2 text-sm text-text md:col-start-3">
                         <span class="font-medium">{{ product.name }}</span>
-                        <span
-                          class="w-16 shrink-0 rounded border border-border bg-field px-1 py-0.5 text-center text-xs text-text"
-                          data-test="meal-leftover-amount"
-                        >
-                          {{ product.amount - allocatedOf(product) }}
+                        <span class="text-xs text-muted">
+                          {{ formatProductAmount(row.amount, product.unit) }}
                         </span>
-                        <span class="text-xs text-muted">{{ product.unit }}</span>
+                        <span
+                          v-if="row.position === 0 && product.isMeat"
+                          class="text-xs text-muted"
+                        >
+                          мясное · {{ meatPortion }}
+                        </span>
                         <button
-                          v-if="canEdit"
+                          v-if="canEdit && row.position === 0"
                           type="button"
-                          class="cursor-pointer underline"
-                          :data-test="'meal-leftover-drop-' + product.productId"
-                          @click="dropLeftover(day.index, kind, product)"
+                          class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
+                          title="Убрать продукт"
+                          :data-test="`meal-line-remove-${product.productId}`"
+                          @click="removeLine(day.index, kind, product.productId)"
                         >
                           ×
                         </button>

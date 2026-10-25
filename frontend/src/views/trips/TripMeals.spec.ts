@@ -207,6 +207,16 @@ function plan(): TripMealPlan {
           },
         ],
       },
+      {
+        id: 'p2',
+        name: 'Пакет 2',
+        kind: 'normal',
+        mealId: null,
+        weightActualGrams: null,
+        weightActualStale: false,
+        weightEstimatedGrams: 0,
+        items: [],
+      },
     ],
   }
 }
@@ -273,6 +283,12 @@ function signIn() {
   } as never
 }
 
+/**
+ * Раскладка, которую тесты правят перед монтированием: `fetchMealPlan`
+ * отдаёт именно её, а `setMealAllocations` возвращает её же с новыми долями.
+ */
+let currentPlan: TripMealPlan
+
 async function mountMeals(canEdit = true) {
   const wrapper = mount(TripMeals, { props: { trip: TRIP, canEdit } })
   await flushPromises()
@@ -287,6 +303,7 @@ describe('TripMeals', () => {
     signIn()
 
     const current = plan()
+    currentPlan = current
     mocks.fetchMealPlan.mockResolvedValue(current)
     mocks.addMealDish.mockResolvedValue(current)
     mocks.removeMealDish.mockResolvedValue(current)
@@ -435,14 +452,23 @@ describe('TripMeals', () => {
     expect(card().find('[data-test="meal-form"]').exists()).toBe(true)
   })
 
-  it('у пустого приёма иконки свёртывания нет', async () => {
+  it('иконки есть и у пустого приёма, и он сворачивается', async () => {
     const wrapper = await mountMeals()
 
-    // День 2, ужин — пустая плашка: скрывать нечего, там только форма.
-    expect(wrapper.find('[data-test="meal-add-toggle-2-dinner"]').exists()).toBe(false)
-    // Без права правки иконки тоже нет: полей добавления нет вовсе.
+    // Пустая плашка тоже сворачивается: с автономным питанием их много.
+    expect(wrapper.find('[data-test="meal-add-toggle-2-dinner"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="meals-collapse-all-2-dinner"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="meal-add-toggle-2-dinner"]').trigger('click')
+    await flushPromises()
+
+    const card = wrapper.find('[data-test="meal-2-dinner"]')
+    expect(card.find('[data-test="meal-add"]').exists()).toBe(false)
+    expect(card.text()).toContain('Пусто')
+
+    // Без права правки иконок нет: полей добавления там нет вовсе.
     const guest = await mountMeals(false)
-    expect(guest.find('[data-test="meal-add-toggle-1-breakfast"]').exists()).toBe(false)
+    expect(guest.find('[data-test="meal-add-toggle-2-dinner"]').exists()).toBe(false)
   })
 
   it('двойной шеврон сворачивает и разворачивает все плашки', async () => {
@@ -460,8 +486,8 @@ describe('TripMeals', () => {
     expect(card('1-breakfast').find('[data-test="meal-form"]').exists()).toBe(false)
     expect(card('1-lunch').find('[data-test="meal-form"]').exists()).toBe(false)
     expect(card('1-breakfast').find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
-    // Пустая плашка осталась с формой: результата в ней нет, скрывать нечего.
-    expect(card('2-dinner').find('[data-test="meal-add"]').exists()).toBe(true)
+    // Пустые плашки тоже свернулись: их формы добавления спрятаны.
+    expect(card('2-dinner').find('[data-test="meal-add"]').exists()).toBe(false)
     // Иконка теперь предлагает разворот.
     expect(all().attributes('title')).toBe('Развернуть все приёмы')
 
@@ -470,6 +496,7 @@ describe('TripMeals', () => {
 
     expect(card('1-breakfast').find('[data-test="meal-form"]').exists()).toBe(true)
     expect(card('1-lunch').find('[data-test="meal-form"]').exists()).toBe(true)
+    expect(card('2-dinner').find('[data-test="meal-add"]').exists()).toBe(true)
     expect(all().attributes('title')).toBe('Свернуть все приёмы')
   })
 
@@ -542,6 +569,93 @@ describe('TripMeals', () => {
 
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
       { packageId: 'p1', amount: 0, isElastic: true },
+    ])
+  })
+
+  it('количество заблокировано, пока не выбран пакет', async () => {
+    const wrapper = await mountMeals()
+
+    const amount = () =>
+      wrapper.find('[data-test="ing-amount-d1-1"]').element as HTMLSelectElement
+
+    expect(amount().disabled).toBe(true)
+
+    await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p1')
+    await flushPromises()
+
+    expect(amount().disabled).toBe(false)
+  })
+
+  it('кулёк виден в списках своего приёма и не оставляет пустых полей', async () => {
+    currentPlan.packages.push({
+      id: 'pk',
+      name: '1з',
+      kind: 'kulek',
+      mealId: 'm1',
+      weightActualGrams: null,
+      weightActualStale: false,
+      weightEstimatedGrams: 160,
+      items: [],
+    })
+    currentPlan.meals[0]!.products[0]!.allocations = [
+      { packageId: 'pk', amount: 160, isElastic: true },
+    ]
+
+    const wrapper = await mountMeals()
+
+    const pack = () =>
+      wrapper.find('[data-test="ing-pack-d1-1"]').element as HTMLSelectElement
+    const amount = () =>
+      wrapper.find('[data-test="ing-amount-d1-1"]').element as HTMLSelectElement
+
+    expect(wrapper.find('[data-test="ing-pack-d1-1"]').text()).toContain('1з · кулёк')
+    expect(pack().value).toBe('pk')
+    expect(amount().value).toBe('all')
+    expect(amount().disabled).toBe(false)
+
+    // Другой пакет расформировывает кулёк — без подтверждения, как решили.
+    await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p2')
+    await flushPromises()
+
+    expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
+      { packageId: 'p2', amount: 0, isElastic: true },
+    ])
+  })
+
+  it('остаток — такая же строка с другим весом и своим пакетом', async () => {
+    const wrapper = await mountMeals()
+
+    // Кладём в пакет 100 из 160 — на экране появляется вторая строка с 60.
+    await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p1')
+    await flushPromises()
+    await wrapper.find('[data-test="ing-amount-d1-1"]').setValue('100')
+    await flushPromises()
+
+    const first = wrapper.find('[data-test="ing-row-d1-1-0"]')
+    const second = wrapper.find('[data-test="ing-row-d1-1-1"]')
+
+    expect(first.exists()).toBe(true)
+    expect(second.exists()).toBe(true)
+    // Строка остатка — без подписей и цвета, с тем же названием и весом.
+    expect(second.text()).toContain('Крупа')
+    expect(second.text()).toContain('60 г')
+    expect(second.text()).not.toContain('остаток')
+    // Поля те же: выбор пакета (включая «новый пакет») и количество.
+    expect(
+      second.find('[data-test="ing-pack-d1-1-2"]').text(),
+    ).toContain('новый пакет')
+    expect(
+      (second.find('[data-test="ing-amount-d1-1-2"]').element as HTMLSelectElement)
+        .disabled,
+    ).toBe(true)
+
+    // Остаток кладём в другой пакет — он становится обычной долей.
+    await second.find('[data-test="ing-pack-d1-1-2"]').setValue('p2')
+    await flushPromises()
+
+    expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [
+      { packageId: 'p1', amount: 100, isElastic: false },
+      { packageId: 'p2', amount: 60, isElastic: false },
     ])
   })
 
@@ -646,6 +760,6 @@ describe('TripMeals', () => {
 
     // Содержимое осталось внутри своих секций.
     expect(sections[0]!.findAll('[data-test="meal-day"]')).toHaveLength(2)
-    expect(sections[1]!.findAll('[data-test="package"]')).toHaveLength(1)
+    expect(sections[1]!.findAll('[data-test="package"]')).toHaveLength(2)
   })
 })
