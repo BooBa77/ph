@@ -32,6 +32,7 @@ import {
   type Trip,
   type TripMeal,
   type TripMealDish,
+  type TripMealDishIngredient,
   type TripMealForm,
   type TripMealKind,
   type TripMealPackage,
@@ -214,6 +215,10 @@ const meatPortion = computed(() => {
 /**
  * Убрать или вернуть ингредиент блюда в этом приёме. Рецепт не меняется:
  * исключение живёт только в строке приёма.
+ *
+ * **Убрали последний — блюдо уходит целиком.** Блюдо без ингредиентов
+ * ничего не весит и ничего не раскладывает: оставлять его в плашке
+ * с шапкой «в пакет / кол-во» и пустыми строками незачем.
  */
 function toggleDishIngredient(
   dayIndex: number,
@@ -226,6 +231,19 @@ function toggleDishIngredient(
   const excluded = dish.excludedProductIds.includes(productId)
     ? dish.excludedProductIds.filter((id) => id !== productId)
     : [...dish.excludedProductIds, productId]
+
+  const emptied =
+    !dish.excludedProductIds.includes(productId) &&
+    dish.ingredients.length > 0 &&
+    dish.ingredients.every((row) => excluded.includes(row.productId))
+
+  if (emptied) {
+    void run(`${dish.dishId}:empty`, () =>
+      removeMealDish(props.trip.id, dayIndex, kind, dish.dishId),
+    )
+
+    return
+  }
 
   void run(`${dish.dishId}:${productId}:exclude`, () =>
     setMealDishExclusions(
@@ -502,6 +520,34 @@ function amountValue(row: PackRow): string {
   return row.isElastic || row.isFree ? 'all' : String(row.amount)
 }
 
+/**
+ * Строки ингредиента: доли продукта в пакетах и остаток.
+ *
+ * У исключённого ингредиента продукта в приёме нет, но чип с названием
+ * остаётся: иначе ингредиент было бы не вернуть.
+ */
+function ingredientRows(
+  meal: TripMeal | undefined,
+  ingredient: TripMealDishIngredient,
+): PackRow[] {
+  const product = meal ? productById(meal, ingredient.productId) : undefined
+  const rows = packRows(product)
+
+  if (rows.length > 0) return rows
+
+  return [
+    {
+      position: 0,
+      index: -1,
+      key: `${ingredient.productId}:chip`,
+      packageId: '',
+      amount: ingredient.amount,
+      isElastic: false,
+      isFree: true,
+    },
+  ]
+}
+
 /** Сколько вариантов в селекте «кол-во»: от 1 до количества по рецепту. */
 function amountOptions(product: TripMealProduct | undefined): number[] {
   return Array.from(
@@ -717,6 +763,65 @@ function setIngredientAmount(
   setRowAmount(dayIndex, kind, product, row, event)
 }
 
+/** Убрать одну строку-долю: остальные доли продукта остаются на месте. */
+function removeShareRow(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+  row: PackRow,
+): void {
+  if (row.index < 0) return
+
+  const shares = currentShares(product).filter(
+    (_, index) => index !== row.index,
+  )
+  saveShares(dayIndex, kind, product, shares)
+}
+
+/** Крестик строки продукта: у доли — только эта доля, у остатка — продукт. */
+function removeProductRow(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+  row: PackRow,
+): void {
+  if (row.isFree) {
+    removeLine(dayIndex, kind, product.productId)
+
+    return
+  }
+
+  removeShareRow(dayIndex, kind, product, row)
+}
+
+/** Крестик строки ингредиента: у доли — эта доля, у остатка — исключение. */
+function ingredientAction(
+  dayIndex: number,
+  kind: TripMealKind,
+  dish: TripMealDish,
+  ingredient: TripMealDishIngredient,
+  row: PackRow,
+): void {
+  // Исключённый ингредиент возвращаем тем же кликом.
+  if (dish.excludedProductIds.includes(ingredient.productId)) {
+    toggleDishIngredient(dayIndex, kind, dish, ingredient.productId)
+
+    return
+  }
+
+  const meal = mealOf(dayIndex, kind)
+  const product = meal ? productById(meal, ingredient.productId) : undefined
+
+  if (product && !row.isFree) {
+    removeShareRow(dayIndex, kind, product, row)
+
+    return
+  }
+
+  // Свободная строка — это сам ингредиент: убираем его из приёма.
+  toggleDishIngredient(dayIndex, kind, dish, ingredient.productId)
+}
+
 /** Всего разложено по пакетам. */
 function allocatedOf(product: TripMealProduct): number {
   return product.allocations.reduce((sum, row) => sum + row.amount, 0)
@@ -885,9 +990,14 @@ onMounted(() => {
       />
 
       <!-- Раскладка по дням. <details>: длинную раскладку хочется свернуть,
-           не уходя со вкладки; содержимое остаётся на своих местах -->
-      <details open class="group flex flex-col gap-4" data-test="schedule">
-        <summary class="cursor-pointer select-none text-sm text-muted">Раскладка</summary>
+           не уходя со вкладки; содержимое остаётся на своих местах. Свой
+           желтоватый фон — чтобы переход к разделу читался глазами -->
+      <details
+        open
+        class="group flex flex-col gap-4 rounded-2xl border border-amber-200 bg-amber-50/70 p-3"
+        data-test="schedule"
+      >
+        <summary class="cursor-pointer select-none text-sm text-amber-800">Раскладка</summary>
 
         <section
           v-for="day in days"
@@ -1175,12 +1285,15 @@ onMounted(() => {
                     :key="ingredient.productId"
                   >
                     <div
-                      v-for="row in packRows(productById(mealOf(day.index, kind)!, ingredient.productId))"
+                      v-for="row in ingredientRows(mealOf(day.index, kind), ingredient)"
                       :key="row.key"
                       class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
                       :data-test="`ing-row-${dish.dishId}-${ingredient.productId}-${row.position}`"
                     >
-                      <div class="flex gap-1 md:col-start-2">
+                      <div
+                        v-if="productById(mealOf(day.index, kind)!, ingredient.productId)"
+                        class="flex gap-1 md:col-start-2"
+                      >
                         <select
                           :value="row.packageId"
                           :data-test="shareTest('ing-pack', dish.dishId + '-' + ingredient.productId, row)"
@@ -1216,33 +1329,38 @@ onMounted(() => {
                         </select>
                       </div>
 
-                      <div class="md:col-start-3">
+                      <div class="flex items-center gap-1 md:col-start-3">
                         <!--
-                          Строка остатка выглядит ровно как родитель: та же
-                          обводка, то же «×» (исключение ингредиента),
-                          только вес — свой.
+                          Родитель показывает ровно то, что лежит в пакете,
+                          остаток — то, что осталось: обводка и крестик у них
+                          одинаковые, отличается только вес.
                         -->
-                        <button
-                          type="button"
+                        <span
                           class="rounded-full border px-2 py-0.5 text-xs transition-colors"
                           :class="
                             dish.excludedProductIds.includes(ingredient.productId)
                               ? 'border-dashed border-border text-muted line-through'
-                              : 'border-border text-text hover:border-primary'
+                              : 'border-border text-text'
                           "
-                          :disabled="!canEdit"
                           :data-test="shareTest('dish-ing', dish.dishId + '-' + ingredient.productId, row)"
-                          @click="toggleDishIngredient(day.index, kind, dish, ingredient.productId)"
                         >
                           {{ ingredient.name }}
-                          {{
-                            row.position === 0
-                              ? formatProductAmount(ingredient.amount, ingredient.unit)
-                              : formatProductAmount(row.amount, ingredient.unit)
-                          }}
-                          <span v-if="canEdit">
-                            {{ dish.excludedProductIds.includes(ingredient.productId) ? '+' : '×' }}
-                          </span>
+                          {{ formatProductAmount(row.amount, ingredient.unit) }}
+                        </span>
+
+                        <button
+                          v-if="canEdit"
+                          type="button"
+                          class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
+                          :title="
+                            dish.excludedProductIds.includes(ingredient.productId)
+                              ? 'Вернуть ингредиент'
+                              : 'Убрать строку'
+                          "
+                          :data-test="`ing-action-${dish.dishId}-${ingredient.productId}-${row.position}`"
+                          @click="ingredientAction(day.index, kind, dish, ingredient, row)"
+                        >
+                          {{ dish.excludedProductIds.includes(ingredient.productId) ? '+' : '×' }}
                         </button>
                       </div>
                     </div>
@@ -1326,12 +1444,12 @@ onMounted(() => {
                           мясное · {{ meatPortion }}
                         </span>
                         <button
-                          v-if="canEdit && row.position === 0"
+                          v-if="canEdit"
                           type="button"
                           class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
-                          title="Убрать продукт"
-                          :data-test="`meal-line-remove-${product.productId}`"
-                          @click="removeLine(day.index, kind, product.productId)"
+                          :title="row.isFree ? 'Убрать продукт' : 'Убрать долю из пакета'"
+                          :data-test="shareTest('meal-line-remove', String(product.productId), row)"
+                          @click="removeProductRow(day.index, kind, product, row)"
                         >
                           ×
                         </button>
@@ -1349,9 +1467,14 @@ onMounted(() => {
         </section>
       </details>
 
-      <!-- Фасовка: пакеты. Свёртывается так же, как раскладка -->
-      <details open class="flex flex-col gap-2" data-test="packages">
-        <summary class="cursor-pointer select-none text-sm text-muted">Пакеты</summary>
+      <!-- Фасовка: пакеты. Свёртывается так же, как раскладка; свой
+           фиолетовый фон отличает её от раскладки -->
+      <details
+        open
+        class="flex flex-col gap-2 rounded-2xl border border-violet-200 bg-violet-50/70 p-3"
+        data-test="packages"
+      >
+        <summary class="cursor-pointer select-none text-sm text-violet-800">Пакеты</summary>
 
         <div v-if="canEdit" class="flex flex-wrap items-center justify-end gap-2">
           <button

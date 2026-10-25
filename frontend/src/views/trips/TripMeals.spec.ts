@@ -645,11 +645,11 @@ describe('TripMeals', () => {
     expect(second.text()).toContain('Крупа')
     expect(second.text()).toContain('60 г')
     expect(second.text()).not.toContain('остаток')
-    // «Равна родителю»: та же обводка и тот же крестик исключения.
+    // «Равна родителю»: та же обводка, а крестик — отдельной кнопкой рядом.
     const chip = second.find('[data-test="dish-ing-d1-1-2"]')
     expect(chip.classes()).toContain('rounded-full')
     expect(chip.classes()).toContain('border')
-    expect(chip.text()).toContain('×')
+    expect(second.find('[data-test="ing-action-d1-1-1"]').text()).toBe('×')
     // Поля те же: выбор пакета (включая «новый пакет») и количество.
     expect(
       second.find('[data-test="ing-pack-d1-1-2"]').text(),
@@ -708,6 +708,8 @@ describe('TripMeals', () => {
       (second.find('[data-test="alloc-amount-2-2"]').element as HTMLSelectElement)
         .disabled,
     ).toBe(true)
+    // У остатка продукта тоже есть крестик.
+    expect(second.find('[data-test="meal-line-remove-2-2"]').exists()).toBe(true)
 
     await second.find('[data-test="alloc-pack-2-2"]').setValue('p2')
     await flushPromises()
@@ -718,13 +720,86 @@ describe('TripMeals', () => {
     ])
   })
 
-  it('ингредиент блюда убирается в приёме и возвращается', async () => {
+  it('у блюда из двух ингредиентов убирается один, а не всё блюдо', async () => {
+    // Второй ингредиент и его продукт: иначе блюдо из одного, и убрать
+    // единственный — значит убрать блюдо целиком (см. следующий тест).
+    currentPlan.meals[0]!.dishes[0]!.ingredients.push({
+      productId: 2,
+      name: 'Соль',
+      unit: 'g',
+      amount: 5,
+      isMeat: false,
+    })
+    currentPlan.meals[0]!.products.push({
+      productId: 2,
+      name: 'Соль',
+      unit: 'g',
+      weightPerUnitGrams: 1,
+      recipeAmount: 5,
+      manualAmount: 0,
+      amount: 5,
+      isMeat: false,
+      fromDishes: ['Каша'],
+      allocations: [],
+    })
+
     const wrapper = await mountMeals()
 
-    await wrapper.find('[data-test="dish-ing-d1-1"]').trigger('click')
+    await wrapper.find('[data-test="ing-action-d1-2-0"]').trigger('click')
     await flushPromises()
 
-    expect(mocks.setMealDishExclusions).toHaveBeenCalledWith('7', 1, 'breakfast', 'd1', [1])
+    expect(mocks.setMealDishExclusions).toHaveBeenCalledWith('7', 1, 'breakfast', 'd1', [2])
+    expect(mocks.removeMealDish).not.toHaveBeenCalled()
+  })
+
+  it('последний ингредиент убирает блюдо целиком, а не оставляет пустое', async () => {
+    const wrapper = await mountMeals()
+
+    // У блюда d1 один ингредиент: убираем его — уходит и блюдо.
+    await wrapper.find('[data-test="ing-action-d1-1-0"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.removeMealDish).toHaveBeenCalledWith('7', 1, 'breakfast', 'd1')
+    expect(mocks.setMealDishExclusions).not.toHaveBeenCalled()
+  })
+
+  it('крестик доли убирает только эту долю, а не все доли', async () => {
+    const wrapper = await mountMeals()
+
+    // Кладём 100 из 160: первая строка — доля в пакете, вторая — остаток.
+    await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p1')
+    await flushPromises()
+    await wrapper.find('[data-test="ing-amount-d1-1"]').setValue('100')
+    await flushPromises()
+
+    await wrapper.find('[data-test="ing-action-d1-1-0"]').trigger('click')
+    await flushPromises()
+
+    // Убрана одна доля; продукт в плане остался, блюдо тоже.
+    expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [])
+    expect(mocks.removeMealDish).not.toHaveBeenCalled()
+  })
+
+  it('крестик остатка продукта убирает продукт', async () => {
+    currentPlan.meals[0]!.products.push({
+      productId: 2,
+      name: 'Хлеб',
+      unit: 'g',
+      weightPerUnitGrams: 1,
+      recipeAmount: 0,
+      manualAmount: 200,
+      amount: 200,
+      isMeat: false,
+      fromDishes: [],
+      allocations: [],
+    })
+
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="meal-line-remove-2"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.removeMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 2)
   })
 
   it('кулёк приёма включается кнопкой', async () => {
