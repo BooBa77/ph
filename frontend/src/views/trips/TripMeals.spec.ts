@@ -346,7 +346,6 @@ describe('TripMeals', () => {
     await wrapper
       .find('[data-test="meal-dish-select-1-lunch"]')
       .setValue('d2')
-    await wrapper.find('[data-test="meal-dish-add-1-lunch"]').trigger('click')
     await flushPromises()
 
     expect(mocks.addMealDish).toHaveBeenCalledWith('7', 1, 'lunch', 'd2')

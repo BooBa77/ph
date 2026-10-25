@@ -499,6 +499,42 @@ function setAllocationAmount2(
   ])
 }
 
+/**
+ * Остаток в пакет: это обычная доля, просто её вносят отдельной строкой.
+ *
+ * Сыр 1000 г, в пакет ушло 800 — остаток 200 можно положить в другой
+ * пакет той же строкой, без «остаток: 200» в подписи.
+ */
+function assignLeftover(
+  dayIndex: number,
+  kind: TripMealKind,
+  product: TripMealProduct,
+  event: Event,
+): void {
+  const select = event.target as HTMLSelectElement
+  const packageId = select.value
+  select.value = ''
+
+  const leftover = product.amount - allocatedOf(product)
+  if (!packageId || leftover <= 0) return
+
+  // Доли заменяются целиком: уже разложенное надо перенести, иначе
+  // 800 г из первого пакета пропадут от одной правки остатка.
+  const rows = product.allocations
+    .filter((share) => !share.isElastic)
+    .map((share) => ({
+      packageId: share.packageId,
+      amount: share.amount,
+      isElastic: false,
+    }))
+
+  const existing = rows.find((row) => row.packageId === packageId)
+  if (existing) existing.amount += leftover
+  else rows.push({ packageId, amount: leftover, isElastic: false })
+
+  saveShares(dayIndex, kind, product, rows)
+}
+
 /** Убрать остаток из плана: убавка на «разложено минус рецепт». */
 function dropLeftover(
   dayIndex: number,
@@ -743,20 +779,49 @@ onMounted(() => {
                         {{ dish.title }}
                       </option>
                     </select>
-                    <button
-                      type="button"
-                      class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary disabled:opacity-50"
-                      :disabled="!dishDraft(mealKey(day.index, kind)) || busy !== null"
-                      :data-test="`meal-dish-add-${day.index}-${kind}`"
-                      @click="addDish(day.index, kind)"
-                    >
-                      +
-                    </button>
                   </div>
                 </div>
               </div>
 
-              <template v-if="mealOf(day.index, kind)">
+                              <!-- Строка продуктов: заголовок и форма добавления -->
+                <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
+                  <div class="md:col-start-3">
+                    <span class="text-xs uppercase tracking-wide text-muted">Продукты</span>
+
+                    <div v-if="canEdit" class="flex flex-col" data-test="meal-add">
+                      <ProductPicker
+                        :product="lineDraft(mealKey(day.index, kind)).product"
+                        :query="lineDraft(mealKey(day.index, kind)).text"
+                        :trip-id="trip.id"
+                        class="[&_input]:rounded-b-none"
+                        @select="chooseLineProduct(mealKey(day.index, kind), $event)"
+                        @update:query="onLineQuery(day.index, kind, $event)"
+                      />
+                      <div class="flex items-center gap-1">
+                        <input
+                          v-model="lineDraft(mealKey(day.index, kind)).amount"
+                          type="number"
+                          min="1"
+                          step="1"
+                          placeholder="кол-во"
+                          class="-mt-px w-20 shrink-0 rounded-t-none rounded-b-lg border border-border bg-field px-2 py-1.5 text-xs text-text focus:border-primary focus:outline-none"
+                          :data-test="`meal-line-amount-${day.index}-${kind}`"
+                        />
+                        <button
+                          type="button"
+                          class="ml-auto shrink-0 cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+                          :disabled="!lineReady(mealKey(day.index, kind)) || busy !== null"
+                          :data-test="`meal-line-add-${day.index}-${kind}`"
+                          @click="addLine(day.index, kind)"
+                        >
+                          Добавить
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+<template v-if="mealOf(day.index, kind)">
                 <!-- Строки блюд: пары фасовки слева, блюдо справа -->
                 <div
                   v-for="dish in mealOf(day.index, kind)!.dishes"
@@ -849,44 +914,6 @@ onMounted(() => {
                   </div>
                 </div>
 
-                <!-- Строка продуктов: заголовок и форма добавления -->
-                <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
-                  <div class="md:col-start-3">
-                    <span class="text-xs uppercase tracking-wide text-muted">Продукты</span>
-
-                    <div v-if="canEdit" class="flex flex-col" data-test="meal-add">
-                      <ProductPicker
-                        :product="lineDraft(mealKey(day.index, kind)).product"
-                        :query="lineDraft(mealKey(day.index, kind)).text"
-                        :trip-id="trip.id"
-                        class="[&_input]:rounded-b-none"
-                        @select="chooseLineProduct(mealKey(day.index, kind), $event)"
-                        @update:query="onLineQuery(day.index, kind, $event)"
-                      />
-                      <div class="flex items-center gap-1">
-                        <input
-                          v-model="lineDraft(mealKey(day.index, kind)).amount"
-                          type="number"
-                          min="1"
-                          step="1"
-                          placeholder="кол-во"
-                          class="-mt-px w-20 shrink-0 rounded-t-none rounded-b-lg border border-border bg-field px-2 py-1.5 text-xs text-text focus:border-primary focus:outline-none"
-                          :data-test="`meal-line-amount-${day.index}-${kind}`"
-                        />
-                        <button
-                          type="button"
-                          class="ml-auto shrink-0 cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-                          :disabled="!lineReady(mealKey(day.index, kind)) || busy !== null"
-                          :data-test="`meal-line-add-${day.index}-${kind}`"
-                          @click="addLine(day.index, kind)"
-                        >
-                          Добавить
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
                 <div
                   v-if="mealOf(day.index, kind)!.products.some((row) => row.manualAmount > 0)"
                   class="grid gap-x-4 text-[10px] uppercase leading-none text-muted md:grid-cols-[9rem_12rem_1fr]"
@@ -937,21 +964,6 @@ onMounted(() => {
                         <span v-if="overAllocated(product) > 0" class="text-xs text-amber-700">
                           сверх рецепта: {{ formatProductAmount(overAllocated(product), product.unit) }}
                         </span>
-                        <span
-                          v-if="allocatedOf(product) > 0 && product.amount > allocatedOf(product)"
-                          class="text-xs text-amber-700"
-                          data-test="meal-leftover"
-                        >
-                          остаток: {{ formatProductAmount(product.amount - allocatedOf(product), product.unit) }}
-                          <button
-                            type="button"
-                            class="cursor-pointer underline"
-                            :data-test="'meal-leftover-drop-' + product.productId"
-                            @click="dropLeftover(day.index, kind, product)"
-                          >
-                            убрать
-                          </button>
-                        </span>
                       </template>
                     </div>
 
@@ -981,9 +993,28 @@ onMounted(() => {
                       class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
                       data-test="meal-leftover-row"
                     >
+                      <div v-if="canEdit" class="flex gap-1 md:col-start-2">
+                        <select
+                          :value="''"
+                          class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
+                          :data-test="`leftover-pack-${product.productId}`"
+                          @change="assignLeftover(day.index, kind, product, $event)"
+                        >
+                          <option value="" disabled>в пакет</option>
+                          <option v-for="pack in normalPackages" :key="pack.id" :value="pack.id">
+                            {{ pack.name }}
+                          </option>
+                        </select>
+                      </div>
+
                       <div class="flex items-center gap-2 text-sm text-amber-700 md:col-start-3">
-                        <span>остаток: {{ formatProductAmount(product.amount - allocatedOf(product), product.unit) }}</span>
+                        <span class="font-medium">{{ product.name }}</span>
+                        <span class="text-xs">
+                          {{ formatProductAmount(product.amount - allocatedOf(product), product.unit) }}
+                          — остаток
+                        </span>
                         <button
+                          v-if="canEdit"
                           type="button"
                           class="cursor-pointer underline"
                           :data-test="'meal-leftover-drop-' + product.productId"
