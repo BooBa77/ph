@@ -1,7 +1,7 @@
 ﻿<script setup lang="ts">
 import { onUnmounted, ref, watch } from 'vue'
 
-import { searchProducts } from '@/api/meals'
+import { createProduct, searchProducts } from '@/api/meals'
 import { PRODUCT_UNIT_LABELS, type Product } from '@/types/meals'
 
 /**
@@ -41,6 +41,7 @@ const query = ref('')
 const options = ref<Product[]>([])
 const isLoading = ref(false)
 const error = ref<string | null>(null)
+const isCreating = ref(false)
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 /** После выбора поле заполняется названием — искать его заново не надо. */
@@ -100,6 +101,24 @@ onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
 })
 
+/** Свой продукт: вес единицы 0, граммы по нему не считаются. */
+async function createCustom() {
+  const name = query.value.trim()
+  if (name.length === 0) return
+
+  isCreating.value = true
+  error.value = null
+
+  try {
+    choose(await createProduct({ name, unit: 'piece' }))
+  } catch (cause) {
+    error.value =
+      cause instanceof Error ? cause.message : 'Не удалось добавить продукт'
+  } finally {
+    isCreating.value = false
+  }
+}
+
 function choose(product: Product) {
   emit('select', product)
   skipNextSearch = true
@@ -143,5 +162,16 @@ function choose(product: Product) {
         </button>
       </li>
     </ul>
+
+    <button
+      v-else-if="query.trim().length > 0"
+      type="button"
+      class="cursor-pointer rounded-xl border border-dashed border-border px-3 py-1.5 text-left text-xs text-muted transition-colors hover:border-primary hover:text-text"
+      :disabled="isCreating"
+      data-test="product-create"
+      @click="createCustom"
+    >
+      {{ isCreating ? 'Добавляем…' : 'Добавить «' + query.trim() + '» — нет в справочнике' }}
+    </button>
   </div>
 </template>
