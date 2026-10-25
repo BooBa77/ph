@@ -15,7 +15,6 @@ import {
   setMealForm,
   setMealKulek,
   addMealLine,
-  setMealLine,
   setMyStatus,
   updateMealPackage,
 } from '@/api/trips'
@@ -549,12 +548,38 @@ function ingredientRows(
   ]
 }
 
-/** Сколько вариантов в селекте «кол-во»: от 1 до количества по рецепту. */
-function amountOptions(product: TripMealProduct | undefined): number[] {
-  return Array.from(
-    { length: Math.max(product?.amount ?? 0, 1) },
-    (_, index) => index + 1,
-  )
+/**
+ * Варианты «кол-во» для строки: от 1 до того, сколько всего может лежать
+ * в этой строке.
+ *
+ * Верхняя граница — «количество продукта минус всё, что уже лежит в других
+ * строках». Без неё две строки по 5 яблок давали бы 10 при плане в 5:
+ * строка может забрать остаток, но не больше.
+ */
+function amountOptions(
+  product: TripMealProduct | undefined,
+  row: PackRow,
+): number[] {
+  if (!product) return [1]
+
+  // У остатка своей доли в сумме нет — он и есть несложенное.
+  const others = row.isFree
+    ? allocatedOf(product)
+    : allocatedOf(product) - row.amount
+  const limit = Math.max(1, product.amount - others)
+
+  return Array.from({ length: limit }, (_, index) => index + 1)
+}
+
+/** Подсказка крестика: он убирает либо долю, либо весь продукт. */
+function removeHint(
+  row: PackRow,
+  meal: TripMeal | undefined,
+  what: string,
+): string {
+  return row.isFree || isKulekRow(meal, row)
+    ? `Убрать ${what}`
+    : 'Убрать долю из пакета'
 }
 
 /** data-test строки: у первой — прежний, у остальных — с номером строки. */
@@ -771,56 +796,42 @@ function removeShareRow(
   product: TripMealProduct,
   row: PackRow,
 ): void {
-  if (row.index < 0) return
+  // Пока идёт сохранение, второй клик считался бы по старому снимку долей
+  // и вернул бы убранное назад — ждём ответа.
+  if (busy.value) return
 
+  // Сверяем по пакету, а не по индексу: строки перерисовываются, и индекс
+  // мог бы указывать на соседнюю долю — «удалялось бы не то».
   const shares = currentShares(product).filter(
-    (_, index) => index !== row.index,
+    (share) => share.packageId !== row.packageId,
   )
   saveShares(dayIndex, kind, product, shares)
 }
 
-/** Крестик строки продукта: у доли — только эта доля, у остатка — остаток. */
+/**
+ * Крестик строки продукта.
+ *
+ * Доля в обычном пакете убирается одна. Остаток и доля в кульке — продукт
+ * целиком: уменьшить план на этот приём нельзя (убавка живёт ручной
+ * строкой и переживает удаление блюда — это был баг), а вынуть одну долю
+ * из кулька API не умеет, он расформировывает кулёк целиком.
+ */
 function removeProductRow(
   dayIndex: number,
   kind: TripMealKind,
   product: TripMealProduct,
   row: PackRow,
 ): void {
-  if (row.isFree) {
-    // «Остаток не берём»: план ужимается до разложенного, и строка остатка
-    // исчезает. Если не разложено ничего, ужимать некуда — убираем продукт.
-    if (allocatedOf(product) > 0) {
-      dropRest(dayIndex, kind, product)
-    } else {
-      removeLine(dayIndex, kind, product.productId)
-    }
+  if (!row.isFree && !isKulekRow(mealOf(dayIndex, kind), row)) {
+    removeShareRow(dayIndex, kind, product, row)
 
     return
   }
 
-  removeShareRow(dayIndex, kind, product, row)
+  removeLine(dayIndex, kind, product.productId)
 }
 
-/**
- * Убрать строку остатка: план ужимается до разложенного.
- *
- * Убавка на «разложено минус рецепт» — та же ручная строка, что когда-то
- * жила под кнопкой «убрать лишнее», только теперь она означает ровно то,
- * что человек сделал: остаток не нужен, в плане остаётся фасовка.
- */
-function dropRest(
-  dayIndex: number,
-  kind: TripMealKind,
-  product: TripMealProduct,
-): void {
-  const reduction = allocatedOf(product) - product.recipeAmount
-
-  void run(`${product.productId}:rest`, () =>
-    setMealLine(props.trip.id, dayIndex, kind, product.productId, reduction),
-  )
-}
-
-/** Крестик строки ингредиента: у доли — эта доля, у остатка — исключение. */
+/** Крестик строки ингредиента — те же правила, что у продукта. */
 function ingredientAction(
   dayIndex: number,
   kind: TripMealKind,
@@ -838,20 +849,13 @@ function ingredientAction(
   const meal = mealOf(dayIndex, kind)
   const product = meal ? productById(meal, ingredient.productId) : undefined
 
-  if (product && !row.isFree) {
+  if (product && !row.isFree && !isKulekRow(meal, row)) {
     removeShareRow(dayIndex, kind, product, row)
 
     return
   }
 
-  // Свободная строка: остаток не берём (план ужмётся до разложенного),
-  // а если не разложено ничего — убираем ингредиент из приёма.
-  if (product && allocatedOf(product) > 0) {
-    dropRest(dayIndex, kind, product)
-
-    return
-  }
-
+  // Остаток или кулёк: убираем ингредиент из приёма (рецепт не меняется).
   toggleDishIngredient(dayIndex, kind, dish, ingredient.productId)
 }
 
@@ -1353,7 +1357,7 @@ onMounted(() => {
                           <option value="" disabled></option>
                           <option value="all">всё</option>
                           <option
-                            v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId))"
+                            v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId), row)"
                             :key="n"
                             :value="String(n)"
                           >
@@ -1382,15 +1386,13 @@ onMounted(() => {
                         </span>
 
                         <button
-                          v-if="canEdit && !isKulekRow(mealOf(day.index, kind), row)"
+                          v-if="canEdit"
                           type="button"
                           class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
                           :title="
                             dish.excludedProductIds.includes(ingredient.productId)
                               ? 'Вернуть ингредиент'
-                              : row.isFree
-                                ? 'Убрать остаток'
-                                : 'Убрать строку'
+                              : removeHint(row, mealOf(day.index, kind), 'ингредиент')
                           "
                           :data-test="`ing-action-${dish.dishId}-${ingredient.productId}-${row.position}`"
                           @click="ingredientAction(day.index, kind, dish, ingredient, row)"
@@ -1453,7 +1455,7 @@ onMounted(() => {
                             >
                               <option value="" disabled></option>
                               <option value="all">всё</option>
-                              <option v-for="n in amountOptions(product)" :key="n" :value="String(n)">
+                              <option v-for="n in amountOptions(product, row)" :key="n" :value="String(n)">
                                 {{ n }}
                               </option>
                             </select>
@@ -1479,10 +1481,10 @@ onMounted(() => {
                           мясное · {{ meatPortion }}
                         </span>
                         <button
-                          v-if="canEdit && !isKulekRow(mealOf(day.index, kind), row)"
+                          v-if="canEdit"
                           type="button"
                           class="cursor-pointer text-xs text-muted transition-colors hover:text-text"
-                          :title="row.isFree ? 'Убрать остаток' : 'Убрать долю из пакета'"
+                          :title="removeHint(row, mealOf(day.index, kind), 'продукт')"
                           :data-test="shareTest('meal-line-remove', String(product.productId), row)"
                           @click="removeProductRow(day.index, kind, product, row)"
                         >

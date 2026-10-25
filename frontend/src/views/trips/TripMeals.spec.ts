@@ -627,7 +627,7 @@ describe('TripMeals', () => {
     expect(wrapper.find('[data-test="ing-pack-d1-1"]').text()).not.toContain('кулёк')
   })
 
-  it('у строки кулька нет крестика: его можно только расформировать', async () => {
+  it('у строки кулька есть крестик, и он убирает продукт', async () => {
     currentPlan.packages.push({
       id: 'pk',
       name: '1з',
@@ -644,7 +644,15 @@ describe('TripMeals', () => {
 
     const wrapper = await mountMeals()
 
-    expect(wrapper.find('[data-test="ing-action-d1-1-0"]').exists()).toBe(false)
+    // Разделить кулёк нельзя, а убрать продукт — можно.
+    expect(wrapper.find('[data-test="ing-action-d1-1-0"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="ing-action-d1-1-0"]').trigger('click')
+    await flushPromises()
+
+    // Ингредиент один — уходит блюдо; доли кулька не перекраиваем.
+    expect(mocks.removeMealDish).toHaveBeenCalledWith('7', 1, 'breakfast', 'd1')
+    expect(mocks.setMealAllocations).not.toHaveBeenCalled()
   })
 
   it('остаток — такая же строка с другим весом и своим пакетом', async () => {
@@ -800,7 +808,7 @@ describe('TripMeals', () => {
     expect(mocks.removeMealDish).not.toHaveBeenCalled()
   })
 
-  it('крестик остатка продукта ужимает план до разложенного, а не убирает продукт', async () => {
+  it('крестик остатка продукта убирает продукт: план на приём не меняется', async () => {
     currentPlan.meals[0]!.products.push({
       productId: 2,
       name: 'Хлеб',
@@ -821,15 +829,16 @@ describe('TripMeals', () => {
     await wrapper.find('[data-test="alloc-amount-2"]').setValue('150')
     await flushPromises()
 
-    // Остаток 50 не нужен: план ужимается до 150, строка остатка исчезает.
+    // Уменьшать план ручной строкой нельзя: она переживает удаление блюда.
+    // Остаток убираем вместе с продуктом, строк не трогаем.
     await wrapper.find('[data-test="meal-line-remove-2-2"]').trigger('click')
     await flushPromises()
 
-    expect(mocks.setMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 2, 150)
-    expect(mocks.removeMealLine).not.toHaveBeenCalled()
+    expect(mocks.removeMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 2)
+    expect(mocks.setMealLine).not.toHaveBeenCalled()
   })
 
-  it('крестик остатка ингредиента ужимает план, а не убирает ингредиент', async () => {
+  it('крестик остатка ингредиента убирает ингредиент, а не план', async () => {
     const wrapper = await mountMeals()
 
     await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p1')
@@ -840,10 +849,75 @@ describe('TripMeals', () => {
     await wrapper.find('[data-test="ing-action-d1-1-1"]').trigger('click')
     await flushPromises()
 
-    // Разложено 100 из рецепта 160: убавка -60, ингредиент остаётся.
-    expect(mocks.setMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 1, -60)
-    expect(mocks.setMealDishExclusions).not.toHaveBeenCalled()
-    expect(mocks.removeMealDish).not.toHaveBeenCalled()
+    // Ингредиент один — уходит блюдо; план ручной строкой не трогаем.
+    expect(mocks.removeMealDish).toHaveBeenCalledWith('7', 1, 'breakfast', 'd1')
+    expect(mocks.setMealLine).not.toHaveBeenCalled()
+  })
+
+  it('убираем первую долю — остальные доли остаются как были', async () => {
+    // Пять яблок в двух пакетах: 2 и 3.
+    currentPlan.meals[0]!.products.push({
+      productId: 3,
+      name: 'Яблоки',
+      unit: 'piece',
+      weightPerUnitGrams: 100,
+      recipeAmount: 0,
+      manualAmount: 5,
+      amount: 5,
+      isMeat: false,
+      fromDishes: [],
+      allocations: [
+        { packageId: 'p1', amount: 2, isElastic: false },
+        { packageId: 'p2', amount: 3, isElastic: false },
+      ],
+    })
+
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="meal-line-remove-3"]').trigger('click')
+    await flushPromises()
+
+    // Убрана именно первая доля, вторая не изменилась и не сложилась с ней.
+    expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 3, [
+      { packageId: 'p2', amount: 3, isElastic: false },
+    ])
+  })
+
+  it('варианты «кол-во» не дают взять больше, чем есть в строке', async () => {
+    // Пять яблок: два в пакет, три в остатке.
+    currentPlan.meals[0]!.products.push({
+      productId: 3,
+      name: 'Яблоки',
+      unit: 'piece',
+      weightPerUnitGrams: 100,
+      recipeAmount: 0,
+      manualAmount: 5,
+      amount: 5,
+      isMeat: false,
+      fromDishes: [],
+      allocations: [],
+    })
+
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="alloc-pack-3"]').setValue('p1')
+    await flushPromises()
+    await wrapper.find('[data-test="alloc-amount-3"]').setValue('2')
+    await flushPromises()
+
+    const values = (selector: string) =>
+      wrapper
+        .findAll(`${selector} option`)
+        .map((option) => (option.element as HTMLOptionElement).value)
+
+    // У остатка три яблока — в списке только 1..3, а не до пяти.
+    const leftover = values('[data-test="alloc-amount-3-2"]')
+    expect(leftover).toContain('3')
+    expect(leftover).not.toContain('4')
+    expect(leftover).not.toContain('5')
+
+    // У доли можно забрать остаток целиком — до пяти.
+    expect(values('[data-test="alloc-amount-3"]')).toContain('5')
   })
 
   it('крестик единственной строки продукта убирает продукт', async () => {
