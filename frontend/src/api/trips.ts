@@ -1,4 +1,4 @@
-import { apiFetch } from '@/api/client'
+﻿import { apiFetch } from '@/api/client'
 import type {
   ChatKind,
   CreateTripRequest,
@@ -362,6 +362,24 @@ export async function removeMealDish(
 }
 
 /** PUT .../lines/:productId — ручная строка (абсолютная). */
+/**
+ * POST .../lines — добавить продукт в приём по названию.
+ *
+ * Либо `catalogProductId` (продукт справочника копируется в поход), либо
+ * `name` (свой продукт этого похода). Ссылки на справочник в плане нет.
+ */
+export async function addMealLine(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  payload: { amount: number; name?: string; catalogProductId?: number },
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(`${mealPath(tripId, dayIndex, kind)}/lines`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  })
+}
+
 export async function setMealLine(
   tripId: string,
   dayIndex: number,

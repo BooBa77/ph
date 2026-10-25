@@ -15,6 +15,7 @@ import {
   setMealDishExclusions,
   setMealForm,
   setMealKulek,
+  addMealLine,
   setMealLine,
   setMyStatus,
   updateMealCheck,
@@ -67,7 +68,9 @@ const busy = ref<string | null>(null)
 /** Выбранное блюдо в форме добавления: ключ приёма → dishId. */
 const dishDrafts = ref<Record<string, string>>({})
 /** Черновик ручной строки: ключ приёма → продукт и количество. */
-const lineDrafts = ref<Record<string, { product: Product | null; amount: string }>>({})
+const lineDrafts = ref<
+  Record<string, { product: Product | null; text: string; amount: string }>
+>({})
 
 function messageOf(cause: unknown, fallback: string): string {
   return cause instanceof ApiError ? cause.message : fallback
@@ -87,8 +90,12 @@ function dishDraft(key: string): string {
   return dishDrafts.value[key] ?? ''
 }
 
-function lineDraft(key: string): { product: Product | null; amount: string } {
-  lineDrafts.value[key] ??= { product: null, amount: '' }
+function lineDraft(key: string): {
+  product: Product | null
+  text: string
+  amount: string
+} {
+  lineDrafts.value[key] ??= { product: null, text: '', amount: '' }
 
   return lineDrafts.value[key]!
 }
@@ -226,9 +233,15 @@ function removeDish(dayIndex: number, kind: TripMealKind, dishId: string) {
   )
 }
 
+/** Текст в поле поиска продукта: он и станет названием своего продукта. */
+function onLineQuery(dayIndex: number, kind: TripMealKind, text: string) {
+  lineDraft(mealKey(dayIndex, kind)).text = text
+}
+
 function chooseLineProduct(key: string, product: Product) {
   const draft = lineDraft(key)
   draft.product = product
+  draft.text = product.name
   draft.amount = ''
 }
 
@@ -245,7 +258,7 @@ function lineReady(key: string): boolean {
   const draft = lineDraft(key)
   const amount = Number(String(draft.amount).trim())
 
-  return Boolean(draft.product) && Number.isInteger(amount) && amount > 0
+  return draft.text.trim().length > 0 && Number.isInteger(amount) && amount > 0
 }
 
 function addLine(dayIndex: number, kind: TripMealKind) {
@@ -255,16 +268,20 @@ function addLine(dayIndex: number, kind: TripMealKind) {
   if (!lineReady(key)) return
 
   const amount = Number(String(draft.amount).trim())
+  const name = draft.text.trim()
+  // Продукт из справочника копируется в поход; если текст правили руками —
+  // это уже свой продукт похода, справочник тут не при чём.
+  const catalogProductId =
+    draft.product && draft.product.name === name ? draft.product.id : undefined
 
   void run(`${key}:line`, async () => {
-    const next = await setMealLine(
-      props.trip.id,
-      dayIndex,
-      kind,
-      draft.product!.id,
+    const next = await addMealLine(props.trip.id, dayIndex, kind, {
       amount,
-    )
-    lineDrafts.value[key] = { product: null, amount: '' }
+      ...(catalogProductId === undefined
+        ? { name }
+        : { catalogProductId }),
+    })
+    lineDrafts.value[key] = { product: null, text: '', amount: '' }
 
     return next
   })
@@ -840,9 +857,11 @@ onMounted(() => {
                     <div v-if="canEdit" class="flex flex-col" data-test="meal-add">
                       <ProductPicker
                         :product="lineDraft(mealKey(day.index, kind)).product"
+                        :query="lineDraft(mealKey(day.index, kind)).text"
                         :trip-id="trip.id"
                         class="[&_input]:rounded-b-none"
                         @select="chooseLineProduct(mealKey(day.index, kind), $event)"
+                        @update:query="onLineQuery(day.index, kind, $event)"
                       />
                       <div class="flex items-center gap-1">
                         <input

@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onUnmounted, ref, watch } from 'vue'
 
-import { createProduct, searchProducts } from '@/api/meals'
+import { searchProducts } from '@/api/meals'
 import { PRODUCT_UNIT_LABELS, type Product } from '@/types/meals'
 
 /**
@@ -25,8 +25,10 @@ const props = withDefaults(
     placeholder?: string
     /** Выбранный продукт: поле показывает его и сбрасывается вместе с ним. */
     product?: Product | null
-    /** Поход: свои продукты заводятся только в его рамках. */
+    /** Поход: в подсказки попадают и его собственные продукты. */
     tripId?: string
+    /** Текст в поле: приходит от родителя, чтобы тот знал, что набрано. */
+    query?: string
   }>(),
   { placeholder: 'Введите название продукта', product: null },
 )
@@ -34,16 +36,25 @@ const props = withDefaults(
 const emit = defineEmits<{
   /** Выбран продукт. Поле показывает его название, чтобы выбор был виден. */
   select: [product: Product]
+  'update:query': [text: string]
 }>()
 
 /** Пауза перед поиском: на каждую букву ходить в справочник незачем. */
 const SEARCH_DELAY_MS = 300
 
-const query = ref('')
+const query = ref(props.query ?? '')
+
+watch(
+  () => props.query,
+  (text) => {
+    if (text !== undefined && text !== query.value) query.value = text
+  },
+)
+
+watch(query, (text) => emit('update:query', text))
 const options = ref<Product[]>([])
 const isLoading = ref(false)
 const error = ref<string | null>(null)
-const isCreating = ref(false)
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 /** После выбора поле заполняется названием — искать его заново не надо. */
@@ -103,28 +114,6 @@ onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
 })
 
-/** Свой продукт: только в походе, в справочник не пишется. */
-async function createCustom() {
-  const name = query.value.trim()
-  if (name.length === 0) return
-
-  isCreating.value = true
-  error.value = null
-
-  try {
-    choose(
-      await createProduct(
-        { name, unit: 'piece', weightPerUnitGrams: 0 },
-        props.tripId,
-      ),
-    )
-  } catch (cause) {
-    error.value =
-      cause instanceof Error ? cause.message : 'Не удалось добавить продукт'
-  } finally {
-    isCreating.value = false
-  }
-}
 
 function choose(product: Product) {
   emit('select', product)
@@ -133,22 +122,10 @@ function choose(product: Product) {
   options.value = []
 }
 
-/**
- * Enter: выбрать первое совпадение, а если совпадений нет — завести свой
- * продукт похода. Кнопка под полем делает то же самое, но Enter не зависит
- * от того, дотянулась ли мышь до разметки.
- */
+/** Enter выбирает первое совпадение: список короткий, промахнуться нечем. */
 function submit() {
   const first = options.value[0]
-  if (first) {
-    choose(first)
-
-    return
-  }
-
-  if (query.value.trim().length > 0 && !isCreating.value) {
-    void createCustom()
-  }
+  if (first) choose(first)
 }
 
 
@@ -189,15 +166,6 @@ function submit() {
       </li>
     </ul>
 
-    <button
-      v-else-if="query.trim().length > 0"
-      type="button"
-      class="cursor-pointer rounded-xl border border-dashed border-border px-3 py-1.5 text-left text-xs text-muted transition-colors hover:border-primary hover:text-text"
-      :disabled="isCreating"
-      data-test="product-create"
-      @click="createCustom"
-    >
-      {{ isCreating ? 'Добавляем…' : 'Добавить «' + query.trim() + '» — нет в справочнике' }}
-    </button>
+
   </div>
 </template>
