@@ -5,11 +5,16 @@ import { ApiError } from '@/api/errors'
 import { listDishes } from '@/api/meals'
 import {
   addMealDish,
+  addMyMealDish,
+  addMyMealLine,
   createMealPackage,
   fetchMealPlan,
+  fetchMyMealPlan,
   removeMealDish,
   removeMealLine,
   removeMealPackage,
+  removeMyMealDish,
+  removeMyMealLine,
   setMealAllocations,
   setMealDishExclusions,
   setMealForm,
@@ -22,7 +27,6 @@ import {
 import ProductPicker from '@/components/ui/ProductPicker.vue'
 import TripChat from '@/views/trips/TripChat.vue'
 import TripMealShoppingModal from '@/views/trips/TripMealShoppingModal.vue'
-import TripMyMeals from '@/views/trips/TripMyMeals.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   TRIP_MEAL_CODES,
@@ -48,6 +52,11 @@ import { formatWeight } from '@/utils/gearWeight'
  *
  * Раскладка считается на бэкенде: рецепт × едоков, мясное — без
  * вегетарианцев, ручные строки абсолютные. Здесь только экран и правки.
+ *
+ * **Два слоя в одной плашке.** Общая еда похода и личная еда участника
+ * живут в одном приёме: личные поля стоят над общими и отделены синим.
+ * Правит каждый своё, читают оба слоя все идущие — флаг «питаюсь
+ * отдельно» для личных полей не нужен.
  *
  * **Дни — из похода.** У решённого похода день имеет дату; у «Планирую»
  * — только номер. Края подрезаются по времени заезда/выезда: приехали
@@ -957,6 +966,239 @@ function removePackage(pack: TripMealPackage): void {
   void run(`${pack.id}:delete`, () => removeMealPackage(props.trip.id, pack.id))
 }
 
+// ─── личная еда: моё в тех же плашках ───
+
+/**
+ * Личный слой участника: `fetchMyMealPlan` и `/my-meals/...`.
+ *
+ * Его видит и ведёт любой идущий — флаг «питаюсь отдельно» больше не
+ * нужен: личные поля стоят в тех же плашках приёма, только отдельным
+ * цветом. Кто в поход не идёт, получит 400 — личный интерфейс просто
+ * не появится.
+ */
+const myPlan = ref<TripMealPlan | null>(null)
+
+const myDishDrafts = ref<Record<string, string>>({})
+const myLineDrafts = ref<
+  Record<string, { product: Product | null; text: string; amount: string }>
+>({})
+
+/** «Список моих продуктов» — модалка личного чек-листа. */
+const myShoppingOpen = ref(false)
+
+/**
+ * Свёрнутость личных полей — отдельно от общих.
+ *
+ * Две независимые пары треугольников: свернуть свои поля не значит
+ * свернуть чужие, и наоборот.
+ */
+const myEditHidden = ref<Record<string, boolean>>({})
+
+function isMyEditHidden(key: string): boolean {
+  return myEditHidden.value[key] === true
+}
+
+function toggleMyEdit(key: string): void {
+  myEditHidden.value[key] = !isMyEditHidden(key)
+}
+
+const allMyCollapsed = computed(
+  () =>
+    slotKeys.value.length > 0 &&
+    slotKeys.value.every((key) => isMyEditHidden(key)),
+)
+
+/** Свернуть или развернуть личные поля во всех плашках. */
+function toggleAllMy(): void {
+  const next = !allMyCollapsed.value
+
+  myEditHidden.value = Object.fromEntries(
+    slotKeys.value.map((key) => [key, next]),
+  )
+}
+
+function myMealOf(dayIndex: number, kind: TripMealKind): TripMeal | undefined {
+  return myPlan.value?.meals.find(
+    (meal) => meal.dayIndex === dayIndex && meal.kind === kind,
+  )
+}
+
+function myLineDraft(key: string): {
+  product: Product | null
+  text: string
+  amount: string
+} {
+  myLineDrafts.value[key] ??= { product: null, text: '', amount: '' }
+
+  return myLineDrafts.value[key]!
+}
+
+/** Вес личного приёма: сколько человек берёт на этот приём. */
+function myMealWeight(dayIndex: number, kind: TripMealKind): number {
+  return myMealOf(dayIndex, kind)?.weightGrams ?? 0
+}
+
+/**
+ * Рецепты для личного приёма: свои из книги плюс общие из раскладки похода.
+ *
+ * Дубль по id снимается: одно и то же блюдо может быть и своим, и общим —
+ * выбирать его дважды незачем.
+ */
+function myDishesFor(
+  meal: TripMeal | undefined,
+): Array<{ id: string; title: string }> {
+  const rows = [
+    ...dishes.value.map((dish) => ({ id: dish.id, title: dish.title })),
+    ...sharedDishes.value.map((dish) => ({
+      id: dish.dishId,
+      title: dish.title,
+    })),
+  ]
+  const unique = new Map(rows.map((row) => [row.id, row]))
+  const taken = new Set(meal?.dishes.map((dish) => dish.dishId) ?? [])
+
+  return [...unique.values()].filter((row) => !taken.has(row.id))
+}
+
+/** Правка личного слоя: план обновляется из ответа, общий не трогаем. */
+async function runMy(key: string, action: () => Promise<TripMealPlan>) {
+  busy.value = key
+  error.value = null
+
+  try {
+    myPlan.value = await action()
+  } catch (problem) {
+    error.value = messageOf(problem, 'Не удалось сохранить')
+  } finally {
+    busy.value = null
+  }
+}
+
+function addMyDish(dayIndex: number, kind: TripMealKind): void {
+  const key = mealKey(dayIndex, kind)
+  const dishId = myDishDrafts.value[key]
+  if (!dishId) return
+
+  void runMy(`${key}:my-dish`, async () => {
+    const next = await addMyMealDish(props.trip.id, dayIndex, kind, dishId)
+    myDishDrafts.value[key] = ''
+
+    return next
+  })
+}
+
+function removeMyDish(
+  dayIndex: number,
+  kind: TripMealKind,
+  dishId: string,
+): void {
+  void runMy(`${mealKey(dayIndex, kind)}:my-dish:${dishId}`, () =>
+    removeMyMealDish(props.trip.id, dayIndex, kind, dishId),
+  )
+}
+
+function onMyLineQuery(
+  dayIndex: number,
+  kind: TripMealKind,
+  text: string,
+): void {
+  myLineDraft(mealKey(dayIndex, kind)).text = text
+}
+
+function chooseMyLineProduct(key: string, product: Product): void {
+  const draft = myLineDraft(key)
+  draft.product = product
+  draft.text = product.name
+  draft.amount = ''
+}
+
+function myLineReady(key: string): boolean {
+  const draft = myLineDraft(key)
+  const amount = Number(String(draft.amount).trim())
+
+  return draft.text.trim().length > 0 && Number.isInteger(amount) && amount > 0
+}
+
+function addMyLine(dayIndex: number, kind: TripMealKind): void {
+  const key = mealKey(dayIndex, kind)
+  const draft = myLineDraft(key)
+
+  if (!myLineReady(key)) return
+
+  const amount = Number(String(draft.amount).trim())
+  const name = draft.text.trim()
+  // Продукт из справочника копируется в поход; если текст правили руками —
+  // это уже свой продукт, и он уедет только в личный слой.
+  const catalogProductId =
+    draft.product && draft.product.name === name ? draft.product.id : undefined
+
+  void runMy(`${key}:my-line`, async () => {
+    const next = await addMyMealLine(props.trip.id, dayIndex, kind, {
+      amount,
+      ...(catalogProductId === undefined ? { name } : { catalogProductId }),
+    })
+    myLineDrafts.value[key] = { product: null, text: '', amount: '' }
+
+    return next
+  })
+}
+
+function removeMyLine(
+  dayIndex: number,
+  kind: TripMealKind,
+  productId: number,
+): void {
+  void runMy(`${mealKey(dayIndex, kind)}:my-line:${productId}`, () =>
+    removeMyMealLine(props.trip.id, dayIndex, kind, productId),
+  )
+}
+
+/** Мои продукты целиком: агрегат по всем личным приёмам для карточки. */
+const myProducts = computed(() => {
+  const rows = new Map<number, { key: string; name: string; weightGrams: number }>()
+
+  for (const meal of myPlan.value?.meals ?? []) {
+    for (const product of meal.products) {
+      const row = rows.get(product.productId) ?? {
+        key: String(product.productId),
+        name: product.name,
+        weightGrams: 0,
+      }
+      row.weightGrams += product.amount * product.weightPerUnitGrams
+      rows.set(product.productId, row)
+    }
+  }
+
+  return [...rows.values()]
+})
+
+const myProductsWeight = computed(() =>
+  myProducts.value.reduce((sum, row) => sum + row.weightGrams, 0),
+)
+
+/**
+ * Правый отступ колонки форм: под треугольники в углу плашки.
+ *
+ * Пара кнопок — около 48 px; пар может быть две (общая и личная), одна
+ * или ни одной. Лишний отступ съедает ширину селекта, поэтому считаем.
+ */
+const formsPad = computed(() => {
+  const pairs = (props.canEdit ? 1 : 0) + (myPlan.value ? 1 : 0)
+
+  if (pairs === 0) return 'pr-2'
+
+  return pairs === 1 ? 'pr-12' : 'pr-24'
+})
+
+async function loadMyPlan(): Promise<void> {
+  try {
+    myPlan.value = await fetchMyMealPlan(props.trip.id)
+  } catch {
+    // Не идёт в поход или личный слой недоступен — живём без личных полей.
+    myPlan.value = null
+  }
+}
+
 // ─── список покупок ───
 
 /**
@@ -969,6 +1211,7 @@ const shoppingOpen = ref(false)
 onMounted(() => {
   void load()
   void loadDishes()
+  void loadMyPlan()
 })
 </script>
 
@@ -991,15 +1234,15 @@ onMounted(() => {
           <template v-else>вегетарианцев {{ plan.eaters.vegetarians }}</template>
           </p>
 
-          <!-- Список покупок — наверху: за ним идут перед закупкой, а не
-               после того, как пролистали всю раскладку -->
+          <!-- Список общих продуктов — наверху: за ним идут перед закупкой,
+               а не после того, как пролистали всю раскладку -->
           <button
             type="button"
-            class="ml-auto cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
+            class="ml-auto cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
             data-test="checklist-toggle"
             @click="shoppingOpen = true"
           >
-            Список покупок
+            Список общих продуктов
           </button>
         </div>
 
@@ -1018,8 +1261,12 @@ onMounted(() => {
           </li>
         </ul>
 
-        <div v-if="me" class="mt-2 border-t border-border pt-2" data-test="eats-separately-block">
-          <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+        <div
+          v-if="me || myPlan"
+          class="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2"
+          data-test="eats-separately-block"
+        >
+          <label v-if="me" class="flex cursor-pointer items-center gap-2 text-sm text-text">
             <input
               type="checkbox"
               class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
@@ -1030,17 +1277,19 @@ onMounted(() => {
             />
             Я буду питаться отдельно
           </label>
+
+          <!-- Личный список продуктов — рядом с флагом: своя закупка -->
+          <button
+            v-if="myPlan"
+            type="button"
+            class="ml-auto cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
+            data-test="my-checklist-toggle"
+            @click="myShoppingOpen = true"
+          >
+            Список моих продуктов
+          </button>
         </div>
       </div>
-
-      <!-- Моя еда: личный слой того, кто питается отдельно -->
-      <TripMyMeals
-        v-if="me?.eatsSeparately"
-        :trip-id="trip.id"
-        :days="days"
-        :dishes="dishes"
-        :shared-dishes="sharedDishes"
-      />
 
       <!-- Раскладка по дням. <details>: длинную раскладку хочется свернуть,
            не уходя со вкладки; содержимое остаётся на своих местах. Свой
@@ -1071,109 +1320,204 @@ onMounted(() => {
               :data-test="`meal-${day.index}-${kind}`"
             >
               <!--
-                Две кнопки в углу плашки: одинарный шеврон — эта плашка,
-                двойной — все разом. Живут в углу, а не в скрываемых полях:
-                свёрнутая колонка исчезает вместе с кнопкой, и развернуть
-                приём было бы нечем. Есть и у пустых плашек: с автономным
-                питанием их стало больше, и полотно пустых форм тоже
-                хочется свернуть.
+                Четыре кнопки в углу плашки: две пары треугольников. Общая
+                пара (одинарный — эта плашка, двойной — все) и личная, синяя,
+                — сворачивает только свои поля. Живут в углу, а не
+                в скрываемых полях: свёрнутая колонка исчезает вместе
+                с кнопкой, и развернуть приём было бы нечем.
               -->
               <div
-                v-if="canEdit"
-                class="absolute right-1.5 top-1.5 flex items-center gap-1"
+                v-if="canEdit || myPlan"
+                class="absolute right-1.5 top-1.5 flex items-center gap-2"
                 data-test="meal-toggles"
               >
-                <button
-                  type="button"
-                  class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
-                  :aria-expanded="!isEditHidden(mealKey(day.index, kind))"
-                  :aria-label="
-                    isEditHidden(mealKey(day.index, kind))
-                      ? 'Показать поля приёма'
-                      : 'Свернуть поля приёма'
-                  "
-                  :title="
-                    isEditHidden(mealKey(day.index, kind))
-                      ? 'Показать поля приёма'
-                      : 'Свернуть поля приёма'
-                  "
-                  :data-test="`meal-add-toggle-${day.index}-${kind}`"
-                  @click="toggleEdit(mealKey(day.index, kind))"
-                >
-                  <svg
-                    viewBox="0 0 16 16"
-                    class="h-3 w-3"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                    aria-hidden="true"
+                <span v-if="canEdit" class="flex items-center gap-1">
+                  <button
+                    type="button"
+                    class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
+                    :aria-expanded="!isEditHidden(mealKey(day.index, kind))"
+                    :aria-label="
+                      isEditHidden(mealKey(day.index, kind))
+                        ? 'Показать поля приёма'
+                        : 'Свернуть поля приёма'
+                    "
+                    :title="
+                      isEditHidden(mealKey(day.index, kind))
+                        ? 'Показать поля приёма'
+                        : 'Свернуть поля приёма'
+                    "
+                    :data-test="`meal-add-toggle-${day.index}-${kind}`"
+                    @click="toggleEdit(mealKey(day.index, kind))"
                   >
-                    <path
-                      v-if="isEditHidden(mealKey(day.index, kind))"
-                      d="M4 6l4 4 4-4"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                    <path
-                      v-else
-                      d="M4 10l4-4 4 4"
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                    />
-                  </svg>
-                </button>
+                    <svg
+                      viewBox="0 0 16 16"
+                      class="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      aria-hidden="true"
+                    >
+                      <path
+                        v-if="isEditHidden(mealKey(day.index, kind))"
+                        d="M4 6l4 4 4-4"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                      <path
+                        v-else
+                        d="M4 10l4-4 4 4"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
 
-                <button
-                  type="button"
-                  class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
-                  :aria-expanded="!allCollapsed"
-                  :aria-label="
-                    allCollapsed
-                      ? 'Развернуть все приёмы'
-                      : 'Свернуть все приёмы'
-                  "
-                  :title="
-                    allCollapsed
-                      ? 'Развернуть все приёмы'
-                      : 'Свернуть все приёмы'
-                  "
-                  :data-test="`meals-collapse-all-${day.index}-${kind}`"
-                  @click="toggleAll"
-                >
-                  <svg
-                    viewBox="0 0 16 16"
-                    class="h-3 w-3"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.6"
-                    aria-hidden="true"
+                  <button
+                    type="button"
+                    class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
+                    :aria-expanded="!allCollapsed"
+                    :aria-label="
+                      allCollapsed
+                        ? 'Развернуть все приёмы'
+                        : 'Свернуть все приёмы'
+                    "
+                    :title="
+                      allCollapsed
+                        ? 'Развернуть все приёмы'
+                        : 'Свернуть все приёмы'
+                    "
+                    :data-test="`meals-collapse-all-${day.index}-${kind}`"
+                    @click="toggleAll"
                   >
-                    <template v-if="allCollapsed">
+                    <svg
+                      viewBox="0 0 16 16"
+                      class="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      aria-hidden="true"
+                    >
+                      <template v-if="allCollapsed">
+                        <path
+                          d="M3 7l5 5 5-5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                        <path
+                          d="M3 2l5 5 5-5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </template>
+                      <template v-else>
+                        <path
+                          d="M3 9l5-5 5 5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                        <path
+                          d="M3 14l5-5 5 5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </template>
+                    </svg>
+                  </button>
+                </span>
+
+                <span v-if="myPlan" class="flex items-center gap-1">
+                  <button
+                    type="button"
+                    class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-blue-300 text-blue-600 transition-colors hover:border-blue-500 hover:text-blue-700"
+                    :aria-expanded="!isMyEditHidden(mealKey(day.index, kind))"
+                    :aria-label="
+                      isMyEditHidden(mealKey(day.index, kind))
+                        ? 'Показать мои поля'
+                        : 'Свернуть мои поля'
+                    "
+                    :title="
+                      isMyEditHidden(mealKey(day.index, kind))
+                        ? 'Показать мои поля'
+                        : 'Свернуть мои поля'
+                    "
+                    :data-test="`my-meal-add-toggle-${day.index}-${kind}`"
+                    @click="toggleMyEdit(mealKey(day.index, kind))"
+                  >
+                    <svg
+                      viewBox="0 0 16 16"
+                      class="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      aria-hidden="true"
+                    >
                       <path
-                        d="M3 7l5 5 5-5"
+                        v-if="isMyEditHidden(mealKey(day.index, kind))"
+                        d="M4 6l4 4 4-4"
                         stroke-linecap="round"
                         stroke-linejoin="round"
                       />
                       <path
-                        d="M3 2l5 5 5-5"
+                        v-else
+                        d="M4 10l4-4 4 4"
                         stroke-linecap="round"
                         stroke-linejoin="round"
                       />
-                    </template>
-                    <template v-else>
-                      <path
-                        d="M3 9l5-5 5 5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                      <path
-                        d="M3 14l5-5 5 5"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                    </template>
-                  </svg>
-                </button>
+                    </svg>
+                  </button>
+
+                  <button
+                    type="button"
+                    class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-blue-300 text-blue-600 transition-colors hover:border-blue-500 hover:text-blue-700"
+                    :aria-expanded="!allMyCollapsed"
+                    :aria-label="
+                      allMyCollapsed
+                        ? 'Развернуть мои поля везде'
+                        : 'Свернуть мои поля везде'
+                    "
+                    :title="
+                      allMyCollapsed
+                        ? 'Развернуть мои поля везде'
+                        : 'Свернуть мои поля везде'
+                    "
+                    :data-test="`my-meals-collapse-all-${day.index}-${kind}`"
+                    @click="toggleAllMy"
+                  >
+                    <svg
+                      viewBox="0 0 16 16"
+                      class="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      aria-hidden="true"
+                    >
+                      <template v-if="allMyCollapsed">
+                        <path
+                          d="M3 7l5 5 5-5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                        <path
+                          d="M3 2l5 5 5-5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </template>
+                      <template v-else>
+                        <path
+                          d="M3 9l5-5 5 5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                        <path
+                          d="M3 14l5-5 5 5"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </template>
+                    </svg>
+                  </button>
+                </span>
               </div>
 
               <!-- Строка 1: приём | фасовка | блюда -->
@@ -1216,6 +1560,14 @@ onMounted(() => {
                   <p v-if="mealOf(day.index, kind) && mealOf(day.index, kind)!.weightGrams > 0" class="text-xs text-muted" data-test="meal-weight">
                     {{ formatWeight(mealOf(day.index, kind)?.weightGrams ?? 0) }}
                   </p>
+
+                  <p
+                    v-if="myMealWeight(day.index, kind) > 0"
+                    class="text-xs text-blue-600"
+                    data-test="my-meal-weight"
+                  >
+                    Мои продукты: {{ formatWeight(myMealWeight(day.index, kind)) }}
+                  </p>
                 </div>
 
                 <div
@@ -1240,64 +1592,187 @@ onMounted(() => {
                   </button>
                 </div>
 
-                <div
-                  v-if="canEdit && !isEditHidden(mealKey(day.index, kind))"
-                  class="flex flex-col gap-1 pr-12 md:col-start-3"
-                >
-                  <span class="text-xs uppercase tracking-wide text-muted">Блюда</span>
-                  <div class="flex flex-col gap-1">
+                <div class="flex flex-col gap-2 md:col-start-3" :class="formsPad">
+                  <!-- 1. Мои блюда -->
+                  <div
+                    v-if="myPlan && !isMyEditHidden(mealKey(day.index, kind))"
+                    class="flex flex-col gap-1"
+                    data-test="my-meal-dish-block"
+                  >
+                    <span class="text-xs uppercase tracking-wide text-blue-700">Блюда мои</span>
                     <select
-                      v-model="dishDrafts[mealKey(day.index, kind)]"
-                      @change="addDish(day.index, kind)"
-                      class="w-full rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
-                      :data-test="`meal-dish-select-${day.index}-${kind}`"
+                      v-model="myDishDrafts[mealKey(day.index, kind)]"
+                      class="w-full rounded-lg border border-blue-300 bg-field px-2 py-1 text-xs text-blue-700 focus:border-blue-500 focus:outline-none"
+                      :data-test="`my-meal-dish-select-${day.index}-${kind}`"
+                      @change="addMyDish(day.index, kind)"
                     >
                       <option value="" disabled hidden>Выберите рецепт блюда</option>
-                      <option v-for="dish in dishesFor(mealOf(day.index, kind))" :key="dish.id" :value="dish.id">
+                      <option
+                        v-for="dish in myDishesFor(myMealOf(day.index, kind))"
+                        :key="dish.id"
+                        :value="dish.id"
+                      >
                         {{ dish.title }}
                       </option>
                     </select>
-                <!-- Строка продуктов: заголовок и форма добавления -->
-                <div class="flex flex-col gap-2">
-                  <div>
-                    <span class="text-xs uppercase tracking-wide text-muted">Продукты</span>
+                  </div>
 
-                    <div v-if="canEdit" class="flex flex-col" data-test="meal-add">
+                  <!-- 2. Мои продукты -->
+                  <div
+                    v-if="myPlan && !isMyEditHidden(mealKey(day.index, kind))"
+                    class="flex flex-col gap-1"
+                  >
+                    <span class="text-xs uppercase tracking-wide text-blue-700">Продукты мои</span>
+
+                    <div class="flex flex-col" data-test="my-meal-add">
                       <ProductPicker
-                        :product="lineDraft(mealKey(day.index, kind)).product"
-                        :query="lineDraft(mealKey(day.index, kind)).text"
+                        :product="myLineDraft(mealKey(day.index, kind)).product"
+                        :query="myLineDraft(mealKey(day.index, kind)).text"
                         :trip-id="trip.id"
-                        class="[&_input]:rounded-b-none"
-                        @select="chooseLineProduct(mealKey(day.index, kind), $event)"
-                        @update:query="onLineQuery(day.index, kind, $event)"
+                        class="[&_input]:rounded-b-none [&_input]:border-blue-300"
+                        @select="chooseMyLineProduct(mealKey(day.index, kind), $event)"
+                        @update:query="onMyLineQuery(day.index, kind, $event)"
                       />
                       <div class="flex items-center gap-1">
                         <input
-                          v-model="lineDraft(mealKey(day.index, kind)).amount"
+                          v-model="myLineDraft(mealKey(day.index, kind)).amount"
                           type="number"
                           min="1"
                           step="1"
                           placeholder="кол-во"
-                          class="-mt-px w-20 shrink-0 rounded-t-none rounded-b-lg border border-border bg-field px-2 py-1.5 text-xs text-text focus:border-primary focus:outline-none"
-                          :data-test="`meal-line-amount-${day.index}-${kind}`"
+                          class="-mt-px w-20 shrink-0 rounded-t-none rounded-b-lg border border-blue-300 bg-field px-2 py-1.5 text-xs text-text focus:border-blue-500 focus:outline-none"
+                          :data-test="`my-meal-line-amount-${day.index}-${kind}`"
                         />
                         <button
                           type="button"
-                          class="ml-auto shrink-0 cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
-                          :disabled="!lineReady(mealKey(day.index, kind)) || busy !== null"
-                          :data-test="`meal-line-add-${day.index}-${kind}`"
-                          @click="addLine(day.index, kind)"
+                          class="ml-auto shrink-0 cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+                          :disabled="!myLineReady(mealKey(day.index, kind)) || busy !== null"
+                          :data-test="`my-meal-line-add-${day.index}-${kind}`"
+                          @click="addMyLine(day.index, kind)"
                         >
                           Добавить
                         </button>
                       </div>
                     </div>
                   </div>
-                </div>
 
-                  </div>
+                  <!-- 3. Общие блюда -->
+                  <template v-if="canEdit && !isEditHidden(mealKey(day.index, kind))">
+                    <div class="flex flex-col gap-1">
+                      <span class="text-xs uppercase tracking-wide text-muted">Блюда общие</span>
+                      <select
+                        v-model="dishDrafts[mealKey(day.index, kind)]"
+                        class="w-full rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
+                        :data-test="`meal-dish-select-${day.index}-${kind}`"
+                        @change="addDish(day.index, kind)"
+                      >
+                        <option value="" disabled hidden>Выберите рецепт блюда</option>
+                        <option
+                          v-for="dish in dishesFor(mealOf(day.index, kind))"
+                          :key="dish.id"
+                          :value="dish.id"
+                        >
+                          {{ dish.title }}
+                        </option>
+                      </select>
+                    </div>
+
+                    <!-- 4. Общие продукты -->
+                    <div class="flex flex-col gap-1">
+                      <span class="text-xs uppercase tracking-wide text-muted">Продукты общие</span>
+
+                      <div class="flex flex-col" data-test="meal-add">
+                        <ProductPicker
+                          :product="lineDraft(mealKey(day.index, kind)).product"
+                          :query="lineDraft(mealKey(day.index, kind)).text"
+                          :trip-id="trip.id"
+                          class="[&_input]:rounded-b-none"
+                          @select="chooseLineProduct(mealKey(day.index, kind), $event)"
+                          @update:query="onLineQuery(day.index, kind, $event)"
+                        />
+                        <div class="flex items-center gap-1">
+                          <input
+                            v-model="lineDraft(mealKey(day.index, kind)).amount"
+                            type="number"
+                            min="1"
+                            step="1"
+                            placeholder="кол-во"
+                            class="-mt-px w-20 shrink-0 rounded-t-none rounded-b-lg border border-border bg-field px-2 py-1.5 text-xs text-text focus:border-primary focus:outline-none"
+                            :data-test="`meal-line-amount-${day.index}-${kind}`"
+                          />
+                          <button
+                            type="button"
+                            class="ml-auto shrink-0 cursor-pointer rounded-lg bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-40"
+                            :disabled="!lineReady(mealKey(day.index, kind)) || busy !== null"
+                            :data-test="`meal-line-add-${day.index}-${kind}`"
+                            @click="addLine(day.index, kind)"
+                          >
+                            Добавить
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  </template>
                 </div>
               </div>
+
+              <!-- Результат личной еды: свои блюда и продукты, выше общих -->
+              <template v-if="myMealOf(day.index, kind)">
+                <div
+                  v-for="dish in myMealOf(day.index, kind)!.dishes"
+                  :key="`my-dish-${dish.dishId}`"
+                  class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                  data-test="my-meal-dish"
+                >
+                  <div class="flex flex-col gap-1 md:col-start-3">
+                    <div class="flex items-start justify-between gap-2">
+                      <span class="font-medium text-blue-700">{{ dish.title }}</span>
+                      <button
+                        type="button"
+                        class="cursor-pointer text-xs text-blue-600 underline transition-colors hover:text-blue-800"
+                        :data-test="`my-meal-dish-remove-${dish.dishId}`"
+                        @click="removeMyDish(day.index, kind, dish.dishId)"
+                      >
+                        убрать
+                      </button>
+                    </div>
+
+                    <p v-if="dish.ingredients.length" class="text-xs text-blue-600">
+                      {{ dish.ingredients
+                        .map(
+                          (ingredient) =>
+                            `${ingredient.name} ${formatProductAmount(ingredient.amount, ingredient.unit)}`,
+                        )
+                        .join(' · ') }}
+                    </p>
+                  </div>
+                </div>
+
+                <ul class="flex flex-col gap-1" data-test="my-meal-products">
+                  <li
+                    v-for="product in myMealOf(day.index, kind)!.products"
+                    :key="`my-product-${product.productId}`"
+                    class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                    data-test="my-meal-product"
+                  >
+                    <div class="flex flex-wrap items-baseline gap-2 md:col-start-3">
+                      <span class="font-medium text-blue-700">{{ product.name }}</span>
+                      <span class="text-xs text-blue-600">
+                        {{ formatProductAmount(product.amount, product.unit) }}
+                      </span>
+                      <button
+                        type="button"
+                        class="ml-auto cursor-pointer text-xs text-blue-600 transition-colors hover:text-blue-800"
+                        title="Убрать продукт"
+                        :data-test="`my-meal-line-remove-${product.productId}`"
+                        @click="removeMyLine(day.index, kind, product.productId)"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </li>
+                </ul>
+              </template>
 
               <template v-if="mealOf(day.index, kind)">
                 <!-- Строки блюд: пары фасовки слева, блюдо справа -->
@@ -1650,6 +2125,26 @@ onMounted(() => {
           </li>
         </ul>
 
+        <!-- Мои продукты: итог по личным приёмам, без пакета в БД -->
+        <div
+          v-if="myProductsWeight > 0"
+          class="mt-1 flex flex-col gap-2 rounded-xl border border-blue-300 bg-blue-50 p-3"
+          data-test="my-products"
+        >
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 class="text-sm font-medium text-blue-700">Мои продукты</h3>
+            <span class="text-xs text-blue-600">
+              расчётно: {{ formatWeight(myProductsWeight) }}
+            </span>
+          </div>
+
+          <ul class="flex flex-col gap-0.5">
+            <li v-for="row in myProducts" :key="row.key" class="text-xs text-blue-600">
+              {{ row.name }} — {{ formatWeight(row.weightGrams) }}
+            </li>
+          </ul>
+        </div>
+
         <div v-if="unpackedRows.length" class="mt-1 flex flex-col gap-1" data-test="unpacked">
           <p class="text-xs text-muted">Не расфасовано:</p>
           <ul class="flex flex-col gap-0.5">
@@ -1665,6 +2160,14 @@ onMounted(() => {
         v-if="shoppingOpen"
         :trip-id="trip.id"
         @close="shoppingOpen = false"
+      />
+
+      <!-- Список моих продуктов: тот же экран, личные строки и отметки -->
+      <TripMealShoppingModal
+        v-if="myShoppingOpen"
+        :trip-id="trip.id"
+        personal
+        @close="myShoppingOpen = false"
       />
 
       <!-- Чат питания: обсуждение раскладки и закупки -->

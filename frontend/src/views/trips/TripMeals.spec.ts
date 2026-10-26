@@ -268,6 +268,70 @@ function checks(): TripMealCheck[] {
   ]
 }
 
+/**
+ * Личный слой участника: своё блюдо и свой продукт в завтраке первого дня.
+ *
+ * Он живёт в тех же плашках приёма, поэтому по умолчанию загружен: так
+ * проверяются и личные строки, и карточка «Мои продукты», и то, что общие
+ * тесты не ломаются от соседства.
+ */
+function myPlan(): TripMealPlan {
+  return {
+    dayCount: 2,
+    eaters: {
+      total: 1,
+      men: 1,
+      women: 0,
+      vegetarians: 0,
+      people: [
+        {
+          userId: ORGANIZER,
+          displayName: 'Организатор',
+          avatarUrl: null,
+          gender: 'm',
+          isVegetarian: false,
+          allergies: null,
+          eatsSeparately: false,
+        },
+      ],
+    },
+    meals: [
+      {
+        id: 'my1',
+        dayIndex: 1,
+        kind: 'breakfast',
+        form: 'cook',
+        dishes: [
+          {
+            dishId: 'dm1',
+            title: 'Мой суп',
+            ingredients: [
+              { productId: 11, name: 'Сыр', unit: 'g', amount: 40, isMeat: false },
+            ],
+            excludedProductIds: [],
+          },
+        ],
+        products: [
+          {
+            productId: 11,
+            name: 'Сыр',
+            unit: 'g',
+            weightPerUnitGrams: 1,
+            recipeAmount: 40,
+            manualAmount: 60,
+            amount: 100,
+            isMeat: false,
+            fromDishes: ['Мой суп'],
+            allocations: [],
+          },
+        ],
+        weightGrams: 100,
+      },
+    ],
+    packages: [],
+  }
+}
+
 function signIn() {
   const auth = useAuthStore()
   auth.user = {
@@ -288,6 +352,9 @@ function signIn() {
  * отдаёт именно её, а `setMealAllocations` возвращает её же с новыми долями.
  */
 let currentPlan: TripMealPlan
+
+/** Личный план: ответы личных ручек тоже должны быть согласованы. */
+let currentMyPlan: TripMealPlan
 
 async function mountMeals(canEdit = true) {
   const wrapper = mount(TripMeals, { props: { trip: TRIP, canEdit } })
@@ -350,28 +417,14 @@ describe('TripMeals', () => {
       },
     ])
     mocks.searchProducts.mockResolvedValue([])
-    mocks.fetchMyMealPlan.mockResolvedValue({
-      dayCount: 2,
-      eaters: {
-        total: 1,
-        men: 0,
-        women: 1,
-        vegetarians: 1,
-        people: [
-          {
-            userId: ORGANIZER,
-            displayName: 'Организатор',
-            avatarUrl: null,
-            gender: 'm',
-            isVegetarian: false,
-            allergies: null,
-            eatsSeparately: true,
-          },
-        ],
-      },
-      meals: [],
-      packages: [],
-    })
+
+    const currentMy = myPlan()
+    currentMyPlan = currentMy
+    mocks.fetchMyMealPlan.mockResolvedValue(currentMy)
+    mocks.addMyMealDish.mockResolvedValue(currentMy)
+    mocks.removeMyMealDish.mockResolvedValue(currentMy)
+    mocks.addMyMealLine.mockResolvedValue(currentMy)
+    mocks.removeMyMealLine.mockResolvedValue(currentMy)
     mocks.fetchMyMealChecks.mockResolvedValue([])
   })
 
@@ -444,6 +497,8 @@ describe('TripMeals', () => {
     expect(card().text()).toContain('Завтрак')
     expect(card().find('[data-test="meal-weight"]').exists()).toBe(true)
     expect(card().text()).toContain('Каша')
+    // Общее свёртывание не прячет личные поля.
+    expect(card().find('[data-test="my-meal-add"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="meal-add-toggle-1-breakfast"]').trigger('click')
     await flushPromises()
@@ -510,22 +565,94 @@ describe('TripMeals', () => {
     expect(mocks.fetchMealPlan).toHaveBeenCalledTimes(2)
   })
 
-  it('без флага «питаюсь отдельно» личной еды нет', async () => {
-    const wrapper = await mountMeals()
+  it('без права правки видны личные поля, а общие — нет', async () => {
+    const wrapper = await mountMeals(false)
 
-    expect(wrapper.find('[data-test="my-meals"]').exists()).toBe(false)
-    expect(mocks.fetchMyMealPlan).not.toHaveBeenCalled()
+    // Личный слой ведёт любой идущий: свои поля есть и без прав на общие.
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="my-meal-dish-select-1-breakfast"]').exists()).toBe(true)
+
+    // А общие формы — только у завхоза.
+    expect(wrapper.find('[data-test="meal-add"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
   })
 
-  it('«Моя еда» появляется у того, кто питается отдельно', async () => {
-    const current = plan()
-    current.eaters.people[0]!.eatsSeparately = true
-    mocks.fetchMealPlan.mockResolvedValue(current)
-
+  it('личный продукт добавляется в приём', async () => {
     const wrapper = await mountMeals()
 
-    expect(wrapper.find('[data-test="my-meals"]').exists()).toBe(true)
-    expect(mocks.fetchMyMealPlan).toHaveBeenCalledWith('7')
+    await wrapper
+      .find('[data-test="my-meal-add"] [data-test="product-search"]')
+      .setValue('Хлеб')
+    await wrapper.find('[data-test="my-meal-line-amount-1-breakfast"]').setValue('200')
+    await flushPromises()
+
+    await wrapper.find('[data-test="my-meal-line-add-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addMyMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', {
+      amount: 200,
+      name: 'Хлеб',
+    })
+  })
+
+  it('личные строки идут выше общих и покрашены в синий', async () => {
+    const wrapper = await mountMeals()
+    const card = wrapper.find('[data-test="meal-1-breakfast"]')
+
+    const myDish = card.find('[data-test="my-meal-dish"]')
+    expect(myDish.text()).toContain('Мой суп')
+    expect(myDish.find('span').classes()).toContain('text-blue-700')
+
+    const myProduct = card.find('[data-test="my-meal-product"]')
+    expect(myProduct.text()).toContain('Сыр')
+    expect(myProduct.find('span').classes()).toContain('text-blue-700')
+
+    // Личные строки стоят выше общих в разметке плашки.
+    const rows = card.findAll('[data-test="my-meal-dish"], [data-test="meal-dish"]')
+    expect(rows[0]!.attributes('data-test')).toBe('my-meal-dish')
+  })
+
+  it('«Список моих продуктов» открывает личный чек-лист', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="my-checklist-toggle"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.fetchMyMealChecks).toHaveBeenCalledWith('7')
+    expect(mocks.fetchMealChecks).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="checklist"]').attributes('role')).toBe('dialog')
+  })
+
+  it('личный двойной шеврон сворачивает мои поля во всех плашках', async () => {
+    const wrapper = await mountMeals()
+    const card = (key: string) => wrapper.find(`[data-test="meal-${key}"]`)
+
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="my-meals-collapse-all-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="my-meal-dish-select-1-breakfast"]').exists()).toBe(false)
+    // Общие поля свёртывание личных не трогает.
+    expect(card('1-breakfast').find('[data-test="meal-add"]').exists()).toBe(true)
+    expect(card('1-breakfast').find('[data-test="meal-form"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="my-meals-collapse-all-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(true)
+  })
+
+  it('синяя карточка «Мои продукты» показывает вес и продукт', async () => {
+    const wrapper = await mountMeals()
+
+    const card = wrapper.find('[data-test="my-products"]')
+    expect(card.exists()).toBe(true)
+    expect(card.classes()).toContain('bg-blue-50')
+    expect(card.text()).toContain('Мои продукты')
+    expect(card.text()).toContain('расчётно')
+    expect(card.text()).toContain('Сыр')
   })
 
   it('показывает пакеты и их расчётный вес', async () => {
