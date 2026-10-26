@@ -114,9 +114,17 @@ function lineDraft(key: string): {
  * Свёрнутая плашка: «только результат».
  *
  * Прячем всё, что нужно в момент сборки и мешает в момент просмотра:
- * кнопки формы приёма (готовка/перекус), колонку «ФАСОВКА по пакетам»
- * с кульком и выбор блюда с продуктом. Остаются название приёма, его вес,
- * блюда с составом и строки продуктов — по ним и видно, что человек ест.
+ * колонку «ФАСОВКА по пакетам» с кульком и выбор блюда с продуктом.
+ * Остаются название приёма, форма (готовка/перекус — это режим, а не поле
+ * ввода), вес, блюда с составом и строки продуктов — по ним и видно,
+ * что человек ест.
+ *
+ * Раньше сюда же попадали кнопки «Готовка / Перекус». Заказчик назвал это
+ * багом (26.10.2026): режим приёма — не поле, которое заполняют, а то,
+ * что и в просмотре надо видеть. Теперь они остаются всегда.
+ *
+ * Выбор пакета в строках этим флагом не управляется — для него отдельная
+ * кнопка «свернуть фасовку» (`packsHidden`).
  *
  * Состояние живёт в памяти вкладки: это режим просмотра на минуту, а не
  * настройка, которую надо запоминать между заходами.
@@ -161,6 +169,29 @@ function toggleAll(): void {
   editHidden.value = Object.fromEntries(
     slotKeys.value.map((key) => [key, next]),
   )
+}
+
+/**
+ * Свёрнутая фасовка: плашка показывает, **что** едят, но не **во что**
+ * это уложено.
+ *
+ * Отдельный флаг, а не часть «свернуть поля», потому что задачи разные:
+ * поля — про сборку приёма (блюда, продукты, кнопки формы), фасовка — про
+ * пакеты. Раскладку чаще смотрят, чтобы понять состав, и выбор пакета в
+ * каждой строке этому только мешает; при этом состав видеть нужно.
+ *
+ * Флаг прячет **только выбор пакета в строках раскладки**: секция «Пакеты»
+ * (состав пакетов, вес, переименование) остаётся — её сворачивают своим
+ * `<details>`, и это разные вещи.
+ */
+const packsHidden = ref<Record<string, boolean>>({})
+
+function isPacksHidden(key: string): boolean {
+  return packsHidden.value[key] === true
+}
+
+function togglePacks(key: string): void {
+  packsHidden.value[key] = !isPacksHidden(key)
 }
 
 /** Кто из смотрящих — едок (для флага «питаюсь отдельно»). */
@@ -1263,14 +1294,28 @@ function saveMyFoodWeight(event: Event): void {
  *
  * Пара кнопок — около 48 px; пар может быть две (общая и личная), одна
  * или ни одной. Лишний отступ съедает ширину селекта, поэтому считаем.
+ *
+ * С 26.10.2026 в общей паре три кнопки (добавилась «свернуть фасовку»),
+ * поэтому её ширина — 68 px, а не 48.
  */
 const formsPad = computed(() => {
   const pairs = (props.canEdit ? 1 : 0) + (myPlan.value ? 1 : 0)
 
   if (pairs === 0) return 'pr-2'
 
-  return pairs === 1 ? 'pr-12' : 'pr-24'
+  return pairs === 1 ? 'pr-[4.5rem]' : 'pr-[7rem]'
 })
+
+/**
+ * Отступ справа у шапки приёма.
+ *
+ * На телефоне шапка занимает всю ширину плашки, а кнопки сворачивания висят
+ * в правом верхнем углу поверх неё — без отступа «Мои продукты: 50 г»
+ * оказывались под кнопками (видно на снимке до правки). На десктопе шапка
+ * стоит в первой колонке (`9rem`), а кнопки — над третьей, так что там
+ * отступ только съедал бы место.
+ */
+const headerPad = computed(() => `${formsPad.value} md:pr-0`)
 
 async function loadMyPlan(): Promise<void> {
   try {
@@ -1506,6 +1551,59 @@ onMounted(() => {
                       </template>
                     </svg>
                   </button>
+
+                  <!--
+                    Третья кнопка — сворачивает фасовку: выбор пакета
+                    в строках раскладки. Отдельная, потому что это другой
+                    вопрос: «что едят» смотрят чаще, чем «во что уложено»,
+                    и ради второго не хочется прятать первое.
+                  -->
+                  <button
+                    type="button"
+                    class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
+                    :aria-expanded="!isPacksHidden(mealKey(day.index, kind))"
+                    :aria-label="
+                      isPacksHidden(mealKey(day.index, kind))
+                        ? 'Показать фасовку'
+                        : 'Свернуть фасовку'
+                    "
+                    :title="
+                      isPacksHidden(mealKey(day.index, kind))
+                        ? 'Показать фасовку'
+                        : 'Свернуть фасовку'
+                    "
+                    :data-test="`meal-pack-toggle-${day.index}-${kind}`"
+                    @click="togglePacks(mealKey(day.index, kind))"
+                  >
+                    <svg
+                      viewBox="0 0 16 16"
+                      class="h-3 w-3"
+                      fill="none"
+                      stroke="currentColor"
+                      stroke-width="1.6"
+                      aria-hidden="true"
+                    >
+                      <!-- коробка слева, шеврон справа: «свернуть упаковку» -->
+                      <path
+                        d="M1.5 4.5h6.5v8H1.5z"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                      <path d="M1.5 7h6.5" stroke-linecap="round" />
+                      <path
+                        v-if="isPacksHidden(mealKey(day.index, kind))"
+                        d="M10 9l2.5-2.5L15 9"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                      <path
+                        v-else
+                        d="M10 7l2.5 2.5L15 7"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                  </button>
                 </span>
 
                 <span v-if="myPlan" class="flex items-center gap-1">
@@ -1605,21 +1703,29 @@ onMounted(() => {
 
               <!-- Строка 1: приём | фасовка | блюда -->
               <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
+                <!--
+                  Шапка приёма — строка с переносами на телефоне и колонка
+                  на десктопе. Свёрнутость больше не меняет раскладку шапки:
+                  кнопки формы теперь видны всегда, и «в строку» они встают
+                  сами. Отступ справа (`headerPad`) держит текст из-под
+                  кнопок в углу плашки.
+                -->
                 <div
-                  class="flex"
-                  :class="
+                  class="flex flex-wrap items-center gap-x-2 gap-y-1"
+                  :class="[
+                    headerPad,
                     isEditHidden(mealKey(day.index, kind))
-                      ? 'flex-row flex-wrap items-baseline gap-2'
-                      : 'flex-col items-start gap-1'
-                  "
+                      ? 'md:flex-row md:flex-wrap md:items-baseline md:gap-2'
+                      : 'md:flex-col md:items-start md:gap-1',
+                  ]"
                 >
                   <span class="text-sm font-medium text-text">
                     {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
                   </span>
 
                   <div
-                    v-if="canEdit && !isEditHidden(mealKey(day.index, kind))"
-                    class="flex flex-col items-start gap-1"
+                    v-if="canEdit"
+                    class="flex flex-wrap items-center gap-1"
                     data-test="meal-form"
                   >
                     <button
@@ -1654,8 +1760,8 @@ onMounted(() => {
                 </div>
 
                 <div
-                  v-if="!isEditHidden(mealKey(day.index, kind))"
-                  class="flex flex-col gap-1 md:col-start-2"
+                  v-if="!isEditHidden(mealKey(day.index, kind)) && !isPacksHidden(mealKey(day.index, kind))"
+                  class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 md:col-start-2 md:flex-col md:items-start md:gap-y-1"
                 >
                   <span class="text-xs uppercase tracking-wide text-muted">ФАСОВКА по пакетам</span>
                   <button
@@ -1904,8 +2010,8 @@ onMounted(() => {
                   </div>
 
                   <div
-                    v-if="dish.ingredients.length"
-                    class="grid gap-x-4 text-[10px] uppercase leading-none text-muted md:grid-cols-[9rem_12rem_1fr]"
+                    v-if="dish.ingredients.length && !isPacksHidden(mealKey(day.index, kind))"
+                    class="hidden gap-x-4 text-[10px] uppercase leading-none text-muted md:grid md:grid-cols-[9rem_12rem_1fr]"
                   >
                     <span class="hidden md:col-start-1 md:block"></span>
                     <span class="flex gap-1 md:col-start-2">
@@ -1921,49 +2027,17 @@ onMounted(() => {
                     <div
                       v-for="row in ingredientRows(mealOf(day.index, kind), ingredient)"
                       :key="row.key"
-                      class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                      class="flex flex-col gap-1 md:grid md:grid-cols-[9rem_12rem_1fr] md:gap-x-4"
                       :data-test="`ing-row-${dish.dishId}-${ingredient.productId}-${row.position}`"
                     >
-                      <div
-                        v-if="productById(mealOf(day.index, kind)!, ingredient.productId)"
-                        class="flex gap-1 md:col-start-2"
-                      >
-                        <select
-                          :value="row.packageId"
-                          :data-test="shareTest('ing-pack', dish.dishId + '-' + ingredient.productId, row)"
-                          class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
-                          @change="setIngredientPack(day.index, kind, ingredient.productId, row, $event)"
-                        >
-                          <option value="" disabled></option>
-                          <option value="__new__">новый пакет</option>
-                          <option
-                            v-for="pack in packOptions(mealOf(day.index, kind), row)"
-                            :key="pack.id"
-                            :value="pack.id"
-                          >
-                            {{ packLabel(pack) }}
-                          </option>
-                        </select>
-                        <select
-                          :value="amountValue(row)"
-                          :disabled="row.isFree || isKulekRow(mealOf(day.index, kind), row)"
-                          :data-test="shareTest('ing-amount', dish.dishId + '-' + ingredient.productId, row)"
-                          class="w-16 shrink-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
-                          @change="setIngredientAmount(day.index, kind, ingredient.productId, row, $event)"
-                        >
-                          <option value="" disabled></option>
-                          <option value="all">всё</option>
-                          <option
-                            v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId), row)"
-                            :key="n"
-                            :value="String(n)"
-                          >
-                            {{ n }}
-                          </option>
-                        </select>
-                      </div>
-
-                      <div class="flex items-center gap-1 md:col-start-3">
+                      <!--
+                        Продукт идёт первым: на телефоне это одна колонка,
+                        и фасовка должна стоять ПОД тем, что фасуют.
+                        На десктопе сетка та же, что была: продукт в третьей
+                        колонке, фасовка во второй — местами их разводит
+                        `md:col-start`, а не порядок в разметке.
+                      -->
+                      <div class="flex items-center gap-1 md:col-start-3 md:row-start-1">
                         <!--
                           Родитель показывает ровно то, что лежит в пакете,
                           остаток — то, что осталось: обводка и крестик у них
@@ -1997,13 +2071,59 @@ onMounted(() => {
                           {{ dish.excludedProductIds.includes(ingredient.productId) ? '+' : '×' }}
                         </button>
                       </div>
+
+                      <!-- Фасовка строки: пакет и количество, 3 : 1 -->
+                      <div
+                        v-if="
+                          !isPacksHidden(mealKey(day.index, kind)) &&
+                          productById(mealOf(day.index, kind)!, ingredient.productId)
+                        "
+                        class="grid grid-cols-4 gap-1 md:col-start-2 md:row-start-1 md:flex"
+                      >
+                        <select
+                          :value="row.packageId"
+                          :data-test="shareTest('ing-pack', dish.dishId + '-' + ingredient.productId, row)"
+                          class="col-span-3 min-w-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text md:col-span-1 md:flex-1"
+                          @change="setIngredientPack(day.index, kind, ingredient.productId, row, $event)"
+                        >
+                          <option value="" disabled>в пакет</option>
+                          <option value="__new__">новый пакет</option>
+                          <option
+                            v-for="pack in packOptions(mealOf(day.index, kind), row)"
+                            :key="pack.id"
+                            :value="pack.id"
+                          >
+                            {{ packLabel(pack) }}
+                          </option>
+                        </select>
+                        <select
+                          :value="amountValue(row)"
+                          :disabled="row.isFree || isKulekRow(mealOf(day.index, kind), row)"
+                          :data-test="shareTest('ing-amount', dish.dishId + '-' + ingredient.productId, row)"
+                          class="col-span-1 min-w-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50 md:w-16 md:shrink-0"
+                          @change="setIngredientAmount(day.index, kind, ingredient.productId, row, $event)"
+                        >
+                          <option value="" disabled>кол-во</option>
+                          <option value="all">всё</option>
+                          <option
+                            v-for="n in amountOptions(productById(mealOf(day.index, kind)!, ingredient.productId), row)"
+                            :key="n"
+                            :value="String(n)"
+                          >
+                            {{ n }}
+                          </option>
+                        </select>
+                      </div>
                     </div>
                   </template>
                 </div>
 
                 <div
-                  v-if="mealOf(day.index, kind)!.products.some((row) => row.manualAmount > 0)"
-                  class="grid gap-x-4 text-[10px] uppercase leading-none text-muted md:grid-cols-[9rem_12rem_1fr]"
+                  v-if="
+                    mealOf(day.index, kind)!.products.some((row) => row.manualAmount > 0) &&
+                    !isPacksHidden(mealKey(day.index, kind))
+                  "
+                  class="hidden gap-x-4 text-[10px] uppercase leading-none text-muted md:grid md:grid-cols-[9rem_12rem_1fr]"
                 >
                   <span class="hidden md:col-start-1 md:block"></span>
                   <span class="flex gap-1 md:col-start-2">
@@ -2021,52 +2141,11 @@ onMounted(() => {
                     <li
                       v-for="row in packRows(product)"
                       :key="row.key"
-                      class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                      class="flex flex-col gap-1 md:grid md:grid-cols-[9rem_12rem_1fr] md:gap-x-4"
                       :data-test="`meal-product-${product.productId}-${row.position}`"
                     >
-                      <div class="flex flex-col gap-0.5 md:col-start-2">
-                        <template v-if="canEdit && packsFor(mealOf(day.index, kind)).length > 0">
-                          <div class="flex gap-1" :data-test="`product-packs-${product.productId}`">
-                            <select
-                              :value="row.packageId"
-                              :data-test="shareTest('alloc-pack', String(product.productId), row)"
-                              class="min-w-0 flex-1 rounded border border-border bg-field px-1 py-0.5 text-xs text-text"
-                              @change="setRowPack(day.index, kind, product, row, $event)"
-                            >
-                              <option value="" disabled></option>
-                              <option value="__new__">новый пакет</option>
-                              <option
-                                v-for="pack in packOptions(mealOf(day.index, kind), row)"
-                                :key="pack.id"
-                                :value="pack.id"
-                              >
-                                {{ packLabel(pack) }}
-                              </option>
-                            </select>
-                            <select
-                              :value="amountValue(row)"
-                              :disabled="row.isFree || isKulekRow(mealOf(day.index, kind), row)"
-                              :data-test="shareTest('alloc-amount', String(product.productId), row)"
-                              class="rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50"
-                              @change="setRowAmount(day.index, kind, product, row, $event)"
-                            >
-                              <option value="" disabled></option>
-                              <option value="all">всё</option>
-                              <option v-for="n in amountOptions(product, row)" :key="n" :value="String(n)">
-                                {{ n }}
-                              </option>
-                            </select>
-                          </div>
-                          <span
-                            v-if="row.position === 0 && overAllocated(product) > 0"
-                            class="text-xs text-amber-700"
-                          >
-                            сверх рецепта: {{ formatProductAmount(overAllocated(product), product.unit) }}
-                          </span>
-                        </template>
-                      </div>
-
-                      <div class="flex flex-wrap items-baseline gap-2 text-sm text-text md:col-start-3">
+                      <!-- Продукт первым: на телефоне фасовка идёт под ним -->
+                      <div class="flex flex-wrap items-baseline gap-2 text-sm text-text md:col-start-3 md:row-start-1">
                         <span class="font-medium">{{ product.name }}</span>
                         <span class="text-xs text-muted">
                           {{ formatProductAmount(row.amount, product.unit) }}
@@ -2087,6 +2166,57 @@ onMounted(() => {
                         >
                           ×
                         </button>
+                      </div>
+
+                      <!-- Фасовка строки: пакет и количество, 3 : 1 -->
+                      <div
+                        v-if="
+                          !isPacksHidden(mealKey(day.index, kind)) &&
+                          canEdit &&
+                          packsFor(mealOf(day.index, kind)).length > 0
+                        "
+                        class="flex flex-col gap-0.5 md:col-start-2 md:row-start-1"
+                      >
+                        <div
+                          class="grid grid-cols-4 gap-1 md:flex"
+                          :data-test="`product-packs-${product.productId}`"
+                        >
+                          <select
+                            :value="row.packageId"
+                            :data-test="shareTest('alloc-pack', String(product.productId), row)"
+                            class="col-span-3 min-w-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text md:col-span-1 md:flex-1"
+                            @change="setRowPack(day.index, kind, product, row, $event)"
+                          >
+                            <option value="" disabled>в пакет</option>
+                            <option value="__new__">новый пакет</option>
+                            <option
+                              v-for="pack in packOptions(mealOf(day.index, kind), row)"
+                              :key="pack.id"
+                              :value="pack.id"
+                            >
+                              {{ packLabel(pack) }}
+                            </option>
+                          </select>
+                          <select
+                            :value="amountValue(row)"
+                            :disabled="row.isFree || isKulekRow(mealOf(day.index, kind), row)"
+                            :data-test="shareTest('alloc-amount', String(product.productId), row)"
+                            class="col-span-1 min-w-0 rounded border border-border bg-field px-1 py-0.5 text-xs text-text disabled:opacity-50 md:w-16 md:shrink-0"
+                            @change="setRowAmount(day.index, kind, product, row, $event)"
+                          >
+                            <option value="" disabled>кол-во</option>
+                            <option value="all">всё</option>
+                            <option v-for="n in amountOptions(product, row)" :key="n" :value="String(n)">
+                              {{ n }}
+                            </option>
+                          </select>
+                        </div>
+                        <span
+                          v-if="row.position === 0 && overAllocated(product) > 0"
+                          class="text-xs text-amber-700"
+                        >
+                          сверх рецепта: {{ formatProductAmount(overAllocated(product), product.unit) }}
+                        </span>
                       </div>
                     </li>
                   </template>

@@ -499,15 +499,20 @@ describe('TripMeals', () => {
     await wrapper.find('[data-test="meal-add-toggle-1-breakfast"]').trigger('click')
     await flushPromises()
 
-    // Поля сборки спрятаны: выбор блюда и продукта, форма приёма, фасовка.
+    // Поля сборки спрятаны: выбор блюда и продукта и фасовка.
     expect(card().find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
     expect(card().find('[data-test="meal-line-amount-1-breakfast"]').exists()).toBe(false)
-    expect(card().find('[data-test="meal-form"]').exists()).toBe(false)
     expect(card().find('[data-test="meal-kulek-1-breakfast"]').exists()).toBe(false)
+    // Форма приёма остаётся: это режим (готовка/перекус), а не поле ввода.
+    // Заказчик назвал багом, что она сворачивалась вместе с полями.
+    expect(card().find('[data-test="meal-form"]').exists()).toBe(true)
     // Результат на месте: название приёма, вес, блюдо.
     expect(card().text()).toContain('Завтрак')
     expect(card().find('[data-test="meal-weight"]').exists()).toBe(true)
     expect(card().text()).toContain('Каша')
+    // Фасовка — отдельный вопрос и отдельная кнопка: «свернуть поля»
+    // выбор пакета не трогает.
+    expect(card().find('[data-test="ing-pack-d1-1"]').exists()).toBe(true)
     // Общее свёртывание не прячет личные поля.
     expect(card().find('[data-test="my-meal-add"]').exists()).toBe(true)
 
@@ -516,6 +521,55 @@ describe('TripMeals', () => {
 
     expect(card().find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(true)
     expect(card().find('[data-test="meal-form"]').exists()).toBe(true)
+  })
+
+  it('третья кнопка сворачивает фасовку, не трогая пакеты и блюда', async () => {
+    const wrapper = await mountMeals()
+
+    const card = () => wrapper.find('[data-test="meal-1-breakfast"]')
+    const packs = () =>
+      card().findAll('[data-test^="ing-pack"], [data-test^="alloc-pack"]')
+
+    expect(packs().length).toBeGreaterThan(0)
+    expect(card().text()).toContain('ФАСОВКА')
+
+    await wrapper.find('[data-test="meal-pack-toggle-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    // Выбор пакета ушёл, а состав приёма остался: именно это и нужно
+    // человеку, который смотрит «что едим», а не «во что уложено».
+    expect(packs()).toHaveLength(0)
+    expect(card().text()).not.toContain('ФАСОВКА')
+    expect(card().text()).toContain('Каша')
+    expect(card().text()).toContain('Крупа')
+    // Форма приёма и вес — не фасовка, они на месте.
+    expect(card().find('[data-test="meal-form"]').exists()).toBe(true)
+    expect(card().find('[data-test="meal-weight"]').exists()).toBe(true)
+
+    // Секция «Пакеты» живёт своей жизнью: это не раскладка.
+    const packages = wrapper.find('[data-test="packages"]')
+    expect(packages.exists()).toBe(true)
+    expect(packages.findAll('[data-test="package"]').length).toBeGreaterThan(0)
+
+    // И обратно: кнопка возвращает выбор пакета.
+    await wrapper.find('[data-test="meal-pack-toggle-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    expect(packs().length).toBeGreaterThan(0)
+  })
+
+  it('свёрнутая фасовка не мешает другим приёмам', async () => {
+    const wrapper = await mountMeals()
+
+    await wrapper.find('[data-test="meal-pack-toggle-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="meal-1-breakfast"]').text()).not.toContain('ФАСОВКА')
+    // У обеда выбор пакета остаётся: флаг свой у каждой плашки.
+    expect(
+      wrapper.find('[data-test="meal-1-lunch"]').findAll('[data-test^="ing-pack"]'),
+    ).toHaveLength(0)
+    expect(wrapper.find('[data-test="meal-pack-toggle-1-lunch"]').exists()).toBe(true)
   })
 
   it('иконки есть и у пустого приёма, и он сворачивается', async () => {
@@ -549,8 +603,9 @@ describe('TripMeals', () => {
     await all().trigger('click')
     await flushPromises()
 
-    expect(card('1-breakfast').find('[data-test="meal-form"]').exists()).toBe(false)
-    expect(card('1-lunch').find('[data-test="meal-form"]').exists()).toBe(false)
+    // Форма приёма видна и после общего свёртывания — см. предыдущий тест.
+    expect(card('1-breakfast').find('[data-test="meal-form"]').exists()).toBe(true)
+    expect(card('1-lunch').find('[data-test="meal-form"]').exists()).toBe(true)
     expect(card('1-breakfast').find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
     // Пустые плашки тоже свернулись: их формы добавления спрятаны.
     expect(card('2-dinner').find('[data-test="meal-add"]').exists()).toBe(false)
