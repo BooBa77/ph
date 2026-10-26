@@ -38,10 +38,6 @@ const mocks = vi.hoisted(() => ({
   removeMyMealDish: vi.fn(),
   addMyMealLine: vi.fn(),
   removeMyMealLine: vi.fn(),
-  setMyMealAllocations: vi.fn(),
-  createMyMealPackage: vi.fn(),
-  updateMyMealPackage: vi.fn(),
-  removeMyMealPackage: vi.fn(),
   fetchMyMealChecks: vi.fn(),
   updateMyMealCheck: vi.fn(),
 }))
@@ -69,10 +65,6 @@ vi.mock('@/api/trips', () => ({
   removeMyMealDish: mocks.removeMyMealDish,
   addMyMealLine: mocks.addMyMealLine,
   removeMyMealLine: mocks.removeMyMealLine,
-  setMyMealAllocations: mocks.setMyMealAllocations,
-  createMyMealPackage: mocks.createMyMealPackage,
-  updateMyMealPackage: mocks.updateMyMealPackage,
-  removeMyMealPackage: mocks.removeMyMealPackage,
   fetchMyMealChecks: mocks.fetchMyMealChecks,
   updateMyMealCheck: mocks.updateMyMealCheck,
 }))

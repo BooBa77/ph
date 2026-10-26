@@ -589,52 +589,6 @@ export async function removeMyMealLine(
   )
 }
 
-/** PUT .../my-meals/:day/:kind/allocations/:productId — доли по своим пакетам. */
-export async function setMyMealAllocations(
-  tripId: string,
-  dayIndex: number,
-  kind: TripMealKind,
-  productId: number,
-  allocations: MealAllocationInput[],
-): Promise<TripMealPlan> {
-  return apiFetch<TripMealPlan>(
-    `${myMealPath(tripId, dayIndex, kind)}/allocations/${productId}`,
-    { method: 'PUT', body: JSON.stringify({ allocations }) },
-  )
-}
-
-/** POST /api/trips/:id/my-meal-packages — новый личный пакет. */
-export async function createMyMealPackage(
-  tripId: string,
-): Promise<TripMealPlan> {
-  return apiFetch<TripMealPlan>(`/trips/${tripId}/my-meal-packages`, {
-    method: 'POST',
-  })
-}
-
-/** PATCH /api/trips/:id/my-meal-packages/:packageId — имя и/или вес. */
-export async function updateMyMealPackage(
-  tripId: string,
-  packageId: string,
-  patch: { name?: string; weightActualGrams?: number | null },
-): Promise<TripMealPlan> {
-  return apiFetch<TripMealPlan>(
-    `/trips/${tripId}/my-meal-packages/${packageId}`,
-    { method: 'PATCH', body: JSON.stringify(patch) },
-  )
-}
-
-/** DELETE /api/trips/:id/my-meal-packages/:packageId — доли уходят каскадом. */
-export async function removeMyMealPackage(
-  tripId: string,
-  packageId: string,
-): Promise<TripMealPlan> {
-  return apiFetch<TripMealPlan>(
-    `/trips/${tripId}/my-meal-packages/${packageId}`,
-    { method: 'DELETE' },
-  )
-}
-
 /** GET /api/trips/:id/my-meal-checks — мой список покупок. */
 export async function fetchMyMealChecks(
   tripId: string,

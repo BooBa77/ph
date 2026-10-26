@@ -6,7 +6,6 @@ import {
   HttpCode,
   Param,
   ParseIntPipe,
-  Patch,
   Post,
   Put,
 } from '@nestjs/common';
@@ -17,40 +16,38 @@ import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
   AddMealDishDto,
   AddMealLineDto,
-  SetDishExclusionsDto,
-  SetMealAllocationsDto,
-  SetMealFormDto,
-  SetMealKulekDto,
-  SetMealLineDto,
   TripMealCheckListDto,
   TripMealPlanDto,
   UpdateMealCheckDto,
-  UpdateMealPackageDto,
 } from './dto/trip-meal.dto';
 import type { TripMealKind } from './trip.types';
 import { TripMealsService } from './trip-meals.service';
 
 /**
- * «Моя еда»: личное питание участника, который едет отдельно.
+ * «Моя еда»: личные блюда и продукты участника в плашке приёма.
  *
  * Отдельные маршруты, а не флаг в общих: личный слой — не часть общей
  * раскладки, и путать их в одном `:id/meals/...` значило бы каждый вызов
- * проверять, чей слой просят. Здесь владелец всегда тот, кто делает
- * запрос, — перебирать id нечего.
+ * проверять, чей слой просят. Владелец всегда тот, кто делает запрос, —
+ * перебирать id нечего.
+ *
+ * **Чего здесь намеренно нет.**Личная еда не фасуется: у неё нет пакетов,
+ * долей и кулька — в рюкзак она уходит одной позицией «Продукты» с общим
+ * весом. Нет и формы приёма с исключениями ингредиентов: в личном слое
+ * это не с чем сравнивать, а UI их не показывает. Если модель поменяется,
+ * маршруты вернутся — сервис умеет оба слоя.
  *
  * Права считает сервис: личную еду видит и правит только её владелец,
- * завхоз сюда не заходит. Флаг «питаюсь отдельно» ставится на участии
- * (`PATCH /api/trips/:id/participants/me`), а не здесь: личную еду можно
- * вести заранее, не объявляя себя отдельным.
+ * завхоз сюда не заходит.
  */
 @ApiTags('trip-meals')
 @Controller('trips')
 export class TripMyMealsController {
   constructor(private readonly tripMeals: TripMealsService) {}
 
-  /** Личная раскладка: дни и приёмы того, кто питается отдельно. */
+  /** Личная раскладка: мои блюда и продукты по дням и приёмам. */
   @Get(':id/my-meal-plan')
-  @ApiOperation({ summary: 'Моя личная раскладка и фасовка' })
+  @ApiOperation({ summary: 'Моя личная раскладка' })
   @ApiOkResponse({ type: TripMealPlanDto })
   async getPlan(
     @CurrentUser() authUser: AuthUser,
@@ -59,34 +56,7 @@ export class TripMyMealsController {
     return this.tripMeals.getPlan(authUser.id, id, authUser.id);
   }
 
-  /** Форма приёма: готовка или перекус. */
-  @Put(':id/my-meals/:dayIndex/:kind/form')
-  @ApiOperation({ summary: 'Форма личного приёма' })
-  @ApiOkResponse({ type: TripMealPlanDto })
-  async setForm(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Param('dayIndex', ParseIntPipe) dayIndex: number,
-    @Param('kind') kind: TripMealKind,
-    @Body() dto: SetMealFormDto,
-  ): Promise<TripMealPlanDto> {
-    return this.tripMeals.setForm(
-      authUser.id,
-      id,
-      authUser.id,
-      dayIndex,
-      kind,
-      dto.form,
-    );
-  }
-
-  /**
-   * Блюдо в личный приём: своё или общее из раскладки похода.
-   *
-   * «Общее» — то, что уже стоит в общей раскладке: участник берёт рецепт
-   * группы, а не заводит его заново. Чужие блюда вне похода по-прежнему
-   * не видны (404).
-   */
+  /** Блюдо в мой приём: своё или общее из раскладки похода. */
   @Post(':id/my-meals/:dayIndex/:kind/dishes')
   @ApiOperation({ summary: 'Добавить блюдо в личный приём' })
   @ApiOkResponse({ type: TripMealPlanDto })
@@ -107,7 +77,7 @@ export class TripMyMealsController {
     );
   }
 
-  /** Убрать блюдо из личного приёма. */
+  /** Убрать блюдо из моего приёма. */
   @Delete(':id/my-meals/:dayIndex/:kind/dishes/:dishId')
   @ApiOperation({ summary: 'Убрать блюдо из личного приёма' })
   @ApiOkResponse({ type: TripMealPlanDto })
@@ -128,53 +98,7 @@ export class TripMyMealsController {
     );
   }
 
-  /** Исключить ингредиенты блюда в личном приёме. */
-  @Put(':id/my-meals/:dayIndex/:kind/dishes/:dishId/exclusions')
-  @ApiOperation({ summary: 'Исключения ингредиентов в личном приёме' })
-  @ApiOkResponse({ type: TripMealPlanDto })
-  async setDishExclusions(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Param('dayIndex', ParseIntPipe) dayIndex: number,
-    @Param('kind') kind: TripMealKind,
-    @Param('dishId') dishId: string,
-    @Body() dto: SetDishExclusionsDto,
-  ): Promise<TripMealPlanDto> {
-    return this.tripMeals.setDishExclusions(
-      authUser.id,
-      id,
-      authUser.id,
-      dayIndex,
-      kind,
-      dishId,
-      dto.productIds,
-    );
-  }
-
-  /** Ручная строка в личном приёме. */
-  @Put(':id/my-meals/:dayIndex/:kind/lines/:productId')
-  @ApiOperation({ summary: 'Ручная строка в личном приёме' })
-  @ApiOkResponse({ type: TripMealPlanDto })
-  async setLine(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Param('dayIndex', ParseIntPipe) dayIndex: number,
-    @Param('kind') kind: TripMealKind,
-    @Param('productId', ParseIntPipe) productId: number,
-    @Body() dto: SetMealLineDto,
-  ): Promise<TripMealPlanDto> {
-    return this.tripMeals.setLine(
-      authUser.id,
-      id,
-      authUser.id,
-      dayIndex,
-      kind,
-      productId,
-      dto.amount,
-    );
-  }
-
-  /** Добавить продукт в личный приём по названию или из справочника. */
+  /** Продукт в мой приём: из справочника или своим названием. */
   @Post(':id/my-meals/:dayIndex/:kind/lines')
   @HttpCode(200)
   @ApiOperation({ summary: 'Добавить продукт в личный приём' })
@@ -196,9 +120,9 @@ export class TripMyMealsController {
     );
   }
 
-  /** Убрать ручную строку. */
+  /** Убрать продукт из моего приёма. */
   @Delete(':id/my-meals/:dayIndex/:kind/lines/:productId')
-  @ApiOperation({ summary: 'Убрать ручную строку' })
+  @ApiOperation({ summary: 'Убрать продукт из личного приёма' })
   @ApiOkResponse({ type: TripMealPlanDto })
   async removeLine(
     @CurrentUser() authUser: AuthUser,
@@ -217,123 +141,9 @@ export class TripMyMealsController {
     );
   }
 
-  /** Убрать приём целиком. */
-  @Delete(':id/my-meals/:dayIndex/:kind')
-  @ApiOperation({ summary: 'Убрать личный приём' })
-  @ApiOkResponse({ type: TripMealPlanDto })
-  async removeMeal(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Param('dayIndex', ParseIntPipe) dayIndex: number,
-    @Param('kind') kind: TripMealKind,
-  ): Promise<TripMealPlanDto> {
-    return this.tripMeals.removeMeal(
-      authUser.id,
-      id,
-      authUser.id,
-      dayIndex,
-      kind,
-    );
-  }
-
-  // ─────────────────────────── личная фасовка ───────────────────────────
-
-  /** Новый личный пакет. */
-  @Post(':id/my-meal-packages')
-  @ApiOperation({ summary: 'Новый личный пакет' })
-  @ApiOkResponse({ type: TripMealPlanDto })
-  async createPackage(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-  ): Promise<TripMealPlanDto> {
-    return this.tripMeals.createPackage(authUser.id, id, authUser.id);
-  }
-
-  /** Имя личного пакета и фактический вес. */
-  @Patch(':id/my-meal-packages/:packageId')
-  @ApiOperation({ summary: 'Правка личного пакета' })
-  @ApiOkResponse({ type: TripMealPlanDto })
-  async updatePackage(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Param('packageId') packageId: string,
-    @Body() dto: UpdateMealPackageDto,
-  ): Promise<TripMealPlanDto> {
-    return this.tripMeals.updatePackage(
-      authUser.id,
-      id,
-      authUser.id,
-      packageId,
-      dto,
-    );
-  }
-
-  /** Удалить личный пакет. */
-  @Delete(':id/my-meal-packages/:packageId')
-  @ApiOperation({ summary: 'Удалить личный пакет' })
-  @ApiOkResponse({ type: TripMealPlanDto })
-  async removePackage(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Param('packageId') packageId: string,
-  ): Promise<TripMealPlanDto> {
-    return this.tripMeals.removePackage(
-      authUser.id,
-      id,
-      authUser.id,
-      packageId,
-    );
-  }
-
-  /** Доли личной строки по личным пакетам. */
-  @Put(':id/my-meals/:dayIndex/:kind/allocations/:productId')
-  @ApiOperation({ summary: 'Доли личной строки по пакетам' })
-  @ApiOkResponse({ type: TripMealPlanDto })
-  async setAllocations(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Param('dayIndex', ParseIntPipe) dayIndex: number,
-    @Param('kind') kind: TripMealKind,
-    @Param('productId', ParseIntPipe) productId: number,
-    @Body() dto: SetMealAllocationsDto,
-  ): Promise<TripMealPlanDto> {
-    return this.tripMeals.setAllocations(
-      authUser.id,
-      id,
-      authUser.id,
-      dayIndex,
-      kind,
-      productId,
-      dto.allocations,
-    );
-  }
-
-  /** Кулёк личного приёма. */
-  @Put(':id/my-meals/:dayIndex/:kind/kulek')
-  @ApiOperation({ summary: 'Кулёк личного приёма' })
-  @ApiOkResponse({ type: TripMealPlanDto })
-  async setKulek(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-    @Param('dayIndex', ParseIntPipe) dayIndex: number,
-    @Param('kind') kind: TripMealKind,
-    @Body() dto: SetMealKulekDto,
-  ): Promise<TripMealPlanDto> {
-    return this.tripMeals.setKulek(
-      authUser.id,
-      id,
-      authUser.id,
-      dayIndex,
-      kind,
-      dto.enabled,
-    );
-  }
-
-  // ─────────────────────────── личный чек-лист ───────────────────────────
-
-  /** Личный список покупок: проекция моей раскладки и мои отметки. */
+  /** Мой список продуктов: проекция моей еды и мои отметки. */
   @Get(':id/my-meal-checks')
-  @ApiOperation({ summary: 'Мой список покупок' })
+  @ApiOperation({ summary: 'Мой список продуктов' })
   @ApiOkResponse({ type: TripMealCheckListDto })
   async getChecklist(
     @CurrentUser() authUser: AuthUser,
@@ -342,9 +152,9 @@ export class TripMyMealsController {
     return this.tripMeals.getChecklist(authUser.id, id, authUser.id);
   }
 
-  /** Отметки личного списка: куплено, домашнее, сколько куплено. */
+  /** Отметки моего списка: куплено, домашнее, сколько куплено. */
   @Put(':id/my-meal-checks/:productId')
-  @ApiOperation({ summary: 'Отметка личного списка покупок' })
+  @ApiOperation({ summary: 'Отметка моего списка продуктов' })
   @ApiOkResponse({ type: TripMealCheckListDto })
   async updateCheck(
     @CurrentUser() authUser: AuthUser,
