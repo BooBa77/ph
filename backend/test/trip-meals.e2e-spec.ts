@@ -927,6 +927,48 @@ describe('Питание похода (e2e)', () => {
     );
   });
 
+  it('убавка уходит вместе с блюдом: повторно выбранное блюдо с полным весом', async () => {
+    // Чистый приём: блюдо организатора (крупа + тушёнка).
+    await call('post', `/api/trips/${tripId}/meals/5/lunch/dishes`, organizerToken)
+      .send({ dishId: organizerDishId })
+      .expect(201);
+
+    const before = await readPlan(organizerToken);
+    expect(mealProduct(before, 5, 'lunch', gramName).amount).toBe(80);
+
+    // Убавляем 20 г — так делает крестик строки на фронте.
+    await call(
+      'put',
+      `/api/trips/${tripId}/meals/5/lunch/lines/${await tripProductId(gramName)}`,
+      organizerToken,
+    )
+      .send({ amount: -20 })
+      .expect(200);
+
+    const reduced = await readPlan(organizerToken);
+    expect(mealProduct(reduced, 5, 'lunch', gramName).amount).toBe(60);
+
+    // Убрали блюдо и поставили снова — убавка не переживает блюдо.
+    await call(
+      'delete',
+      `/api/trips/${tripId}/meals/5/lunch/dishes/${organizerDishId}`,
+      organizerToken,
+    ).expect(200);
+
+    const restored = await call(
+      'post',
+      `/api/trips/${tripId}/meals/5/lunch/dishes`,
+      organizerToken,
+    )
+      .send({ dishId: organizerDishId })
+      .expect(201);
+
+    expect(
+      mealProduct(restored.body as Record<string, unknown>, 5, 'lunch', gramName)
+        .amount,
+    ).toBe(80);
+  });
+
   /**
    * Автономное питание: у участника с флагом «питаюсь отдельно» своя еда.
    *

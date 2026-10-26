@@ -15,6 +15,7 @@ import {
   setMealForm,
   setMealKulek,
   addMealLine,
+  setMealLine,
   setMyStatus,
   updateMealPackage,
 } from '@/api/trips'
@@ -571,7 +572,7 @@ function amountOptions(
   return Array.from({ length: limit }, (_, index) => index + 1)
 }
 
-/** Подсказка крестика: он убирает либо долю, либо весь продукт. */
+/** Подсказка крестика: он убирает либо порцию, либо весь продукт. */
 function removeHint(
   row: PackRow,
   meal: TripMeal | undefined,
@@ -579,7 +580,7 @@ function removeHint(
 ): string {
   return row.isFree || isKulekRow(meal, row)
     ? `Убрать ${what}`
-    : 'Убрать долю из пакета'
+    : 'Убрать порцию'
 }
 
 /** data-test строки: у первой — прежний, у остальных — с номером строки. */
@@ -789,46 +790,65 @@ function setIngredientAmount(
   setRowAmount(dayIndex, kind, product, row, event)
 }
 
-/** Убрать одну строку-долю: остальные доли продукта остаются на месте. */
-function removeShareRow(
+/**
+ * Убрать строку: и её количество из плана приёма.
+ *
+ * Строка — это порция продукта. Крестик убирает порцию целиком: количество
+ * уходит из плана (убавка ручной строкой), а не превращается в «остаток».
+ * Поэтому после удаления 3 г из 2+5+3 остаются 2 и 5, а не 2, 5 и «3
+ * не расфасовано». Если убирать больше нечего — продукт уходит из приёма.
+ */
+async function removePortion(
   dayIndex: number,
   kind: TripMealKind,
   product: TripMealProduct,
   row: PackRow,
-): void {
-  // Пока идёт сохранение, второй клик считался бы по старому снимку долей
-  // и вернул бы убранное назад — ждём ответа.
+  removeProduct: () => void,
+): Promise<void> {
+  // Пока идёт сохранение, второй клик считался бы по старому снимку.
   if (busy.value) return
 
-  // Сверяем по пакету, а не по индексу: строки перерисовываются, и индекс
-  // мог бы указывать на соседнюю долю — «удалялось бы не то».
-  const shares = currentShares(product).filter(
-    (share) => share.packageId !== row.packageId,
-  )
-  saveShares(dayIndex, kind, product, shares)
+  if (product.amount - row.amount <= 0) {
+    removeProduct()
+
+    return
+  }
+
+  const newManual = product.manualAmount - row.amount
+  const shares = row.isFree
+    ? null
+    : currentShares(product).filter(
+        (share) => share.packageId !== row.packageId,
+      )
+
+  await run(`${product.productId}:remove`, async () => {
+    if (shares) {
+      await setMealAllocations(
+        props.trip.id,
+        dayIndex,
+        kind,
+        product.productId,
+        normalizedShares(shares),
+      )
+    }
+
+    // Ноль в ручной строке запрещён: убавка до нуля — это её удаление.
+    return newManual === 0
+      ? removeMealLine(props.trip.id, dayIndex, kind, product.productId)
+      : setMealLine(props.trip.id, dayIndex, kind, product.productId, newManual)
+  })
 }
 
-/**
- * Крестик строки продукта.
- *
- * Доля в обычном пакете убирается одна. Остаток и доля в кульке — продукт
- * целиком: уменьшить план на этот приём нельзя (убавка живёт ручной
- * строкой и переживает удаление блюда — это был баг), а вынуть одну долю
- * из кулька API не умеет, он расформировывает кулёк целиком.
- */
+/** Крестик строки продукта: убрать порцию, а когда порции кончились — продукт. */
 function removeProductRow(
   dayIndex: number,
   kind: TripMealKind,
   product: TripMealProduct,
   row: PackRow,
 ): void {
-  if (!row.isFree && !isKulekRow(mealOf(dayIndex, kind), row)) {
-    removeShareRow(dayIndex, kind, product, row)
-
-    return
-  }
-
-  removeLine(dayIndex, kind, product.productId)
+  void removePortion(dayIndex, kind, product, row, () =>
+    removeLine(dayIndex, kind, product.productId),
+  )
 }
 
 /** Крестик строки ингредиента — те же правила, что у продукта. */
@@ -848,15 +868,11 @@ function ingredientAction(
 
   const meal = mealOf(dayIndex, kind)
   const product = meal ? productById(meal, ingredient.productId) : undefined
+  if (!product) return
 
-  if (product && !row.isFree && !isKulekRow(meal, row)) {
-    removeShareRow(dayIndex, kind, product, row)
-
-    return
-  }
-
-  // Остаток или кулёк: убираем ингредиент из приёма (рецепт не меняется).
-  toggleDishIngredient(dayIndex, kind, dish, ingredient.productId)
+  void removePortion(dayIndex, kind, product, row, () =>
+    toggleDishIngredient(dayIndex, kind, dish, ingredient.productId),
+  )
 }
 
 /** Всего разложено по пакетам. */

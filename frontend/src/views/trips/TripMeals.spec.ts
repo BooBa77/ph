@@ -791,7 +791,7 @@ describe('TripMeals', () => {
     expect(mocks.setMealDishExclusions).not.toHaveBeenCalled()
   })
 
-  it('крестик доли убирает только эту долю, а не все доли', async () => {
+  it('крестик доли убирает эту порцию и её количество из плана', async () => {
     const wrapper = await mountMeals()
 
     // Кладём 100 из 160: первая строка — доля в пакете, вторая — остаток.
@@ -803,12 +803,13 @@ describe('TripMeals', () => {
     await wrapper.find('[data-test="ing-action-d1-1-0"]').trigger('click')
     await flushPromises()
 
-    // Убрана одна доля; продукт в плане остался, блюдо тоже.
+    // Доля убрана, и её количество ушло из плана: «не расфасовано» не растёт.
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 1, [])
+    expect(mocks.setMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 1, -100)
     expect(mocks.removeMealDish).not.toHaveBeenCalled()
   })
 
-  it('крестик остатка продукта убирает продукт: план на приём не меняется', async () => {
+  it('крестик остатка продукта ужимает план до разложенного', async () => {
     currentPlan.meals[0]!.products.push({
       productId: 2,
       name: 'Хлеб',
@@ -829,16 +830,15 @@ describe('TripMeals', () => {
     await wrapper.find('[data-test="alloc-amount-2"]').setValue('150')
     await flushPromises()
 
-    // Уменьшать план ручной строкой нельзя: она переживает удаление блюда.
-    // Остаток убираем вместе с продуктом, строк не трогаем.
+    // Остаток 50 не нужен: план ужимается до 150, строка остатка исчезает.
     await wrapper.find('[data-test="meal-line-remove-2-2"]').trigger('click')
     await flushPromises()
 
-    expect(mocks.removeMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 2)
-    expect(mocks.setMealLine).not.toHaveBeenCalled()
+    expect(mocks.setMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 2, 150)
+    expect(mocks.removeMealLine).not.toHaveBeenCalled()
   })
 
-  it('крестик остатка ингредиента убирает ингредиент, а не план', async () => {
+  it('крестик остатка ингредиента ужимает план, а не убирает ингредиент', async () => {
     const wrapper = await mountMeals()
 
     await wrapper.find('[data-test="ing-pack-d1-1"]').setValue('p1')
@@ -849,9 +849,9 @@ describe('TripMeals', () => {
     await wrapper.find('[data-test="ing-action-d1-1-1"]').trigger('click')
     await flushPromises()
 
-    // Ингредиент один — уходит блюдо; план ручной строкой не трогаем.
-    expect(mocks.removeMealDish).toHaveBeenCalledWith('7', 1, 'breakfast', 'd1')
-    expect(mocks.setMealLine).not.toHaveBeenCalled()
+    // Разложено 100 из рецепта 160: убавка -60, ингредиент остаётся.
+    expect(mocks.setMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 1, -60)
+    expect(mocks.removeMealDish).not.toHaveBeenCalled()
   })
 
   it('убираем первую долю — остальные доли остаются как были', async () => {
@@ -881,6 +881,9 @@ describe('TripMeals', () => {
     expect(mocks.setMealAllocations).toHaveBeenCalledWith('7', 1, 'breakfast', 3, [
       { packageId: 'p2', amount: 3, isElastic: false },
     ])
+    // И её количество ушло из плана: у ручного продукта это его строка —
+    // 5 яблок стали 3, а не «2 не расфасовано».
+    expect(mocks.setMealLine).toHaveBeenCalledWith('7', 1, 'breakfast', 3, 3)
   })
 
   it('варианты «кол-во» не дают взять больше, чем есть в строке', async () => {

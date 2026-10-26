@@ -9,6 +9,7 @@ import {
   DataSource,
   In,
   IsNull,
+  LessThan,
   Not,
   type EntityManager,
   type FindOperator,
@@ -205,7 +206,16 @@ export class TripMealsService {
     return this.getPlan(userId, id, owner);
   }
 
-  /** Убрать блюдо из приёма. */
+  /**
+   * Убрать блюдо из приёма.
+   *
+   * **Убавки блюда уходят вместе с ним.** Уменьшенное количество
+   * ингредиента живёт ручной строкой приёма (другого места для «взяли
+   * меньше рецепта» нет). Если блюдо убрать, а строку оставить, повторно
+   * выбранное блюдо придёт с уменьшенным ингредиентом — ровно этот баг
+   * и ловим. Отрицательные строки могут появиться только убавкой, поэтому
+   * чистим именно их, не трогая обычные ручные добавления.
+   */
   async removeDish(
     userId: string,
     id: number,
@@ -218,6 +228,7 @@ export class TripMealsService {
       const meal = await this.findMeal(manager, trip.id, dayIndex, kind, owner);
       if (!meal) return;
 
+      await this.dropDishReductions(manager, meal, dishId);
       await manager.delete(TripMealDish, { mealId: meal.id, dishId });
       await this.cleanupAllocations(manager, meal);
       await this.markMealPackagesStale(manager, meal.id);
@@ -225,6 +236,35 @@ export class TripMealsService {
     });
 
     return this.getPlan(userId, id, owner);
+  }
+
+  /** Отрицательные ручные строки этого блюда в приёме: убавки уходят с ним. */
+  private async dropDishReductions(
+    manager: EntityManager,
+    meal: TripMeal,
+    dishId: string,
+  ): Promise<void> {
+    const ingredients = await manager.find(DishIngredient, {
+      where: { dishId },
+      relations: { product: true },
+    });
+    if (ingredients.length === 0) return;
+
+    const idByName = await this.tripProductIdsByName(
+      manager,
+      meal.tripId,
+      meal.eaterUserId,
+    );
+    const productIds = ingredients
+      .map((ingredient) => idByName.get(ingredient.product.name))
+      .filter((productId): productId is number => productId !== undefined);
+    if (productIds.length === 0) return;
+
+    await manager.delete(TripMealLine, {
+      mealId: meal.id,
+      productId: In(productIds),
+      amount: LessThan(0),
+    });
   }
 
   /** Ручная строка: «хлеб 600 г» — абсолютная, без мясного флага. */
