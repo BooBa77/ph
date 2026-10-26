@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onUnmounted, ref, watch } from 'vue'
 
 import { searchProducts } from '@/api/meals'
@@ -25,8 +25,7 @@ const props = withDefaults(
     placeholder?: string
     /** Выбранный продукт: поле показывает его и сбрасывается вместе с ним. */
     product?: Product | null
-    /** Поход: в подсказки попадают и его собственные продукты. */
-    tripId?: string
+
     /** Текст в поле: приходит от родителя, чтобы тот знал, что набрано. */
     query?: string
   }>(),
@@ -73,7 +72,7 @@ async function search() {
   error.value = null
 
   try {
-    options.value = await searchProducts(text, props.tripId)
+    options.value = await searchProducts(text)
   } catch {
     error.value = 'Не удалось загрузить справочник'
     options.value = []

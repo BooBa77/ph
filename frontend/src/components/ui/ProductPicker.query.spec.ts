@@ -1,4 +1,4 @@
-﻿import { flushPromises, mount } from '@vue/test-utils'
+import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ProductPicker from './ProductPicker.vue'
@@ -26,7 +26,7 @@ describe('ProductPicker', () => {
   })
 
   it('набранный текст сообщает родителю', async () => {
-    const wrapper = mount(ProductPicker, { props: { tripId: '679' } })
+    const wrapper = mount(ProductPicker)
 
     await wrapper.find('[data-test="product-search"]').setValue('Трава')
     await flushPromises()
@@ -35,7 +35,7 @@ describe('ProductPicker', () => {
   })
 
   it('выбор подсказки отдаёт продукт и текст названия', async () => {
-    const wrapper = mount(ProductPicker, { props: { tripId: '679' } })
+    const wrapper = mount(ProductPicker)
 
     await wrapper.find('[data-test="product-search"]').setValue('Тушёнка')
     // Поиск с задержкой: даём дебаунсу отработать.
@@ -56,7 +56,7 @@ describe('ProductPicker', () => {
   })
 
   it('кнопки создания в справочнике нет', async () => {
-    const wrapper = mount(ProductPicker, { props: { tripId: '679' } })
+    const wrapper = mount(ProductPicker)
 
     await wrapper.find('[data-test="product-search"]').setValue('Трава')
     await flushPromises()

@@ -893,39 +893,15 @@ describe('Питание похода (e2e)', () => {
     await call('get', `/api/trips/${ideaTripId}/meal-checks`, organizerToken).expect(400);
   });
 
-  it('продукт похода живёт только в своём походе', async () => {
-    const created = await call('post', `/api/products?tripId=${tripId}`, organizerToken)
+  it('создание продукта в справочнике убрано: походные — в trip_products', async () => {
+    // Старая модель «продукт похода в справочнике» снята: `trip_id` больше
+    // нет, поиск смотрит только справочник, а свой продукт заводится
+    // ручной строкой приёма и живёт в `trip_products`.
+    await call('post', '/api/products', organizerToken)
       .send({ name: 'Экзотика', unit: 'piece', weightPerUnitGrams: 0 })
-      .expect(201);
-    const productId = created.body.id as number;
-
-    const mine = await call(
-      'get',
-      `/api/products?search=${encodeURIComponent('Экзотика')}&tripId=${tripId}`,
-      organizerToken,
-    ).expect(200);
-    expect((mine.body.products as Array<{ id: number }>).map((p) => p.id)).toContain(productId);
-
-    // Без tripId — только справочник: продукт похода туда не попадает.
-    const global = await call(
-      'get',
-      `/api/products?search=${encodeURIComponent('Экзотика')}`,
-      organizerToken,
-    ).expect(200);
-    expect((global.body.products as Array<{ id: number }>).map((p) => p.id)).not.toContain(
-      productId,
-    );
-
-    // Чужой поход продукт не видит.
-    const other = await call(
-      'get',
-      `/api/products?search=${encodeURIComponent('Экзотика')}&tripId=0`,
-      organizerToken,
-    ).expect(200);
-    expect((other.body.products as Array<{ id: number }>).map((p) => p.id)).not.toContain(
-      productId,
-    );
+      .expect(404);
   });
+
 
   it('убавка уходит вместе с блюдом: повторно выбранное блюдо с полным весом', async () => {
     // Чистый приём: блюдо организатора (крупа + тушёнка).

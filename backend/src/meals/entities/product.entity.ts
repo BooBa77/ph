@@ -3,14 +3,11 @@ import {
   Column,
   CreateDateColumn,
   Entity,
-  Index,
-  JoinColumn,
-  ManyToOne,
   PrimaryGeneratedColumn,
+  Unique,
 } from 'typeorm';
 
 import { sqlValues } from '../../users/sport-experience.types';
-import { Trip } from '../../trips/entities/trip.entity';
 import { PRODUCT_UNITS, type ProductUnit } from '../meal.types';
 
 /**
@@ -28,16 +25,14 @@ import { PRODUCT_UNITS, type ProductUnit } from '../meal.types';
  *
  * `name` уникально: справочник без уникальности — это справочник, в котором
  * «Гречка» и «гречка» живут отдельно.
+ *
+ * **Продукты похода живут не здесь.** Своя «экзотика» — это строка
+ * `trip_products` со своим `owner_user_id`: справочник общий и пополняется
+ * осознанно, а поход заводит свою копию. Раньше продукт похода жил здесь же
+ * с `trip_id`; ветку убрали миграцией `ProductCatalogOnly`.
  */
 @Entity('products')
-@Index('UQ_products_name_global', ['name'], {
-  unique: true,
-  where: '"trip_id" IS NULL',
-})
-@Index('UQ_products_trip_name', ['tripId', 'name'], {
-  unique: true,
-  where: '"trip_id" IS NOT NULL',
-})
+@Unique('UQ_products_name', ['name'])
 @Check('chk_products_unit', `"unit" IN (${sqlValues(PRODUCT_UNITS)})`)
 @Check('chk_products_weight', `"weight_per_unit_grams" >= 0`)
 @Check('chk_products_name', `char_length(btrim("name")) > 0`)
@@ -47,16 +42,6 @@ export class Product {
 
   @Column({ type: 'varchar', length: 120 })
   name: string;
-
-  @Column({ name: 'trip_id', type: 'bigint', nullable: true })
-  tripId: string | null;
-
-  @ManyToOne(() => Trip, { onDelete: 'CASCADE', nullable: true })
-  @JoinColumn({
-    name: 'trip_id',
-    foreignKeyConstraintName: 'FK_products_trip',
-  })
-  trip: Trip | null;
 
   @Column({ type: 'varchar', length: 10 })
   unit: ProductUnit;

@@ -1,15 +1,14 @@
-﻿import {
+import {
   BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager, In, IsNull } from 'typeorm';
+import { DataSource, EntityManager, In } from 'typeorm';
 
 import {
   AddIngredientDto,
   CreateDishDto,
-  CreateProductDto,
   DishDto,
   DishIngredientDto,
   DishListDto,
@@ -53,11 +52,12 @@ export class MealsService {
    * Пустая строка — пустой список, а не «все продукты»: справочник
    * не листают целиком, его ищут по названию. `%` и `_` экранируются,
    * иначе «%» пользователя превратился бы в «найди всё».
+   *
+   * Продуктов похода здесь нет: своя «экзотика» живёт в `trip_products`
+   * и в справочник не попадает — иначе подсказки засорялись бы чужими
+   * походами.
    */
-  async searchProducts(
-    search: string | undefined,
-    tripId?: string,
-  ): Promise<ProductListDto> {
+  async searchProducts(search: string | undefined): Promise<ProductListDto> {
     const text = search?.trim();
     if (!text) return { products: [] };
 
@@ -66,53 +66,11 @@ export class MealsService {
     const products = await this.dataSource.manager
       .createQueryBuilder(Product, 'product')
       .where('product.name ILIKE :search', { search: `%${escaped}%` })
-      .andWhere(
-        '(product.tripId IS NULL OR product.tripId = :tripId)',
-        { tripId: tripId ?? null },
-      )
       .orderBy('product.name', 'ASC')
       .take(PRODUCT_SEARCH_LIMIT)
       .getMany();
 
     return { products: products.map((product) => ProductDto.from(product)) };
-  }
-
-  /**
-   * Свой продукт: «шоколад», «бабушкино варенье». Вес единицы — 0,
-   * граммы по нему не считаются, но в раскладке он живёт как обычный.
-   *
-   * Справочник общий и имя уникально: повторное имя — это тот же продукт,
-   * его надо выбрать из подсказки, а не заводить второй.
-   */
-  async createProduct(
-    dto: CreateProductDto,
-    tripId?: string,
-  ): Promise<ProductDto> {
-    const name = dto.name.trim();
-    if (name.length === 0) {
-      throw new BadRequestException('У продукта должно быть название');
-    }
-
-    const manager = this.dataSource.manager;
-    const existing = await manager.findOne(Product, {
-      where: { name, tripId: tripId ?? IsNull() },
-    });
-    if (existing) {
-      throw new ConflictException(
-        'Такой продукт уже есть — выберите его из списка',
-      );
-    }
-
-    const saved = await manager.save(
-      manager.create(Product, {
-        name,
-        unit: dto.unit,
-        weightPerUnitGrams: dto.weightPerUnitGrams ?? 0,
-        tripId: tripId ?? null,
-      }),
-    );
-
-    return ProductDto.from(saved);
   }
 
   // ───────────────────────── блюда ─────────────────────────

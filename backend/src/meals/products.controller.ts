@@ -1,7 +1,7 @@
-﻿import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Controller, Get, Query } from '@nestjs/common';
+import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
-import { CreateProductDto, ProductDto, ProductListDto, ProductSearchQueryDto } from './dto/meal.dto';
+import { ProductListDto, ProductSearchQueryDto } from './dto/meal.dto';
 import { MealsService } from './meals.service';
 
 /**
@@ -14,6 +14,9 @@ import { MealsService } from './meals.service';
  * Без строки поиска роут отдаёт **пустой список**, а не все продукты:
  * справочник не листают, его ищут — и подсказка в поле ввода говорит
  * человеку, что делать.
+ *
+ * Продуктов похода здесь нет и быть не может: своя «экзотика» живёт
+ * в `trip_products`, а справочник — общий.
  */
 @ApiTags('meals')
 @Controller('products')
@@ -26,19 +29,7 @@ export class ProductsController {
   @ApiOkResponse({ type: ProductListDto })
   async search(
     @Query() query: ProductSearchQueryDto,
-    @Query('tripId') tripId?: string,
   ): Promise<ProductListDto> {
-    return this.mealsService.searchProducts(query.search, tripId);
-  }
-
-  /** Свой продукт: вес единицы 0, граммы по нему не считаются. */
-  @Post()
-  @ApiOperation({ summary: 'Добавить свой продукт' })
-  @ApiCreatedResponse({ type: ProductDto })
-  async create(
-    @Body() dto: CreateProductDto,
-    @Query('tripId') tripId?: string,
-  ): Promise<ProductDto> {
-    return this.mealsService.createProduct(dto, tripId);
+    return this.mealsService.searchProducts(query.search);
   }
 }

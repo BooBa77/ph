@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import { IsBoolean, IsInt, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
 
 import type { ProductUnit } from '../meal.types';
 import { PRODUCT_UNITS } from '../meal.types';
@@ -219,44 +219,4 @@ export class ProductSearchQueryDto {
   @IsString({ message: 'Строка поиска должна быть строкой' })
   @MaxLength(120, { message: 'Строка поиска не должна превышать 120 символов' })
   search?: string;
-
-  /**
-   * Поход: в выдачу попадают и его собственные продукты.
-   *
-   * Объявлено здесь, а не только в `@Query('tripId')`: глобальная
-   * валидация с `forbidNonWhitelisted` иначе отвечает 400 на сам параметр.
-   */
-  @ApiProperty({
-    description: 'Id похода: добавить в выдачу его продукты',
-    required: false,
-  })
-  @IsOptional()
-  @IsString({ message: 'Id похода — строка' })
-  tripId?: string;
-}
-
-/** Свой продукт: «шоколад», «бабушкино варенье». Вес единицы — 0. */
-export class CreateProductDto {
-  @ApiProperty({ description: 'Название продукта', example: 'Шоколад' })
-  @IsString({ message: 'Название продукта — строка' })
-  @MaxLength(120, { message: 'Название длиннее 120 символов' })
-  name: string;
-
-  @ApiProperty({
-    description: 'Единица продукта',
-    enum: PRODUCT_UNITS,
-    example: 'pcs',
-  })
-  @IsIn(PRODUCT_UNITS, { message: 'Такой единицы нет в справочнике' })
-  unit: ProductUnit;
-
-  @ApiProperty({
-    description: 'Вес единицы в граммах (для своего продукта похода)',
-    required: false,
-    example: 0,
-  })
-  @IsOptional()
-  @IsInt({ message: 'Вес единицы — целое число грамм' })
-  @Min(0, { message: 'Вес единицы не может быть отрицательным' })
-  weightPerUnitGrams?: number;
 }

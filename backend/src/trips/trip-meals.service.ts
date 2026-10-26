@@ -347,7 +347,7 @@ export class TripMealsService {
 
       if (dto.catalogProductId !== undefined) {
         const catalog = await manager.findOne(Product, {
-          where: { id: dto.catalogProductId, tripId: IsNull() },
+          where: { id: dto.catalogProductId },
         });
         if (!catalog) {
           throw new BadRequestException('Такого продукта нет в справочнике');

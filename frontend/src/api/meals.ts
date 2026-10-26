@@ -1,5 +1,5 @@
 import { apiFetch } from '@/api/client'
-import type { Dish, DishIngredient, Product, ProductUnit } from '@/types/meals'
+import type { Dish, DishIngredient, Product } from '@/types/meals'
 
 /**
  * Питание: справочник продуктов (только чтение) и кулинарная книга.
@@ -9,22 +9,18 @@ import type { Dish, DishIngredient, Product, ProductUnit } from '@/types/meals'
  */
 
 /**
- * GET /api/products?search=&tripId=
+ * GET /api/products?search=
  *
  * Поиск по подстроке названия. Пустая строка уходит как есть — бэкенд
  * отвечает пустым списком, и это правильно: справочник не листают,
  * его ищут.
  *
- * Походные продукты («экзотика» группы) видны только участникам похода,
- * поэтому tripId передаётся и в поиск, и в создание.
+ * Продукты похода сюда не попадают: своя «экзотика» живёт в
+ * `trip_products` и в справочник не примешивается.
  */
-export async function searchProducts(
-  search: string,
-  tripId?: string,
-): Promise<Product[]> {
-  const trip = tripId ? `&tripId=${encodeURIComponent(tripId)}` : ''
+export async function searchProducts(search: string): Promise<Product[]> {
   const response = await apiFetch<{ products: Product[] }>(
-    `/products?search=${encodeURIComponent(search)}${trip}`,
+    `/products?search=${encodeURIComponent(search)}`,
   )
   return response.products
 }
@@ -94,19 +90,3 @@ export async function deleteIngredient(ingredientId: string): Promise<void> {
   await apiFetch<void>(`/dishes/ingredients/${ingredientId}`, { method: 'DELETE' })
 }
 
-/** POST /products — свой продукт с нулевым весом. */
-export async function createProduct(
-  payload: {
-    name: string
-    unit: ProductUnit
-    weightPerUnitGrams?: number
-  },
-  tripId?: string,
-): Promise<Product> {
-  const query = tripId ? `?tripId=${encodeURIComponent(tripId)}` : ''
-
-  return apiFetch<Product>(`/products${query}`, {
-    method: 'POST',
-    body: JSON.stringify(payload),
-  })
-}
