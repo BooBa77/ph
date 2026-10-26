@@ -655,6 +655,14 @@ describe('Питание похода (e2e)', () => {
     )!;
     expect(changed.weightActualStale).toBe(true);
 
+    // А невзвешенного соседа метка не трогает: ему нужен первый вес,
+    // а не новый — иначе «требуется перевзвесить» висит на пустом «факте».
+    const unweighed = packagesOf(await readPlan(organizerToken)).find(
+      (row) => row.id === second.id,
+    )!;
+    expect(unweighed.weightActualGrams).toBeNull();
+    expect(unweighed.weightActualStale).toBe(false);
+
     const reweighed = await call(
       'patch',
       `/api/trips/${tripId}/meal-packages/${first.id}`,

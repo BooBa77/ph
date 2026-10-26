@@ -947,9 +947,12 @@ export class TripMealsService {
     ];
     if (ids.length === 0) return;
 
+    // Перевесить просим только взвешенные пакеты: у невзвешенного «факта»
+    // нет, и метка «требуется перевзвесить» была бы враньём — ему нужен
+    // первый вес, а не новый.
     await manager.update(
       TripMealPackage,
-      { id: In(ids) },
+      { id: In(ids), weightActualGrams: Not(IsNull()) },
       { weightActualStale: true },
     );
   }

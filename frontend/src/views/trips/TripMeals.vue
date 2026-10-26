@@ -1711,7 +1711,6 @@ onMounted(() => {
                       <ProductPicker
                         :product="myLineDraft(mealKey(day.index, kind)).product"
                         :query="myLineDraft(mealKey(day.index, kind)).text"
-                        :trip-id="trip.id"
                         class="[&_input]:rounded-b-none [&_input]:border-blue-300"
                         @select="chooseMyLineProduct(mealKey(day.index, kind), $event)"
                         @update:query="onMyLineQuery(day.index, kind, $event)"
@@ -1768,7 +1767,6 @@ onMounted(() => {
                         <ProductPicker
                           :product="lineDraft(mealKey(day.index, kind)).product"
                           :query="lineDraft(mealKey(day.index, kind)).text"
-                          :trip-id="trip.id"
                           class="[&_input]:rounded-b-none"
                           @select="chooseLineProduct(mealKey(day.index, kind), $event)"
                           @update:query="onLineQuery(day.index, kind, $event)"
@@ -2112,16 +2110,6 @@ onMounted(() => {
       >
         <summary class="cursor-pointer select-none text-sm text-violet-900">Пакеты</summary>
 
-        <div v-if="canEdit" class="flex flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
-            data-test="package-add"
-            @click="addPackage"
-          >
-            Добавить пакет
-          </button>
-        </div>
 
         <!--
           Мои продукты: итог по личным приёмам, без пакета в БД. В общее
@@ -2160,6 +2148,17 @@ onMounted(() => {
               {{ row.name }} — {{ formatWeight(row.weightGrams) }}
             </li>
           </ul>
+        </div>
+
+        <div v-if="canEdit" class="flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
+            data-test="package-add"
+            @click="addPackage"
+          >
+            Добавить пакет
+          </button>
         </div>
 
         <p v-if="plan.packages.length === 0" class="text-sm text-muted" data-test="packages-empty">
