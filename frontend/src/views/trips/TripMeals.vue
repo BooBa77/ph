@@ -19,6 +19,7 @@ import {
   setMealDishExclusions,
   setMealForm,
   setMealKulek,
+  setMyMealDishExclusions,
   addMealLine,
   setMealLine,
   setMyStatus,
@@ -1097,6 +1098,45 @@ function removeMyDish(
   )
 }
 
+/**
+ * Убрать или вернуть ингредиент в моём приёме.
+ *
+ * Как и в общем слое: исключение живёт в строке приёма, рецепт не меняется.
+ * Убрали последний ингредиент — блюдо уходит целиком, иначе осталась бы
+ * пустая строка без состава.
+ */
+function toggleMyDishIngredient(
+  dayIndex: number,
+  kind: TripMealKind,
+  dish: TripMealDish,
+  productId: number,
+): void {
+  const excluded = dish.excludedProductIds.includes(productId)
+    ? dish.excludedProductIds.filter((id) => id !== productId)
+    : [...dish.excludedProductIds, productId]
+
+  const emptied =
+    !dish.excludedProductIds.includes(productId) &&
+    dish.ingredients.length > 0 &&
+    dish.ingredients.every((row) => excluded.includes(row.productId))
+
+  if (emptied) {
+    removeMyDish(dayIndex, kind, dish.dishId)
+
+    return
+  }
+
+  void runMy(`${dish.dishId}:${productId}:my-exclude`, () =>
+    setMyMealDishExclusions(
+      props.trip.id,
+      dayIndex,
+      kind,
+      dish.dishId,
+      excluded,
+    ),
+  )
+}
+
 function onMyLineQuery(
   dayIndex: number,
   kind: TripMealKind,
@@ -1176,6 +1216,48 @@ const myProductsWeight = computed(() =>
   myProducts.value.reduce((sum, row) => sum + row.weightGrams, 0),
 )
 
+// ─── мои продукты: контрольное взвешивание ───
+
+/**
+ * Вес моих продуктов после контрольного взвешивания.
+ *
+ * Хранится в браузере: это отметка для себя, а не данные похода — сервер
+ * про личный вес ничего не знает. Когда личные продукты поедут в
+ * «Снаряжение» одной позицией, вес переедет в базу вместе с рюкзаком.
+ */
+const MY_FOOD_WEIGHT_KEY = 'ph.myFoodWeight'
+
+const myFoodActualGrams = ref<number | null>(null)
+
+function myFoodWeightKey(): string {
+  return `${MY_FOOD_WEIGHT_KEY}.${props.trip.id}.${auth.user?.id ?? ''}`
+}
+
+function readMyFoodWeight(): void {
+  try {
+    const raw = window.localStorage.getItem(myFoodWeightKey())
+    myFoodActualGrams.value =
+      raw === null || Number.isNaN(Number(raw)) ? null : Number(raw)
+  } catch {
+    myFoodActualGrams.value = null
+  }
+}
+
+function saveMyFoodWeight(event: Event): void {
+  const raw = (event.target as HTMLInputElement).value.trim()
+  const grams = raw === '' ? null : Number(raw)
+  if (grams !== null && (!Number.isInteger(grams) || grams <= 0)) return
+
+  myFoodActualGrams.value = grams
+
+  try {
+    if (grams === null) window.localStorage.removeItem(myFoodWeightKey())
+    else window.localStorage.setItem(myFoodWeightKey(), String(grams))
+  } catch {
+    // Без хранилища отметка просто не переживёт перезагрузку.
+  }
+}
+
 /**
  * Правый отступ колонки форм: под треугольники в углу плашки.
  *
@@ -1212,6 +1294,7 @@ onMounted(() => {
   void load()
   void loadDishes()
   void loadMyPlan()
+  readMyFoodWeight()
 })
 </script>
 
@@ -1737,20 +1820,45 @@ onMounted(() => {
                       </button>
                     </div>
 
-                    <p v-if="dish.ingredients.length" class="text-xs text-blue-600">
-                      {{ dish.ingredients
-                        .map(
-                          (ingredient) =>
-                            `${ingredient.name} ${formatProductAmount(ingredient.amount, ingredient.unit)}`,
-                        )
-                        .join(' · ') }}
-                    </p>
+                    <!-- Состав: такой же чип, как в общем слое, только синий -->
+                    <div v-if="dish.ingredients.length" class="flex flex-wrap gap-1">
+                      <span
+                        v-for="ingredient in dish.ingredients"
+                        :key="ingredient.productId"
+                        class="flex items-center gap-1"
+                      >
+                        <span
+                          class="rounded-full border px-2 py-0.5 text-xs transition-colors"
+                          :class="
+                            dish.excludedProductIds.includes(ingredient.productId)
+                              ? 'border-dashed border-blue-300 text-blue-300 line-through'
+                              : 'border-blue-300 text-blue-700'
+                          "
+                        >
+                          {{ ingredient.name }}
+                          {{ formatProductAmount(ingredient.amount, ingredient.unit) }}
+                        </span>
+                        <button
+                          type="button"
+                          class="cursor-pointer text-xs text-blue-600 transition-colors hover:text-blue-800"
+                          :title="
+                            dish.excludedProductIds.includes(ingredient.productId)
+                              ? 'Вернуть ингредиент'
+                              : 'Убрать ингредиент'
+                          "
+                          :data-test="`my-dish-ing-${dish.dishId}-${ingredient.productId}`"
+                          @click="toggleMyDishIngredient(day.index, kind, dish, ingredient.productId)"
+                        >
+                          {{ dish.excludedProductIds.includes(ingredient.productId) ? '+' : '×' }}
+                        </button>
+                      </span>
+                    </div>
                   </div>
                 </div>
 
                 <ul class="flex flex-col gap-1" data-test="my-meal-products">
                   <li
-                    v-for="product in myMealOf(day.index, kind)!.products"
+                    v-for="product in myMealOf(day.index, kind)!.products.filter((row) => row.manualAmount > 0)"
                     :key="`my-product-${product.productId}`"
                     class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
                     data-test="my-meal-product"
@@ -2015,6 +2123,45 @@ onMounted(() => {
           </button>
         </div>
 
+        <!--
+          Мои продукты: итог по личным приёмам, без пакета в БД. В общее
+          распределение не входит — это своя ноша в рюкзаке; здесь только
+          вес и контрольное взвешивание.
+        -->
+        <div
+          v-if="myProductsWeight > 0"
+          class="flex flex-col gap-2 rounded-xl border border-blue-300 bg-blue-50 p-3"
+          data-test="my-products"
+        >
+          <div class="flex flex-wrap items-baseline justify-between gap-2">
+            <h3 class="text-sm font-medium text-blue-700">Мои продукты</h3>
+            <span class="text-xs text-blue-600">
+              расчётно: {{ formatWeight(myProductsWeight) }}
+            </span>
+          </div>
+
+          <label class="flex items-center gap-1 text-xs text-blue-700">
+            факт:
+            <input
+              type="number"
+              min="1"
+              step="1"
+              :value="myFoodActualGrams ?? ''"
+              placeholder="—"
+              class="w-20 rounded-lg border border-blue-300 bg-field px-2 py-1 text-xs text-text focus:border-blue-500 focus:outline-none"
+              data-test="my-products-weight"
+              @change="saveMyFoodWeight($event)"
+            />
+            г
+          </label>
+
+          <ul class="flex flex-col gap-0.5">
+            <li v-for="row in myProducts" :key="row.key" class="text-xs text-blue-600">
+              {{ row.name }} — {{ formatWeight(row.weightGrams) }}
+            </li>
+          </ul>
+        </div>
+
         <p v-if="plan.packages.length === 0" class="text-sm text-muted" data-test="packages-empty">
           Пакетов пока нет.
         </p>
@@ -2124,26 +2271,6 @@ onMounted(() => {
             </ul>
           </li>
         </ul>
-
-        <!-- Мои продукты: итог по личным приёмам, без пакета в БД -->
-        <div
-          v-if="myProductsWeight > 0"
-          class="mt-1 flex flex-col gap-2 rounded-xl border border-blue-300 bg-blue-50 p-3"
-          data-test="my-products"
-        >
-          <div class="flex flex-wrap items-baseline justify-between gap-2">
-            <h3 class="text-sm font-medium text-blue-700">Мои продукты</h3>
-            <span class="text-xs text-blue-600">
-              расчётно: {{ formatWeight(myProductsWeight) }}
-            </span>
-          </div>
-
-          <ul class="flex flex-col gap-0.5">
-            <li v-for="row in myProducts" :key="row.key" class="text-xs text-blue-600">
-              {{ row.name }} — {{ formatWeight(row.weightGrams) }}
-            </li>
-          </ul>
-        </div>
 
         <div v-if="unpackedRows.length" class="mt-1 flex flex-col gap-1" data-test="unpacked">
           <p class="text-xs text-muted">Не расфасовано:</p>

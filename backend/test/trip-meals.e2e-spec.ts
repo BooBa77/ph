@@ -1104,6 +1104,56 @@ describe('Питание похода (e2e)', () => {
         amount: 0,
       });
     });
+    it('ингредиент блюда убирается в моём приёме и возвращается', async () => {
+      // В личном завтраке стоит общее блюдо: мясное вегетарианке не нужно.
+      const canId = await tripProductId(canName);
+
+      const response = await call(
+        'put',
+        `/api/trips/${tripId}/my-meals/1/breakfast/dishes/${organizerDishId}/exclusions`,
+        memberToken,
+      )
+        .send({ productIds: [canId] })
+        .expect(200);
+
+      const meal = (response.body.meals as Array<{
+        dayIndex: number;
+        kind: string;
+        dishes: Array<{ dishId: string; excludedProductIds: number[] }>;
+        products: Array<{ productId: number }>;
+      }>).find((row) => row.dayIndex === 1 && row.kind === 'breakfast')!;
+
+      expect(
+        meal.dishes.find((row) => row.dishId === organizerDishId)
+          ?.excludedProductIds,
+      ).toEqual([canId]);
+      expect(meal.products.some((row) => row.productId === canId)).toBe(false);
+
+      // Возврат: продукт снова в моём плане, рецепт не менялся.
+      const back = await call(
+        'put',
+        `/api/trips/${tripId}/my-meals/1/breakfast/dishes/${organizerDishId}/exclusions`,
+        memberToken,
+      )
+        .send({ productIds: [] })
+        .expect(200);
+
+      const mealBack = (back.body.meals as Array<{
+        dayIndex: number;
+        kind: string;
+        dishes: Array<{ dishId: string; excludedProductIds: number[] }>;
+        products: Array<{ productId: number }>;
+      }>).find((row) => row.dayIndex === 1 && row.kind === 'breakfast')!;
+
+      expect(
+        mealBack.dishes.find((row) => row.dishId === organizerDishId)
+          ?.excludedProductIds,
+      ).toEqual([]);
+      expect(mealBack.products.some((row) => row.productId === canId)).toBe(
+        true,
+      );
+    });
+
 
     it('чужое блюдо вне раскладки в личный приём не ставится', async () => {
       const extra = await call('post', '/api/dishes', organizerToken)

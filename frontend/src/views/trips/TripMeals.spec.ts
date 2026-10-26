@@ -36,6 +36,7 @@ const mocks = vi.hoisted(() => ({
   fetchMyMealPlan: vi.fn(),
   addMyMealDish: vi.fn(),
   removeMyMealDish: vi.fn(),
+  setMyMealDishExclusions: vi.fn(),
   addMyMealLine: vi.fn(),
   removeMyMealLine: vi.fn(),
   fetchMyMealChecks: vi.fn(),
@@ -63,6 +64,7 @@ vi.mock('@/api/trips', () => ({
   fetchMyMealPlan: mocks.fetchMyMealPlan,
   addMyMealDish: mocks.addMyMealDish,
   removeMyMealDish: mocks.removeMyMealDish,
+  setMyMealDishExclusions: mocks.setMyMealDishExclusions,
   addMyMealLine: mocks.addMyMealLine,
   removeMyMealLine: mocks.removeMyMealLine,
   fetchMyMealChecks: mocks.fetchMyMealChecks,
@@ -299,25 +301,41 @@ function myPlan(): TripMealPlan {
             title: 'Мой суп',
             ingredients: [
               { productId: 11, name: 'Сыр', unit: 'g', amount: 40, isMeat: false },
+              { productId: 13, name: 'Соль', unit: 'g', amount: 5, isMeat: false },
             ],
             excludedProductIds: [],
           },
         ],
         products: [
+          // Ингредиент блюда: в списке продуктов его быть не должно —
+          // он уже показан чипом в составе, иначе он «дублируется».
           {
             productId: 11,
             name: 'Сыр',
             unit: 'g',
             weightPerUnitGrams: 1,
             recipeAmount: 40,
-            manualAmount: 60,
-            amount: 100,
+            manualAmount: 0,
+            amount: 40,
             isMeat: false,
             fromDishes: ['Мой суп'],
             allocations: [],
           },
+          // Свой продукт рукой — только он и попадает в список продуктов.
+          {
+            productId: 12,
+            name: 'Хлеб',
+            unit: 'g',
+            weightPerUnitGrams: 1,
+            recipeAmount: 0,
+            manualAmount: 80,
+            amount: 80,
+            isMeat: false,
+            fromDishes: [],
+            allocations: [],
+          },
         ],
-        weightGrams: 100,
+        weightGrams: 120,
       },
     ],
     packages: [],
@@ -415,6 +433,7 @@ describe('TripMeals', () => {
     mocks.fetchMyMealPlan.mockResolvedValue(currentMy)
     mocks.addMyMealDish.mockResolvedValue(currentMy)
     mocks.removeMyMealDish.mockResolvedValue(currentMy)
+    mocks.setMyMealDishExclusions.mockResolvedValue(currentMy)
     mocks.addMyMealLine.mockResolvedValue(currentMy)
     mocks.removeMyMealLine.mockResolvedValue(currentMy)
     mocks.fetchMyMealChecks.mockResolvedValue([])
@@ -595,13 +614,49 @@ describe('TripMeals', () => {
     expect(myDish.text()).toContain('Мой суп')
     expect(myDish.find('span').classes()).toContain('text-blue-700')
 
+    // В списке продуктов — только своя ручная строка, ингредиент блюда
+    // живёт чипом в составе и сюда не дублируется.
     const myProduct = card.find('[data-test="my-meal-product"]')
-    expect(myProduct.text()).toContain('Сыр')
+    expect(myProduct.text()).toContain('Хлеб')
+    expect(card.findAll('[data-test="my-meal-product"]')).toHaveLength(1)
     expect(myProduct.find('span').classes()).toContain('text-blue-700')
 
     // Личные строки стоят выше общих в разметке плашки.
     const rows = card.findAll('[data-test="my-meal-dish"], [data-test="meal-dish"]')
     expect(rows[0]!.attributes('data-test')).toBe('my-meal-dish')
+  })
+
+  it('ингредиент моего блюда убирается крестиком и возвращается', async () => {
+    const wrapper = await mountMeals()
+    const card = wrapper.find('[data-test="meal-1-breakfast"]')
+
+    // У Сыра (id 11) в составе есть крестик: исключение живёт в моём приёме.
+    const cross = card.find('[data-test="my-dish-ing-dm1-11"]')
+    expect(cross.exists()).toBe(true)
+
+    await cross.trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMyMealDishExclusions).toHaveBeenCalledWith(
+      '7',
+      1,
+      'breakfast',
+      'dm1',
+      [11],
+    )
+  })
+
+  it('вес моих продуктов запоминается в браузере', async () => {
+    const wrapper = await mountMeals()
+
+    const input = wrapper.find('[data-test="my-products-weight"]')
+    expect(input.exists()).toBe(true)
+
+    await input.setValue('950')
+    await input.trigger('change')
+    await flushPromises()
+
+    expect(window.localStorage.getItem(`ph.myFoodWeight.7.${ORGANIZER}`)).toBe('950')
   })
 
   it('«Список моих продуктов» открывает личный чек-лист', async () => {
@@ -1098,7 +1153,10 @@ describe('TripMeals', () => {
     expect(mocks.fetchMealChecks).toHaveBeenCalledWith('7')
     expect(wrapper.find('[data-test="checklist"]').attributes('role')).toBe('dialog')
     expect(wrapper.findAll('[data-test="check-row"]')).toHaveLength(3)
-    expect(wrapper.text()).toContain('надо')
+    // Строка списка: «Гречка 160 г [---] взяли [ ] куплено [ ] из дома».
+    expect(wrapper.text()).toContain('взяли')
+    expect(wrapper.text()).toContain('из дома')
+    expect(wrapper.text()).not.toContain('надо')
     expect(wrapper.text()).toContain('купил(а): Вегетарианка')
   })
 

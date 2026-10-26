@@ -145,18 +145,37 @@ onBeforeUnmount(() => {
         </p>
 
         <ul v-if="checks !== null && checks.length > 0" class="flex flex-col gap-2">
+          <!--
+            Строка списка: «Гречка 200 г [---] взяли [✓] куплено [ ] из дома».
+            Сначала что нужно и сколько взяли, потом отметки: куплено —
+            купили в магазине, из дома — своё, покупать не надо.
+          -->
           <li
             v-for="check in checks"
             :key="check.productId"
-            class="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-2 text-sm"
+            class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border bg-surface p-2 text-sm"
             :class="check.isOrphaned ? 'text-muted' : 'text-text'"
             data-test="check-row"
           >
-            <span>{{ check.name }}</span>
+            <span class="font-medium">{{ check.name }}</span>
             <span class="text-xs text-muted">
-              надо: {{ formatProductAmount(check.needAmount, check.unit) }}
+              {{ formatProductAmount(check.needAmount, check.unit) }}
             </span>
             <span v-if="check.isOrphaned" class="text-xs text-muted">нет в плане</span>
+
+            <label class="flex items-center gap-1 text-xs text-muted">
+              <input
+                type="number"
+                min="0"
+                step="1"
+                :value="check.boughtAmount ?? ''"
+                placeholder="—"
+                class="w-16 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
+                data-test="check-amount"
+                @change="setCheckAmount(check, $event)"
+              />
+              взяли
+            </label>
 
             <label class="flex items-center gap-1 text-xs text-muted">
               <input
@@ -177,21 +196,7 @@ onBeforeUnmount(() => {
                 data-test="check-home"
                 @change="toggleCheck(check, 'isHome')"
               />
-              домашнее
-            </label>
-
-            <label class="flex items-center gap-1 text-xs text-muted">
-              куплено:
-              <input
-                type="number"
-                min="0"
-                step="1"
-                :value="check.boughtAmount ?? ''"
-                placeholder="—"
-                class="w-16 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text focus:border-primary focus:outline-none"
-                data-test="check-amount"
-                @change="setCheckAmount(check, $event)"
-              />
+              из дома
             </label>
 
             <span v-if="check.boughtByName" class="text-xs text-muted">

@@ -563,6 +563,20 @@ export async function removeMyMealDish(
   )
 }
 
+/** PUT .../my-meals/:day/:kind/dishes/:dishId/exclusions — «это я не ем». */
+export async function setMyMealDishExclusions(
+  tripId: string,
+  dayIndex: number,
+  kind: TripMealKind,
+  dishId: string,
+  productIds: number[],
+): Promise<TripMealPlan> {
+  return apiFetch<TripMealPlan>(
+    `${myMealPath(tripId, dayIndex, kind)}/dishes/${dishId}/exclusions`,
+    { method: 'PUT', body: JSON.stringify({ productIds }) },
+  )
+}
+
 /** POST .../my-meals/:day/:kind/lines — продукт в личный приём. */
 export async function addMyMealLine(
   tripId: string,

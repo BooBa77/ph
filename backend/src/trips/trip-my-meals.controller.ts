@@ -16,6 +16,7 @@ import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
   AddMealDishDto,
   AddMealLineDto,
+  SetDishExclusionsDto,
   TripMealCheckListDto,
   TripMealPlanDto,
   UpdateMealCheckDto,
@@ -95,6 +96,29 @@ export class TripMyMealsController {
       dayIndex,
       kind,
       dishId,
+    );
+  }
+
+  /** Исключить ингредиенты блюда в моём приёме: «это я не ем». */
+  @Put(':id/my-meals/:dayIndex/:kind/dishes/:dishId/exclusions')
+  @ApiOperation({ summary: 'Исключения ингредиентов в личном приёме' })
+  @ApiOkResponse({ type: TripMealPlanDto })
+  async setDishExclusions(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('dayIndex', ParseIntPipe) dayIndex: number,
+    @Param('kind') kind: TripMealKind,
+    @Param('dishId') dishId: string,
+    @Body() dto: SetDishExclusionsDto,
+  ): Promise<TripMealPlanDto> {
+    return this.tripMeals.setDishExclusions(
+      authUser.id,
+      id,
+      authUser.id,
+      dayIndex,
+      kind,
+      dishId,
+      dto.productIds,
     );
   }
 
