@@ -108,6 +108,17 @@ describe('AppHeader', () => {
     expect(button.attributes('aria-expanded')).toBe('true')
   })
 
+  it('стоит в углу, сразу за кнопкой профиля', async () => {
+    const wrapper = await mountHeader()
+
+    const profile = wrapper.get('a[aria-label="Личный кабинет"]')
+    const button = wrapper.get('[data-test="menu-button"]')
+
+    // Порядок в шапке — требование заказчика: сначала человек, потом меню,
+    // и меню у самого края экрана.
+    expect(profile.element.nextElementSibling).toBe(button.element)
+  })
+
   it('прячет гамбургер на десктопе', async () => {
     const wrapper = await mountHeader()
 

@@ -40,7 +40,7 @@ const profilePath = computed(() => appStore.lastProfilePath)
 
 <template>
   <header
-    class="relative flex items-center justify-between gap-3 border-b border-border bg-surface px-4 py-3"
+    class="relative flex items-center justify-between gap-3 border-b border-border bg-surface py-3 pr-1 pl-4 md:pr-4"
   >
     <RouterLink
       to="/"
@@ -63,21 +63,6 @@ const profilePath = computed(() => appStore.lastProfilePath)
     </RouterLink>
 
     <div class="flex min-w-0 shrink items-center gap-1">
-      <!-- Меню: на мобиле открывает панель (разделы сайта или вкладки
-           похода — что положила страница), на десктопе скрыто -->
-      <button
-        id="site-menu-button"
-        type="button"
-        class="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-text transition-colors hover:bg-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary md:hidden"
-        :aria-expanded="menu.isOpen"
-        aria-controls="site-mobile-menu"
-        aria-label="Меню"
-        data-test="menu-button"
-        @click="menu.toggle()"
-      >
-        <span class="block h-6 w-6"><SidebarIcon name="menu" /></span>
-      </button>
-
       <RouterLink
         v-if="auth.user"
         :to="profilePath"
@@ -93,6 +78,21 @@ const profilePath = computed(() => appStore.lastProfilePath)
         -->
         <span class="mr-1 truncate">{{ auth.user.displayName }}</span>
       </RouterLink>
+
+      <!-- Меню — последним, в самом углу (решение заказчика 26.10.2026):
+           кнопка у края экрана, сразу за профилем. На десктопе скрыта -->
+      <button
+        id="site-menu-button"
+        type="button"
+        class="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-text transition-colors hover:bg-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary md:hidden"
+        :aria-expanded="menu.isOpen"
+        aria-controls="site-mobile-menu"
+        aria-label="Меню"
+        data-test="menu-button"
+        @click="menu.toggle()"
+      >
+        <span class="block h-6 w-6"><SidebarIcon name="menu" /></span>
+      </button>
     </div>
   </header>
 </template>
