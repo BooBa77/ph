@@ -183,6 +183,17 @@ export const ACTIVITY_ICONS: Record<string, ActivityIconShape[]> = {
       { kind: 'path', d: 'M25.60 11.13 V24.67' },
   ],
 
+  cinema: [
+    path('M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12'),
+    path('M8 4l0 16'),
+    path('M16 4l0 16'),
+    path('M4 8l4 0'),
+    path('M4 16l4 0'),
+    path('M4 12l16 0'),
+    path('M16 8l4 0'),
+    path('M16 16l4 0'),
+  ],
+
   theatre: [
     path(
       'M13.192 9h6.616a2 2 0 0 1 1.992 2.183l-.567 6.182a4 4 0 0 1 -3.983 3.635h-1.5a4 4 0 0 1 -3.983 -3.635l-.567 -6.182a2 2 0 0 1 1.992 -2.183',
