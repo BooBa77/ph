@@ -58,6 +58,7 @@ const GROUPS = [
     types: [
       { code: 'trip', label: 'Командировка', icon: 'trip' },
       { code: 'shift', label: 'Вахта', icon: 'shift' },
+      { code: 'overtime', label: 'Сверхурочная работа', icon: 'overtime' },
     ],
   },
   {

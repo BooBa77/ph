@@ -55,6 +55,19 @@ const strokeWidth = computed(() => ICON_STROKE_WIDTH[props.name] ?? 2)
     <template v-for="(shape, index) in shapes" :key="index">
       <path v-if="shape.kind === 'path'" :d="shape.d" />
       <circle v-else-if="shape.kind === 'circle'" :cx="shape.cx" :cy="shape.cy" :r="shape.r" />
+      <!--
+        Заливка: `evenodd` вырезает внутренние подпути, поэтому дырки
+        (тулья шапки, обода колёс) просвечивают цветом клетки. Обводка —
+        только если фигура помечена `stroked`: она добирает толщину там,
+        где в рисунке есть волоски тоньше пикселя.
+      -->
+      <path
+        v-else-if="shape.kind === 'area'"
+        :d="shape.d"
+        fill="currentColor"
+        fill-rule="evenodd"
+        :stroke="shape.stroked ? 'currentColor' : 'none'"
+      />
       <line v-else :x1="shape.x1" :y1="shape.y1" :x2="shape.x2" :y2="shape.y2" />
     </template>
   </svg>
