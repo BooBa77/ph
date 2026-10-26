@@ -19,7 +19,13 @@ const ACTIVE_CLASS = 'border-primary font-medium text-primary'
 </script>
 
 <template>
-  <main class="flex flex-col gap-6">
+  <!--
+    Здесь `<div>`, а не `<main>`: внутри этой рамки рендерится страница
+    похода, и у неё свой `<main>` (TripView). Вложенный `<main>` — ошибка
+    разметки (второй landmark внутри первого), её нашли замером при разборе
+    мобильной вёрстки 26.10.2026.
+  -->
+  <div class="flex flex-col gap-6">
     <h1 class="text-3xl font-bold text-text">Походы</h1>
 
     <nav class="flex flex-wrap gap-2" aria-label="Разделы походов">
@@ -41,5 +47,5 @@ const ACTIVE_CLASS = 'border-primary font-medium text-primary'
     </nav>
 
     <RouterView />
-  </main>
+  </div>
 </template>

@@ -6,6 +6,7 @@ import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 import AppHeader from '@/components/layout/AppHeader.vue'
 import type { User } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
+import { useMobileMenuStore } from '@/stores/mobileMenu'
 
 /**
  * Тесты шапки.
@@ -90,5 +91,28 @@ describe('AppHeader', () => {
     const profileLink = wrapper.get('a[aria-label="Личный кабинет"]')
     expect(profileLink.attributes('href')).toBe('/profile/personal')
     expect(profileLink.text()).toContain('Тест')
+  })
+
+  it('открывает мобильное меню кнопкой-гамбургером', async () => {
+    const wrapper = await mountHeader()
+    const menu = useMobileMenuStore()
+
+    const button = wrapper.get('[data-test="menu-button"]')
+    expect(button.attributes('aria-label')).toBe('Меню')
+    expect(button.attributes('aria-expanded')).toBe('false')
+    expect(button.attributes('aria-controls')).toBe('site-mobile-menu')
+
+    await button.trigger('click')
+
+    expect(menu.isOpen).toBe(true)
+    expect(button.attributes('aria-expanded')).toBe('true')
+  })
+
+  it('прячет гамбургер на десктопе', async () => {
+    const wrapper = await mountHeader()
+
+    // На широком экране разделы стоят колонкой слева: вторая кнопка для них
+    // заставляла бы выбирать между двумя одинаковыми меню.
+    expect(wrapper.get('[data-test="menu-button"]').classes()).toContain('md:hidden')
   })
 })

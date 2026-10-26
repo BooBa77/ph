@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
 import { fetchTripTabs, getTrip, updateTrip } from '@/api/trips'
 import { getPublicUser, type PublicUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
+import { useMobileMenuStore } from '@/stores/mobileMenu'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
 import TripMeals from '@/views/trips/TripMeals.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
@@ -22,10 +23,12 @@ import { tripWhenText } from '@/utils/tripDisplay'
 /**
  * Страница похода: общая рамка и вкладки.
  *
- * **Вкладки сверху на десктопе и снизу на телефоне.** Это не украшение:
- * вверху в мобильном браузере вкладки конкурируют с адресной строкой,
- * а большой палец до верхнего края не дотягивается. Внизу — то место, где
- * вкладки живут в мобильных приложениях.
+ * **Вкладки сверху на десктопе и в гамбургере на телефоне.** Так решил
+ * заказчик 26.10.2026: нижняя полоса с десятью вкладками занимала три ряда
+ * и закрывала содержимое (замер: 157 px полосы против 80 px отступа).
+ * Мобильный гамбургер в шапке на этой странице открывает именно вкладки
+ * похода — сами вкладки уходят в `MobileMenu` через стор, потому что шапка
+ * и страница — соседние ветки дерева.
  *
  * Вкладки переключаются **внутренним состоянием, а не адресом**: страница
  * остаётся одним экраном, поход грузится один раз, переход между вкладками
@@ -38,6 +41,7 @@ import { tripWhenText } from '@/utils/tripDisplay'
  */
 const route = useRoute()
 const auth = useAuthStore()
+const mobileMenu = useMobileMenuStore()
 
 const trip = ref<Trip | null>(null)
 const isLoading = ref(true)
@@ -105,6 +109,40 @@ const canEditMeals = computed(
 const isOrganizer = computed(
   () => trip.value !== null && trip.value.organizerUserId === auth.user?.id,
 )
+
+/**
+ * Вкладки — в мобильный гамбургер.
+ *
+ * Меню открывается кнопкой в шапке, а список вкладок знает эта страница:
+ * права и доступность приходят с сервера. Поэтому страница кладёт свой
+ * контекст в стор (`useMobileMenuStore`), а меню его показывает — шапка
+ * и страница про вкладки ничего друг о друге не знают.
+ *
+ * `watchEffect` пересобирает список сам: пришли права, переключилась
+ * вкладка — подсветка в меню обязана совпасть с содержимым. Уходя со
+ * страницы, контекст снимаем, иначе гамбургер на главной открыл бы вкладки
+ * покинутого похода.
+ */
+watchEffect(() => {
+  if (!trip.value) return
+
+  mobileMenu.setContext({
+    title: 'Разделы похода',
+    items: displayTabs.value.map((item) => ({
+      key: item.code,
+      label: item.label,
+      icon: item.code,
+      iconSet: 'trip',
+      available: item.available,
+      active: activeTab.value === item.code,
+      onSelect: () => {
+        activeTab.value = item.code
+      },
+    })),
+  })
+})
+
+onUnmounted(() => mobileMenu.clearContext())
 
 async function load(id: string) {
   isLoading.value = true
@@ -199,7 +237,7 @@ async function toggleRecruitment() {
 </script>
 
 <template>
-  <main class="flex flex-col gap-4 pb-20 md:pb-0">
+  <main class="flex flex-col gap-4">
     <p v-if="isLoading" class="text-muted">Загружаем поход…</p>
 
     <p v-else-if="error" class="text-muted" data-test="trip-error">
@@ -311,30 +349,14 @@ async function toggleRecruitment() {
         с Ф7: сейчас готовы «Гостевая», «Участники» и «Питание».
       </p>
 
-      <!-- Вкладки: на телефоне снизу, под большим пальцем. Перенос строк —
-           единственный способ уложить десять вкладок на узком экране -->
-      <nav
-        class="fixed inset-x-0 bottom-0 z-20 grid grid-cols-4 border-t border-border bg-surface md:hidden"
-        aria-label="Разделы похода"
-      >
-        <button
-          v-for="item in displayTabs"
-          :key="item.code"
-          type="button"
-          class="flex cursor-pointer flex-col items-center justify-center gap-0.5 border-t-2 bg-transparent px-1 py-2 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40"
-          :class="
-            activeTab === item.code
-              ? 'border-primary font-medium text-primary'
-              : 'border-transparent text-muted'
-          "
-          :disabled="!item.available"
-          :data-test="`tab-mobile-${item.code}`"
-          @click="activeTab = item.code"
-        >
-          <span class="h-4 w-4 shrink-0"><TripTabIcon :name="item.code" /></span>
-          {{ item.label }}
-        </button>
-      </nav>
+      <!--
+        Нижней полосы вкладок здесь больше нет (26.10.2026). Десять вкладок
+        в сетке по четыре давали три ряда высотой 157 px и закрывали 53 px
+        содержимого у низа страницы, а подписи у всех десяти читались как
+        список, а не как переключатель. Теперь на телефоне вкладки открывает
+        гамбургер в шапке — той же кнопкой, что и разделы сайта на остальных
+        страницах.
+      -->
     </template>
   </main>
 </template>

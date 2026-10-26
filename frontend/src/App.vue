@@ -3,6 +3,7 @@ import { computed, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 
 import AppHeader from '@/components/layout/AppHeader.vue'
+import MobileMenu from '@/components/layout/MobileMenu.vue'
 import SeasonDecor from '@/components/layout/SeasonDecor.vue'
 import SiteSidebar from '@/components/layout/SiteSidebar.vue'
 import InstallHintDialog from '@/components/ui/InstallHintDialog.vue'
@@ -72,10 +73,18 @@ watch(
   <AppHeader v-if="showHeader" />
 
   <!--
-    Общий каркас страниц: меню слева (на мобиле — полоса ярлыков сверху)
-    и содержимое. Меню одно на всё приложение: раньше разделы жили только
-    внутри личного кабинета, и на главной меню не было вовсе, а второе
-    меню рядом с первым путало бы.
+    Мобильное меню — на уровне приложения, а не внутри шапки: это оверлей
+    на весь экран, и жить он должен рядом с шапкой, а не в её разметке.
+    Открывается кнопкой из шапки через стор, содержимое (разделы сайта или
+    вкладки похода) кладёт страница.
+  -->
+  <MobileMenu v-if="showHeader" />
+
+  <!--
+    Общий каркас страниц: меню слева (на мобиле меню живёт в гамбургере
+    шапки, а эта колонка скрыта) и содержимое. Меню одно на всё приложение:
+    раньше разделы жили только внутри личного кабинета, и на главной меню
+    не было вовсе, а второе меню рядом с первым путало бы.
 
     Классы каркаса включаются только вместе с шапкой: на странице входа
     (`hideHeader`) остаётся голая обёртка, а сама форма центрируется своими
