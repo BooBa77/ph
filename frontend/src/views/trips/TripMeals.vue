@@ -2149,18 +2149,6 @@ onMounted(() => {
             </li>
           </ul>
         </div>
-
-        <div v-if="canEdit" class="flex flex-wrap items-center justify-end gap-2">
-          <button
-            type="button"
-            class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
-            data-test="package-add"
-            @click="addPackage"
-          >
-            Добавить пакет
-          </button>
-        </div>
-
         <p v-if="plan.packages.length === 0" class="text-sm text-muted" data-test="packages-empty">
           Пакетов пока нет.
         </p>
@@ -2248,12 +2236,21 @@ onMounted(() => {
                 факт: {{ formatWeight(pack.weightActualGrams) }}
               </span>
 
+              <!-- Невзвешенному нужен первый вес, взвешенному — новый,
+                   если содержимое поменялось. Два разных повода, две метки. -->
               <span
-                v-if="pack.weightActualStale"
+                v-if="pack.weightActualGrams === null"
+                class="text-xs text-amber-700"
+                data-test="package-unweighed"
+              >
+                не взвешен
+              </span>
+              <span
+                v-else-if="pack.weightActualStale"
                 class="text-xs text-amber-700"
                 data-test="package-stale"
               >
-                требуется перевзвесить пакет
+                требуется перевзвесить
               </span>
             </div>
 
@@ -2270,6 +2267,17 @@ onMounted(() => {
             </ul>
           </li>
         </ul>
+
+        <div v-if="canEdit" class="mt-1 flex flex-wrap items-center justify-end gap-2">
+          <button
+            type="button"
+            class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
+            data-test="package-add"
+            @click="addPackage"
+          >
+            Добавить пакет
+          </button>
+        </div>
 
         <div v-if="unpackedRows.length" class="mt-1 flex flex-col gap-1" data-test="unpacked">
           <p class="text-xs text-muted">Не расфасовано:</p>

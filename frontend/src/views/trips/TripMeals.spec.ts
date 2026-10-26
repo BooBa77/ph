@@ -1128,6 +1128,39 @@ describe('TripMeals', () => {
     expect(mocks.setMealKulek).toHaveBeenCalledWith('7', 1, 'breakfast', true)
   })
 
+  it('пакет без веса просит взвесить, взвешенный — только перевесить', async () => {
+    currentPlan.packages[0]!.weightActualGrams = 500
+    currentPlan.packages[0]!.weightActualStale = true
+    // Пустой пакет показывает «пустой», поэтому второму даём содержимое.
+    currentPlan.packages[1]!.items = [
+      {
+        mealId: 'm1',
+        dayIndex: 1,
+        kind: 'breakfast',
+        productId: 1,
+        name: 'Крупа',
+        amount: 50,
+        isElastic: false,
+        weightGrams: 50,
+      },
+    ]
+
+    const wrapper = await mountMeals()
+
+    const rows = wrapper.findAll('[data-test="package"]')
+    // Пакет 1 взвешен и содержимое менялось — просим перевесить.
+    expect(rows[0]!.find('[data-test="package-stale"]').text()).toContain(
+      'требуется перевзвесить',
+    )
+    expect(rows[0]!.find('[data-test="package-unweighed"]').exists()).toBe(false)
+
+    // Пакет 2 не взвешен ни разу — ему нужен первый вес, а не новый.
+    expect(rows[1]!.find('[data-test="package-unweighed"]').text()).toContain(
+      'не взвешен',
+    )
+    expect(rows[1]!.find('[data-test="package-stale"]').exists()).toBe(false)
+  })
+
   it('фактический вес пакета сохраняется', async () => {
     const wrapper = await mountMeals()
 
