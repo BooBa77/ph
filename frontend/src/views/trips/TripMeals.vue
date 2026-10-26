@@ -1544,10 +1544,15 @@ onMounted(() => {
                     в строках раскладки. Отдельная, потому что это другой
                     вопрос: «что едят» смотрят чаще, чем «во что уложено»,
                     и ради второго не хочется прятать первое.
+
+                    Кнопка шире остальных: в ней два знака — коробка и
+                    шеврон. В квадрате 20 px они сливались в одну закорючку
+                    (замечание заказчика), поэтому ширина 28 px и зазор
+                    между знаками больше.
                   -->
                   <button
                     type="button"
-                    class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
+                    class="flex h-5 w-7 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
                     :aria-expanded="!isPacksHidden()"
                     :aria-label="
                       isPacksHidden()
@@ -1564,7 +1569,7 @@ onMounted(() => {
                   >
                     <svg
                       viewBox="0 0 16 16"
-                      class="h-3 w-3"
+                      class="h-3.5 w-3.5"
                       fill="none"
                       stroke="currentColor"
                       stroke-width="1.6"
@@ -1572,20 +1577,20 @@ onMounted(() => {
                     >
                       <!-- коробка слева, шеврон справа: «свернуть упаковку» -->
                       <path
-                        d="M1.5 4.5h6.5v8H1.5z"
+                        d="M1.5 4h5.5v8H1.5z"
                         stroke-linecap="round"
                         stroke-linejoin="round"
                       />
-                      <path d="M1.5 7h6.5" stroke-linecap="round" />
+                      <path d="M1.5 6.8h5.5" stroke-linecap="round" />
                       <path
                         v-if="isPacksHidden()"
-                        d="M10 9l2.5-2.5L15 9"
+                        d="M10.5 9.4l2.25-2.25L15 9.4"
                         stroke-linecap="round"
                         stroke-linejoin="round"
                       />
                       <path
                         v-else
-                        d="M10 7l2.5 2.5L15 7"
+                        d="M10.5 7.4l2.25 2.25L15 7.4"
                         stroke-linecap="round"
                         stroke-linejoin="round"
                       />
@@ -1960,7 +1965,7 @@ onMounted(() => {
                       </span>
                       <button
                         type="button"
-                        class="ml-auto cursor-pointer text-xs text-blue-600 transition-colors hover:text-blue-800"
+                        class="cursor-pointer text-xs text-blue-600 transition-colors hover:text-blue-800"
                         title="Убрать продукт"
                         :data-test="`my-meal-line-remove-${product.productId}`"
                         @click="removeMyLine(day.index, kind, product.productId)"
@@ -2351,22 +2356,16 @@ onMounted(() => {
               </span>
 
               <!--
-                Слово одно на оба случая — «не взвешен» (решение заказчика
-                26.10.2026). Раньше у перевзвешивания был свой текст
-                «требуется перевзвесить»: человеку важно, что вес не готов,
-                а не по какой причине. Различаются только data-test.
+                Одна метка на оба случая — «не взвешен» (решение заказчика
+                26.10.2026). Разница между «вес ещё не вводили» и «состав
+                изменился после взвешивания» осталась только в расчёте:
+                в разметке и в тексте её нет. Второй span с `package-stale`
+                убран — два одинаковых слова в двух тегах только путали.
               -->
               <span
-                v-if="pack.weightActualGrams === null"
+                v-if="pack.weightActualGrams === null || pack.weightActualStale"
                 class="text-xs text-amber-700"
                 data-test="package-unweighed"
-              >
-                не взвешен
-              </span>
-              <span
-                v-else-if="pack.weightActualStale"
-                class="text-xs text-amber-700"
-                data-test="package-stale"
               >
                 не взвешен
               </span>

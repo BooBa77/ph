@@ -1207,13 +1207,12 @@ describe('TripMeals', () => {
 
     const rows = wrapper.findAll('[data-test="package"]')
     // Заказчик упростил формулировку (26.10.2026): «требуется перевзвесить»
-    // больше нет — оба состояния читаются как «не взвешен». Различаются
-    // только признаком разметки.
-    expect(rows[0]!.find('[data-test="package-stale"]').text()).toBe('не взвешен')
-    expect(rows[0]!.find('[data-test="package-unweighed"]').exists()).toBe(false)
-
+    // больше нет, и второй метки тоже — оба случая читаются как «не взвешен».
+    // Разница «вес не задавали» / «состав изменился» осталась только в том,
+    // что человек увидит, нажав на поле веса, но не в разметке.
+    expect(rows[0]!.find('[data-test="package-unweighed"]').text()).toBe('не взвешен')
     expect(rows[1]!.find('[data-test="package-unweighed"]').text()).toBe('не взвешен')
-    expect(rows[1]!.find('[data-test="package-stale"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="package-stale"]').exists()).toBe(false)
   })
 
   it('фактический вес пакета сохраняется', async () => {
