@@ -499,10 +499,11 @@ describe('TripMeals', () => {
     await wrapper.find('[data-test="meal-add-toggle-1-breakfast"]').trigger('click')
     await flushPromises()
 
-    // Поля сборки спрятаны: выбор блюда и продукта и фасовка.
+    // Поля сборки спрятаны: выбор блюда и продукта.
     expect(card().find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
     expect(card().find('[data-test="meal-line-amount-1-breakfast"]').exists()).toBe(false)
-    expect(card().find('[data-test="meal-kulek-1-breakfast"]').exists()).toBe(false)
+    // Кулёк остаётся: это фасовка, у неё своя кнопка.
+    expect(card().find('[data-test="meal-kulek-1-breakfast"]').exists()).toBe(true)
     // Форма приёма остаётся: это режим (готовка/перекус), а не поле ввода.
     // Заказчик назвал багом, что она сворачивалась вместе с полями.
     expect(card().find('[data-test="meal-form"]').exists()).toBe(true)
@@ -531,15 +532,15 @@ describe('TripMeals', () => {
       card().findAll('[data-test^="ing-pack"], [data-test^="alloc-pack"]')
 
     expect(packs().length).toBeGreaterThan(0)
-    expect(card().text()).toContain('ФАСОВКА')
+    expect(card().find('[data-test="meal-kulek-1-breakfast"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="meal-pack-toggle-1-breakfast"]').trigger('click')
     await flushPromises()
 
-    // Выбор пакета ушёл, а состав приёма остался: именно это и нужно
+    // Выбор пакета и кулёк ушли, а состав приёма остался: именно это и нужно
     // человеку, который смотрит «что едим», а не «во что уложено».
     expect(packs()).toHaveLength(0)
-    expect(card().text()).not.toContain('ФАСОВКА')
+    expect(card().find('[data-test="meal-kulek-1-breakfast"]').exists()).toBe(false)
     expect(card().text()).toContain('Каша')
     expect(card().text()).toContain('Крупа')
     // Форма приёма и вес — не фасовка, они на месте.
@@ -558,18 +559,20 @@ describe('TripMeals', () => {
     expect(packs().length).toBeGreaterThan(0)
   })
 
-  it('свёрнутая фасовка не мешает другим приёмам', async () => {
+  it('фасовка сворачивается сразу во всех приёмах', async () => {
     const wrapper = await mountMeals()
 
+    // Кнопка в завтраке — а прячет выбор пакета везде: это режим просмотра,
+    // а не настройка отдельного приёма (решение заказчика 26.10.2026).
     await wrapper.find('[data-test="meal-pack-toggle-1-breakfast"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-test="meal-1-breakfast"]').text()).not.toContain('ФАСОВКА')
-    // У обеда выбор пакета остаётся: флаг свой у каждой плашки.
+    const anywhere = wrapper.findAll('[data-test^="ing-pack"], [data-test^="alloc-pack"]')
+    expect(anywhere).toHaveLength(0)
+    // У обеда своя кнопка, и она тоже показывает свёрнутое состояние.
     expect(
-      wrapper.find('[data-test="meal-1-lunch"]').findAll('[data-test^="ing-pack"]'),
-    ).toHaveLength(0)
-    expect(wrapper.find('[data-test="meal-pack-toggle-1-lunch"]').exists()).toBe(true)
+      wrapper.get('[data-test="meal-pack-toggle-1-lunch"]').attributes('aria-expanded'),
+    ).toBe('false')
   })
 
   it('иконки есть и у пустого приёма, и он сворачивается', async () => {
@@ -1183,7 +1186,7 @@ describe('TripMeals', () => {
     expect(mocks.setMealKulek).toHaveBeenCalledWith('7', 1, 'breakfast', true)
   })
 
-  it('пакет без веса просит взвесить, взвешенный — только перевесить', async () => {
+  it('пакет без веса и пакет с устаревшим весом подписаны одинаково', async () => {
     currentPlan.packages[0]!.weightActualGrams = 500
     currentPlan.packages[0]!.weightActualStale = true
     // Пустой пакет показывает «пустой», поэтому второму даём содержимое.
@@ -1203,16 +1206,13 @@ describe('TripMeals', () => {
     const wrapper = await mountMeals()
 
     const rows = wrapper.findAll('[data-test="package"]')
-    // Пакет 1 взвешен и содержимое менялось — просим перевесить.
-    expect(rows[0]!.find('[data-test="package-stale"]').text()).toContain(
-      'требуется перевзвесить',
-    )
+    // Заказчик упростил формулировку (26.10.2026): «требуется перевзвесить»
+    // больше нет — оба состояния читаются как «не взвешен». Различаются
+    // только признаком разметки.
+    expect(rows[0]!.find('[data-test="package-stale"]').text()).toBe('не взвешен')
     expect(rows[0]!.find('[data-test="package-unweighed"]').exists()).toBe(false)
 
-    // Пакет 2 не взвешен ни разу — ему нужен первый вес, а не новый.
-    expect(rows[1]!.find('[data-test="package-unweighed"]').text()).toContain(
-      'не взвешен',
-    )
+    expect(rows[1]!.find('[data-test="package-unweighed"]').text()).toBe('не взвешен')
     expect(rows[1]!.find('[data-test="package-stale"]').exists()).toBe(false)
   })
 

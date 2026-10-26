@@ -172,26 +172,26 @@ function toggleAll(): void {
 }
 
 /**
- * Свёрнутая фасовка: плашка показывает, **что** едят, но не **во что**
+ * Свёрнутая фасовка: раскладка показывает, **что** едят, но не **во что**
  * это уложено.
  *
- * Отдельный флаг, а не часть «свернуть поля», потому что задачи разные:
- * поля — про сборку приёма (блюда, продукты, кнопки формы), фасовка — про
- * пакеты. Раскладку чаще смотрят, чтобы понять состав, и выбор пакета в
- * каждой строке этому только мешает; при этом состав видеть нужно.
+ * Флаг один на всю вкладку, а не свой у каждой плашки (заказчик,
+ * 26.10.2026): «свернуть фасовку» — это режим просмотра, а не настройка
+ * отдельного приёма. Кнопка есть в каждой плашке, но переключает всех
+ * разом, как двойной шеврон «свернуть все приёмы».
  *
- * Флаг прячет **только выбор пакета в строках раскладки**: секция «Пакеты»
- * (состав пакетов, вес, переименование) остаётся — её сворачивают своим
- * `<details>`, и это разные вещи.
+ * Прячет **только выбор пакета в строках раскладки** и кнопку кулька:
+ * блюда, продукты и вес остаются. Секцию «Пакеты» не трогает — у неё свой
+ * `<details>`, это разные вещи.
  */
-const packsHidden = ref<Record<string, boolean>>({})
+const packsHidden = ref(false)
 
-function isPacksHidden(key: string): boolean {
-  return packsHidden.value[key] === true
+function isPacksHidden(): boolean {
+  return packsHidden.value
 }
 
-function togglePacks(key: string): void {
-  packsHidden.value[key] = !isPacksHidden(key)
+function togglePacks(): void {
+  packsHidden.value = !packsHidden.value
 }
 
 /** Кто из смотрящих — едок (для флага «питаюсь отдельно»). */
@@ -1290,32 +1290,19 @@ function saveMyFoodWeight(event: Event): void {
 }
 
 /**
- * Правый отступ колонки форм: под треугольники в углу плашки.
+ * Правый отступ шапки приёма — под кнопки сворачивания в углу плашки.
  *
- * Пара кнопок — около 48 px; пар может быть две (общая и личная), одна
- * или ни одной. Лишний отступ съедает ширину селекта, поэтому считаем.
- *
- * С 26.10.2026 в общей паре три кнопки (добавилась «свернуть фасовку»),
- * поэтому её ширина — 68 px, а не 48.
+ * Кнопки висят абсолютно, поэтому текст шапки должен заканчиваться раньше:
+ * без отступа «Мои продукты: 50 г» уезжали под них. Пар две (общая из трёх
+ * кнопок и личная из двух), между ними зазор; лишний отступ съедал бы ширину.
  */
-const formsPad = computed(() => {
+const togglesPad = computed(() => {
   const pairs = (props.canEdit ? 1 : 0) + (myPlan.value ? 1 : 0)
 
   if (pairs === 0) return 'pr-2'
 
-  return pairs === 1 ? 'pr-[4.5rem]' : 'pr-[7rem]'
+  return pairs === 1 ? 'pr-[5rem]' : 'pr-[8rem]'
 })
-
-/**
- * Отступ справа у шапки приёма.
- *
- * На телефоне шапка занимает всю ширину плашки, а кнопки сворачивания висят
- * в правом верхнем углу поверх неё — без отступа «Мои продукты: 50 г»
- * оказывались под кнопками (видно на снимке до правки). На десктопе шапка
- * стоит в первой колонке (`9rem`), а кнопки — над третьей, так что там
- * отступ только съедал бы место.
- */
-const headerPad = computed(() => `${formsPad.value} md:pr-0`)
 
 async function loadMyPlan(): Promise<void> {
   try {
@@ -1561,19 +1548,19 @@ onMounted(() => {
                   <button
                     type="button"
                     class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-border text-muted transition-colors hover:border-primary hover:text-text"
-                    :aria-expanded="!isPacksHidden(mealKey(day.index, kind))"
+                    :aria-expanded="!isPacksHidden()"
                     :aria-label="
-                      isPacksHidden(mealKey(day.index, kind))
+                      isPacksHidden()
                         ? 'Показать фасовку'
                         : 'Свернуть фасовку'
                     "
                     :title="
-                      isPacksHidden(mealKey(day.index, kind))
+                      isPacksHidden()
                         ? 'Показать фасовку'
                         : 'Свернуть фасовку'
                     "
                     :data-test="`meal-pack-toggle-${day.index}-${kind}`"
-                    @click="togglePacks(mealKey(day.index, kind))"
+                    @click="togglePacks()"
                   >
                     <svg
                       viewBox="0 0 16 16"
@@ -1591,7 +1578,7 @@ onMounted(() => {
                       />
                       <path d="M1.5 7h6.5" stroke-linecap="round" />
                       <path
-                        v-if="isPacksHidden(mealKey(day.index, kind))"
+                        v-if="isPacksHidden()"
                         d="M10 9l2.5-2.5L15 9"
                         stroke-linecap="round"
                         stroke-linejoin="round"
@@ -1701,24 +1688,21 @@ onMounted(() => {
                 </span>
               </div>
 
-              <!-- Строка 1: приём | фасовка | блюда -->
-              <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
-                <!--
-                  Шапка приёма — строка с переносами на телефоне и колонка
-                  на десктопе. Свёрнутость больше не меняет раскладку шапки:
-                  кнопки формы теперь видны всегда, и «в строку» они встают
-                  сами. Отступ справа (`headerPad`) держит текст из-под
-                  кнопок в углу плашки.
-                -->
-                <div
-                  class="flex flex-wrap items-center gap-x-2 gap-y-1"
-                  :class="[
-                    headerPad,
-                    isEditHidden(mealKey(day.index, kind))
-                      ? 'md:flex-row md:flex-wrap md:items-baseline md:gap-2'
-                      : 'md:flex-col md:items-start md:gap-1',
-                  ]"
-                >
+              <!--
+                Шапка приёма: название, форма (готовка/перекус), веса и кулёк
+                одной строкой на всю ширину плашки.
+
+                Раньше шапка стояла в первой колонке сетки (9rem), и на
+                десктопе её высота — форма плюс два веса — не давала списку
+                блюд подняться к верху плашки даже при свёрнутых полях.
+                Теперь шапка вне сетки: строки раскладки начинаются сразу
+                под ней, что бы в ней ни было.
+
+                Отступ справа (`togglesPad`) — под кнопки сворачивания:
+                они висят в углу плашки, и текст под них заезжать не должен.
+              -->
+              <div class="flex flex-col gap-1">
+                <div class="flex flex-wrap items-baseline gap-x-3 gap-y-1" :class="togglesPad">
                   <span class="text-sm font-medium text-text">
                     {{ day.index }}{{ TRIP_MEAL_CODES[kind] }} · {{ TRIP_MEAL_LABELS[kind] }}
                   </span>
@@ -1747,7 +1731,7 @@ onMounted(() => {
                   </div>
 
                   <p v-if="mealOf(day.index, kind) && mealOf(day.index, kind)!.weightGrams > 0" class="text-xs text-muted" data-test="meal-weight">
-                    {{ formatWeight(mealOf(day.index, kind)?.weightGrams ?? 0) }}
+                    Общие продукты: {{ formatWeight(mealOf(day.index, kind)?.weightGrams ?? 0) }}
                   </p>
 
                   <p
@@ -1759,29 +1743,31 @@ onMounted(() => {
                   </p>
                 </div>
 
-                <div
-                  v-if="!isEditHidden(mealKey(day.index, kind)) && !isPacksHidden(mealKey(day.index, kind))"
-                  class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5 md:col-start-2 md:flex-col md:items-start md:gap-y-1"
+                <!--
+                  Кулёк — под весом: это действие над содержимым приёма, и
+                  раньше он висел под заголовком «ФАСОВКА по пакетам»,
+                  который заказчик попросил убрать совсем.
+                -->
+                <button
+                  v-if="canEdit && mealOf(day.index, kind) && !isPacksHidden()"
+                  type="button"
+                  class="cursor-pointer self-start text-xs transition-colors"
+                  :class="
+                    kulekOf(mealOf(day.index, kind)!)
+                      ? 'font-medium text-primary'
+                      : 'text-muted underline hover:text-text'
+                  "
+                  :data-test="`meal-kulek-${day.index}-${kind}`"
+                  @click="toggleKulek(mealOf(day.index, kind)!)"
                 >
-                  <span class="text-xs uppercase tracking-wide text-muted">ФАСОВКА по пакетам</span>
-                  <button
-                    v-if="canEdit && mealOf(day.index, kind)"
-                    type="button"
-                    class="cursor-pointer text-left text-xs transition-colors"
-                    :class="
-                      kulekOf(mealOf(day.index, kind)!)
-                        ? 'font-medium text-primary'
-                        : 'text-muted underline hover:text-text'
-                    "
-                    :data-test="`meal-kulek-${day.index}-${kind}`"
-                    @click="toggleKulek(mealOf(day.index, kind)!)"
-                  >
-                    <template v-if="kulekOf(mealOf(day.index, kind)!)">кулёк собран</template>
-                    <template v-else>всё в отдельный кулёк</template>
-                  </button>
-                </div>
+                  <template v-if="kulekOf(mealOf(day.index, kind)!)">кулёк собран</template>
+                  <template v-else>всё в отдельный кулёк</template>
+                </button>
+              </div>
 
-                <div class="flex flex-col gap-2 md:col-start-3" :class="formsPad">
+              <!-- Поля сборки приёма: на десктопе вторая колонка, как у строк -->
+              <div class="grid gap-x-4 md:grid-cols-[12rem_1fr]">
+                <div class="flex flex-col gap-2 md:col-start-2">
                   <!-- 1. Мои блюда -->
                   <div
                     v-if="myPlan && !isMyEditHidden(mealKey(day.index, kind))"
@@ -1908,10 +1894,10 @@ onMounted(() => {
                 <div
                   v-for="dish in myMealOf(day.index, kind)!.dishes"
                   :key="`my-dish-${dish.dishId}`"
-                  class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                  class="grid gap-x-4 md:grid-cols-[12rem_1fr]"
                   data-test="my-meal-dish"
                 >
-                  <div class="flex flex-col gap-1 md:col-start-3">
+                  <div class="flex flex-col gap-1 md:col-start-2">
                     <div class="flex items-start justify-between gap-2">
                       <span class="font-medium text-blue-700">{{ dish.title }}</span>
                       <button
@@ -1964,10 +1950,10 @@ onMounted(() => {
                   <li
                     v-for="product in myMealOf(day.index, kind)!.products.filter((row) => row.manualAmount > 0)"
                     :key="`my-product-${product.productId}`"
-                    class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]"
+                    class="grid gap-x-4 md:grid-cols-[12rem_1fr]"
                     data-test="my-meal-product"
                   >
-                    <div class="flex flex-wrap items-baseline gap-2 md:col-start-3">
+                    <div class="flex flex-wrap items-baseline gap-2 md:col-start-2">
                       <span class="font-medium text-blue-700">{{ product.name }}</span>
                       <span class="text-xs text-blue-600">
                         {{ formatProductAmount(product.amount, product.unit) }}
@@ -1994,8 +1980,8 @@ onMounted(() => {
                   class="flex flex-col gap-1"
                   data-test="meal-dish"
                 >
-                  <div class="grid gap-x-4 md:grid-cols-[9rem_12rem_1fr]">
-                    <div class="flex items-start justify-between gap-2 md:col-start-3">
+                  <div class="grid gap-x-4 md:grid-cols-[12rem_1fr]">
+                    <div class="flex items-start justify-between gap-2 md:col-start-2">
                       <span class="font-medium text-text">{{ dish.title }}</span>
                       <button
                         v-if="canEdit"
@@ -2010,11 +1996,10 @@ onMounted(() => {
                   </div>
 
                   <div
-                    v-if="dish.ingredients.length && !isPacksHidden(mealKey(day.index, kind))"
-                    class="hidden gap-x-4 text-[10px] uppercase leading-none text-muted md:grid md:grid-cols-[9rem_12rem_1fr]"
+                    v-if="dish.ingredients.length && !isPacksHidden()"
+                    class="hidden gap-x-4 text-[10px] uppercase leading-none text-muted md:grid md:grid-cols-[12rem_1fr]"
                   >
-                    <span class="hidden md:col-start-1 md:block"></span>
-                    <span class="flex gap-1 md:col-start-2">
+                      <span class="flex gap-1 md:col-start-1">
                       <span class="flex-1">в пакет</span>
                       <span class="w-16 text-center">КОЛ-ВО</span>
                     </span>
@@ -2027,7 +2012,7 @@ onMounted(() => {
                     <div
                       v-for="row in ingredientRows(mealOf(day.index, kind), ingredient)"
                       :key="row.key"
-                      class="flex flex-col gap-1 md:grid md:grid-cols-[9rem_12rem_1fr] md:gap-x-4"
+                      class="flex flex-col gap-1 md:grid md:grid-cols-[12rem_1fr] md:gap-x-4"
                       :data-test="`ing-row-${dish.dishId}-${ingredient.productId}-${row.position}`"
                     >
                       <!--
@@ -2037,7 +2022,7 @@ onMounted(() => {
                         колонке, фасовка во второй — местами их разводит
                         `md:col-start`, а не порядок в разметке.
                       -->
-                      <div class="flex items-center gap-1 md:col-start-3 md:row-start-1">
+                      <div class="flex items-center gap-1 md:col-start-2 md:row-start-1">
                         <!--
                           Родитель показывает ровно то, что лежит в пакете,
                           остаток — то, что осталось: обводка и крестик у них
@@ -2075,10 +2060,10 @@ onMounted(() => {
                       <!-- Фасовка строки: пакет и количество, 3 : 1 -->
                       <div
                         v-if="
-                          !isPacksHidden(mealKey(day.index, kind)) &&
+                          !isPacksHidden() &&
                           productById(mealOf(day.index, kind)!, ingredient.productId)
                         "
-                        class="grid grid-cols-4 gap-1 md:col-start-2 md:row-start-1 md:flex"
+                        class="grid grid-cols-4 gap-1 md:col-start-1 md:row-start-1 md:flex"
                       >
                         <select
                           :value="row.packageId"
@@ -2121,12 +2106,11 @@ onMounted(() => {
                 <div
                   v-if="
                     mealOf(day.index, kind)!.products.some((row) => row.manualAmount > 0) &&
-                    !isPacksHidden(mealKey(day.index, kind))
+                    !isPacksHidden()
                   "
-                  class="hidden gap-x-4 text-[10px] uppercase leading-none text-muted md:grid md:grid-cols-[9rem_12rem_1fr]"
+                  class="hidden gap-x-4 text-[10px] uppercase leading-none text-muted md:grid md:grid-cols-[12rem_1fr]"
                 >
-                  <span class="hidden md:col-start-1 md:block"></span>
-                  <span class="flex gap-1 md:col-start-2">
+                  <span class="flex gap-1 md:col-start-1">
                     <span class="flex-1">в пакет</span>
                     <span class="w-16 text-center">КОЛ-ВО</span>
                   </span>
@@ -2141,11 +2125,11 @@ onMounted(() => {
                     <li
                       v-for="row in packRows(product)"
                       :key="row.key"
-                      class="flex flex-col gap-1 md:grid md:grid-cols-[9rem_12rem_1fr] md:gap-x-4"
+                      class="flex flex-col gap-1 md:grid md:grid-cols-[12rem_1fr] md:gap-x-4"
                       :data-test="`meal-product-${product.productId}-${row.position}`"
                     >
                       <!-- Продукт первым: на телефоне фасовка идёт под ним -->
-                      <div class="flex flex-wrap items-baseline gap-2 text-sm text-text md:col-start-3 md:row-start-1">
+                      <div class="flex flex-wrap items-baseline gap-2 text-sm text-text md:col-start-2 md:row-start-1">
                         <span class="font-medium">{{ product.name }}</span>
                         <span class="text-xs text-muted">
                           {{ formatProductAmount(row.amount, product.unit) }}
@@ -2171,11 +2155,11 @@ onMounted(() => {
                       <!-- Фасовка строки: пакет и количество, 3 : 1 -->
                       <div
                         v-if="
-                          !isPacksHidden(mealKey(day.index, kind)) &&
+                          !isPacksHidden() &&
                           canEdit &&
                           packsFor(mealOf(day.index, kind)).length > 0
                         "
-                        class="flex flex-col gap-0.5 md:col-start-2 md:row-start-1"
+                        class="flex flex-col gap-0.5 md:col-start-1 md:row-start-1"
                       >
                         <div
                           class="grid grid-cols-4 gap-1 md:flex"
@@ -2366,8 +2350,12 @@ onMounted(() => {
                 факт: {{ formatWeight(pack.weightActualGrams) }}
               </span>
 
-              <!-- Невзвешенному нужен первый вес, взвешенному — новый,
-                   если содержимое поменялось. Два разных повода, две метки. -->
+              <!--
+                Слово одно на оба случая — «не взвешен» (решение заказчика
+                26.10.2026). Раньше у перевзвешивания был свой текст
+                «требуется перевзвесить»: человеку важно, что вес не готов,
+                а не по какой причине. Различаются только data-test.
+              -->
               <span
                 v-if="pack.weightActualGrams === null"
                 class="text-xs text-amber-700"
@@ -2380,7 +2368,7 @@ onMounted(() => {
                 class="text-xs text-amber-700"
                 data-test="package-stale"
               >
-                требуется перевзвесить
+                не взвешен
               </span>
             </div>
 
