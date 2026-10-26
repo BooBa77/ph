@@ -2271,7 +2271,7 @@ onMounted(() => {
         <div v-if="canEdit" class="mt-1 flex flex-wrap items-center justify-end gap-2">
           <button
             type="button"
-            class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
+            class="cursor-pointer rounded-lg border border-border bg-surface px-2 py-1 text-xs text-violet-900 shadow-sm transition-colors hover:border-violet-400"
             data-test="package-add"
             @click="addPackage"
           >
