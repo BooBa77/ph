@@ -416,12 +416,6 @@ function buildPayload(): CreateTripRequest {
     announcement: announcement.value.trim() || null,
     routeText: routeText.value,
     requirementsText: requirements.value.trim() || null,
-    /**
-     * Место сбора — поле «Трансфера», а не анонса (решение 21.10.2026).
-     * В форме его нет; значение не теряем: при правке оставляем прежнее,
-     * при создании — null.
-     */
-    meetingPlace: initial?.meetingPlace ?? null,
     hasGuitar: guitar.value,
     visibility: visibility.value,
     status: status.value,
@@ -456,7 +450,6 @@ function buildPayload(): CreateTripRequest {
 
   // У мечты полей подготовки нет — и в теле им делать нечего.
   if (isIdea.value) {
-    payload.meetingPlace = null
     payload.requirementsText = null
     payload.hasGuitar = false
   }

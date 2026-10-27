@@ -20,7 +20,6 @@ import type {
   TripRequest,
   TripTabPermission,
   TripTransfer,
-  TransferCarInput,
   TransferLegInput,
   TripTypeList,
   RequestDirection,
@@ -636,13 +635,13 @@ export async function updateMyMealCheck(
 /**
  * Все ручки «Трансфера» возвращают вкладку целиком.
  *
- * Так решил бэкенд, и это перенесено сюда без исключений: на экране места
- * в машине, «без машины» и состав строки — числа от двух таблиц, и собирать
- * их из частичного ответа значит однажды показать «3 из 5» там, где «4 из 5».
- * Поэтому ни одна функция здесь не возвращает что-то кроме `TripTransfer`.
+ * Так решил бэкенд: на экране занятые места, заявки и состав карточек —
+ * числа от двух таблиц, и собирать их из частичного ответа значит однажды
+ * показать «3 из 5» там, где «4 из 5». Поэтому ни одна функция здесь
+ * не возвращает что-то кроме `TripTransfer`.
  */
 
-/** Общий путь строки: `/trips/:id/transfer/legs/:legId`. */
+/** Общий путь карточки: `/trips/:id/transfer/legs/:legId`. */
 function legPath(tripId: string, legId: string): string {
   return `/trips/${tripId}/transfer/legs/${legId}`
 }
@@ -652,7 +651,12 @@ export async function fetchTripTransfer(tripId: string): Promise<TripTransfer> {
   return apiFetch<TripTransfer>(`/trips/${tripId}/transfer`)
 }
 
-/** POST /api/trips/:id/transfer/legs — новая строка заброски. */
+/**
+ * POST /api/trips/:id/transfer/legs — новая карточка перемещения.
+ *
+ * Сторона задаётся здесь, а не отдельным адресом: на экране две области,
+ * и «Добавить трансфер» в каждой кладёт карточку в свой список.
+ */
 export async function createTransferLeg(
   tripId: string,
   input: TransferLegInput,
@@ -663,7 +667,7 @@ export async function createTransferLeg(
   })
 }
 
-/** PATCH .../legs/:legId — правка строки: три состояния поля, как у похода. */
+/** PATCH .../legs/:legId — правка карточки: три состояния поля, как у похода. */
 export async function updateTransferLeg(
   tripId: string,
   legId: string,
@@ -675,7 +679,7 @@ export async function updateTransferLeg(
   })
 }
 
-/** DELETE .../legs/:legId — убрать строку вместе с машинами и пассажирами. */
+/** DELETE .../legs/:legId — убрать карточку вместе с пассажирами. */
 export async function removeTransferLeg(
   tripId: string,
   legId: string,
@@ -684,21 +688,19 @@ export async function removeTransferLeg(
 }
 
 /**
- * POST .../legs/:legId/return — «вернуться так же».
+ * POST .../legs/:legId/join — присоединиться.
  *
- * Копия строки с обратными точками, машинами и людьми; даты в копии нет
- * намеренно — обратный выезд в этот момент обычно ещё неизвестен.
+ * На рейс человек попадает в карточку сразу, на чужое ТС — заявкой:
+ * принимает владелец. Это решает бэкенд, ответ несёт `joinStatus`.
  */
-export async function returnTransferLeg(
+export async function joinTransferLeg(
   tripId: string,
   legId: string,
 ): Promise<TripTransfer> {
-  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/return`, {
-    method: 'POST',
-  })
+  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/join`, { method: 'POST' })
 }
 
-/** POST .../legs/:legId/passengers — поставить человека в строку. */
+/** POST .../passengers — посадить человека: владелец ТС или право вкладки. */
 export async function addTransferPassenger(
   tripId: string,
   legId: string,
@@ -710,60 +712,24 @@ export async function addTransferPassenger(
   })
 }
 
-/** PUT .../passengers/:userId — место в машине; `null` — «без машины». */
-export async function seatTransferPassenger(
+/** POST .../passengers/:userId/accept — принять заявку. */
+export async function acceptTransferPassenger(
   tripId: string,
   legId: string,
   userId: string,
-  carId: string | null,
 ): Promise<TripTransfer> {
-  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/passengers/${userId}`, {
-    method: 'PUT',
-    body: JSON.stringify({ carId: carId === null ? null : Number(carId) }),
+  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/passengers/${userId}/accept`, {
+    method: 'POST',
   })
 }
 
-/** DELETE .../passengers/:userId — снять человека со строки. */
+/** DELETE .../passengers/:userId — уйти самому или убрать человека. */
 export async function removeTransferPassenger(
   tripId: string,
   legId: string,
   userId: string,
 ): Promise<TripTransfer> {
   return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/passengers/${userId}`, {
-    method: 'DELETE',
-  })
-}
-
-/** POST .../legs/:legId/cars — машина в строке. */
-export async function createTransferCar(
-  tripId: string,
-  legId: string,
-  input: TransferCarInput,
-): Promise<TripTransfer> {
-  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/cars`, {
-    method: 'POST',
-    body: JSON.stringify(input),
-  })
-}
-
-/** PATCH .../cars/:carId — водитель, места, телефон, заметка. */
-export async function updateTransferCar(
-  tripId: string,
-  carId: string,
-  patch: Partial<TransferCarInput>,
-): Promise<TripTransfer> {
-  return apiFetch<TripTransfer>(`/trips/${tripId}/transfer/cars/${carId}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  })
-}
-
-/** DELETE .../cars/:carId — убрать машину: пассажиры останутся в строке. */
-export async function removeTransferCar(
-  tripId: string,
-  carId: string,
-): Promise<TripTransfer> {
-  return apiFetch<TripTransfer>(`/trips/${tripId}/transfer/cars/${carId}`, {
     method: 'DELETE',
   })
 }

@@ -44,7 +44,6 @@ const TRIP: Trip = {
   announcement: 'Идём на майские',
   routeText: 'Подход от станции',
   requirementsText: 'Свои кошки',
-  meetingPlace: 'Иркутск, автовокзал',
   hasGuitar: false,
   visibility: 'public',
   isRecruitmentClosed: false,
@@ -114,8 +113,6 @@ describe('TripEdit', () => {
     const announcement = wrapper.find('[data-test="announcement"]').element as HTMLInputElement
 
     expect(announcement.value).toBe('Идём на майские')
-    // Место сбора — поле «Трансфера», в форме его нет.
-    expect(wrapper.find('[data-test="meeting-place"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="selected-goal"]').text()).toContain('Витязь')
 
     // Тип похода в форме — выбранный чипс, а не пустой список.

@@ -39,7 +39,6 @@ export function buildTripPatch(initial: Trip, payload: CreateTripRequest): Updat
   set('announcement', initial.announcement, payload.announcement ?? null)
   set('routeText', initial.routeText, payload.routeText ?? '')
   set('requirementsText', initial.requirementsText, payload.requirementsText ?? null)
-  set('meetingPlace', initial.meetingPlace, payload.meetingPlace ?? null)
   set('hasGuitar', initial.hasGuitar, payload.hasGuitar ?? false)
   set('visibility', initial.visibility, payload.visibility)
   set('status', initial.status, payload.status)

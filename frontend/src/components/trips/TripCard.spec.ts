@@ -32,7 +32,6 @@ const BASE: Trip = {
   announcement: 'Идём на майские, набор шесть человек',
   routeText: '',
   requirementsText: null,
-  meetingPlace: null,
   hasGuitar: false,
   visibility: 'public',
   isRecruitmentClosed: false,

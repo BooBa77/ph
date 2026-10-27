@@ -317,12 +317,9 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="error"]').text()).toContain('несуществующие объекты')
   })
 
-  it('«Будет гитара» уходит в тело, а место сбора — нет', async () => {
+  it('«Будет гитара» уходит в тело', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
-
-    // Место сбора уехало в «Трансфер»: в форме его нет вовсе.
-    expect(wrapper.find('[data-test="meeting-place"]').exists()).toBe(false)
 
     await wrapper.find('[data-test="status"]').setValue('decided')
     await wrapper.find('[data-test="starts-at"]').setValue('2027-05-05T09:00')
@@ -331,12 +328,11 @@ describe('CreateTrip', () => {
     await submit(wrapper)
 
     expect(lastPayload()).toMatchObject({
-      meetingPlace: null,
       hasGuitar: true,
     })
   })
 
-  it('пустой сбор уезжает null-ом, а гитара по умолчанию «не будет»', async () => {
+  it('гитара по умолчанию «не будет»', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
     await wrapper.find('[data-test="status"]').setValue('decided')
@@ -345,7 +341,6 @@ describe('CreateTrip', () => {
     await submit(wrapper)
 
     expect(lastPayload()).toMatchObject({
-      meetingPlace: null,
       hasGuitar: false,
     })
   })

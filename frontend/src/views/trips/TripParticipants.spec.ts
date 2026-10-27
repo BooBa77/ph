@@ -59,7 +59,6 @@ const TRIP: Trip = {
   announcement: null,
   routeText: '',
   requirementsText: null,
-  meetingPlace: null,
   hasGuitar: false,
   visibility: 'public',
   isRecruitmentClosed: false,

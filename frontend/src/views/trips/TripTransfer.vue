@@ -3,59 +3,58 @@ import { computed, ref, watch } from 'vue'
 
 import { ApiError } from '@/api/errors'
 import {
+  acceptTransferPassenger,
   addTransferPassenger,
-  createTransferCar,
   createTransferLeg,
   fetchTripTransfer,
-  removeTransferCar,
+  joinTransferLeg,
   removeTransferLeg,
   removeTransferPassenger,
-  returnTransferLeg,
-  seatTransferPassenger,
-  updateTransferCar,
   updateTransferLeg,
 } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
 import {
-  TRANSFER_CAR_OWNERSHIPS,
-  TRANSFER_CAR_OWNERSHIP_LABELS,
-  TRANSFER_MODES,
+  TRANSFER_COMPENSATIONS,
+  TRANSFER_COMPENSATION_LABELS,
+  TRANSFER_DIRECTION_LABELS,
+  TRANSFER_MODE_GROUPS,
   TRANSFER_MODE_LABELS,
-  type TransferCarOwnership,
+  TRANSFER_PUBLIC_MODES,
+  TRANSFER_ROUND_TRIP_COMPENSATIONS,
+  type TransferCompensation,
+  type TransferDirection,
   type TransferMode,
   type Trip,
   type TripTransfer,
-  type TripTransferCar,
   type TripTransferLeg,
   type TripTransferPassenger,
 } from '@/types/trips'
-import { tripMeetingText } from '@/utils/tripDisplay'
 import TripChat from '@/views/trips/TripChat.vue'
 
 /**
- * Вкладка «Трансфер»: строки заброски, машины и пассажиры.
+ * Вкладка «Трансфер»: карточки перемещений двух сторон.
  *
- * **Строка — это заброска, машина — её часть.** У поезда машины нет, но
- * пассажиры и места нужны те же, поэтому строка отвечает на «когда, откуда,
- * куда, на чём», а машины живут внутри строки. Из этого следует и
- * «вернуться так же»: копия строки с обратными точками, а не общая машина
- * на весь поход.
+ * **Карточка — это и есть транспорт** (переделано 27.10.2026 по разбору
+ * заказчика). Способ доставки, время, откуда и куда, места, владелец
+ * и компенсация живут в одной плашке; «каждая часть группы едет своей
+ * карточкой». Машин отдельной сущностью больше нет — у поезда и вертолёта
+ * пассажиры те же, а мест и водителя нет.
  *
- * **Пассажиры — это состав строки, а не машины.** Человек сначала «едет
- * этой строкой», потом получает место; `carId: null` — «едет, но места
- * нет», и на экране это подписано «без машины», потому что это работа для
- * людей, а не ошибка.
+ * **Две области, «Туда» и «Обратно»** — как разделы «Питания»: свои цвета,
+ * своя кнопка «Добавить трансфер», свой порядок карточек. Сторона — поле
+ * карточки, а не вывод из точек: обратный выезд бывает без точек вовсе.
  *
- * **Права считает бэкенд**, и здесь они только читаются:
- * `plan.canEdit` — можно править строки и заводить наёмные машины,
- * `car.canEdit` — можно править эту машину (свою водитель правит сам),
- * «снять себя» доступно всегда — это и есть «пассажир может отказаться».
+ * **Плашка сворачивается**: в шапке видно «что, когда и куда» и счёт
+ * (места, компенсация), внутри — пассажиры и действия. Длинный список
+ * из десяти карточек иначе не читается.
  *
- * **Любая правка возвращает вкладку целиком**, поэтому состояние на экране
- * не собирается по кусочкам: места в машине и «без машины» — числа от двух
- * таблиц, и частичный ответ однажды разошёлся бы с ними.
+ * **Права считает бэкенд**: `plan.canEdit` — можно заводить любые карточки
+ * и ставить флаг «наше ТС», `leg.canEdit` — можно править эту карточку
+ * (владелец своего ТС правит свою без права на вкладку), `leg.joinStatus` —
+ * что будет, если человек присоединится: на рейс сразу, на чужое ТС заявкой.
  *
- * Чат трансфера — часть вкладки, как у «Питания»: чат — тема вкладки.
+ * **Чата нет в шаблоне** отдельной кнопкой — он часть вкладки, как у
+ * «Питания»: чат — тема вкладки.
  */
 const props = defineProps<{ trip: Trip }>()
 
@@ -67,20 +66,34 @@ const isSaving = ref(false)
 const error = ref<string | null>(null)
 const actionError = ref<string | null>(null)
 
-const meId = computed(() => auth.user?.id ?? '')
-const legs = computed(() => plan.value?.legs ?? [])
-const travelers = computed(() => plan.value?.travelers ?? [])
-const canEdit = computed(() => plan.value?.canEdit ?? false)
+/** Свёрнутые плашки: ключ — id карточки. По умолчанию всё развёрнуто. */
+const collapsed = ref<Set<string>>(new Set())
 
-/**
- * Место сбора живёт в походе (`trips.meeting_place`), а не в строке:
- * у него нет ни даты, ни вида, ни машины. Показываем отдельной строкой
- * сверху, правит его организатор в форме похода — поэтому здесь только
- * показ и подсказка.
- */
-const meetingText = computed(
-  () => plan.value?.meetingPlace ?? tripMeetingText(props.trip),
-)
+const meId = computed(() => auth.user?.id ?? '')
+const canEditTab = computed(() => plan.value?.canEdit ?? false)
+const travelers = computed(() => plan.value?.travelers ?? [])
+const legs = computed(() => plan.value?.legs ?? [])
+
+const legsThere = computed(() => legs.value.filter((leg) => leg.direction === 'there'))
+const legsBack = computed(() => legs.value.filter((leg) => leg.direction === 'back'))
+
+/** Две области одного экрана: свои цвета, своя кнопка, свой порядок. */
+const sections = computed(() => [
+  {
+    direction: 'there' as TransferDirection,
+    legs: legsThere.value,
+    plate: 'border-sky-300 bg-sky-100',
+    title: 'text-sky-900',
+    button: 'bg-sky-600',
+  },
+  {
+    direction: 'back' as TransferDirection,
+    legs: legsBack.value,
+    plate: 'border-emerald-300 bg-emerald-100',
+    title: 'text-emerald-900',
+    button: 'bg-emerald-600',
+  },
+])
 
 async function load() {
   isLoading.value = true
@@ -99,10 +112,7 @@ async function load() {
 
 watch(() => props.trip.id, load, { immediate: true })
 
-/**
- * Одна обёртка на все действия: сервер отвечает вкладкой целиком, поэтому
- * после любого действия достаточно заменить состояние его ответом.
- */
+/** Одна обёртка на все действия: сервер отвечает вкладкой целиком. */
 async function run(action: () => Promise<TripTransfer>): Promise<boolean> {
   if (isSaving.value) return false
 
@@ -114,86 +124,29 @@ async function run(action: () => Promise<TripTransfer>): Promise<boolean> {
     return true
   } catch (problem) {
     actionError.value =
-      problem instanceof ApiError
-        ? problem.message
-        : 'Не получилось — попробуйте ещё раз'
+      problem instanceof ApiError ? problem.message : 'Не получилось — попробуйте ещё раз'
     return false
   } finally {
     isSaving.value = false
   }
 }
 
-// ───────────────────────────── места и люди ─────────────────────────────
+// ───────────────────────────── что показываем ─────────────────────────────
 
-function carPassengers(
-  leg: TripTransferLeg,
-  car: TripTransferCar,
-): TripTransferPassenger[] {
-  return leg.passengers.filter((passenger) => passenger.carId === car.id)
+function isCollapsed(id: string): boolean {
+  return collapsed.value.has(id)
 }
 
-/** Места не указаны (`null`) — не потолок: «пятиместная» уточнят позже. */
-function hasFreeSeat(car: TripTransferCar): boolean {
-  return car.seats === null || car.occupied < car.seats
+function toggleCollapsed(id: string) {
+  const next = new Set(collapsed.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+
+  collapsed.value = next
 }
 
-function seatsText(car: TripTransferCar): string {
-  return car.seats === null ? 'места не указаны' : `${car.occupied} из ${car.seats}`
-}
-
-function unassigned(leg: TripTransferLeg): TripTransferPassenger[] {
-  return leg.passengers.filter((passenger) => passenger.carId === null)
-}
-
-/** Кого ещё нет в строке — их и предлагаем добавить. */
-function outsiders(leg: TripTransferLeg) {
-  return travelers.value.filter(
-    (traveler) => !leg.passengers.some((passenger) => passenger.userId === traveler.userId),
-  )
-}
-
-/** Под машинами показываем «без машины», у остальных строк — весь состав. */
-function rowPeople(leg: TripTransferLeg): TripTransferPassenger[] {
-  return leg.mode === 'car' ? unassigned(leg) : leg.passengers
-}
-
-function carLabel(leg: TripTransferLeg, carId: string): string {
-  const car = leg.cars.find((item) => item.id === carId)
-  return car ? car.driverName : 'машина'
-}
-
-/**
- * Право управлять людьми строки: право на вкладку или машина в этой строке
- * (водитель выбирает пассажиров). Себя человек сажает и снимает сам —
- * отдельной кнопкой «я еду этой строкой» на телефоне.
- */
-function canManagePeople(leg: TripTransferLeg): boolean {
-  return canEdit.value || leg.cars.some((car) => car.canEdit)
-}
-
-function canRemovePassenger(
-  leg: TripTransferLeg,
-  passenger: TripTransferPassenger,
-): boolean {
-  return canManagePeople(leg) || passenger.userId === meId.value
-}
-
-/**
- * Снять себя из машины человек вправе всегда, даже если его посадил
- * водитель: это и есть «пассажир может отказаться». Посадить себя сам
- * он не может — место в машине даёт водитель.
- */
-function canUnseat(car: TripTransferCar, passenger: TripTransferPassenger): boolean {
-  return car.canEdit || passenger.userId === meId.value
-}
-
-function isInLeg(leg: TripTransferLeg): boolean {
-  return leg.passengers.some((passenger) => passenger.userId === meId.value)
-}
-
-function departureText(iso: string | null): string {
-  if (!iso) return 'время уточняется'
-
+/** «7 ноября, 08:00» — время обязательно, поэтому без «уточняется». */
+function departureText(iso: string): string {
   return new Date(iso).toLocaleString('ru-RU', {
     day: 'numeric',
     month: 'long',
@@ -202,33 +155,49 @@ function departureText(iso: string | null): string {
   })
 }
 
-const canAddMyCar = computed(
-  () => travelers.value.some((traveler) => traveler.userId === meId.value),
-)
-
-// ───────────────────────────── действия ─────────────────────────────
-
-const seatFromRow = (leg: TripTransferLeg, passenger: TripTransferPassenger, event: Event) => {
-  const select = event.target as HTMLSelectElement
-  const carId = select.value === '' ? null : select.value
-  select.value = ''
-
-  if (carId !== null) {
-    void run(() => seatTransferPassenger(props.trip.id, leg.id, passenger.userId, carId))
-  }
+function seatsText(leg: TripTransferLeg): string {
+  return leg.seats === null ? 'мест не указано' : `${leg.occupied} из ${leg.seats}`
 }
 
-const seatFromCar = (leg: TripTransferLeg, car: TripTransferCar, event: Event) => {
-  const select = event.target as HTMLSelectElement
-  const userId = select.value
-  select.value = ''
+/**
+ * Компенсация одной строкой: «Общий расход · 3000 ₽ · туда-обратно».
+ * Сумма у «безвозмездно» не показывается — её и нет.
+ */
+function compensationText(leg: TripTransferLeg): string {
+  const parts = [TRANSFER_COMPENSATION_LABELS[leg.compensation]]
 
-  if (userId !== '') {
-    void run(() => seatTransferPassenger(props.trip.id, leg.id, userId, car.id))
+  if (leg.compensationAmountRub !== null) {
+    parts.push(`${leg.compensationAmountRub.toLocaleString('ru-RU')} ₽`)
   }
+  if (leg.isRoundTrip) parts.push('туда-обратно')
+
+  return parts.join(' · ')
 }
 
-const addFromSelect = (leg: TripTransferLeg, event: Event) => {
+function accepted(leg: TripTransferLeg): TripTransferPassenger[] {
+  return leg.passengers.filter((person) => person.status === 'accepted')
+}
+
+function requested(leg: TripTransferLeg): TripTransferPassenger[] {
+  return leg.passengers.filter((person) => person.status === 'requested')
+}
+
+/** Кого ещё нет в карточке — их и предлагаем посадить. */
+function outsiders(leg: TripTransferLeg) {
+  return travelers.value.filter(
+    (traveler) => !leg.passengers.some((person) => person.userId === traveler.userId),
+  )
+}
+
+function isMine(person: TripTransferPassenger): boolean {
+  return person.userId === meId.value
+}
+
+function hasFreeSeat(leg: TripTransferLeg): boolean {
+  return leg.seats === null || leg.occupied < leg.seats
+}
+
+const addTraveler = (leg: TripTransferLeg, event: Event) => {
   const select = event.target as HTMLSelectElement
   const userId = select.value
   select.value = ''
@@ -238,42 +207,41 @@ const addFromSelect = (leg: TripTransferLeg, event: Event) => {
   }
 }
 
-const addMe = (leg: TripTransferLeg) =>
-  void run(() => addTransferPassenger(props.trip.id, leg.id, meId.value))
+const join = (leg: TripTransferLeg) => void run(() => joinTransferLeg(props.trip.id, leg.id))
 
-const unseat = (leg: TripTransferLeg, passenger: TripTransferPassenger) =>
-  void run(() => seatTransferPassenger(props.trip.id, leg.id, passenger.userId, null))
+const accept = (leg: TripTransferLeg, person: TripTransferPassenger) =>
+  void run(() => acceptTransferPassenger(props.trip.id, leg.id, person.userId))
 
-const removePassenger = (leg: TripTransferLeg, passenger: TripTransferPassenger) =>
-  void run(() => removeTransferPassenger(props.trip.id, leg.id, passenger.userId))
-
-const removeCar = (leg: TripTransferLeg, car: TripTransferCar) =>
-  void run(() => removeTransferCar(props.trip.id, car.id))
+const leave = (leg: TripTransferLeg, person: TripTransferPassenger) =>
+  void run(() => removeTransferPassenger(props.trip.id, leg.id, person.userId))
 
 const removeLeg = (leg: TripTransferLeg) =>
   void run(() => removeTransferLeg(props.trip.id, leg.id))
 
-const returnSameWay = (leg: TripTransferLeg) =>
-  void run(() => returnTransferLeg(props.trip.id, leg.id))
-
-// ───────────────────────────── строка: диалог ─────────────────────────────
+// ───────────────────────────── карточка: диалог ─────────────────────────────
 
 interface LegDraft {
   id: string | null
+  direction: TransferDirection
   mode: TransferMode
   fromPlace: string
   toPlace: string
+  /** `datetime-local` — местное «YYYY-MM-DDTHH:mm». */
   departsAt: string
+  isOwnVehicle: boolean
+  ownerUserId: string
+  seats: string | number
+  compensation: TransferCompensation
+  amount: string | number
+  isRoundTrip: boolean
   note: string
 }
 
 const legDraft = ref<LegDraft | null>(null)
 const legError = ref<string | null>(null)
 
-/** `datetime-local` ждёт местное «YYYY-MM-DDTHH:mm», а храним мы ISO. */
-function toLocalInput(iso: string | null): string {
-  if (!iso) return ''
-
+/** `datetime-local` ждёт местное «YYYY-MM-DDTHH:mm», а API — ISO. */
+function toLocalInput(iso: string): string {
   const date = new Date(iso)
   const pad = (value: number) => String(value).padStart(2, '0')
 
@@ -286,18 +254,79 @@ function fromLocalInput(value: string): string | null {
   return value ? new Date(value).toISOString() : null
 }
 
-function openLegDialog(leg: TripTransferLeg | null) {
+const isPublicMode = (mode: TransferMode) =>
+  (TRANSFER_PUBLIC_MODES as readonly string[]).includes(mode)
+
+/** Какие компенсации допустимы для способа: у рейса — билет, у своего — расход. */
+const allowedCompensations = computed<TransferCompensation[]>(() => {
+  if (!legDraft.value) return [...TRANSFER_COMPENSATIONS]
+
+  return isPublicMode(legDraft.value.mode)
+    ? ['free', 'ticket']
+    : ['free', 'shared', 'sharedPerPassenger']
+})
+
+const isRoundTripAvailable = computed(() =>
+  legDraft.value
+    ? (TRANSFER_ROUND_TRIP_COMPENSATIONS as readonly string[]).includes(
+        legDraft.value.compensation,
+      )
+    : false,
+)
+
+const isAmountNeeded = computed(() => legDraft.value?.compensation !== 'free')
+
+/** Флаг «наше ТС» — только тому, кому роль дала вкладку. */
+const canFlagOwnVehicle = computed(
+  () => canEditTab.value && legDraft.value !== null && !isPublicMode(legDraft.value.mode),
+)
+
+function openLegDialog(direction: TransferDirection, leg: TripTransferLeg | null = null) {
   legError.value = null
   legDraft.value = leg
     ? {
         id: leg.id,
+        direction: leg.direction,
         mode: leg.mode,
         fromPlace: leg.fromPlace,
         toPlace: leg.toPlace,
         departsAt: toLocalInput(leg.departsAt),
+        isOwnVehicle: leg.isOwnVehicle,
+        ownerUserId: leg.ownerUserId ?? meId.value,
+        seats: leg.seats ?? '',
+        compensation: leg.compensation,
+        amount: leg.compensationAmountRub ?? '',
+        isRoundTrip: leg.isRoundTrip,
         note: leg.note ?? '',
       }
-    : { id: null, mode: 'car', fromPlace: '', toPlace: '', departsAt: '', note: '' }
+    : {
+        id: null,
+        direction,
+        mode: 'car',
+        fromPlace: '',
+        toPlace: '',
+        departsAt: '',
+        isOwnVehicle: false,
+        ownerUserId: meId.value,
+        seats: '',
+        compensation: 'free',
+        amount: '',
+        isRoundTrip: false,
+        note: '',
+      }
+}
+
+/** Смена способа может сделать компенсацию незаконной — приводим к «бесплатно». */
+function changeMode() {
+  const draft = legDraft.value
+  if (!draft) return
+
+  if (!allowedCompensations.value.includes(draft.compensation)) {
+    draft.compensation = 'free'
+    draft.isRoundTrip = false
+  }
+
+  if (isPublicMode(draft.mode)) draft.isOwnVehicle = false
 }
 
 async function saveLeg() {
@@ -306,17 +335,46 @@ async function saveLeg() {
 
   const fromPlace = draft.fromPlace.trim()
   const toPlace = draft.toPlace.trim()
+  const departsAt = fromLocalInput(draft.departsAt)
 
   if (!fromPlace || !toPlace) {
-    legError.value = 'Нужны обе точки: откуда и куда'
+    legError.value = 'Нужны обе точки: откуда и докуда'
+    return
+  }
+
+  if (!departsAt) {
+    legError.value = 'Без времени отправления карточка бесполезна — укажите его'
+    return
+  }
+
+  const rawAmount = String(draft.amount).trim()
+  const amount = rawAmount === '' ? null : Number(rawAmount)
+
+  if (draft.compensation !== 'free' && (amount === null || amount <= 0)) {
+    legError.value = 'Укажите сумму компенсации'
+    return
+  }
+
+  const rawSeats = String(draft.seats).trim()
+  const seats = rawSeats === '' ? null : Number(rawSeats)
+
+  if (seats !== null && (!Number.isInteger(seats) || seats < 1)) {
+    legError.value = 'Мест — целое число, и хотя бы одно'
     return
   }
 
   const input = {
+    direction: draft.direction,
     mode: draft.mode,
+    departsAt,
     fromPlace,
     toPlace,
-    departsAt: fromLocalInput(draft.departsAt),
+    isOwnVehicle: draft.isOwnVehicle,
+    ownerUserId: draft.isOwnVehicle ? draft.ownerUserId : null,
+    seats,
+    compensation: draft.compensation,
+    compensationAmountRub: draft.compensation === 'free' ? null : amount,
+    isRoundTrip: draft.isRoundTrip,
     note: draft.note.trim() || null,
   }
 
@@ -328,105 +386,11 @@ async function saveLeg() {
   if (ok) legDraft.value = null
 }
 
-// ───────────────────────────── машина: диалог ─────────────────────────────
-
-interface CarDraft {
-  /** `null` — новая машина; иначе правим существующую. */
-  carId: string | null
-  legId: string
-  ownership: TransferCarOwnership
-  driverUserId: string
-  driverName: string
-  driverPhone: string
-  /**
-   * Мест может быть числом или пустой строкой: `<input type="number">`
-   * с `v-model` отдаёт число, а очищенное поле — строку.
-   */
-  seats: string | number
-}
-
-const carDraft = ref<CarDraft | null>(null)
-const carError = ref<string | null>(null)
-
-/** Наёмную машину заводит только тот, кому роль дала вкладку. */
-const ownershipOptions = computed<TransferCarOwnership[]>(() =>
-  canEdit.value ? [...TRANSFER_CAR_OWNERSHIPS] : ['own'],
-)
-
-/** Свою машину участник заводит сам — водитель здесь он и только он. */
 const driverOptions = computed(() =>
-  canEdit.value ? travelers.value : travelers.value.filter((person) => person.userId === meId.value),
+  canEditTab.value
+    ? travelers.value
+    : travelers.value.filter((person) => person.userId === meId.value),
 )
-
-function openCarDialog(leg: TripTransferLeg, car: TripTransferCar | null = null) {
-  carError.value = null
-  carDraft.value = {
-    carId: car?.id ?? null,
-    legId: leg.id,
-    ownership: car?.ownership ?? 'own',
-    driverUserId: car?.driverUserId ?? meId.value,
-    driverName: car?.ownership === 'hired' ? car.driverName : '',
-    driverPhone: car?.driverPhone ?? '',
-    seats: car?.seats ?? '',
-  }
-}
-
-async function saveCar() {
-  const draft = carDraft.value
-  if (!draft) return
-
-  const rawSeats = String(draft.seats).trim()
-  const seats = rawSeats === '' ? null : Number(rawSeats)
-
-  if (seats !== null && (!Number.isInteger(seats) || seats < 1)) {
-    carError.value = 'Мест — целое число, и хотя бы одно'
-    return
-  }
-
-  let driverUserId: string | null = null
-  let driverName: string | null = null
-
-  if (draft.ownership === 'own') {
-    const driver = driverOptions.value.find((person) => person.userId === draft.driverUserId)
-    if (!driver) {
-      carError.value = 'Выберите водителя из участников'
-      return
-    }
-    driverUserId = driver.userId
-  } else {
-    driverName = draft.driverName.trim()
-    if (!driverName) {
-      carError.value = 'У наёмной машины нужно имя водителя'
-      return
-    }
-  }
-
-  /**
-   * `ownership` при правке не отправляем: «своя стала наёмной» — это не
-   * правка поля, а другая машина с другим водителем.
-   */
-  const ok =
-    draft.carId === null
-      ? await run(() =>
-          createTransferCar(props.trip.id, draft.legId, {
-            ownership: draft.ownership,
-            driverUserId,
-            driverName,
-            driverPhone: draft.driverPhone.trim() || null,
-            seats,
-          }),
-        )
-      : await run(() =>
-          updateTransferCar(props.trip.id, draft.carId as string, {
-            driverUserId: draft.ownership === 'own' ? driverUserId : undefined,
-            driverName: draft.ownership === 'hired' ? driverName : undefined,
-            driverPhone: draft.driverPhone.trim() || null,
-            seats,
-          }),
-        )
-
-  if (ok) carDraft.value = null
-}
 </script>
 
 <template>
@@ -440,284 +404,262 @@ async function saveCar() {
         {{ actionError }}
       </p>
 
-      <!-- Место сбора: строка похода, отдельно от строк заброски -->
-      <div
-        class="flex flex-wrap items-baseline gap-x-2 gap-y-1 rounded-xl border border-border bg-surface p-3"
-        data-test="transfer-meeting"
+      <!-- Две стороны: «Туда» и «Обратно», как разделы «Питания» — свои цвета -->
+      <details
+        v-for="section in sections"
+        :key="section.direction"
+        open
+        class="flex flex-col gap-3 rounded-2xl border p-3"
+        :class="section.plate"
+        :data-test="`transfer-area-${section.direction}`"
       >
-        <span class="text-sm text-muted">Место сбора</span>
-        <span class="text-base text-text" data-test="transfer-meeting-text">
-          {{ meetingText || 'не указано' }}
-        </span>
-        <span v-if="!meetingText && canEdit" class="text-xs text-muted">
-          — заполняется в форме похода
-        </span>
-      </div>
+        <summary class="cursor-pointer select-none text-sm" :class="section.title">
+          {{ TRANSFER_DIRECTION_LABELS[section.direction] }} · {{ section.legs.length }}
+        </summary>
 
-      <div class="flex flex-wrap items-center justify-between gap-2">
-        <h2 class="text-sm text-muted">Заброска · идут {{ travelers.length }}</h2>
+        <p v-if="section.legs.length === 0" class="text-sm text-muted">
+          Пока пусто. «{{ TRANSFER_DIRECTION_LABELS[section.direction] }}» — это одна карточка
+          на одну часть группы: кто-то едет машиной, кто-то автобусом.
+        </p>
 
-        <button
-          v-if="canEdit"
-          type="button"
-          class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-2 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-          :disabled="isSaving"
-          data-test="transfer-add-leg"
-          @click="openLegDialog(null)"
+        <article
+          v-for="leg in section.legs"
+          :key="leg.id"
+          class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
+          data-test="transfer-leg"
         >
-          Строка заброски
-        </button>
-      </div>
-
-      <p v-if="legs.length === 0" class="text-sm text-muted" data-test="transfer-empty">
-        Строк пока нет. Первая — «туда»: откуда, куда, на чём и во сколько.
-      </p>
-
-      <article
-        v-for="leg in legs"
-        :key="leg.id"
-        class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4"
-        data-test="transfer-leg"
-      >
-        <header class="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-          <div class="flex min-w-0 flex-col gap-0.5">
-            <span class="text-base font-medium text-text" data-test="transfer-leg-mode">
-              {{ TRANSFER_MODE_LABELS[leg.mode] }} · {{ departureText(leg.departsAt) }}
-            </span>
-            <span class="text-sm text-text" data-test="transfer-leg-places">
-              {{ leg.fromPlace }} → {{ leg.toPlace }}
-            </span>
-            <span v-if="leg.note" class="text-xs text-muted">{{ leg.note }}</span>
-          </div>
-
-          <div v-if="canEdit" class="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
-              :disabled="isSaving"
-              data-test="transfer-return"
-              @click="returnSameWay(leg)"
-            >
-              Вернуться так же
-            </button>
-            <button
-              type="button"
-              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
-              :disabled="isSaving"
-              data-test="transfer-edit-leg"
-              @click="openLegDialog(leg)"
-            >
-              Править
-            </button>
-            <button
-              type="button"
-              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-muted transition-colors hover:border-primary hover:text-text disabled:opacity-60"
-              :disabled="isSaving"
-              data-test="transfer-remove-leg"
-              @click="removeLeg(leg)"
-            >
-              Убрать
-            </button>
-          </div>
-        </header>
-
-        <!-- Машины: только у авто. У поезда и автобуса мест не распределишь -->
-        <div v-if="leg.mode === 'car'" class="flex flex-col gap-2">
-          <div
-            v-for="car in leg.cars"
-            :key="car.id"
-            class="flex flex-col gap-2 rounded-xl border border-border bg-field p-3"
-            data-test="transfer-car"
-          >
-            <div class="flex flex-wrap items-baseline justify-between gap-x-2 gap-y-1">
-              <span class="text-sm text-text" data-test="transfer-car-driver">
-                <span class="font-medium">{{ TRANSFER_CAR_OWNERSHIP_LABELS[car.ownership] }}</span>
-                · {{ car.driverName }}
-                <template v-if="car.driverPhone"> · {{ car.driverPhone }}</template>
+          <header class="flex items-start gap-2">
+            <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span class="text-base font-medium text-text" data-test="transfer-leg-mode">
+                {{ TRANSFER_MODE_LABELS[leg.mode] }} · {{ departureText(leg.departsAt) }}
               </span>
-              <span class="text-xs text-muted" data-test="transfer-car-seats">
-                {{ seatsText(car) }}
+
+              <span class="text-sm text-text" data-test="transfer-leg-places">
+                {{ leg.fromPlace }} → {{ leg.toPlace }}
+              </span>
+
+              <span class="flex flex-wrap gap-x-2 text-xs text-muted" data-test="transfer-leg-summary">
+                <span v-if="leg.isOwnVehicle" data-test="transfer-leg-own">
+                  Наше ТС<template v-if="leg.ownerName"> · {{ leg.ownerName }}</template>
+                </span>
+                <span data-test="transfer-leg-seats">{{ seatsText(leg) }}</span>
+                <span data-test="transfer-leg-compensation">{{ compensationText(leg) }}</span>
               </span>
             </div>
 
-            <div class="flex flex-wrap items-center gap-2">
-              <span
-                v-for="passenger in carPassengers(leg, car)"
-                :key="passenger.userId"
-                class="flex items-center gap-1 rounded-full border border-border bg-surface px-2 py-1 text-sm text-text"
+            <!-- Свернуть плашку: в шапке остаётся «что, когда и куда» -->
+            <button
+              type="button"
+              class="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-lg border border-border text-muted transition-colors hover:border-primary hover:text-text"
+              :aria-expanded="!isCollapsed(leg.id)"
+              :data-test="`transfer-collapse-${leg.id}`"
+              :title="isCollapsed(leg.id) ? 'Показать подробности' : 'Свернуть'"
+              @click="toggleCollapsed(leg.id)"
+            >
+              <svg
+                class="h-4 w-4 transition-transform"
+                :class="isCollapsed(leg.id) ? '-rotate-90' : ''"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.4"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
               >
-                {{ passenger.displayName }}
+                <path d="M6 9l6 6 6-6" />
+              </svg>
+            </button>
+          </header>
+
+          <template v-if="!isCollapsed(leg.id)">
+            <p v-if="leg.note" class="text-sm text-muted" data-test="transfer-leg-note">
+              {{ leg.note }}
+            </p>
+
+            <div class="flex flex-wrap items-center gap-2" data-test="transfer-passengers">
+              <span
+                v-for="person in accepted(leg)"
+                :key="person.userId"
+                class="flex items-center gap-1 rounded-full border border-border bg-field px-2 py-1 text-sm text-text"
+                data-test="transfer-passenger"
+              >
+                {{ person.displayName }}
+                <span v-if="isMine(person)" class="text-xs text-muted">(вы)</span>
+
                 <button
-                  v-if="canUnseat(car, passenger)"
+                  v-if="isMine(person) || leg.canEdit"
                   type="button"
                   class="cursor-pointer border-0 bg-transparent p-0 text-muted transition-colors hover:text-text disabled:opacity-60"
                   :disabled="isSaving"
-                  :data-test="`transfer-unseat-${passenger.userId}`"
-                  @click="unseat(leg, passenger)"
+                  :data-test="`transfer-leave-${leg.id}-${person.userId}`"
+                  @click="leave(leg, person)"
                 >
                   ×
                 </button>
               </span>
 
-              <span v-if="carPassengers(leg, car).length === 0" class="text-sm text-muted">
-                пока никого
+              <span v-if="accepted(leg).length === 0" class="text-sm text-muted">
+                пока никого — вещи поедут без людей
+              </span>
+            </div>
+
+            <!-- Заявки на своё ТС: владелец принимает сам -->
+            <div
+              v-if="requested(leg).length > 0"
+              class="flex flex-col gap-1 rounded-lg border border-dashed border-border p-2"
+              data-test="transfer-requests"
+            >
+              <span class="text-xs text-muted">Просятся</span>
+
+              <span
+                v-for="person in requested(leg)"
+                :key="person.userId"
+                class="flex flex-wrap items-center gap-2 text-sm text-text"
+              >
+                {{ person.displayName }}
+
+                <template v-if="leg.canEdit">
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-lg border border-primary bg-primary px-2 py-1 text-xs text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                    :disabled="isSaving"
+                    :data-test="`transfer-accept-${leg.id}-${person.userId}`"
+                    @click="accept(leg, person)"
+                  >
+                    Принять
+                  </button>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-xs text-text transition-colors hover:border-primary disabled:opacity-60"
+                    :disabled="isSaving"
+                    :data-test="`transfer-reject-${leg.id}-${person.userId}`"
+                    @click="leave(leg, person)"
+                  >
+                    Отклонить
+                  </button>
+                </template>
+
+                <!-- Свою заявку человек отменяет сам -->
+                <button
+                  v-else-if="isMine(person)"
+                  type="button"
+                  class="cursor-pointer border-0 bg-transparent p-0 text-xs text-muted underline transition-colors hover:text-text disabled:opacity-60"
+                  :disabled="isSaving"
+                  :data-test="`transfer-leave-${leg.id}-${person.userId}`"
+                  @click="leave(leg, person)"
+                >
+                  Отменить заявку
+                </button>
+              </span>
+            </div>
+
+            <div class="flex flex-wrap items-center gap-2">
+              <!-- Присоединиться: на рейс сразу, на чужое ТС заявкой -->
+              <button
+                v-if="leg.joinStatus !== null"
+                type="button"
+                class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                :disabled="isSaving"
+                :data-test="`transfer-join-${leg.id}`"
+                @click="join(leg)"
+              >
+                {{ leg.joinStatus === 'requested' ? 'Попроситься' : 'Присоединиться' }}
+              </button>
+
+              <span
+                v-else-if="leg.isOwnVehicle && leg.ownerUserId === meId"
+                class="text-xs text-muted"
+                data-test="transfer-owner-hint"
+              >
+                Ваше ТС — заявки принимаете вы
               </span>
 
               <select
-                v-if="car.canEdit && unassigned(leg).length > 0 && hasFreeSeat(car)"
-                class="w-full rounded-xl border border-border bg-surface px-2 py-1 text-base text-text transition-colors focus:border-primary focus:outline-none md:w-auto md:text-sm"
-                :data-test="`transfer-seat-in-${car.id}`"
-                @change="seatFromCar(leg, car, $event)"
+                v-if="leg.canEdit && outsiders(leg).length > 0"
+                class="w-full rounded-xl border border-border bg-field px-2 py-1 text-base text-text transition-colors focus:border-primary focus:outline-none md:w-auto md:text-sm"
+                :data-test="`transfer-add-passenger-${leg.id}`"
+                @change="addTraveler(leg, $event)"
               >
                 <option value="">посадить…</option>
-                <option v-for="person in unassigned(leg)" :key="person.userId" :value="person.userId">
+                <option v-for="person in outsiders(leg)" :key="person.userId" :value="person.userId">
                   {{ person.displayName }}
                 </option>
               </select>
 
               <span
-                v-else-if="car.canEdit && unassigned(leg).length > 0"
+                v-if="leg.canEdit && !hasFreeSeat(leg)"
                 class="text-xs text-muted"
-                data-test="transfer-car-full"
+                data-test="transfer-full"
               >
                 мест нет
               </span>
             </div>
 
-            <div v-if="car.canEdit" class="flex flex-wrap gap-2">
+            <div v-if="leg.canEdit" class="flex flex-wrap gap-2">
               <button
                 type="button"
-                class="cursor-pointer rounded-xl border border-border bg-surface px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
+                class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
                 :disabled="isSaving"
-                :data-test="`transfer-edit-car-${car.id}`"
-                @click="openCarDialog(leg, car)"
+                :data-test="`transfer-edit-${leg.id}`"
+                @click="openLegDialog(leg.direction, leg)"
               >
                 Править
               </button>
               <button
                 type="button"
-                class="cursor-pointer rounded-xl border border-border bg-surface px-3 py-1.5 text-sm text-muted transition-colors hover:border-primary hover:text-text disabled:opacity-60"
+                class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-muted transition-colors hover:border-primary hover:text-text disabled:opacity-60"
                 :disabled="isSaving"
-                :data-test="`transfer-remove-car-${car.id}`"
-                @click="removeCar(leg, car)"
+                :data-test="`transfer-remove-${leg.id}`"
+                @click="removeLeg(leg)"
               >
-                Убрать машину
+                Убрать
               </button>
             </div>
-          </div>
+          </template>
+        </article>
 
-          <button
-            v-if="canEdit || canAddMyCar"
-            type="button"
-            class="cursor-pointer self-start rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
-            :disabled="isSaving"
-            data-test="transfer-add-car"
-            @click="openCarDialog(leg)"
-          >
-            Машина
-          </button>
-        </div>
+        <button
+          type="button"
+          class="cursor-pointer self-start rounded-xl px-3 py-2 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          :class="section.button"
+          :disabled="isSaving"
+          :data-test="`transfer-add-${section.direction}`"
+          @click="openLegDialog(section.direction)"
+        >
+          Добавить трансфер
+        </button>
+      </details>
 
-        <!-- Состав строки: у авто — кто остался без машины, у остальных — все -->
-        <div class="flex flex-col gap-2">
-          <div class="flex flex-wrap items-center gap-2">
-            <span class="text-xs text-muted">
-              {{ leg.mode === 'car' ? 'Без машины' : 'Кто едет' }}
-            </span>
-
-            <span
-              v-for="passenger in rowPeople(leg)"
-              :key="passenger.userId"
-              class="flex items-center gap-1 rounded-full border border-border bg-field px-2 py-1 text-sm text-text"
-              data-test="transfer-passenger"
-            >
-              {{ passenger.displayName }}
-              <span v-if="passenger.carId !== null" class="text-xs text-muted">
-                · {{ carLabel(leg, passenger.carId) }}
-              </span>
-
-              <!-- Нераспределённого сажают в машину: водитель или ведущий -->
-              <select
-                v-if="leg.mode === 'car' && passenger.carId === null && canManagePeople(leg) && leg.cars.length > 0"
-                class="rounded-lg border border-border bg-surface px-1 py-0.5 text-base text-text md:text-xs"
-                :data-test="`transfer-choose-car-${passenger.userId}`"
-                @change="seatFromRow(leg, passenger, $event)"
-              >
-                <option value="">в машину</option>
-                <option
-                  v-for="car in leg.cars"
-                  :key="car.id"
-                  :value="car.id"
-                  :disabled="!hasFreeSeat(car)"
-                >
-                  {{ car.driverName }}
-                </option>
-              </select>
-
-              <button
-                v-if="canRemovePassenger(leg, passenger)"
-                type="button"
-                class="cursor-pointer border-0 bg-transparent p-0 text-muted transition-colors hover:text-text disabled:opacity-60"
-                :disabled="isSaving"
-                :data-test="`transfer-drop-${passenger.userId}`"
-                @click="removePassenger(leg, passenger)"
-              >
-                ×
-              </button>
-            </span>
-
-            <span v-if="rowPeople(leg).length === 0" class="text-sm text-muted" data-test="transfer-no-people">
-              {{ leg.mode === 'car' ? 'все по машинам' : 'пока никто' }}
-            </span>
-
-            <!-- Себя человек ставит в строку сам: «я еду этой заброской» -->
-            <button
-              v-if="!isInLeg(leg)"
-              type="button"
-              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
-              :disabled="isSaving"
-              data-test="transfer-add-me"
-              @click="addMe(leg)"
-            >
-              Я еду этой строкой
-            </button>
-
-            <select
-              v-if="canManagePeople(leg) && outsiders(leg).length > 0"
-              class="w-full rounded-xl border border-border bg-field px-2 py-1 text-base text-text transition-colors focus:border-primary focus:outline-none md:w-auto md:text-sm"
-              data-test="transfer-add-passenger"
-              @change="addFromSelect(leg, $event)"
-            >
-              <option value="">добавить участника…</option>
-              <option v-for="person in outsiders(leg)" :key="person.userId" :value="person.userId">
-                {{ person.displayName }}
-              </option>
-            </select>
-          </div>
-        </div>
-      </article>
-
-      <!-- Строка: создать или поправить. Одна форма на оба случая -->
+      <!-- Карточка: создать или поправить. Одна форма на оба случая -->
       <div
         v-if="legDraft"
-        class="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
+        class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/30 p-4"
         data-test="transfer-leg-dialog"
       >
         <div class="flex w-full max-w-md flex-col gap-2 rounded-xl border border-border bg-surface p-4">
           <h3 class="text-base font-medium text-text">
-            {{ legDraft.id === null ? 'Новая строка заброски' : 'Строка заброски' }}
+            {{ legDraft.id === null ? 'Новый трансфер' : 'Трансфер' }} ·
+            {{ TRANSFER_DIRECTION_LABELS[legDraft.direction] }}
           </h3>
 
           <label class="flex flex-col gap-1 text-sm text-muted">
-            Вид
+            Способ доставки
             <select
               v-model="legDraft.mode"
               class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="transfer-leg-mode-input"
+              data-test="transfer-mode-input"
+              @change="changeMode"
             >
-              <option v-for="mode in TRANSFER_MODES" :key="mode" :value="mode">
-                {{ TRANSFER_MODE_LABELS[mode] }}
-              </option>
+              <optgroup
+                v-for="group in TRANSFER_MODE_GROUPS"
+                :key="group.code"
+                :label="group.label"
+              >
+                <option v-for="mode in group.modes" :key="mode" :value="mode">
+                  {{ TRANSFER_MODE_LABELS[mode] }}
+                </option>
+              </optgroup>
             </select>
           </label>
 
@@ -733,7 +675,7 @@ async function saveCar() {
           </label>
 
           <label class="flex flex-col gap-1 text-sm text-muted">
-            Куда
+            Докуда
             <input
               v-model="legDraft.toPlace"
               type="text"
@@ -744,13 +686,106 @@ async function saveCar() {
           </label>
 
           <label class="flex flex-col gap-1 text-sm text-muted">
-            Выезд — можно не заполнять
+            Время отправления
             <input
               v-model="legDraft.departsAt"
               type="datetime-local"
               class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
               data-test="transfer-departure-input"
             />
+          </label>
+
+          <!-- «Наше ТС» — только тому, кому роль дала вкладку -->
+          <label
+            v-if="canFlagOwnVehicle"
+            class="flex cursor-pointer items-center gap-2 text-sm text-text"
+          >
+            <input
+              v-model="legDraft.isOwnVehicle"
+              type="checkbox"
+              class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+              data-test="transfer-own-input"
+            />
+            Наше ТС
+            <span class="text-xs text-muted">— заявки на него принимает владелец</span>
+          </label>
+
+          <label
+            v-if="legDraft.isOwnVehicle"
+            class="flex flex-col gap-1 text-sm text-muted"
+          >
+            Владелец ТС
+            <select
+              v-model="legDraft.ownerUserId"
+              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+              data-test="transfer-owner-input"
+            >
+              <option v-for="person in driverOptions" :key="person.userId" :value="person.userId">
+                {{ person.displayName }}
+              </option>
+            </select>
+          </label>
+
+          <p
+            v-else-if="!canEditTab && !isPublicMode(legDraft.mode)"
+            class="text-xs text-muted"
+            data-test="transfer-own-hint"
+          >
+            Свой транспорт попадёт как «наше ТС»: заявки будете принимать вы
+          </p>
+
+          <label class="flex flex-col gap-1 text-sm text-muted">
+            Всего мест, включая водителя — можно не заполнять
+            <input
+              v-model="legDraft.seats"
+              type="number"
+              min="1"
+              max="60"
+              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+              data-test="transfer-seats-input"
+            />
+          </label>
+
+          <label class="flex flex-col gap-1 text-sm text-muted">
+            Компенсация расходов
+            <select
+              v-model="legDraft.compensation"
+              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+              data-test="transfer-compensation-input"
+            >
+              <option v-for="value in allowedCompensations" :key="value" :value="value">
+                {{ TRANSFER_COMPENSATION_LABELS[value] }}
+              </option>
+            </select>
+          </label>
+
+          <label
+            v-if="isAmountNeeded"
+            class="flex flex-col gap-1 text-sm text-muted"
+          >
+            Сумма, рублей
+            <input
+              v-model="legDraft.amount"
+              type="number"
+              min="1"
+              max="1000000"
+              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+              data-test="transfer-amount-input"
+            />
+          </label>
+
+          <label
+            v-if="isRoundTripAvailable"
+            class="flex cursor-pointer items-center gap-2 text-sm text-text"
+          >
+            <input
+              v-model="legDraft.isRoundTrip"
+              type="checkbox"
+              class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+              data-test="transfer-round-trip-input"
+            />
+            Туда-обратно
+            <span class="text-xs text-muted">— расход один на две стороны</span>
           </label>
 
           <label class="flex flex-col gap-1 text-sm text-muted">
@@ -764,7 +799,9 @@ async function saveCar() {
             />
           </label>
 
-          <p v-if="legError" class="text-sm text-red-600" data-test="transfer-leg-error">{{ legError }}</p>
+          <p v-if="legError" class="text-sm text-red-600" data-test="transfer-leg-error">
+            {{ legError }}
+          </p>
 
           <div class="mt-2 flex justify-end gap-2">
             <button
@@ -781,108 +818,6 @@ async function saveCar() {
               :disabled="isSaving"
               data-test="transfer-leg-save"
               @click="saveLeg"
-            >
-              Сохранить
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <!-- Машина: своя — водитель из состава, наёмная — имя и телефон -->
-      <div
-        v-if="carDraft"
-        class="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
-        data-test="transfer-car-dialog"
-      >
-        <div class="flex w-full max-w-md flex-col gap-2 rounded-xl border border-border bg-surface p-4">
-          <h3 class="text-base font-medium text-text">
-            {{ carDraft.carId === null ? 'Машина' : 'Машина в строке' }}
-          </h3>
-
-          <label v-if="carDraft.carId === null" class="flex flex-col gap-1 text-sm text-muted">
-            Чья
-            <select
-              v-model="carDraft.ownership"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="transfer-ownership-input"
-            >
-              <option v-for="value in ownershipOptions" :key="value" :value="value">
-                {{ TRANSFER_CAR_OWNERSHIP_LABELS[value] }}
-              </option>
-            </select>
-          </label>
-
-          <!-- Своя не становится наёмной: это другая машина с другим водителем -->
-          <p v-else class="text-sm text-muted" data-test="transfer-ownership-fixed">
-            {{ TRANSFER_CAR_OWNERSHIP_LABELS[carDraft.ownership] }} — вид машины не меняется
-          </p>
-
-          <label v-if="carDraft.ownership === 'own'" class="flex flex-col gap-1 text-sm text-muted">
-            Водитель
-            <select
-              v-model="carDraft.driverUserId"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="transfer-driver-input"
-            >
-              <option v-for="person in driverOptions" :key="person.userId" :value="person.userId">
-                {{ person.displayName }}
-              </option>
-            </select>
-          </label>
-
-          <template v-else>
-            <label class="flex flex-col gap-1 text-sm text-muted">
-              Как зовут водителя
-              <input
-                v-model="carDraft.driverName"
-                type="text"
-                maxlength="100"
-                class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-                data-test="transfer-driver-name-input"
-              />
-            </label>
-
-            <label class="flex flex-col gap-1 text-sm text-muted">
-              Телефон — чтобы найти друг друга в день выезда
-              <input
-                v-model="carDraft.driverPhone"
-                type="tel"
-                maxlength="40"
-                class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-                data-test="transfer-driver-phone-input"
-              />
-            </label>
-          </template>
-
-          <label class="flex flex-col gap-1 text-sm text-muted">
-            Всего мест, включая водителя — можно не заполнять
-            <input
-              v-model="carDraft.seats"
-              type="number"
-              min="1"
-              max="60"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="transfer-seats-input"
-            />
-          </label>
-
-          <p v-if="carError" class="text-sm text-red-600" data-test="transfer-car-error">{{ carError }}</p>
-
-          <div class="mt-2 flex justify-end gap-2">
-            <button
-              type="button"
-              class="cursor-pointer rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-text"
-              data-test="transfer-car-cancel"
-              @click="carDraft = null"
-            >
-              Отмена
-            </button>
-            <button
-              type="button"
-              class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-              :disabled="isSaving"
-              data-test="transfer-car-save"
-              @click="saveCar"
             >
               Сохранить
             </button>

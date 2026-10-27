@@ -177,8 +177,6 @@ export function emptyVariantDraft(id: number): DateVariantDraft {
   announcement?: string | null
   routeText?: string
   requirementsText?: string | null
-  /** Где собираются: «у вокзала, платформа 2». */
-  meetingPlace?: string | null
   /** Будет ли гитара. По умолчанию нет: «не указано» и «не будет» — одно. */
   hasGuitar?: boolean
   visibility?: TripVisibility
@@ -211,7 +209,6 @@ export interface UpdateTripRequest {
   announcement?: string | null
   routeText?: string
   requirementsText?: string | null
-  meetingPlace?: string | null
   hasGuitar?: boolean
   visibility?: TripVisibility
   status?: TripStatus
@@ -251,8 +248,6 @@ export interface Trip {
   announcement: string | null
   routeText: string
   requirementsText: string | null
-  /** Где собираются. null — не указано. */
-  meetingPlace: string | null
   /** Будет ли гитара. */
   hasGuitar: boolean
   visibility: TripVisibility
@@ -670,133 +665,166 @@ export interface TripMealPlan {
 // ─────────────────────────── трансфер похода ───────────────────────────
 
 /**
- * Вид заброски — то, на чём едем в этой строке.
+ * Сторона: туда или обратно.
  *
- * Список живёт **в коде**, как виды снаряжения и приёмы пищи: он не меняется
- * от похода к походу, и справочник ради шести строк означал бы миграцию
- * на каждое «а давайте ещё катер».
- *
- * `foot` есть не зря: «от электрички пешком четыре километра» — такая же
- * часть заброски, как и машина, и без него люди писали бы это в заметке.
+ * Раньше сторона выводилась из точек маршрута, и это оказалось хрупко:
+ * обратный выезд бывает без точек вовсе. Теперь это поле, а на экране —
+ * две области со своими кнопками «Добавить трансфер».
  */
-export const TRANSFER_MODES = ['car', 'train', 'bus', 'horses', 'foot', 'other'] as const
-export type TransferMode = (typeof TRANSFER_MODES)[number]
+export const TRANSFER_DIRECTIONS = ['there', 'back'] as const
+export type TransferDirection = (typeof TRANSFER_DIRECTIONS)[number]
+
+export const TRANSFER_DIRECTION_LABELS: Record<TransferDirection, string> = {
+  there: 'Туда',
+  back: 'Обратно',
+}
+
+/**
+ * Способы доставки, сгруппированные для выпадающего списка.
+ *
+ * Группа — это только порядок и подпись в интерфейсе, в базе её нет.
+ * «Пешком» убрано 27.10.2026: пеший переход — это маршрут, а не заброска.
+ */
+export const TRANSFER_MODE_GROUPS = [
+  { code: 'land', label: 'Земля', modes: ['car', 'bus', 'train', 'horses', 'atv'] },
+  { code: 'water', label: 'Вода', modes: ['boat', 'ship', 'airboat'] },
+  { code: 'air', label: 'Воздух', modes: ['helicopter'] },
+  { code: 'other', label: 'Другое', modes: ['other'] },
+] as const
+
+export const TRANSFER_MODES = TRANSFER_MODE_GROUPS.flatMap((group) => group.modes)
+export type TransferMode = (typeof TRANSFER_MODE_GROUPS)[number]['modes'][number]
 
 export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
   car: 'Авто',
-  train: 'Ж/д',
   bus: 'Автобус',
+  train: 'Ж/д',
   horses: 'Кони',
-  foot: 'Пешком',
+  atv: 'Квадроцикл',
+  boat: 'Лодка',
+  ship: 'Корабль',
+  airboat: 'Аэролодка',
+  helicopter: 'Вертолёт',
   other: 'Другое',
 }
 
 /**
- * Машина своя или наёмная.
- *
- * `own` — машина участника: водитель есть в составе, и **свою машину он
- * правит сам**, даже без права на вкладку. `hired` — наёмный водитель:
- * аккаунта у него нет, поэтому его машину правит тот, кому роль дала
- * вкладку. Смешивать нельзя: у наёмной `driverUserId` пуст, у своей —
- * заполнен, и это же держит CHECK в базе.
+ * Рейсы: автобус, ж/д, корабль, вертолёт. У них не бывает «нашего ТС»
+ * и владельца, зато бывает цена билета; общий расход — наоборот, только
+ * у своего транспорта.
  */
-export const TRANSFER_CAR_OWNERSHIPS = ['own', 'hired'] as const
-export type TransferCarOwnership = (typeof TRANSFER_CAR_OWNERSHIPS)[number]
+export const TRANSFER_PUBLIC_MODES = ['bus', 'train', 'ship', 'helicopter'] as const
 
-export const TRANSFER_CAR_OWNERSHIP_LABELS: Record<TransferCarOwnership, string> = {
-  own: 'Своя',
-  hired: 'Наёмная',
+/**
+ * Компенсация расходов.
+ *
+ * `free` — безвозмездно; `ticket` — цена билета (только рейсы);
+ * `shared` — общий расход; `sharedPerPassenger` — общий расход на пассажиров.
+ * У общих расходов бывает флаг «туда-обратно».
+ */
+export const TRANSFER_COMPENSATIONS = [
+  'free',
+  'ticket',
+  'shared',
+  'sharedPerPassenger',
+] as const
+export type TransferCompensation = (typeof TRANSFER_COMPENSATIONS)[number]
+
+export const TRANSFER_COMPENSATION_LABELS: Record<TransferCompensation, string> = {
+  free: 'Безвозмездно',
+  ticket: 'Цена билета',
+  shared: 'Общий расход',
+  sharedPerPassenger: 'Общий расход на пассажиров',
 }
 
-/** Человек, которого можно посадить в строку заброски. */
+/** Компенсации, у которых бывает флаг «туда-обратно». */
+export const TRANSFER_ROUND_TRIP_COMPENSATIONS = ['shared', 'sharedPerPassenger'] as const
+
+/**
+ * Статус пассажира.
+ *
+ * `requested` — попросился на чужое ТС и ждёт владельца; `accepted` — едет.
+ * На рейсах заявок нет: билет куплен, спрашивать некого.
+ */
+export const TRANSFER_PASSENGER_STATUSES = ['requested', 'accepted'] as const
+export type TransferPassengerStatus = (typeof TRANSFER_PASSENGER_STATUSES)[number]
+
+export const TRANSFER_PASSENGER_STATUS_LABELS: Record<TransferPassengerStatus, string> = {
+  requested: 'Просится',
+  accepted: 'Едет',
+}
+
+/** Человек, которого можно посадить в карточку. */
 export interface TripTransferPerson {
   userId: string
   displayName: string
 }
 
-/**
- * Пассажир строки.
- *
- * `carId === null` — едет этой строкой, но места в машине у него нет:
- * он **нераспределённый**, и это работа для людей, а не для алгоритма
- * (правило `gear-distribution.md` §6: первого попавшегося не подставляем).
- */
+/** Пассажир карточки: едет или ещё просится. */
 export interface TripTransferPassenger extends TripTransferPerson {
-  carId: string | null
+  status: TransferPassengerStatus
 }
 
-/** Машина строки заброски. */
-export interface TripTransferCar {
-  id: string
-  ownership: TransferCarOwnership
-  /** Водитель-участник: `null` у наёмной машины. */
-  driverUserId: string | null
-  /** Имя водителя: у своей — из профиля, у наёмной — вписанное. */
-  driverName: string
-  driverPhone: string | null
-  /** Всего мест, включая водителя; `null` — «не знаю», потолка нет. */
-  seats: number | null
-  /**
-   * Сколько мест занято. Считает бэкенд: пассажиры машины плюс водитель,
-   * если он наёмный и в составе его нет — место он всё равно занимает.
-   */
-  occupied: number
-  /**
-   * Правит ли смотрящий эту машину. Считает бэкенд: право на вкладку,
-   * организатор или сам водитель. Фронт матрицу не повторяет.
-   */
-  canEdit: boolean
-}
-
-/** Строка заброски: когда, откуда, куда и на чём. */
+/**
+ * Карточка перемещения — одна часть группы едет одним способом.
+ *
+ * Машины отдельной сущностью больше нет: способ доставки, места, владелец
+ * и компенсация — свойства карточки. Пять человек в одной машине и трое
+ * в другой — это две карточки в одной области.
+ */
 export interface TripTransferLeg {
   id: string
-  /** Порядок строк: «сначала туда, потом обратно» — это порядок, а не даты. */
+  direction: TransferDirection
+  /** Порядок внутри своей стороны. */
   position: number
-  /** Выезд; `null` — «время уточняется», а не «неизвестно навсегда». */
-  departsAt: string | null
+  mode: TransferMode
+  /** Выезд: обязателен, поэтому здесь всегда дата. */
+  departsAt: string
   fromPlace: string
   toPlace: string
-  mode: TransferMode
+  /** «Наше ТС»: транспорт группы, а не рейс. */
+  isOwnVehicle: boolean
+  ownerUserId: string | null
+  ownerName: string | null
+  seats: number | null
+  /** Сколько мест занято принятыми пассажирами. Считает бэкенд. */
+  occupied: number
+  compensation: TransferCompensation
+  compensationAmountRub: number | null
+  isRoundTrip: boolean
   note: string | null
-  cars: TripTransferCar[]
+  /** Правит ли смотрящий карточку: право вкладки или владелец этого ТС. */
+  canEdit: boolean
+  /**
+   * Что будет, если смотрящий присоединится: `accepted` — сразу едет,
+   * `requested` — заявка владельцу, `null` — уже в карточке или нельзя.
+   */
+  joinStatus: TransferPassengerStatus | null
   passengers: TripTransferPassenger[]
 }
 
-/**
- * Вкладка «Трансфер» целиком (`GET /api/trips/:id/transfer`).
- *
- * `meetingPlace` живёт в `trips`, а не среди строк: у места сбора нет ни
- * даты, ни вида, ни машины, и превращать его в первую заброску значило бы
- * заставлять человека придумывать ей дату. Показывается отдельной строкой
- * сверху, правится организатором в форме похода.
- */
+/** Вкладка «Трансфер» целиком (`GET /api/trips/:id/transfer`). */
 export interface TripTransfer {
-  meetingPlace: string | null
-  /** Может ли смотрящий править строки — считает бэкенд по ролям. */
+  /** Может ли смотрящий создавать любые карточки — считает бэкенд. */
   canEdit: boolean
   /** Кого можно посадить: участники, которые идут. */
   travelers: TripTransferPerson[]
   legs: TripTransferLeg[]
 }
 
-/** Что уходит на сервер при создании строки. */
+/** Что уходит на сервер при создании карточки. */
 export interface TransferLegInput {
+  direction: TransferDirection
   mode: TransferMode
+  departsAt: string
   fromPlace: string
   toPlace: string
-  /** ISO или ничего — «время уточняется». */
-  departsAt?: string | null
-  note?: string | null
-}
-
-/** Машина: своя — с водителем из состава, наёмная — с именем и телефоном. */
-export interface TransferCarInput {
-  ownership: TransferCarOwnership
-  driverUserId?: string | null
-  driverName?: string | null
-  driverPhone?: string | null
+  isOwnVehicle?: boolean
+  ownerUserId?: string | null
   seats?: number | null
+  compensation: TransferCompensation
+  compensationAmountRub?: number | null
+  isRoundTrip?: boolean
   note?: string | null
 }
 

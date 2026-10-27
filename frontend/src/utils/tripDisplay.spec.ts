@@ -4,7 +4,6 @@ import {
   tripBadges,
   tripDatesText,
   tripFrameParts,
-  tripMeetingText,
   tripWhenText,
 } from '@/utils/tripDisplay'
 
@@ -23,7 +22,6 @@ const trip = (overrides: Record<string, unknown> = {}) => ({
   isCommercial: false,
   isOfficial: false,
   priceRub: null,
-  meetingPlace: null,
   hasGuitar: false,
   ...overrides,
 })
@@ -75,15 +73,5 @@ describe('tripDisplay', () => {
     expect(
       tripBadges(trip({ hasGuitar: true, isCommercial: true, priceRub: 5000 })),
     ).toEqual(['коммерческий · 5000 ₽', 'будет гитара'])
-  })
-
-  /**
-   * Сбор — только место. Время уехало в трансфер вместе с полем, и пустая
-   * строка вместо «—» нужна, чтобы вкладка «Информация» не показывала
-   * строку «Сбор: —» у похода, где сбора ещё нет.
-   */
-  it('сбор показывает место, а пустой — ничего', () => {
-    expect(tripMeetingText(trip())).toBe('')
-    expect(tripMeetingText(trip({ meetingPlace: 'У вокзала' }))).toBe('У вокзала')
   })
 })

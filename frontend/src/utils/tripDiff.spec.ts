@@ -19,7 +19,6 @@ const TRIP: Trip = {
   announcement: 'Идём на майские',
   routeText: 'Подход от станции',
   requirementsText: 'Свои кошки',
-  meetingPlace: 'У вокзала',
   hasGuitar: false,
   visibility: 'public',
   isRecruitmentClosed: false,
@@ -45,7 +44,6 @@ const payload = (overrides: Partial<CreateTripRequest> = {}): CreateTripRequest 
   announcement: 'Идём на майские',
   routeText: 'Подход от станции',
   requirementsText: 'Свои кошки',
-  meetingPlace: 'У вокзала',
   hasGuitar: false,
   visibility: 'public',
   status: 'decided',
@@ -71,13 +69,9 @@ describe('buildTripPatch', () => {
   })
 
   it('очистка приходит null-ом, а не пропуском поля', () => {
-    const patch = buildTripPatch(
-      TRIP,
-      payload({ meetingPlace: null, requirementsText: null }),
-    )
+    const patch = buildTripPatch(TRIP, payload({ requirementsText: null }))
 
     expect(patch).toEqual({
-      meetingPlace: null,
       requirementsText: null,
     })
   })
