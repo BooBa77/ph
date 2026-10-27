@@ -118,6 +118,7 @@ async function mountTrip() {
         GuestTripView: { template: '<div data-test="guest-stub" />' },
         TripParticipants: { template: '<div data-test="members-stub" />' },
         TripMeals: { template: '<div data-test="meals-stub" />' },
+        TripTransfer: { template: '<div data-test="transfer-stub" />' },
       },
     },
   })
@@ -173,6 +174,7 @@ describe('TripView и мобильное меню', () => {
 
     const items = useMobileMenuStore().context?.items ?? []
     expect(items.find((item) => item.key === 'meals')?.available).toBe(true)
+    expect(items.find((item) => item.key === 'transfer')?.available).toBe(true)
     expect(items.find((item) => item.key === 'sport')?.available).toBe(false)
   })
 

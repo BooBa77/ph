@@ -655,6 +655,110 @@ export interface TripMealPlan {
   packages: TripMealPackage[]
 }
 
+// ─────────────────────────── трансфер похода ───────────────────────────
+
+/**
+ * Вид заброски — то, на чём едем в этой строке.
+ *
+ * Список живёт **в коде**, как виды снаряжения и приёмы пищи: он не меняется
+ * от похода к походу, и справочник ради шести строк означал бы миграцию
+ * на каждое «а давайте ещё катер».
+ *
+ * `foot` есть не зря: «от электрички пешком четыре километра» — такая же
+ * часть заброски, как и машина, и без него люди писали бы это в заметке.
+ */
+export const TRANSFER_MODES = ['car', 'train', 'bus', 'horses', 'foot', 'other'] as const
+export type TransferMode = (typeof TRANSFER_MODES)[number]
+
+export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
+  car: 'Авто',
+  train: 'Ж/д',
+  bus: 'Автобус',
+  horses: 'Кони',
+  foot: 'Пешком',
+  other: 'Другое',
+}
+
+/**
+ * Машина своя или наёмная.
+ *
+ * `own` — машина участника: водитель есть в составе, и **свою машину он
+ * правит сам**, даже без права на вкладку. `hired` — наёмный водитель:
+ * аккаунта у него нет, поэтому его машину правит тот, кому роль дала
+ * вкладку. Смешивать нельзя: у наёмной `driverUserId` пуст, у своей —
+ * заполнен, и это же держит CHECK в базе.
+ */
+export const TRANSFER_CAR_OWNERSHIPS = ['own', 'hired'] as const
+export type TransferCarOwnership = (typeof TRANSFER_CAR_OWNERSHIPS)[number]
+
+export const TRANSFER_CAR_OWNERSHIP_LABELS: Record<TransferCarOwnership, string> = {
+  own: 'Своя',
+  hired: 'Наёмная',
+}
+
+/** Человек, которого можно посадить в строку заброски. */
+export interface TripTransferPerson {
+  userId: string
+  displayName: string
+}
+
+/**
+ * Пассажир строки.
+ *
+ * `carId === null` — едет этой строкой, но места в машине у него нет:
+ * он **нераспределённый**, и это работа для людей, а не для алгоритма
+ * (правило `gear-distribution.md` §6: первого попавшегося не подставляем).
+ */
+export interface TripTransferPassenger extends TripTransferPerson {
+  carId: number | null
+}
+
+/** Машина строки заброски. */
+export interface TripTransferCar {
+  id: number
+  ownership: TransferCarOwnership
+  /** Водитель-участник: `null` у наёмной машины. */
+  driverUserId: string | null
+  /** Имя водителя: у своей — из состава, у наёмной — как его зовут. */
+  driverName: string
+  driverPhone: string | null
+  /** Всего мест, включая водителя; `null` — «не знаю», потолка нет. */
+  seats: number | null
+  /**
+   * Правит ли смотрящий эту машину. Считает бэкенд: право на вкладку,
+   * организатор или сам водитель. Фронт матрицу не повторяет.
+   */
+  canEdit: boolean
+}
+
+/** Строка заброски: когда, откуда, куда и на чём. */
+export interface TripTransferLeg {
+  id: number
+  /** Порядок строк: «сначала туда, потом обратно» — это порядок, а не даты. */
+  position: number
+  /** Выезд; `null` — «время уточняется», а не «неизвестно навсегда». */
+  departsAt: string | null
+  fromPlace: string
+  toPlace: string
+  mode: TransferMode
+  note: string | null
+  cars: TripTransferCar[]
+  passengers: TripTransferPassenger[]
+}
+
+/**
+ * Вкладка «Трансфер» целиком.
+ *
+ * `meetingPlace` живёт в `trips`, а не среди строк: у места сбора нет ни
+ * даты, ни вида, ни машины, и превращать его в первую заброску значило бы
+ * заставлять человека придумывать ей дату. Показывается отдельной строкой
+ * сверху, правится организатором в форме похода.
+ */
+export interface TripTransfer {
+  meetingPlace: string | null
+  legs: TripTransferLeg[]
+}
+
 /** Строка чек-листа покупок: продукт раскладки и его отметки. */
 export interface TripMealCheck {
   productId: number

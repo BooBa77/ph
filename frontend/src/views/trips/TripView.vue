@@ -10,6 +10,7 @@ import { useMobileMenuStore } from '@/stores/mobileMenu'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
 import TripMeals from '@/views/trips/TripMeals.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
+import TripTransfer from '@/views/trips/TripTransfer.vue'
 import TripTabIcon from '@/components/trips/TripTabIcon.vue'
 import {
   TRIP_TAB_LABELS,
@@ -78,8 +79,12 @@ const organizer = ref<PublicUser | null>(null)
  *
  * «Чаты» отдельной вкладкой больше нет: гостевой чат живёт на «Гостевой»,
  * членский — на «Участниках» (решение 21.10.2026: чат — тема вкладки).
+ *
+ * **«Трансфер» пока на заглушках**: вид согласовывается с заказчиком до
+ * миграций (`TripTransfer.vue` — макет с примерными данными). Вкладка
+ * открывается, но сохранения в ней нет, и экран говорит об этом прямо.
  */
-const IMPLEMENTED: TripTabCode[] = ['guest', 'members', 'meals']
+const IMPLEMENTED: TripTabCode[] = ['guest', 'members', 'meals', 'transfer']
 
 const permissions = ref<TripTabPermission[]>([])
 const activeTab = ref<TripTabCode>('guest')
@@ -104,6 +109,16 @@ const canManageRoles = computed(
 /** Править раскладку может завхоз или организатор: это же решает бэкенд. */
 const canEditMeals = computed(
   () => permissions.value.find((permission) => permission.code === 'meals')?.canEdit ?? false,
+)
+
+/**
+ * «Трансфер» правят организатор, соорганизатор и водитель (роль `driver`
+ * получает вкладку сидом `seed-role-tabs`). Свою машину водитель правит
+ * и без права на вкладку — это решает бэкенд, экран лишь не рисует то,
+ * что заведомо не сработает.
+ */
+const canEditTransfer = computed(
+  () => permissions.value.find((permission) => permission.code === 'transfer')?.canEdit ?? false,
 )
 
 /** Править поход может только организатор. */
@@ -346,9 +361,15 @@ async function toggleRecruitment() {
         :can-edit="canEditMeals"
       />
 
+      <TripTransfer
+        v-else-if="activeTab === 'transfer'"
+        :trip="trip"
+        :can-edit="canEditTransfer"
+      />
+
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» появится вместе
-        с Ф7: сейчас готовы «Гостевая», «Участники» и «Питание».
+        с Ф7: сейчас готовы «Гостевая», «Участники», «Питание» и «Трансфер».
       </p>
 
       <!--
