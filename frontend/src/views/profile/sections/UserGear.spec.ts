@@ -197,10 +197,18 @@ describe('UserGear', () => {
     expect((title.element as HTMLInputElement).value).toBe('Палатка на четверых')
   })
 
-  it('удаляет предмет из списка', async () => {
+  it('удаляет предмет из списка, спросив подтверждение', async () => {
     const wrapper = await mountSection()
 
+    // Первый клик только спрашивает.
     await wrapper.find('[data-test="item-delete"]').trigger('click')
+    expect(mocked.deleteGearItem).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test="item-delete-cancel"]').trigger('click')
+    expect(wrapper.find('[data-test="item-delete"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="item-delete"]').trigger('click')
+    await wrapper.find('[data-test="item-delete-confirm"]').trigger('click')
     await flushPromises()
 
     expect(mocked.deleteGearItem).toHaveBeenCalledWith('gear-1')
@@ -223,10 +231,13 @@ describe('UserGear', () => {
   })
 
   /**
-   * Техника — отдельная секция: у неё своя структура (тип, марка, номер,
-   * вместимость), и в одну таблицу с весом рюкзака она не ложится.
+   * Техника — отдельная секция: у неё своя структура (тип, марка, номер),
+   * и в одну таблицу с весом рюкзака она не ложится.
+   *
+   * Вместимости здесь нет (28.10.2026): места считаются у карточки
+   * перемещения, а не в каталоге.
    */
-  it('показывает технику отдельной секцией', async () => {
+  it('показывает технику отдельной секцией, без вместимости', async () => {
     const wrapper = await mountSection(
       [makeItem()],
       [
@@ -245,10 +256,12 @@ describe('UserGear', () => {
     expect(section.exists()).toBe(true)
     expect(section.text()).toContain('Автомобиль')
     expect(section.text()).toContain('А123ВС38')
-    expect(section.text()).toContain('4 мест')
+    // Ни цифры, ни подписи «вместимость не указана» в каталоге не показываем.
+    expect(section.text()).not.toContain('4 мест')
+    expect(section.text()).not.toContain('вместимость')
   })
 
-  it('заводит технику с типом, маркой, номером и вместимостью', async () => {
+  it('заводит технику с типом, маркой и номером — без вместимости', async () => {
     const wrapper = await mountSection()
 
     mockedVehicles.createVehicle.mockResolvedValue({
@@ -260,6 +273,9 @@ describe('UserGear', () => {
       createdAt: '2026-10-21T09:00:00.000Z',
     })
 
+    // Поля вместимости в форме больше нет.
+    expect(wrapper.find('[data-test="vehicle-seats"]').exists()).toBe(false)
+
     await wrapper.find('[data-test="vehicle-kind"]').setValue('snowmobile')
     await wrapper.find('[data-test="vehicle-brand"]').setValue('Буран')
     await wrapper.find('[data-test="vehicle-add"]').trigger('click')
@@ -269,13 +285,12 @@ describe('UserGear', () => {
       kind: 'snowmobile',
       brand: 'Буран',
       plate: null,
-      seats: null,
     })
 
     expect(wrapper.find('[data-test="vehicles-list"]').text()).toContain('Снегоход')
   })
 
-  it('убирает технику из списка', async () => {
+  it('убирает технику из списка, спросив подтверждение', async () => {
     mockedVehicles.removeVehicle.mockResolvedValue(undefined)
 
     const wrapper = await mountSection(
@@ -293,6 +308,9 @@ describe('UserGear', () => {
     )
 
     await wrapper.find('[data-test="vehicle-delete"]').trigger('click')
+    expect(mockedVehicles.removeVehicle).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test="vehicle-delete-confirm"]').trigger('click')
     await flushPromises()
 
     expect(mockedVehicles.removeVehicle).toHaveBeenCalledWith('veh-1')

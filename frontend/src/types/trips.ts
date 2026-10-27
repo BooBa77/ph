@@ -679,11 +679,21 @@ export const TRANSFER_DIRECTION_LABELS: Record<TransferDirection, string> = {
   back: 'Обратно',
 }
 
+/*
+ * Заброска — цепочка этапов из обычных карточек.
+ *
+ * Отдельной сущности нет: `chainId` и `stage` в карточке, и этого хватает,
+ * чтобы собрать «авто → кони → лодка». Порядок задаёт время отправления,
+ * а `stage` считает бэкенд. Цепочка живёт в одной стороне.
+ */
+
 /**
- * Способы доставки, сгруппированные для выпадающего списка.
+ * Типы транспорта, сгруппированные для выпадающего списка.
  *
  * Группа — это только порядок и подпись в интерфейсе, в базе её нет.
  * «Пешком» убрано 27.10.2026: пеший переход — это маршрут, а не заброска.
+ * Велосипед убран 28.10.2026: в «Снаряжении» он остаётся, а группу
+ * с вещами не возит, и этапом заброски не бывает.
  */
 export const TRANSFER_MODE_GROUPS = [
   {
@@ -699,7 +709,6 @@ export const TRANSFER_MODE_GROUPS = [
       'train',
       'motorcycle',
       'snowmobile',
-      'bicycle',
       'horses',
       'atv',
     ],
@@ -722,7 +731,6 @@ export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
   train: 'Ж/д',
   motorcycle: 'Мотоцикл',
   snowmobile: 'Снегоход',
-  bicycle: 'Велосипед',
   horses: 'Кони',
   atv: 'Квадроцикл',
   boat: 'Лодка',
@@ -744,7 +752,9 @@ export const TRANSFER_PUBLIC_MODES = ['bus', 'train', 'ship', 'helicopter'] as c
  *
  * `free` — безвозмездно; `ticket` — цена билета (только рейсы);
  * `shared` — общий расход; `sharedPerPassenger` — общий расход на пассажиров.
- * У общих расходов бывает флаг «туда-обратно».
+ *
+ * «Туда-обратно» от вида компенсации не зависит (28.10.2026): флаг про
+ * трансфер и про деньги одновременно, а не про вид оплаты.
  */
 export const TRANSFER_COMPENSATIONS = [
   'free',
@@ -760,9 +770,6 @@ export const TRANSFER_COMPENSATION_LABELS: Record<TransferCompensation, string> 
   shared: 'Общий расход',
   sharedPerPassenger: 'Общий расход на пассажиров',
 }
-
-/** Компенсации, у которых бывает флаг «туда-обратно». */
-export const TRANSFER_ROUND_TRIP_COMPENSATIONS = ['shared', 'sharedPerPassenger'] as const
 
 /**
  * Статус пассажира.
@@ -801,6 +808,10 @@ export interface TripTransferLeg {
   direction: TransferDirection
   /** Порядок внутри своей стороны. */
   position: number
+  /** Заброска, к которой относится этап; `null` — карточка сама по себе. */
+  chainId: string | null
+  /** Номер этапа в заброске. Считает бэкенд по времени отправления. */
+  stage: number | null
   mode: TransferMode
   /** Выезд: обязателен, поэтому здесь всегда дата. */
   departsAt: string
@@ -814,6 +825,8 @@ export interface TripTransferLeg {
   /** Транспорт из каталога участника, если выбрали из списка. */
   vehicleId: string | null
   vehicleTitle: string | null
+  /** Госномер техники из каталога — чтобы найти машину. */
+  vehiclePlate: string | null
   /** Исходная карточка пары «туда-обратно»: заполнено — это зеркало. */
   sourceLegId: string | null
   /** Сколько мест занято принятыми пассажирами. Считает бэкенд. */
@@ -844,6 +857,8 @@ export interface TripTransfer {
 /** Что уходит на сервер при создании карточки. */
 export interface TransferLegInput {
   direction: TransferDirection
+  /** uuid заброски: существующей, новой (её придумывает клиент) или null. */
+  chainId?: string | null
   mode: TransferMode
   departsAt: string
   fromPlace: string
@@ -851,7 +866,7 @@ export interface TransferLegInput {
   isOwnVehicle?: boolean
   ownerUserId?: string | null
   seats?: number | null
-  /** Транспорт из каталога: способ и места берутся оттуда. */
+  /** Транспорт из каталога: тип и места берутся оттуда. */
   vehicleId?: number | null
   compensation: TransferCompensation
   compensationAmountRub?: number | null
@@ -862,10 +877,10 @@ export interface TransferLegInput {
 /**
  * Типы личной техники — раздел «Моя техника» в «Снаряжении».
  *
- * Это не способы доставки: у способа есть рейсы (автобус, поезд, корабль,
- * вертолёт), а личная техника — то, что человек держит сам. Связь
- * «тип → способ» однозначна, поэтому карточка «Трансфера» понимает способ
- * по выбранной технике сама.
+ * Это не типы транспорта: у транспорта есть рейсы (автобус, поезд, корабль,
+ * вертолёт), а личная техника — то, что человек держит сам. Велосипед
+ * в каталоге остался, но этапом заброски не бывает: `transferModeOfVehicle`
+ * для него вернёт `null`.
  */
 export const VEHICLE_KINDS = ['car', 'bicycle', 'snowmobile', 'atv', 'motorcycle', 'boat'] as const
 export type VehicleKind = (typeof VEHICLE_KINDS)[number]
@@ -879,22 +894,34 @@ export const VEHICLE_KIND_LABELS: Record<VehicleKind, string> = {
   boat: 'Лодка',
 }
 
+/** Какая личная техника возит группу и годится в этап заброски. */
+export const TRANSFER_VEHICLE_KINDS = ['car', 'snowmobile', 'atv', 'motorcycle', 'boat'] as const
+export type TransferVehicleKind = (typeof TRANSFER_VEHICLE_KINDS)[number]
+
 /** Во что превращается тип техники в карточке перемещения. */
-export const VEHICLE_KIND_TO_MODE: Record<VehicleKind, TransferMode> = {
+export const VEHICLE_KIND_TO_MODE: Record<TransferVehicleKind, TransferMode> = {
   car: 'car',
   snowmobile: 'snowmobile',
   atv: 'atv',
   motorcycle: 'motorcycle',
-  bicycle: 'bicycle',
   boat: 'boat',
+}
+
+/** Тип техники → тип транспорта; `null` — эта техника в заброску не идёт. */
+export function transferModeOfVehicle(kind: VehicleKind): TransferMode | null {
+  return (TRANSFER_VEHICLE_KINDS as readonly string[]).includes(kind)
+    ? VEHICLE_KIND_TO_MODE[kind as TransferVehicleKind]
+    : null
 }
 
 /**
  * Личная техника участника.
  *
- * Поля ровно те, что нужны для учёта: тип, марка, госномер и вместимость
- * (необязательная). На «Трансфере» техника выбирается из списка, и способ
- * с местами приходят отсюда.
+ * Поля учёта: тип, марка, госномер и вместимость. Вместимость в «Снаряжении»
+ * не показывается (28.10.2026): места считаются у карточки перемещения,
+ * потому что одна и та же машина едет то с вещами, то без, а каталог —
+ * это «что у меня есть», а не «сколько сегодня влезет». Поле в API
+ * осталось, экран его не спрашивает.
  */
 export interface Vehicle {
   id: string

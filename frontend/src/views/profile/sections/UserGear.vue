@@ -60,6 +60,16 @@ const isAdding = ref(false)
 const savingId = ref<string | null>(null)
 
 /**
+ * Что ждёт подтверждения удаления.
+ *
+ * Удаление предмета необратимо, поэтому спрашиваем — тем же способом, что
+ * у блюд и шаблонов: кнопка превращается в «Да»/«Нет». Предметы и техника
+ * нумеруются в разных списках, поэтому и «ждёт» у них своё.
+ */
+const confirmingItemId = ref<string | null>(null)
+const confirmingVehicleId = ref<string | null>(null)
+
+/**
  * Итог: сумма известных весов и число невзвешенных.
  *
  * Считаем здесь, а не берём из ответа, — иначе после каждой правки
@@ -209,6 +219,7 @@ async function save(
 }
 
 async function remove(item: GearItem) {
+  confirmingItemId.value = null
   savingId.value = item.id
   error.value = null
 
@@ -229,11 +240,17 @@ onMounted(loadVehicles)
 
 /**
  * «Моя техника» — отдельная секция каталога, а не строки в таблице
- * снаряжения: у техники своя структура (тип, марка, номер, вместимость),
- * и одна таблица с весом рюкзака только запутала бы.
+ * снаряжения: у техники своя структура (тип, марка, номер), и одна таблица
+ * с весом рюкзака только запутала бы.
  *
  * На вкладке «Трансфер» эта техника выбирается из списка, поэтому заводится
  * она здесь, рядом с тем, что человек и так ведёт.
+ *
+ * **Вместимости здесь нет** (28.10.2026). Места считаются у карточки
+ * перемещения: одна и та же машина едет то с вещами, то без, и держать
+ * в каталоге цифру, которая врёт половину поездок, незачем. Поле в API
+ * осталось — прежние записи не портятся, — но экран его не спрашивает
+ * и не показывает.
  */
 const vehicles = ref<Vehicle[]>([])
 const vehiclesError = ref<string | null>(null)
@@ -241,27 +258,24 @@ const vehiclesError = ref<string | null>(null)
 const newVehicleKind = ref<VehicleKind>('car')
 const newVehicleBrand = ref('')
 const newVehiclePlate = ref('')
-const newVehicleSeats = ref('')
 const isAddingVehicle = ref(false)
 
-/** Что правим: 
-ull — заводим новое, иначе id техники в форме. */
+/** Что правим: `null` — заводим новое, иначе id техники в форме. */
 const editingVehicleId = ref<string | null>(null)
 
 function startEditVehicle(vehicle: Vehicle) {
   vehiclesError.value = null
+  confirmingVehicleId.value = null
   editingVehicleId.value = vehicle.id
   newVehicleKind.value = vehicle.kind
   newVehicleBrand.value = vehicle.brand
   newVehiclePlate.value = vehicle.plate ?? ''
-  newVehicleSeats.value = vehicle.seats === null ? '' : String(vehicle.seats)
 }
 
 function cancelEditVehicle() {
   editingVehicleId.value = null
   newVehicleBrand.value = ''
   newVehiclePlate.value = ''
-  newVehicleSeats.value = ''
 }
 
 async function loadVehicles() {
@@ -280,14 +294,6 @@ async function addVehicle() {
     return
   }
 
-  const rawSeats = newVehicleSeats.value.trim()
-  const seats = rawSeats === '' ? null : Number(rawSeats)
-
-  if (seats !== null && (!Number.isInteger(seats) || seats < 1)) {
-    vehiclesError.value = 'Вместимость — целое число, и хотя бы одно место'
-    return
-  }
-
   isAddingVehicle.value = true
   vehiclesError.value = null
 
@@ -296,7 +302,6 @@ async function addVehicle() {
       kind: newVehicleKind.value,
       brand,
       plate: newVehiclePlate.value.trim() || null,
-      seats,
     }
 
     if (editingVehicleId.value !== null) {
@@ -312,7 +317,6 @@ async function addVehicle() {
 
     newVehicleBrand.value = ''
     newVehiclePlate.value = ''
-    newVehicleSeats.value = ''
   } catch (problem) {
     vehiclesError.value = messageOf(problem, 'Не удалось сохранить технику')
   } finally {
@@ -321,6 +325,7 @@ async function addVehicle() {
 }
 
 async function removeVehicleById(vehicle: Vehicle) {
+  confirmingVehicleId.value = null
   vehiclesError.value = null
 
   try {
@@ -474,15 +479,39 @@ async function removeVehicleById(vehicle: Vehicle) {
               @change="saveNote(item, $event)"
             />
 
-            <button
-              type="button"
-              :disabled="savingId === item.id"
-              class="cursor-pointer justify-self-start rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600 disabled:opacity-50"
-              data-test="item-delete"
-              @click="remove(item)"
-            >
-              Убрать
-            </button>
+            <div class="flex flex-wrap items-center gap-2 justify-self-start">
+              <template v-if="confirmingItemId === item.id">
+                <span class="text-xs text-muted">Удалить?</span>
+                <button
+                  type="button"
+                  :disabled="savingId === item.id"
+                  class="cursor-pointer rounded-xl border border-red-600 px-2 py-1 text-xs text-red-600 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50"
+                  data-test="item-delete-confirm"
+                  @click="remove(item)"
+                >
+                  Да
+                </button>
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:text-text"
+                  data-test="item-delete-cancel"
+                  @click="confirmingItemId = null"
+                >
+                  Нет
+                </button>
+              </template>
+
+              <button
+                v-else
+                type="button"
+                :disabled="savingId === item.id"
+                class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600 disabled:opacity-50"
+                data-test="item-delete"
+                @click="confirmingItemId = item.id"
+              >
+                Удалить
+              </button>
+            </div>
           </li>
         </ul>
       </section>
@@ -494,8 +523,10 @@ async function removeVehicleById(vehicle: Vehicle) {
 
       <p class="text-sm text-muted">
         Автомобиль, снегоход, квадроцикл, мотоцикл, велосипед или лодка. На вкладке
-        «Трансфер» техника выбирается из этого списка — способ доставки и места подставятся
-        сами.
+        «Трансфер» техника выбирается из этого списка — тип транспорта подставится сам.
+        Сколько мест в машине, спрашивают в карточке перемещения: в каталоге это
+        «что у меня есть», а не «сколько сегодня влезет». Велосипед в «Трансфере»
+        не выбирают — он не возит группу.
       </p>
 
       <p v-if="vehiclesError" class="text-sm text-red-600" data-test="vehicles-error">
@@ -540,19 +571,6 @@ async function removeVehicleById(vehicle: Vehicle) {
           />
         </label>
 
-        <label class="flex flex-col gap-1 text-xs text-muted">
-          Вместимость
-          <input
-            v-model="newVehicleSeats"
-            type="number"
-            min="1"
-            max="60"
-            placeholder="—"
-            class="w-24 rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-            data-test="vehicle-seats"
-          />
-        </label>
-
         <button
           type="button"
           :disabled="isAddingVehicle"
@@ -591,12 +609,9 @@ async function removeVehicleById(vehicle: Vehicle) {
             <template v-if="vehicle.plate">
               · <span class="text-muted">{{ vehicle.plate }}</span>
             </template>
-            · <span class="text-muted">{{
-              vehicle.seats === null ? 'вместимость не указана' : `${vehicle.seats} мест`
-            }}</span>
           </span>
 
-          <span class="flex gap-2">
+          <span class="flex flex-wrap items-center gap-2">
             <button
               type="button"
               class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
@@ -606,13 +621,34 @@ async function removeVehicleById(vehicle: Vehicle) {
               Править
             </button>
 
+            <template v-if="confirmingVehicleId === vehicle.id">
+              <span class="text-xs text-muted">Удалить?</span>
+              <button
+                type="button"
+                class="cursor-pointer rounded-xl border border-red-600 px-2 py-1 text-xs text-red-600 transition-colors hover:bg-red-600 hover:text-white"
+                data-test="vehicle-delete-confirm"
+                @click="removeVehicleById(vehicle)"
+              >
+                Да
+              </button>
+              <button
+                type="button"
+                class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:text-text"
+                data-test="vehicle-delete-cancel"
+                @click="confirmingVehicleId = null"
+              >
+                Нет
+              </button>
+            </template>
+
             <button
+              v-else
               type="button"
               class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600"
               data-test="vehicle-delete"
-              @click="removeVehicleById(vehicle)"
+              @click="confirmingVehicleId = vehicle.id"
             >
-              Убрать
+              Удалить
             </button>
           </span>
         </li>

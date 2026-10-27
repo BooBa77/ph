@@ -8,12 +8,13 @@ import type { Trip, TripTransfer, Vehicle } from '@/types/trips'
 import TripTransferView from '@/views/trips/TripTransfer.vue'
 
 /**
- * Вкладка «Трансфер» второй редакции (27.10.2026).
+ * Вкладка «Трансфер» (27–28.10.2026).
  *
  * Проверяется то, ради чего экран переделан: две области «Туда» и
- * «Обратно» со своими кнопками, карточка-плашка со сворачиванием, флаг
- * «наше ТС» только у права вкладки, компенсации по способу доставки,
- * заявка на чужое ТС и самовольный уход из карточки.
+ * «Обратно» со своими кнопками, плашка со сворачиванием и одной строкой
+ * шапки, заброски-цепочки из обычных карточек, флаг «наше ТС» только у права
+ * вкладки, компенсации по типу транспорта, заявка на чужое ТС и самовольный
+ * уход из карточки.
  *
  * Права берутся из ответа (`plan.canEdit`, `leg.canEdit`, `leg.joinStatus`) —
  * фронт матрицу ролей не повторяет, поэтому и тесты задают их в фикстуре.
@@ -112,6 +113,8 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         id: '1',
         direction: 'there',
         position: 1,
+        chainId: null,
+        stage: null,
         mode: 'car',
         departsAt: THERE_AT,
         fromPlace: 'Иркутск, автовокзал',
@@ -122,6 +125,7 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         seats: 4,
         vehicleId: null,
         vehicleTitle: null,
+        vehiclePlate: null,
         sourceLegId: null,
         occupied: 1,
         compensation: 'shared',
@@ -139,6 +143,8 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         id: '2',
         direction: 'there',
         position: 2,
+        chainId: null,
+        stage: null,
         mode: 'bus',
         departsAt: THERE_AT,
         fromPlace: 'Иркутск, автовокзал',
@@ -149,6 +155,7 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         seats: null,
         vehicleId: null,
         vehicleTitle: null,
+        vehiclePlate: null,
         sourceLegId: null,
         occupied: 1,
         compensation: 'ticket',
@@ -163,6 +170,8 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         id: '3',
         direction: 'back',
         position: 1,
+        chainId: null,
+        stage: null,
         mode: 'airboat',
         departsAt: BACK_AT,
         fromPlace: 'Олхинское плато, Витязь',
@@ -173,6 +182,7 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         seats: null,
         vehicleId: null,
         vehicleTitle: null,
+        vehiclePlate: null,
         sourceLegId: null,
         occupied: 0,
         compensation: 'sharedPerPassenger',
@@ -233,18 +243,26 @@ describe('TripTransfer', () => {
     expect(back.findAll('[data-test="transfer-leg"]')).toHaveLength(1)
     expect(back.text()).toContain('Аэролодка')
 
-    // В шапке карточки: способ, время, точки, счёт и компенсация.
+    // Шапка: тип, время, точки и одна строка про людей.
     const first = legCard(wrapper, '1')!
-    expect(first.find('[data-test="transfer-leg-mode"]').text()).toContain('Авто')
+    expect(first.find('[data-test="transfer-leg-mode"]').text()).toContain('Автомобиль')
     expect(first.find('[data-test="transfer-leg-places"]').text()).toContain(
       'Иркутск, автовокзал → Олхинское плато, Витязь',
     )
-    expect(first.find('[data-test="transfer-leg-own"]').text()).toContain('Наше ТС')
-    expect(first.find('[data-test="transfer-leg-seats"]').text()).toBe('1 из 4')
+    expect(first.find('[data-test="transfer-leg-summary"]').text()).toBe(
+      'Наше ТС · Олег, занято 1 из 4 (Олег) выезд в восемь',
+    )
 
-    // У автобуса мест не бывает — «мест не указано» там не пишем.
-    expect(legCard(wrapper, '2')!.find('[data-test="transfer-leg-seats"]').exists()).toBe(false)
-    // Сумма форматируется с неразрывным пробелом, поэтому проверяем части.
+    // Мест не указали — «ноль из нуля» не пишем, а говорим «едем все вместе».
+    expect(legCard(wrapper, '2')!.find('[data-test="transfer-leg-summary"]').text()).toBe(
+      'едем все вместе',
+    )
+    // Пустая карточка — «без участников», а не «пока никого — вещи поедут без людей».
+    expect(legCard(wrapper, '3')!.find('[data-test="transfer-leg-summary"]').text()).toBe(
+      'без участников',
+    )
+
+    // Оплата живёт внутри плашки.
     const compensation = first.find('[data-test="transfer-leg-compensation"]').text()
     expect(compensation).toContain('Общий расход')
     expect(compensation).toContain('₽')
@@ -262,6 +280,9 @@ describe('TripTransfer', () => {
     // Подробности спрятаны, а «что, когда и куда» осталось.
     expect(legCard(wrapper, '1')!.find('[data-test="transfer-passengers"]').exists()).toBe(false)
     expect(legCard(wrapper, '1')!.find('[data-test="transfer-leg-mode"]').exists()).toBe(true)
+    expect(legCard(wrapper, '1')!.find('[data-test="transfer-leg-compensation"]').exists()).toBe(
+      false,
+    )
   })
 
   it('«Добавить трансфер» открывает форму своей стороны', async () => {
@@ -306,6 +327,7 @@ describe('TripTransfer', () => {
 
     expect(mocks.createTransferLeg).toHaveBeenCalledWith('1', {
       direction: 'there',
+      chainId: null,
       mode: 'car',
       departsAt: new Date('2027-05-05T09:00').toISOString(),
       fromPlace: 'Иркутск',
@@ -340,6 +362,29 @@ describe('TripTransfer', () => {
     expect(options).toEqual(['free', 'ticket'])
   })
 
+  it('«туда-обратно» доступно при любой компенсации, но не на зеркале', async () => {
+    const wrapper = await mountTransfer()
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+
+    // По умолчанию «безвозмездно» — и флаг всё равно есть: он не про деньги.
+    expect(wrapper.find('[data-test="transfer-compensation-input"]').element).toHaveProperty(
+      'value',
+      'free',
+    )
+    expect(wrapper.find('[data-test="transfer-round-trip-input"]').exists()).toBe(true)
+
+    // У зеркала пары флага нет: второй пары не бывает.
+    const plan = makePlan()
+    plan.legs[2]!.sourceLegId = '1'
+
+    const mirror = await mountTransfer(plan)
+    await mirror.find('[data-test="transfer-edit-3"]').trigger('click')
+
+    expect(mirror.find('[data-test="transfer-round-trip-input"]').exists()).toBe(false)
+    expect(mirror.find('[data-test="transfer-round-trip-hint"]').exists()).toBe(true)
+  })
+
   it('без суммы компенсации карточку не сохранить', async () => {
     const wrapper = await mountTransfer()
 
@@ -352,6 +397,85 @@ describe('TripTransfer', () => {
 
     expect(wrapper.find('[data-test="transfer-leg-error"]').text()).toContain('сумму')
     expect(mocks.createTransferLeg).not.toHaveBeenCalled()
+  })
+
+  it('этапы одной заброски собираются в блок с номерами', async () => {
+    const plan = makePlan()
+    const chain = '0191f0a0-0000-4000-8000-000000000001'
+
+    plan.legs = [
+      {
+        ...plan.legs[0]!,
+        id: 'a',
+        chainId: chain,
+        stage: 1,
+        fromPlace: 'Иркутск',
+        toPlace: 'Большое Голоустное',
+      },
+      {
+        ...plan.legs[1]!,
+        id: 'b',
+        chainId: chain,
+        stage: 2,
+        fromPlace: 'Большое Голоустное',
+        toPlace: 'Витязь',
+      },
+      { ...plan.legs[2]!, id: 'c', chainId: null, stage: null },
+    ]
+
+    const wrapper = await mountTransfer(plan)
+    const there = wrapper.find('[data-test="transfer-area-there"]')
+
+    expect(there.findAll('[data-test="transfer-chain"]')).toHaveLength(1)
+
+    const title = there.find('[data-test="transfer-chain-title"]').text()
+    expect(title).toContain('Заброска 1 · 2 этапа')
+    expect(title).toContain('Иркутск → Витязь')
+
+    // Номер этапа виден в шапке плашки.
+    const stages = wrapper
+      .findAll('[data-test="transfer-leg-stage"]')
+      .map((node) => node.text())
+    expect(stages[0]).toContain('этап 1')
+    expect(stages[1]).toContain('этап 2')
+  })
+
+  it('карточку можно положить в заброску — новую или существующую', async () => {
+    const plan = makePlan()
+    plan.legs[0]!.chainId = '0191f0a0-0000-4000-8000-000000000001'
+    plan.legs[0]!.stage = 1
+
+    const wrapper = await mountTransfer(plan)
+    mocks.createTransferLeg.mockResolvedValue(plan)
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+
+    const select = wrapper.find('[data-test="transfer-chain-input"]')
+    expect(select.text()).toContain('Заброска 1 · 1 этап')
+
+    await select.setValue('new')
+    await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
+    await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
+    await wrapper.find('[data-test="transfer-departure-input"]').setValue('2027-05-05T09:00')
+    await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
+    await flushPromises()
+
+    // Новой заброске id придумывает клиент — отдельной ручки «создать» нет.
+    expect(mocks.createTransferLeg).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({ chainId: expect.stringMatching(/^[0-9a-f-]{36}$/) }),
+    )
+  })
+
+  it('внизу секции видны нераспределённые участники', async () => {
+    const wrapper = await mountTransfer()
+    const back = wrapper.find('[data-test="transfer-area-back"]')
+
+    // В «Обратно» никого нет — там не распределён весь состав.
+    const unassigned = back.find('[data-test="transfer-unassigned"]').text()
+    expect(unassigned).toContain('Не распределены')
+    expect(unassigned).toContain('Анна')
+    expect(unassigned).toContain('Пётр')
   })
 
   it('владелец принимает заявку и отклоняет её', async () => {
@@ -424,7 +548,7 @@ describe('TripTransfer', () => {
     const wrapper = await mountTransfer(plan)
 
     expect(wrapper.find('[data-test="transfer-edit-1"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="transfer-remove-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="transfer-delete-1"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="transfer-add-passenger-1"]').exists()).toBe(false)
 
     // Завести свою карточку может любой участник — кнопки на месте.
@@ -455,7 +579,7 @@ describe('TripTransfer', () => {
     )
   })
 
-  it('карточку можно убрать и посадить в неё человека', async () => {
+  it('карточку можно посадить человека, а удаление спрашивает подтверждение', async () => {
     const wrapper = await mountTransfer()
 
     mocks.addTransferPassenger.mockResolvedValue(makePlan())
@@ -465,7 +589,18 @@ describe('TripTransfer', () => {
     expect(mocks.addTransferPassenger).toHaveBeenCalledWith('1', '1', PETR)
 
     mocks.removeTransferLeg.mockResolvedValue(makePlan())
-    await wrapper.find('[data-test="transfer-remove-2"]').trigger('click')
+
+    // Первый клик только спрашивает.
+    await wrapper.find('[data-test="transfer-delete-2"]').trigger('click')
+    expect(mocks.removeTransferLeg).not.toHaveBeenCalled()
+
+    // «Нет» возвращает кнопку.
+    await wrapper.find('[data-test="transfer-delete-cancel-2"]').trigger('click')
+    expect(wrapper.find('[data-test="transfer-delete-2"]').exists()).toBe(true)
+
+    // «Да» удаляет.
+    await wrapper.find('[data-test="transfer-delete-2"]').trigger('click')
+    await wrapper.find('[data-test="transfer-delete-confirm-2"]').trigger('click')
     await flushPromises()
 
     expect(mocks.removeTransferLeg).toHaveBeenCalledWith('1', '2')
@@ -487,16 +622,16 @@ describe('TripTransfer', () => {
 
     await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
 
-    // Каталог виден в выборе: «Нива · Авто · 4 мест».
+    // Каталог виден в выборе: «Нива · Автомобиль · А123ВС38 · 4 мест».
     expect(wrapper.find('[data-test="transfer-vehicle-input"]').text()).toContain('Нива')
 
-    // Пока транспорт не выбран, способ и места вводятся руками.
+    // Пока транспорт не выбран, тип и места вводятся руками.
     expect(wrapper.find('[data-test="transfer-mode-input"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="transfer-seats-input"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="transfer-vehicle-input"]').setValue('7')
 
-    // Выбрали из каталога — способ и места приходят оттуда.
+    // Выбрали из каталога — тип и места приходят оттуда.
     expect(wrapper.find('[data-test="transfer-mode-input"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="transfer-seats-input"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="transfer-vehicle-applied"]').text()).toContain('4 мест')
@@ -518,6 +653,24 @@ describe('TripTransfer', () => {
         ownerUserId: ME,
       }),
     )
+  })
+
+  it('велосипед в «Трансфере» не выбирают', async () => {
+    const bike: Vehicle = {
+      id: '8',
+      kind: 'bicycle',
+      brand: 'Стелс',
+      seats: null,
+      plate: null,
+      createdAt: '2026-10-01T10:00:00.000Z',
+    }
+
+    const wrapper = await mountTransfer(makePlan(), [bike])
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+
+    // В каталоге он есть, а в выборе карточки — нет: группу он не возит.
+    expect(wrapper.find('[data-test="transfer-vehicle-input"]').text()).not.toContain('Стелс')
   })
 
   it('транспорт можно завести прямо в карточке', async () => {
@@ -550,7 +703,7 @@ describe('TripTransfer', () => {
       plate: null,
     })
 
-    // Новый транспорт сразу выбран в карточке — и способ уже его.
+    // Новый транспорт сразу выбран в карточке — и тип уже его.
     expect(wrapper.find('[data-test="transfer-vehicle-applied"]').text()).toContain('Квадроцикл')
     expect(wrapper.find('[data-test="vehicle-form"]').exists()).toBe(false)
   })
@@ -559,7 +712,8 @@ describe('TripTransfer', () => {
     const wrapper = await mountTransfer()
     mocks.removeTransferLeg.mockRejectedValue(new Error('сеть'))
 
-    await wrapper.find('[data-test="transfer-remove-1"]').trigger('click')
+    await wrapper.find('[data-test="transfer-delete-1"]').trigger('click')
+    await wrapper.find('[data-test="transfer-delete-confirm-1"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('[data-test="transfer-action-error"]').text()).toContain('попробуйте')
