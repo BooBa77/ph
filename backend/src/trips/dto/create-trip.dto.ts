@@ -158,18 +158,6 @@ export class CreateTripDto {
   requirementsText?: string | null;
 
   @ApiProperty({
-    description: 'Где собираются: «у вокзала, платформа 2»',
-    example: 'Иркутск, автовокзал, у первой платформы',
-    maxLength: 200,
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsString({ message: 'Место сбора должно быть строкой' })
-  @MaxLength(200, { message: 'Место сбора не должно превышать 200 символов' })
-  meetingPlace?: string | null;
-
-  @ApiProperty({
     description:
       'Будет ли гитара. По умолчанию false: «не указано» и «не будет» — одно',
     example: true,

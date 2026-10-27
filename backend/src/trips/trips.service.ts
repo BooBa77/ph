@@ -192,7 +192,6 @@ export class TripsService {
           announcement: dto.announcement ?? null,
           routeText: dto.routeText ?? '',
           requirementsText: dto.requirementsText ?? null,
-          meetingPlace: dto.meetingPlace ?? null,
           hasGuitar: dto.hasGuitar ?? false,
           visibility: dto.visibility ?? 'public',
           status,
@@ -1261,7 +1260,6 @@ export class TripsService {
       if (dto.requirementsText !== undefined) {
         trip.requirementsText = dto.requirementsText;
       }
-      if (dto.meetingPlace !== undefined) trip.meetingPlace = dto.meetingPlace;
       if (dto.hasGuitar !== undefined) trip.hasGuitar = dto.hasGuitar;
       if (dto.visibility !== undefined) trip.visibility = dto.visibility;
       if (dto.isRecruitmentClosed !== undefined) {

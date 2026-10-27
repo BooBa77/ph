@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
+  IsBoolean,
   IsDateString,
   IsIn,
   IsInt,
@@ -12,28 +13,27 @@ import {
 } from 'class-validator';
 
 import {
-  TRANSFER_CAR_OWNERSHIPS,
+  TRANSFER_COMPENSATIONS,
+  TRANSFER_DIRECTIONS,
   TRANSFER_MODES,
-  type TransferCarOwnership,
+  TRANSFER_PASSENGER_STATUSES,
+  type TransferCompensation,
+  type TransferDirection,
   type TransferMode,
+  type TransferPassengerStatus,
 } from '../trip-transfer.types';
 
 /**
  * Ответы и тела запросов вкладки «Трансфер».
  *
- * **Все ручки вкладки возвращают её состояние целиком** (`TripTransferDto`).
- * Вкладка — один экран с кучей связанных чисел: места в машине, «без машины»,
- * пассажиры строки. Если отвечать только изменённой строкой, клиент начнёт
- * собирать состояние сам и однажды покажет «3 из 5» там, где уже «4 из 5».
- * Ответ целиком стоит одного лишнего запроса к базе и снимает этот класс
- * ошибок совсем.
+ * **Все ручки вкладки возвращают её состояние целиком** (`TripTransferDto`):
+ * на экране занятые места, заявки и состав карточек — числа от двух таблиц,
+ * и собрать их из частичного ответа значит однажды показать неправду.
  *
- * Id — строками, как везде в проекте, где ключ `bigint`: в JSON число
- * потеряло бы точность на больших значениях, а TypeORM отдаёт `bigint`
- * строкой и внутри приложения.
+ * Id — строками, как везде в проекте, где ключ `bigint`.
  */
 
-/** Кого можно посадить в строку: участник, который идёт. */
+/** Кого можно посадить: участник, который идёт. */
 export class TransferTravelerDto {
   @ApiProperty({ description: 'Id участника', example: '90ca6b06-…' })
   userId: string;
@@ -42,7 +42,12 @@ export class TransferTravelerDto {
   displayName: string;
 }
 
-/** Пассажир строки. `carId: null` — едет, но места в машине нет. */
+/**
+ * Пассажир карточки.
+ *
+ * `requested` — попросился на чужое ТС и ждёт владельца; `accepted` — едет.
+ * На рейсах заявок нет: купил билет — едешь.
+ */
 export class TransferPassengerDto {
   @ApiProperty({ description: 'Id участника' })
   userId: string;
@@ -51,115 +56,115 @@ export class TransferPassengerDto {
   displayName: string;
 
   @ApiProperty({
-    description: 'Машина, в которой едет. null — «без машины»',
-    nullable: true,
-    example: '3',
+    description: 'Заявка или уже едет',
+    enum: TRANSFER_PASSENGER_STATUSES,
+    example: 'accepted',
   })
-  carId: string | null;
+  status: TransferPassengerStatus;
 }
 
-/** Машина строки заброски. */
-export class TransferCarDto {
-  @ApiProperty({ description: 'Id машины в походе', example: '3' })
-  id: string;
-
-  @ApiProperty({
-    description: 'Своя или наёмная',
-    enum: TRANSFER_CAR_OWNERSHIPS,
-    example: 'own',
-  })
-  ownership: TransferCarOwnership;
-
-  @ApiProperty({
-    description: 'Водитель-участник. null — наёмный водитель без аккаунта',
-    nullable: true,
-  })
-  driverUserId: string | null;
-
-  @ApiProperty({
-    description: 'Имя водителя: из профиля участника или вписанное для наёмного',
-    example: 'Сергей',
-  })
-  driverName: string;
-
-  @ApiProperty({
-    description: 'Телефон водителя — в день выезда ищут его',
-    nullable: true,
-    example: '+7 902 111-22-33',
-  })
-  driverPhone: string | null;
-
-  @ApiProperty({
-    description: 'Всего мест, включая водителя. null — не указано, потолка нет',
-    nullable: true,
-    example: 5,
-  })
-  seats: number | null;
-
-  @ApiProperty({
-    description:
-      'Сколько мест занято: пассажиры машины плюс водитель, если он наёмный и в составе его нет',
-    example: 3,
-  })
-  occupied: number;
-
-  @ApiProperty({
-    description:
-      'Правит ли смотрящий эту машину: право вкладки или сам водитель своей машины',
-    example: false,
-  })
-  canEdit: boolean;
-}
-
-/** Строка заброски: когда, откуда, куда и на чём. */
+/** Карточка перемещения: одна часть группы едет одним способом. */
 export class TransferLegDto {
-  @ApiProperty({ description: 'Id строки', example: '7' })
+  @ApiProperty({ description: 'Id карточки', example: '7' })
   id: string;
 
-  @ApiProperty({ description: 'Порядок в списке, с 1', example: 1 })
+  @ApiProperty({
+    description: 'Сторона: туда или обратно',
+    enum: TRANSFER_DIRECTIONS,
+    example: 'there',
+  })
+  direction: TransferDirection;
+
+  @ApiProperty({ description: 'Порядок внутри стороны, с 1', example: 1 })
   position: number;
 
   @ApiProperty({
-    description: 'Выезд (ISO). null — время уточняется',
-    nullable: true,
-  })
-  departsAt: string | null;
-
-  @ApiProperty({ description: 'Откуда', example: 'Иркутск, автовокзал' })
-  fromPlace: string;
-
-  @ApiProperty({ description: 'Куда', example: 'Олхинское плато, Витязь' })
-  toPlace: string;
-
-  @ApiProperty({
-    description: 'Вид заброски',
+    description: 'Способ доставки',
     enum: TRANSFER_MODES,
     example: 'car',
   })
   mode: TransferMode;
 
+  @ApiProperty({ description: 'Время отправления (ISO)' })
+  departsAt: string;
+
+  @ApiProperty({ description: 'Откуда', example: 'Иркутск, автовокзал' })
+  fromPlace: string;
+
+  @ApiProperty({ description: 'Докуда', example: 'Олхинское плато, Витязь' })
+  toPlace: string;
+
+  @ApiProperty({
+    description: '«Наше ТС»: транспорт группы, а не рейс',
+    example: true,
+  })
+  isOwnVehicle: boolean;
+
+  @ApiProperty({
+    description: 'Владелец ТС. null — рейс (автобус, ж/д, корабль, вертолёт)',
+    nullable: true,
+  })
+  ownerUserId: string | null;
+
+  @ApiProperty({ description: 'Имя владельца ТС', nullable: true })
+  ownerName: string | null;
+
+  @ApiProperty({
+    description: 'Всего мест, включая водителя. null — не указано',
+    nullable: true,
+    example: 5,
+  })
+  seats: number | null;
+
+  @ApiProperty({ description: 'Сколько мест занято принятыми пассажирами', example: 3 })
+  occupied: number;
+
+  @ApiProperty({
+    description: 'Как считается компенсация расходов',
+    enum: TRANSFER_COMPENSATIONS,
+    example: 'shared',
+  })
+  compensation: TransferCompensation;
+
+  @ApiProperty({
+    description: 'Сумма компенсации, рубли. null — безвозмездно или не указана',
+    nullable: true,
+    example: 3000,
+  })
+  compensationAmountRub: number | null;
+
+  @ApiProperty({
+    description: '«Туда-обратно»: расход один на две стороны',
+    example: false,
+  })
+  isRoundTrip: boolean;
+
   @ApiProperty({ description: 'Заметка', nullable: true })
   note: string | null;
 
-  @ApiProperty({ description: 'Машины строки', type: [TransferCarDto] })
-  cars: TransferCarDto[];
+  @ApiProperty({
+    description: 'Правит ли смотрящий карточку: право вкладки или владелец ТС',
+    example: false,
+  })
+  canEdit: boolean;
 
-  @ApiProperty({ description: 'Кто едет строкой', type: [TransferPassengerDto] })
+  @ApiProperty({
+    description:
+      'Что будет, если смотрящий присоединится: accepted — сразу едет, requested — заявка владельцу, null — уже в карточке или нельзя',
+    enum: TRANSFER_PASSENGER_STATUSES,
+    nullable: true,
+    example: 'requested',
+  })
+  joinStatus: TransferPassengerStatus | null;
+
+  @ApiProperty({ description: 'Пассажиры и заявки', type: [TransferPassengerDto] })
   passengers: TransferPassengerDto[];
 }
 
 /** Вкладка «Трансфер» целиком. */
 export class TripTransferDto {
   @ApiProperty({
-    description:
-      'Место сбора (`trips.meeting_place`): строка похода, а не строка заброски',
-    nullable: true,
-    example: 'Иркутск, автовокзал, у первой платформы',
-  })
-  meetingPlace: string | null;
-
-  @ApiProperty({
-    description: 'Может ли смотрящий править строки (право на вкладку)',
+    description: 'Может ли смотрящий создавать любые карточки (право на вкладку)',
     example: false,
   })
   canEdit: boolean;
@@ -170,34 +175,89 @@ export class TripTransferDto {
   })
   travelers: TransferTravelerDto[];
 
-  @ApiProperty({ description: 'Строки заброски', type: [TransferLegDto] })
+  @ApiProperty({ description: 'Карточки перемещений', type: [TransferLegDto] })
   legs: TransferLegDto[];
 }
 
-/** Тело `POST /api/trips/:id/transfer/legs`. */
+/**
+ * Тело `POST /api/trips/:id/transfer/legs`.
+ *
+ * `direction` и `mode` обязательны; `departsAt`, `fromPlace`, `toPlace` —
+ * обязательны (заказчик: «обязательные поля»). Остальное имеет разумные
+ * значения по умолчанию: безвозмездно, без мест, без владельца.
+ *
+ * `isOwnVehicle` ставит только тот, кому роль дала вкладку; участник свой
+ * транспорт получает с флагом автоматически. У рейсов флага не бывает.
+ */
 export class CreateTransferLegDto {
-  @ApiProperty({ description: 'Вид заброски', enum: TRANSFER_MODES })
-  @IsIn(TRANSFER_MODES, { message: 'Недопустимый вид заброски' })
+  @ApiProperty({ description: 'Сторона', enum: TRANSFER_DIRECTIONS })
+  @IsIn(TRANSFER_DIRECTIONS, { message: 'Сторона — «туда» или «обратно»' })
+  direction: TransferDirection;
+
+  @ApiProperty({ description: 'Способ доставки', enum: TRANSFER_MODES })
+  @IsIn(TRANSFER_MODES, { message: 'Недопустимый способ доставки' })
   mode: TransferMode;
 
-  @ApiProperty({ description: 'Откуда', example: 'Иркутск, автовокзал' })
+  @ApiProperty({ description: 'Время отправления (ISO)' })
+  @IsDateString({}, { message: 'Время отправления — дата ISO' })
+  departsAt: string;
+
+  @ApiProperty({ description: 'Откуда' })
   @IsString({ message: 'Точка отправления должна быть строкой' })
   @Length(1, 200, { message: 'Откуда — от 1 до 200 символов' })
   fromPlace: string;
 
-  @ApiProperty({ description: 'Куда', example: 'Олхинское плато, Витязь' })
+  @ApiProperty({ description: 'Докуда' })
   @IsString({ message: 'Точка прибытия должна быть строкой' })
-  @Length(1, 200, { message: 'Куда — от 1 до 200 символов' })
+  @Length(1, 200, { message: 'Докуда — от 1 до 200 символов' })
   toPlace: string;
 
   @ApiProperty({
-    description: 'Выезд (ISO). Не указан — «время уточняется»',
+    description: '«Наше ТС»: ставит организатор или тот, кому дали вкладку',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг «наше ТС» — да или нет' })
+  isOwnVehicle?: boolean;
+
+  @ApiProperty({
+    description: 'Владелец ТС — участник похода. Нужен при флаге «наше ТС»',
     required: false,
     nullable: true,
   })
   @IsOptional()
-  @IsDateString({}, { message: 'Дата выезда должна быть датой ISO' })
-  departsAt?: string | null;
+  @IsUUID('4', { message: 'Владельцу ТС нужен корректный UUID' })
+  ownerUserId?: string | null;
+
+  @ApiProperty({ description: 'Всего мест', required: false, nullable: true })
+  @IsOptional()
+  @IsInt({ message: 'Места — целое число' })
+  @Min(1, { message: 'Мест должно быть хотя бы одно' })
+  @Max(60, { message: 'Больше 60 мест не бывает' })
+  seats?: number | null;
+
+  @ApiProperty({ description: 'Компенсация расходов', enum: TRANSFER_COMPENSATIONS })
+  @IsIn(TRANSFER_COMPENSATIONS, { message: 'Недопустимый вид компенсации' })
+  compensation: TransferCompensation;
+
+  @ApiProperty({
+    description: 'Сумма компенсации, рубли. Нужна для всего, кроме «безвозмездно»',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Сумма — целое число рублей' })
+  @Min(0, { message: 'Сумма не бывает отрицательной' })
+  @Max(10_000_000, { message: 'Слишком большая сумма' })
+  compensationAmountRub?: number | null;
+
+  @ApiProperty({
+    description: '«Туда-обратно»: только у общих расходов',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг «туда-обратно» — да или нет' })
+  isRoundTrip?: boolean;
 
   @ApiProperty({ description: 'Заметка', required: false, nullable: true })
   @IsOptional()
@@ -207,18 +267,28 @@ export class CreateTransferLegDto {
 }
 
 /**
- * Тело `PATCH /api/trips/:id/transfer/legs/:legId`.
+ * Тело `PATCH /api/trips/:id/transfer/legs/:legId` — три состояния поля,
+ * как у похода: поля нет — не трогаем, `null` — стереть, значение — записать.
  *
- * Три состояния поля, как у похода: поля нет — не трогаем, `null` — стереть,
- * значение — записать. Смена вида на «не авто» при существующих машинах —
- * 400: сначала уберите машины, иначе они остались бы в данных строки,
- * которая их не предусматривает.
+ * Смена способа проверяется **по итогу**, а не по патчу: карточка могла быть
+ * «нашим авто» с общим расходом, а пришла только `mode: 'bus'` — тогда
+ * и флаг, и компенсация перестают быть законными, и это 400 с текстом.
  */
 export class UpdateTransferLegDto {
-  @ApiProperty({ description: 'Вид заброски', enum: TRANSFER_MODES, required: false })
+  @ApiProperty({ description: 'Сторона', enum: TRANSFER_DIRECTIONS, required: false })
   @IsOptional()
-  @IsIn(TRANSFER_MODES, { message: 'Недопустимый вид заброски' })
+  @IsIn(TRANSFER_DIRECTIONS, { message: 'Сторона — «туда» или «обратно»' })
+  direction?: TransferDirection;
+
+  @ApiProperty({ description: 'Способ доставки', enum: TRANSFER_MODES, required: false })
+  @IsOptional()
+  @IsIn(TRANSFER_MODES, { message: 'Недопустимый способ доставки' })
   mode?: TransferMode;
+
+  @ApiProperty({ description: 'Время отправления (ISO)', required: false })
+  @IsOptional()
+  @IsDateString({}, { message: 'Время отправления — дата ISO' })
+  departsAt?: string;
 
   @ApiProperty({ description: 'Откуда', required: false })
   @IsOptional()
@@ -226,16 +296,49 @@ export class UpdateTransferLegDto {
   @Length(1, 200, { message: 'Откуда — от 1 до 200 символов' })
   fromPlace?: string;
 
-  @ApiProperty({ description: 'Куда', required: false })
+  @ApiProperty({ description: 'Докуда', required: false })
   @IsOptional()
   @IsString({ message: 'Точка прибытия должна быть строкой' })
-  @Length(1, 200, { message: 'Куда — до 200 символов' })
+  @Length(1, 200, { message: 'Докуда — до 200 символов' })
   toPlace?: string;
 
-  @ApiProperty({ description: 'Выезд (ISO) или null', required: false, nullable: true })
+  @ApiProperty({ description: '«Наше ТС»', required: false })
   @IsOptional()
-  @IsDateString({}, { message: 'Дата выезда должна быть датой ISO' })
-  departsAt?: string | null;
+  @IsBoolean({ message: 'Флаг «наше ТС» — да или нет' })
+  isOwnVehicle?: boolean;
+
+  @ApiProperty({ description: 'Владелец ТС или null', required: false, nullable: true })
+  @IsOptional()
+  @IsUUID('4', { message: 'Владельцу ТС нужен корректный UUID' })
+  ownerUserId?: string | null;
+
+  @ApiProperty({ description: 'Всего мест или null', required: false, nullable: true })
+  @IsOptional()
+  @IsInt({ message: 'Места — целое число' })
+  @Min(1, { message: 'Мест должно быть хотя бы одно' })
+  @Max(60, { message: 'Больше 60 мест не бывает' })
+  seats?: number | null;
+
+  @ApiProperty({ description: 'Компенсация', enum: TRANSFER_COMPENSATIONS, required: false })
+  @IsOptional()
+  @IsIn(TRANSFER_COMPENSATIONS, { message: 'Недопустимый вид компенсации' })
+  compensation?: TransferCompensation;
+
+  @ApiProperty({
+    description: 'Сумма компенсации, рубли или null',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Сумма — целое число рублей' })
+  @Min(0, { message: 'Сумма не бывает отрицательной' })
+  @Max(10_000_000, { message: 'Слишком большая сумма' })
+  compensationAmountRub?: number | null;
+
+  @ApiProperty({ description: '«Туда-обратно»', required: false })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг «туда-обратно» — да или нет' })
+  isRoundTrip?: boolean;
 
   @ApiProperty({ description: 'Заметка или null', required: false, nullable: true })
   @IsOptional()
@@ -245,128 +348,23 @@ export class UpdateTransferLegDto {
 }
 
 /**
- * Тело `POST /api/trips/:id/transfer/legs/:legId/cars`.
+ * Тело `POST …/legs/:legId/passengers` — посадить человека.
  *
- * `own` — машина участника, водителя называем его id. `hired` — наёмная:
- * имя и телефон водителя, аккаунта у него нет. Свою машину участник может
- * добавить сам, наёмную — только тот, кому роль дала вкладку.
+ * `status` по умолчанию `accepted` (владелец сажает сразу), но владелец
+ * может и не решать за него: `requested` — «попросился, решай».
  */
-export class CreateTransferCarDto {
-  @ApiProperty({
-    description: 'Своя или наёмная',
-    enum: TRANSFER_CAR_OWNERSHIPS,
-    example: 'own',
-  })
-  @IsIn(TRANSFER_CAR_OWNERSHIPS, { message: 'Машина бывает своя или наёмная' })
-  ownership: TransferCarOwnership;
-
-  @ApiProperty({
-    description: 'Водитель-участник. Обязателен для своей машины',
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsUUID('4', { message: 'Водителю нужен корректный UUID пользователя' })
-  driverUserId?: string | null;
-
-  @ApiProperty({
-    description: 'Имя водителя наёмной машины. Обязательно для наёмной',
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsString({ message: 'Имя водителя должно быть строкой' })
-  @Length(1, 100, { message: 'Имя водителя — до 100 символов' })
-  driverName?: string | null;
-
-  @ApiProperty({ description: 'Телефон водителя', required: false, nullable: true })
-  @IsOptional()
-  @IsString({ message: 'Телефон должен быть строкой' })
-  @Length(1, 40, { message: 'Телефон — до 40 символов' })
-  driverPhone?: string | null;
-
-  @ApiProperty({
-    description: 'Всего мест, включая водителя. Не указано — потолка нет',
-    required: false,
-    nullable: true,
-    example: 5,
-  })
-  @IsOptional()
-  @IsInt({ message: 'Места — целое число' })
-  @Min(1, { message: 'Мест должно быть хотя бы одно' })
-  @Max(60, { message: 'Больше 60 мест не бывает' })
-  seats?: number | null;
-
-  @ApiProperty({ description: 'Заметка', required: false, nullable: true })
-  @IsOptional()
-  @IsString({ message: 'Заметка должна быть строкой' })
-  @Length(1, 500, { message: 'Заметка — до 500 символов' })
-  note?: string | null;
-}
-
-/**
- * Тело `PATCH /api/trips/:id/transfer/cars/:carId`.
- *
- * Те же поля, что при создании, и те же три состояния: своего водителя
- * сменить нельзя через `ownership` (это другая машина) — но имя и телефон
- * наёмного, места и заметку правит и сам водитель.
- */
-export class UpdateTransferCarDto {
-  @ApiProperty({ description: 'Водитель-участник', required: false, nullable: true })
-  @IsOptional()
-  @IsUUID('4', { message: 'Водителю нужен корректный UUID пользователя' })
-  driverUserId?: string | null;
-
-  @ApiProperty({ description: 'Имя водителя наёмной машины', required: false, nullable: true })
-  @IsOptional()
-  @IsString({ message: 'Имя водителя должно быть строкой' })
-  @Length(1, 100, { message: 'Имя водителя — до 100 символов' })
-  driverName?: string | null;
-
-  @ApiProperty({ description: 'Телефон водителя', required: false, nullable: true })
-  @IsOptional()
-  @IsString({ message: 'Телефон должен быть строкой' })
-  @Length(1, 40, { message: 'Телефон — до 40 символов' })
-  driverPhone?: string | null;
-
-  @ApiProperty({ description: 'Всего мест или null — «не знаю»', required: false, nullable: true })
-  @IsOptional()
-  @IsInt({ message: 'Места — целое число' })
-  @Min(1, { message: 'Мест должно быть хотя бы одно' })
-  @Max(60, { message: 'Больше 60 мест не бывает' })
-  seats?: number | null;
-
-  @ApiProperty({ description: 'Заметка или null', required: false, nullable: true })
-  @IsOptional()
-  @IsString({ message: 'Заметка должна быть строкой' })
-  @Length(1, 500, { message: 'Заметка — до 500 символов' })
-  note?: string | null;
-}
-
-/** Тело `POST …/legs/:legId/passengers` — поставить человека в строку. */
 export class AddTransferPassengerDto {
-  @ApiProperty({
-    description: 'Кого посадить: участник, который идёт',
-    example: '1f0f5a52-…',
-  })
+  @ApiProperty({ description: 'Кого посадить', example: '1f0f5a52-…' })
   @IsUUID('4', { message: 'Нужен корректный UUID участника' })
   userId: string;
-}
 
-/**
- * Тело `PUT …/legs/:legId/passengers/:userId` — место в машине.
- *
- * `carId: null` — «едет строкой, но без машины»: это законное состояние,
- * а не снятие со строки (для него есть `DELETE`).
- */
-export class SeatTransferPassengerDto {
   @ApiProperty({
-    description: 'Машина этой строки. null — оставить без машины',
-    nullable: true,
-    example: 3,
+    description: 'Заявка или сразу едет',
+    enum: TRANSFER_PASSENGER_STATUSES,
+    required: false,
+    default: 'accepted',
   })
   @IsOptional()
-  @IsInt({ message: 'Машина — целое число' })
-  @Min(1, { message: 'Некорректная машина' })
-  carId?: number | null;
+  @IsIn(TRANSFER_PASSENGER_STATUSES, { message: 'Недопустимый статус пассажира' })
+  status?: TransferPassengerStatus;
 }

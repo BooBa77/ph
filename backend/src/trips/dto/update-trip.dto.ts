@@ -103,17 +103,6 @@ export class UpdateTripDto {
   visibility?: TripVisibility;
 
   @ApiProperty({
-    description: 'Где собираются. null — стереть',
-    maxLength: 200,
-    nullable: true,
-    required: false,
-  })
-  @IsOptional()
-  @IsString({ message: 'Место сбора должно быть строкой' })
-  @MaxLength(200, { message: 'Место сбора не должно превышать 200 символов' })
-  meetingPlace?: string | null;
-
-  @ApiProperty({
     description: 'Будет ли гитара',
     required: false,
   })

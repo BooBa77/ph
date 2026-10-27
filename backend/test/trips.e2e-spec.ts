@@ -303,39 +303,32 @@ describe('Походы (e2e)', () => {
     });
 
     /**
-     * Место сбора и «Будет гитара»: два коротких поля, которые человек ищет
-     * глазами в день выхода. Время сбора и текст заброски уехали во вкладку
-     * «Трансфер» и живут не в `trips`.
+     * «Будет гитара» — короткое поле, которое человек ищет глазами в день
+     * выхода. Место сбора убрано 27.10.2026: с новой редакцией «Трансфера»
+     * у каждой карточки перевозки своя точка и своё время, а общее место
+     * стало бы третьим источником правды о выезде.
      */
-    it('место сбора и гитара сохраняются', async () => {
+    it('гитара сохраняется флагом', async () => {
       const response = await createTrip({
-        announcement: 'Со сбором',
-        meetingPlace: 'Иркутск, автовокзал, у первой платформы',
+        announcement: 'С гитарой',
         hasGuitar: true,
       });
 
       expect(response.status).toBe(201);
-      expect(response.body.meetingPlace).toBe(
-        'Иркутск, автовокзал, у первой платформы',
-      );
       expect(response.body.hasGuitar).toBe(true);
 
       // В базе лежит флаг, а не строка «да»: по нему строится карточка
       // и подпись на странице похода.
       const stored = await dataSource.query(
-        'SELECT meeting_place, has_guitar FROM trips WHERE id = $1',
+        'SELECT has_guitar FROM trips WHERE id = $1',
         [response.body.id],
-      );
-      expect(stored[0].meeting_place).toBe(
-        'Иркутск, автовокзал, у первой платформы',
       );
       expect(stored[0].has_guitar).toBe(true);
     });
 
-    it('у похода без сбора поле пустое, а гитары по умолчанию нет', async () => {
-      const response = await createTrip({ announcement: 'Без сбора' });
+    it('гитары по умолчанию нет', async () => {
+      const response = await createTrip({ announcement: 'Без гитары' });
 
-      expect(response.body.meetingPlace).toBeNull();
       expect(response.body.hasGuitar).toBe(false);
     });
 
@@ -345,10 +338,11 @@ describe('Походы (e2e)', () => {
       expect(response.status).toBe(400);
     });
 
-    it('удалённых полей сбора больше нет: время и заброска отбиваются 400-м', async () => {
+    it('удалённых полей сбора больше нет: место, время и заброска отбиваются 400-м', async () => {
       // `forbidNonWhitelisted` не прощает незнакомых полей — это и есть
       // проверка, что колонки убраны не только из ответа, но и из контракта.
       for (const body of [
+        { meetingPlace: 'У вокзала' },
         { meetingAt: '2099-05-05T00:00:00.000Z' },
         { transferText: 'Электричка 6:40' },
       ]) {
@@ -813,32 +807,29 @@ describe('Походы (e2e)', () => {
       expect(untouched.body.id).toBe(created.body.id);
     });
 
-    it('правка меняет место сбора и включает гитару, не трогая соседние поля', async () => {
+    it('правка включает гитару, не трогая соседние поля', async () => {
       const created = await createTrip({
-        meetingPlace: 'Старое место',
         requirementsText: 'Свои кошки',
       });
 
       const changed = await request(app.getHttpServer())
         .patch(`/api/trips/${created.body.id}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ meetingPlace: 'Новое место, у моста', hasGuitar: true })
+        .send({ hasGuitar: true })
         .expect(200);
 
-      // Патч двух полей не трогает соседние: требования остаются как были,
+      // Патч одного поля не трогает соседние: требования остаются как были,
       // а гитара включается отдельным патчем — «выключить» её можно
       // только явным `false`.
-      expect(changed.body.meetingPlace).toBe('Новое место, у моста');
       expect(changed.body.hasGuitar).toBe(true);
       expect(changed.body.requirementsText).toBe('Свои кошки');
 
       const cleared = await request(app.getHttpServer())
         .patch(`/api/trips/${created.body.id}`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .send({ meetingPlace: null, hasGuitar: false })
+        .send({ hasGuitar: false })
         .expect(200);
 
-      expect(cleared.body.meetingPlace).toBeNull();
       expect(cleared.body.hasGuitar).toBe(false);
     });
 

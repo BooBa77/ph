@@ -22,7 +22,6 @@ import { TripMembershipRequest } from './entities/trip-membership-request.entity
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
-import { TripTransferCar } from './entities/trip-transfer-car.entity';
 import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
 import { TripTransferPassenger } from './entities/trip-transfer-passenger.entity';
 import { TripType } from './entities/trip-type.entity';
@@ -69,7 +68,6 @@ import { ObjectsService } from './objects.service';
       TripMealDishExclusion,
       TripRouteElement,
       TripTransferLeg,
-      TripTransferCar,
       TripTransferPassenger,
       TripType,
       TripParticipant,

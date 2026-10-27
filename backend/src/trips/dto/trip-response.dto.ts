@@ -139,13 +139,6 @@ export class TripResponseDto {
   requirementsText: string | null;
 
   @ApiProperty({
-    description: 'Где собираются. null — не указано',
-    example: 'Иркутск, автовокзал, у первой платформы',
-    nullable: true,
-  })
-  meetingPlace: string | null;
-
-  @ApiProperty({
     description: 'Будет ли гитара',
     example: false,
   })
@@ -271,7 +264,6 @@ export class TripResponseDto {
       announcement: trip.announcement,
       routeText: trip.routeText,
       requirementsText: trip.requirementsText,
-      meetingPlace: trip.meetingPlace,
       hasGuitar: trip.hasGuitar,
       visibility: trip.visibility,
       isRecruitmentClosed: trip.isRecruitmentClosed,

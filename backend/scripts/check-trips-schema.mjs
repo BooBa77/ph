@@ -399,105 +399,144 @@ await check(
   [parentId],
 );
 
-// ─── Трансфер: строки, машины, пассажиры ───
+// ─── Трансфер: карточки перемещений и пассажиры ───
 /**
- * Здесь проверяются те же правила, что и в сервисе, но **базой**: вид
- * строки из списка, своя машина только с водителем, наёмная — только
- * с именем, пассажир только из состава, один человек в строке один раз.
- * Плюс два каскада, на которых держится вкладка: удалили машину — пассажир
- * остался без места, но в строке; удалили поход — ушло всё.
+ * Те же правила, что и в сервисе, но **базой**: сторона и способ из списка,
+ * «наше ТС» только с владельцем и только на своём транспорте, цена билета
+ * только у рейсов, общий расход только у своего, «туда-обратно» только
+ * у общих, время отправления обязательно, пассажир только из состава
+ * и один раз в карточке. Плюс каскад: убрали карточку — ушли её пассажиры.
  */
 const legId = (
   await client.query(
-    `INSERT INTO trip_transfer_legs (trip_id, position, from_place, to_place, mode)
-     VALUES ($1, 1, 'Иркутск, автовокзал', 'Олхинское плато', 'car')
+    `INSERT INTO trip_transfer_legs
+       (trip_id, direction, position, departs_at, from_place, to_place, mode)
+     VALUES ($1, 'there', 1, now(), 'Иркутск, автовокзал', 'Олхинское плато', 'car')
      RETURNING id`,
     [tripId],
   )
 ).rows[0].id;
 
 await check(
-  'трансфер: вид строки вне списка запрещён',
+  'трансфер: способ доставки вне списка запрещён',
   'fail',
   `UPDATE trip_transfer_legs SET mode = 'вертолёт' WHERE id = $1`,
   [legId],
 );
 
 await check(
-  'трансфер: своя машина без водителя из состава запрещена',
+  'трансфер: сторона кроме «туда» и «обратно» запрещена',
   'fail',
-  `INSERT INTO trip_transfer_cars (trip_id, leg_id, ownership, seats)
-   VALUES ($1, $2, 'own', 4)`,
-  [tripId, legId],
+  `UPDATE trip_transfer_legs SET direction = 'вперёд' WHERE id = $1`,
+  [legId],
 );
 
 await check(
-  'трансфер: наёмная машина без имени водителя запрещена',
+  'трансфер: время отправления обязательно',
   'fail',
-  `INSERT INTO trip_transfer_cars (trip_id, leg_id, ownership, seats)
-   VALUES ($1, $2, 'hired', 4)`,
-  [tripId, legId],
+  `UPDATE trip_transfer_legs SET departs_at = NULL WHERE id = $1`,
+  [legId],
 );
 
 await check(
-  'трансфер: мест ноль запрещено',
+  'трансфер: «наше ТС» без владельца запрещено',
   'fail',
-  `INSERT INTO trip_transfer_cars
-     (trip_id, leg_id, ownership, driver_name, seats)
-   VALUES ($1, $2, 'hired', 'Сергей', 0)`,
-  [tripId, legId],
+  `UPDATE trip_transfer_legs SET is_own_vehicle = true WHERE id = $1`,
+  [legId],
 );
 
-const ownCarId = (
+await check(
+  'трансфер: у рейса не бывает владельца («наше ТС»)',
+  'fail',
+  `UPDATE trip_transfer_legs
+      SET mode = 'bus', is_own_vehicle = true, owner_user_id = $2
+    WHERE id = $1`,
+  [legId, user1],
+);
+
+await check(
+  'трансфер: цена билета только у рейсов',
+  'fail',
+  `UPDATE trip_transfer_legs
+      SET compensation = 'ticket', compensation_amount_rub = 500
+    WHERE id = $1`,
+  [legId],
+);
+
+await check(
+  'трансфер: общий расход только у своего транспорта',
+  'fail',
+  `INSERT INTO trip_transfer_legs
+     (trip_id, direction, position, departs_at, from_place, to_place, mode, compensation)
+   VALUES ($1, 'there', 2, now(), 'Иркутск', 'Витязь', 'train', 'shared')`,
+  [tripId],
+);
+
+await check(
+  'трансфер: «туда-обратно» только у общих расходов',
+  'fail',
+  `INSERT INTO trip_transfer_legs
+     (trip_id, direction, position, departs_at, from_place, to_place,
+      mode, compensation, compensation_amount_rub, is_round_trip)
+   VALUES ($1, 'there', 3, now(), 'Иркутск', 'Витязь',
+           'bus', 'ticket', 500, true)`,
+  [tripId],
+);
+
+const ownLegId = (
   await client.query(
-    `INSERT INTO trip_transfer_cars
-       (trip_id, leg_id, ownership, driver_user_id, seats)
-     VALUES ($1, $2, 'own', $3, 4) RETURNING id`,
-    [tripId, legId, user1],
+    `INSERT INTO trip_transfer_legs
+       (trip_id, direction, position, departs_at, from_place, to_place,
+        mode, is_own_vehicle, owner_user_id, seats,
+        compensation, compensation_amount_rub, is_round_trip)
+     VALUES ($1, 'back', 1, now(), 'Олхинское плато', 'Иркутск',
+             'car', true, $2, 4, 'shared', 3000, true)
+     RETURNING id`,
+    [tripId, user1],
   )
 ).rows[0].id;
-
-await client.query(
-  `INSERT INTO trip_transfer_cars
-     (trip_id, leg_id, ownership, driver_name, driver_phone, seats)
-   VALUES ($1, $2, 'hired', 'Сергей', '+7 902 111-22-33', 4)`,
-  [tripId, legId],
-);
 
 await check(
   'трансфер: пассажир не из состава похода запрещён',
   'fail',
   `INSERT INTO trip_transfer_passengers (trip_id, leg_id, user_id)
    VALUES ($1, $2, $3)`,
-  [tripId, legId, user2],
+  [tripId, ownLegId, user2],
 );
 
-const passengerId = (
-  await client.query(
-    `INSERT INTO trip_transfer_passengers (trip_id, leg_id, user_id, car_id)
-     VALUES ($1, $2, $3, $4) RETURNING id`,
-    [tripId, legId, user1, ownCarId],
-  )
-).rows[0].id;
+/** Владелец едет первым — на нём и проверяется дубль. */
+await client.query(
+  `INSERT INTO trip_transfer_passengers (trip_id, leg_id, user_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, ownLegId, user1],
+);
 
 await check(
-  'трансфер: второй раз в той же строке запрещён',
+  'трансфер: второй раз в той же карточке запрещён',
   'fail',
   `INSERT INTO trip_transfer_passengers (trip_id, leg_id, user_id)
    VALUES ($1, $2, $3)`,
-  [tripId, legId, user1],
+  [tripId, ownLegId, user1],
 );
 
-await client.query(`DELETE FROM trip_transfer_cars WHERE id = $1`, [ownCarId]);
-const freedSeat = await client.query(
-  `SELECT car_id FROM trip_transfer_passengers WHERE id = $1`,
-  [passengerId],
+await check(
+  'трансфер: статус пассажира вне списка запрещён',
+  'fail',
+  `UPDATE trip_transfer_passengers SET status = 'может быть'
+    WHERE trip_id = $1 AND leg_id = $2`,
+  [tripId, ownLegId],
 );
-const seatFreed = freedSeat.rows[0]?.car_id === null;
-if (!seatFreed) failed += 1;
+
+await client.query(`DELETE FROM trip_transfer_legs WHERE id = $1`, [ownLegId]);
+const orphanPassengers = await client.query(
+  `SELECT count(*)::int AS count FROM trip_transfer_passengers WHERE leg_id = $1`,
+  [ownLegId],
+);
+const legCascadeClean = orphanPassengers.rows[0]?.count === 0;
+if (!legCascadeClean) failed += 1;
 rows.push([
-  seatFreed ? 'ok' : 'МАШИНА НЕ ОТПУСТИЛА',
-  'трансфер: удаление машины освобождает пассажира (SET NULL)',
+  legCascadeClean ? 'ok' : 'ОСТАЛИСЬ ПАССАЖИРЫ',
+  'трансфер: удаление карточки уносит её пассажиров (CASCADE)',
   '',
 ]);
 
@@ -518,7 +557,6 @@ const counts = `
          (SELECT count(*) FROM trip_participant_roles WHERE trip_id = $1)::int AS roles,
          (SELECT count(*) FROM trip_types WHERE trip_id = $1)::int AS types,
          (SELECT count(*) FROM trip_transfer_legs WHERE trip_id = $1)::int AS transfer_legs,
-         (SELECT count(*) FROM trip_transfer_cars WHERE trip_id = $1)::int AS transfer_cars,
          (SELECT count(*) FROM trip_transfer_passengers WHERE trip_id = $1)::int AS transfer_people
 `;
 const before = (await client.query(counts, [tripId, conversationId])).rows[0];
@@ -538,12 +576,11 @@ const cascadeClean =
   after.roles === 0 &&
   after.types === 0 &&
   after.transfer_legs === 0 &&
-  after.transfer_cars === 0 &&
   after.transfer_people === 0;
 if (!cascadeClean) failed += 1;
 rows.push([
   cascadeClean ? 'ok' : 'ОСТАЛСЯ МУСОР',
-  `каскад убрал за походом (было: участников ${before.participants}, чатов ${before.chats}, сообщений ${before.messages}, вариантов ${before.variants}, ролей ${before.roles}, типов ${before.types}, строк трансфера ${before.transfer_legs}, машин ${before.transfer_cars}, пассажиров ${before.transfer_people})`,
+  `каскад убрал за походом (было: участников ${before.participants}, чатов ${before.chats}, сообщений ${before.messages}, вариантов ${before.variants}, ролей ${before.roles}, типов ${before.types}, карточек трансфера ${before.transfer_legs}, пассажиров ${before.transfer_people})`,
   '',
 ]);
 

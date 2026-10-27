@@ -1,4 +1,5 @@
 import {
+  Check,
   Column,
   CreateDateColumn,
   Entity,
@@ -9,40 +10,42 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+import { sqlValues } from '../../users/sport-experience.types';
+import {
+  TRANSFER_PASSENGER_STATUSES,
+  type TransferPassengerStatus,
+} from '../trip-transfer.types';
 import { TripParticipant } from './trip-participant.entity';
-import { TripTransferCar } from './trip-transfer-car.entity';
 import { TripTransferLeg } from './trip-transfer-leg.entity';
 
 /**
- * Пассажир строки заброски — «кто едет этой строкой».
+ * Пассажир карточки перемещения.
  *
- * **Сначала строка, потом машина.** Человек едет заброской, а место
- * в машине получает после: `car_id = NULL` — «едет, но места нет».
- * На экране это подписано «без машины» и это работа для людей, а не
- * ошибка данных: первого попавшегося не подставляем (`gear-distribution.md`
- * §6.6). У поезда и автобуса машины нет вовсе, а пассажиры есть — поэтому
- * принадлежность строке, а не машине.
+ * **Заявка есть только у чужого ТС.** На общественном транспорте (автобус,
+ * ж/д, корабль, вертолёт) человек «присоединяется» сразу: купил билет —
+ * едешь, спрашивать некого. На личном ТС место даёт владелец, поэтому
+ * человек **просится** (`requested`), а владелец принимает или отклоняет.
+ * Отклонение — удаление строки, а не статус: «отказ» не история, а решение
+ * (то же правило, что у заявок в состав похода).
  *
- * **Уникальность `(leg_id, user_id)`**: в одной строке человек едет один
- * раз. В разных строках — сколько нужно: «туда» машиной, «обратно» поездом.
+ * **Уйти можно самому в любом статусе** — и отменить свою заявку, и сойти
+ * с уже принятой поездки. Это и есть «пассажир может отказаться».
  *
- * Внешние ключи:
+ * Уникальность `(leg_id, user_id)`: в одной карточке человек едет один раз.
+ * В разных карточках — сколько нужно: в одной машине туда, в другой обратно.
  *
- * - `(trip_id, leg_id) → trip_transfer_legs` — `CASCADE`: убрали строку,
- *   ушли её пассажиры (машины уходят тем же путём);
- * - `(trip_id, user_id) → trip_participants` — `CASCADE`: ушёл из состава,
- *   ушёл из всех строк (правила §6 без кода);
- * - `car_id → trip_transfer_cars` — `SET NULL`: убрали машину, её пассажиры
- *   остаются в строке нераспределёнными. Одиночный ключ, а не составной
- *   `(leg_id, car_id)`: `ON DELETE SET NULL` обнулил бы и `leg_id`, а он
- *   `NOT NULL`; что машина из этой же строки, проверяет сервис (400).
+ * Внешние ключи — на пару `(trip_id, …)`: пассажир не из чужой карточки
+ * и не из чужого похода. Ушёл из состава — его строки уходят каскадом.
  */
 @Entity('trip_transfer_passengers')
 @Index('UQ_trip_transfer_passengers_leg_user', ['legId', 'userId'], {
   unique: true,
 })
-@Index('IDX_trip_transfer_passengers_car', ['carId'])
 @Index('IDX_trip_transfer_passengers_trip', ['tripId', 'id'])
+@Check(
+  'chk_trip_transfer_passengers_status',
+  `"status" IN (${sqlValues(TRANSFER_PASSENGER_STATUSES)})`,
+)
 export class TripTransferPassenger {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: string;
@@ -56,9 +59,9 @@ export class TripTransferPassenger {
   @Column({ name: 'user_id', type: 'uuid' })
   userId: string;
 
-  /** Место в машине. `NULL` — едет строкой, но ещё не распределён. */
-  @Column({ name: 'car_id', type: 'bigint', nullable: true })
-  carId: string | null;
+  /** `requested` — просится, `accepted` — едет. */
+  @Column({ type: 'varchar', length: 20, default: 'accepted' })
+  status: TransferPassengerStatus;
 
   @ManyToOne(() => TripTransferLeg, { onDelete: 'CASCADE' })
   @JoinColumn([
@@ -81,13 +84,6 @@ export class TripTransferPassenger {
     { name: 'user_id', referencedColumnName: 'userId' },
   ])
   member: TripParticipant;
-
-  @ManyToOne(() => TripTransferCar, { onDelete: 'SET NULL', nullable: true })
-  @JoinColumn({
-    name: 'car_id',
-    foreignKeyConstraintName: 'FK_trip_transfer_passengers_car',
-  })
-  car: TripTransferCar | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
