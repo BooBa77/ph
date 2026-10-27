@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, In, IsNull } from 'typeorm';
 
 import {
   CreateVehicleDto,
@@ -13,6 +13,7 @@ import {
   VehicleListDto,
 } from './dto/vehicle.dto';
 import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
+import { Trip } from './entities/trip.entity';
 import { Vehicle } from './entities/vehicle.entity';
 
 /**
@@ -23,9 +24,10 @@ import { Vehicle } from './entities/vehicle.entity';
  * в теле нет, чужой транспорт не находится (404 — перебирать id чужих
  * каталогов нечего).
  *
- * **Транспорт, который уже едет в походе, не удаляется** — 409: иначе
- * карточка потеряла бы то, на чём люди договорились ехать. Сначала
- * карточку убирают из похода, потом транспорт из каталога.
+ * **Транспорт, который едет в незакрытом походе, не удаляется** — 409:
+ * иначе карточка потеряла бы то, на чём люди договорились ехать. Когда
+ * поход закрыт (записан факт возвращения или он отменён), техника
+ * освобождается: ссылка в карточке снимается, каталог чистится.
  */
 @Injectable()
 export class VehiclesService {
@@ -74,17 +76,55 @@ export class VehiclesService {
     return VehicleDto.from(await manager.save(vehicle));
   }
 
+  /**
+   * Убрать транспорт из каталога.
+   *
+   * **409 — только пока поход не закрыт** (28.10.2026). Закрытый поход
+   * технику отпускает: вернулись (или поход отменён) — машина больше
+   * не в работе, и держать её в каталоге занятой незачем. Ссылка в карточке
+   * закрытого похода снимается, а сама карточка остаётся: поездка была,
+   * и стирать её из истории из-за уборки каталога неправильно.
+   *
+   * «Закрыт» здесь — тот же признак, что и везде: записан факт возвращения
+   * (`actual_finished_at`) или поход отменён (`cancelled_at`). Отдельного
+   * статуса «завершён» у похода нет.
+   */
   async remove(userId: string, id: number): Promise<void> {
     const manager = this.dataSource.manager;
     const vehicle = await this.findMine(userId, id);
 
-    const used = await manager.count(TripTransferLeg, {
+    const legs = await manager.find(TripTransferLeg, {
       where: { vehicleId: vehicle.id },
     });
 
-    if (used > 0) {
-      throw new ConflictException(
-        'Этот транспорт уже едет в походе — сначала уберите карточку из «Трансфера»',
+    if (legs.length > 0) {
+      const tripIds = [...new Set(legs.map((leg) => leg.tripId))];
+
+      /**
+       * Походы спрашиваем отдельным запросом, а не join-ом от карточки:
+       * у карточки `trip_id` занят ещё и составным ключом владельца, и
+       * TypeORM на такой связке строит запрос с чужим алиасом (`schema:log`
+       * его не показывает — он о схеме, а не о запросах).
+       */
+      const openTrips = await manager.count(Trip, {
+        where: {
+          id: In(tripIds),
+          actualFinishedAt: IsNull(),
+          cancelledAt: IsNull(),
+        },
+      });
+
+      if (openTrips > 0) {
+        throw new ConflictException(
+          'Этот транспорт едет в незакрытом походе — сначала уберите карточку из «Трансфера» или отметьте возвращение',
+        );
+      }
+
+      // Походы закрыты — техника свободна: снимаем ссылку, потом удаляем.
+      await manager.update(
+        TripTransferLeg,
+        { vehicleId: vehicle.id },
+        { vehicleId: null },
       );
     }
 

@@ -24,9 +24,8 @@ import { Trip } from './entities/trip.entity';
 import {
   TRANSFER_PERSONAL_MODES,
   TRANSFER_PUBLIC_MODES,
-  TRANSFER_ROUND_TRIP_COMPENSATIONS,
   TRANSFER_TAB,
-  VEHICLE_KIND_TO_MODE,
+  transferModeOfVehicle,
   type TransferCompensation,
   type TransferDirection,
   type TransferMode,
@@ -61,8 +60,15 @@ import { TripsService } from './trips.service';
  *
  * `free` — безвозмездно; `ticket` — цена билета (только рейсы);
  * `shared` — общий расход; `sharedPerPassenger` — общий расход на пассажиров.
- * У общих расходов бывает флаг «туда-обратно». Проверки дублируют CHECK-и
- * базы, но с понятным текстом: 400, а не 500 от ограничения.
+ * Проверки дублируют CHECK-и базы, но с понятным текстом: 400, а не 500
+ * от ограничения.
+ *
+ * ## Заброски
+ *
+ * Заброска — цепочка этапов из тех же карточек (`chain_id` + `stage`),
+ * отдельной сущности у неё нет (28.10.2026). Цепочка живёт **в одной
+ * стороне**; номер этапа сервис считает сам по времени отправления, потому
+ * что порядок задаёт дата, а не тип транспорта.
  */
 @Injectable()
 export class TripTransferService {
@@ -105,7 +111,7 @@ export class TripTransferService {
     const canEditTab = await this.trips.canEditTab(userId, trip, TRANSFER_TAB);
 
     /**
-     * Транспорт из каталога: способ, места и владелец берутся оттуда.
+     * Транспорт из каталога: тип, места и владелец берутся оттуда.
      * Это и есть «выбором из имеющихся, а не заполнением полей».
      */
     const vehicle =
@@ -113,7 +119,7 @@ export class TripTransferService {
         ? await this.vehicleOrFail(manager, userId, dto.vehicleId)
         : null;
 
-    const mode = vehicle ? VEHICLE_KIND_TO_MODE[vehicle.kind] : dto.mode;
+    const mode = vehicle ? this.vehicleMode(vehicle) : dto.mode;
 
     const { isOwnVehicle, ownerUserId } = vehicle
       ? { isOwnVehicle: true, ownerUserId: userId }
@@ -125,9 +131,15 @@ export class TripTransferService {
 
     const amount =
       dto.compensation === 'free' ? null : (dto.compensationAmountRub ?? null);
-    const isRoundTrip = dto.isRoundTrip ?? false;
 
-    this.assertCompensation(mode, dto.compensation, amount, isRoundTrip);
+    this.assertCompensation(mode, dto.compensation, amount);
+
+    const chainId = await this.resolveChain(
+      manager,
+      trip.id,
+      dto.chainId,
+      dto.direction,
+    );
 
     const last = await manager.findOne(TripTransferLeg, {
       where: { tripId: trip.id, direction: dto.direction },
@@ -139,6 +151,13 @@ export class TripTransferService {
         tripId: trip.id,
         direction: dto.direction,
         position: (last?.position ?? 0) + 1,
+        chainId,
+        /**
+         * Номер этапа обязателен вместе с цепочкой (CHECK в базе), а
+         * настоящий считается ниже — по времени отправления. Единица здесь
+         * живёт один запрос и наружу не выходит.
+         */
+        stage: chainId === null ? null : 1,
         mode,
         departsAt: new Date(dto.departsAt),
         fromPlace: this.place(dto.fromPlace, 'Откуда'),
@@ -149,10 +168,13 @@ export class TripTransferService {
         vehicleId: vehicle?.id ?? null,
         compensation: dto.compensation,
         compensationAmountRub: amount,
-        isRoundTrip,
+        isRoundTrip: dto.isRoundTrip ?? false,
         note: this.note(dto.note),
       }),
     );
+
+    /** Порядок в цепочке задаёт дата: новый этап мог встать в её середину. */
+    if (chainId !== null) await this.recomputeStages(manager, trip.id, chainId);
 
     // Владелец едет в своём ТС: место он занимает, и «присоединяться»
     // к собственной машине ему нечего.
@@ -202,28 +224,26 @@ export class TripTransferService {
 
     const mode = dto.mode ?? leg.mode;
 
-    /** Выбрали транспорт из каталога — способ и места берутся оттуда. */
+    /** Выбрали транспорт из каталога — тип и места берутся оттуда. */
     const vehicle =
       dto.vehicleId != null
         ? await this.vehicleOrFail(manager, userId, dto.vehicleId)
         : null;
+
+    const effectiveMode = vehicle ? this.vehicleMode(vehicle) : mode;
 
     let isOwnVehicle = vehicle !== null ? true : leg.isOwnVehicle;
     let ownerUserId = vehicle !== null ? userId : leg.ownerUserId;
     let vehicleId =
       dto.vehicleId === undefined ? leg.vehicleId : (vehicle?.id ?? null);
     let seats = this.seatsFor(
-      vehicle ? VEHICLE_KIND_TO_MODE[vehicle.kind] : (dto.mode ?? leg.mode),
+      effectiveMode,
       vehicle !== null
         ? vehicle.seats
         : dto.seats !== undefined
           ? dto.seats
           : leg.seats,
     );
-
-    const effectiveMode = vehicle
-      ? VEHICLE_KIND_TO_MODE[vehicle.kind]
-      : mode;
 
     /**
      * Флаг и владельца меняет только право вкладки. Владелец своей карточки
@@ -276,24 +296,52 @@ export class TripTransferService {
         : leg.compensationAmountRub;
     const isRoundTrip = dto.isRoundTrip ?? leg.isRoundTrip;
 
+    /**
+     * Зеркало второй парой не бывает: оно пришло из исходной карточки,
+     * и флаг на нём означал бы «зеркало зеркала». Правят исходную.
+     */
+    if (isRoundTrip && leg.roundTripSourceId !== null) {
+      throw new BadRequestException(
+        'Это обратная карточка пары «туда-обратно» — флаг ставится на исходной, а не на зеркале',
+      );
+    }
+
     this.assertCompensation(
       effectiveMode,
       compensation,
       compensation === 'free' ? null : amount,
-      isRoundTrip,
     );
+
+    const direction = dto.direction ?? leg.direction;
+
+    /**
+     * Этап заброски сторону не меняет: цепочка живёт в одной стороне,
+     * и перенос молча отвязал бы этап. Сказать прямо честнее, чем
+     * переставлять заброску за спиной человека.
+     */
+    if (direction !== leg.direction && leg.chainId !== null) {
+      throw new BadRequestException(
+        'Карточка в заброске — сначала уберите её из цепочки, потом меняйте сторону',
+      );
+    }
+
+    const previousChainId = leg.chainId;
+    const chainId =
+      dto.chainId === undefined
+        ? leg.chainId
+        : await this.resolveChain(manager, trip.id, dto.chainId, direction);
 
     /**
      * Сторона меняется — карточка встаёт в конец новой области: порядок
      * в «Обратно» свой, и сохранять номер из «Туда» значило бы поставить
      * её в середину чужого списка.
      */
-    if (dto.direction !== undefined && dto.direction !== leg.direction) {
+    if (direction !== leg.direction) {
       const last = await manager.findOne(TripTransferLeg, {
-        where: { tripId: trip.id, direction: dto.direction },
+        where: { tripId: trip.id, direction },
         order: { position: 'DESC', id: 'DESC' },
       });
-      leg.direction = dto.direction;
+      leg.direction = direction;
       leg.position = (last?.position ?? 0) + 1;
     }
 
@@ -305,12 +353,26 @@ export class TripTransferService {
     leg.ownerUserId = isOwnVehicle ? ownerUserId : null;
     leg.seats = seats;
     leg.vehicleId = vehicleId;
+    leg.chainId = chainId;
+    if (chainId === null) leg.stage = null;
+    else if (leg.stage === null) leg.stage = 1;
     leg.compensation = compensation;
     leg.compensationAmountRub = compensation === 'free' ? null : amount;
     leg.isRoundTrip = isRoundTrip;
     if (dto.note !== undefined) leg.note = this.note(dto.note);
 
     await manager.save(leg);
+
+    /**
+     * Номер этапа — производное: переставили время или перевели карточку
+     * в другую цепочку, и обе нумеруются заново.
+     */
+    if (leg.chainId !== null) {
+      await this.recomputeStages(manager, trip.id, leg.chainId);
+    }
+    if (previousChainId !== null && previousChainId !== leg.chainId) {
+      await this.recomputeStages(manager, trip.id, previousChainId);
+    }
 
     // Сменился владелец — он должен оказаться пассажиром своей карточки.
     if (leg.ownerUserId !== null) {
@@ -336,7 +398,12 @@ export class TripTransferService {
     const leg = await this.legOrFail(manager, trip.id, legId);
     await this.assertCanManageLeg(trip, userId, leg);
 
+    const chainId = leg.chainId;
+
     await manager.delete(TripTransferLeg, { id: leg.id });
+
+    // Ушёл этап — оставшиеся перенумеровываются: дырок в цепочке не бывает.
+    if (chainId !== null) await this.recomputeStages(manager, trip.id, chainId);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -511,9 +578,13 @@ export class TripTransferService {
   /**
    * Зеркало пары «туда-обратно»: обратная карточка с теми же людьми.
    *
-   * Точки меняются местами, способ, места, владелец, техника и компенсация
+   * Точки меняются местами, тип, места, владелец, техника и компенсация
    * копируются. Время — тоже: обратный выезд человек поправит сам, если
    * он другой, а выдумывать дату за него не наше дело.
+   *
+   * **В заброску зеркало не входит** (`chainId: null`): заказчик сказал
+   * «зеркалится ровно один этап», и цепочку в обратную сторону никто
+   * не заводил — она собирается там сама, своими карточками.
    */
   private async createMirror(
     manager: EntityManager,
@@ -533,6 +604,8 @@ export class TripTransferService {
         tripId,
         direction,
         position: (last?.position ?? 0) + 1,
+        chainId: null,
+        stage: null,
         mode: source.mode,
         departsAt: source.departsAt,
         fromPlace: source.toPlace,
@@ -638,12 +711,99 @@ export class TripTransferService {
   }
 
   /**
-   * Места у рейсов и велосипеда не спрашиваем: у автобуса и поезда место
-   * даёт билет, у велосипеда его нет вовсе.
+   * Места у рейсов не спрашиваем: у автобуса и поезда место даёт билет,
+   * а не салон. У остального — как указали; `NULL` значит «не знаю»,
+   * и потолка тогда нет.
    */
   private seatsFor(mode: TransferMode, seats: number | null): number | null {
-    return this.isPublicMode(mode) || mode === 'bicycle' ? null : seats;
+    return this.isPublicMode(mode) ? null : seats;
   }
+
+  // ───────────────────────────── цепочки ─────────────────────────────
+
+  /**
+   * Тип транспорта выбранной техники — или 400.
+   *
+   * Велосипед в каталоге остался, но этапом заброски быть перестал
+   * (28.10.2026): группу с вещами он не возит. Отбиваем с текстом, а не
+   * `undefined` в поле «тип».
+   */
+  private vehicleMode(vehicle: Vehicle): TransferMode {
+    const mode = transferModeOfVehicle(vehicle.kind);
+
+    if (mode === null) {
+      throw new BadRequestException(
+        'Велосипед в «Трансфере» не выбирают: он не возит группу. В «Снаряжении» он остаётся',
+      );
+    }
+
+    return mode;
+  }
+
+  /**
+   * Проверка заброски: `null` — карточка сама по себе, uuid — цепочка.
+   *
+   * Id новой цепочки придумывает клиент, поэтому отдельной ручки «создать
+   * заброску» нет. Присоединиться к чужой цепочке — только в той же стороне:
+   * этапы одной заброски все «туда» или все «обратно».
+   */
+  private async resolveChain(
+    manager: EntityManager,
+    tripId: string,
+    chainId: string | null | undefined,
+    direction: TransferDirection,
+  ): Promise<string | null> {
+    if (chainId === null || chainId === undefined) return null;
+
+    const sibling = await manager.findOne(TripTransferLeg, {
+      where: { tripId, chainId },
+      order: { id: 'ASC' },
+    });
+
+    if (sibling !== null && sibling.direction !== direction) {
+      throw new BadRequestException(
+        'Заброска живёт в одной стороне: её этапы — все «туда» или все «обратно»',
+      );
+    }
+
+    return chainId;
+  }
+
+  /**
+   * Перенумеровать цепочку по времени отправления.
+   *
+   * `stage` — производное, а не ввод: заказчик сказал, что порядок задаёт
+   * дата, и лодка может стоять и между конями, и после них. Поэтому номер
+   * считается здесь при каждой записи и разойтись с порядком не может.
+   */
+  private async recomputeStages(
+    manager: EntityManager,
+    tripId: string,
+    chainId: string,
+  ): Promise<void> {
+    const stages = await manager.find(TripTransferLeg, {
+      where: { tripId, chainId },
+      order: { departsAt: 'ASC', id: 'ASC' },
+    });
+
+    let index = 0;
+
+    for (const leg of stages) {
+      index += 1;
+      if (leg.stage === index) continue;
+
+      leg.stage = index;
+      await manager.save(leg);
+    }
+  }
+
+  /** Время, по которому цепочка встаёт в общий порядок: её первый этап. */
+  private anchorOf(leg: TripTransferLeg, anchors: Map<string, number>): number {
+    if (leg.chainId === null) return leg.departsAt.getTime();
+
+    return anchors.get(leg.chainId) ?? leg.departsAt.getTime();
+  }
+
   // ───────────────────────────── сборка ответа ─────────────────────────────
 
   /**
@@ -685,7 +845,35 @@ export class TripTransferService {
       passengersByLeg.set(passenger.legId, list);
     }
 
-    const legDtos = legs.map((leg): TransferLegDto => {
+    /**
+     * **Заброска идёт одним блоком.** Этапы цепочки упорядочены по времени,
+     * но между ними могли вклиниться одиночные карточки других людей —
+     * группировка по якорю (первому этапу) держит цепочку вместе и при этом
+     * не ломает общий порядок по времени.
+     */
+    const anchors = new Map<string, number>();
+    for (const leg of legs) {
+      if (leg.chainId === null) continue;
+      const time = leg.departsAt.getTime();
+      const anchor = anchors.get(leg.chainId);
+      if (anchor === undefined || time < anchor) anchors.set(leg.chainId, time);
+    }
+
+    const ordered = [...legs].sort((left, right) => {
+      if (left.direction !== right.direction) {
+        return left.direction === 'there' ? -1 : 1;
+      }
+
+      const byTime = this.anchorOf(left, anchors) - this.anchorOf(right, anchors);
+      if (byTime !== 0) return byTime;
+
+      const byStage = (left.stage ?? 0) - (right.stage ?? 0);
+      if (byStage !== 0) return byStage;
+
+      return Number(left.id) - Number(right.id);
+    });
+
+    const legDtos = ordered.map((leg): TransferLegDto => {
       const inLeg = passengersByLeg.get(leg.id) ?? [];
       const accepted = inLeg.filter((person) => person.status === 'accepted');
       const mine = inLeg.find((person) => person.userId === userId) ?? null;
@@ -701,8 +889,10 @@ export class TripTransferService {
         id: leg.id,
         direction: leg.direction,
         position: leg.position,
+        chainId: leg.chainId,
+        stage: leg.stage,
         mode: leg.vehicle
-          ? VEHICLE_KIND_TO_MODE[leg.vehicle.kind]
+          ? (transferModeOfVehicle(leg.vehicle.kind) ?? leg.mode)
           : leg.mode,
         departsAt: leg.departsAt.toISOString(),
         fromPlace: leg.fromPlace,
@@ -713,6 +903,7 @@ export class TripTransferService {
         seats: leg.vehicle?.seats ?? leg.seats,
         vehicleId: leg.vehicleId,
         vehicleTitle: leg.vehicle?.brand ?? null,
+        vehiclePlate: leg.vehicle?.plate ?? null,
         sourceLegId: leg.roundTripSourceId,
         occupied: accepted.length,
         compensation: leg.compensation,
@@ -794,7 +985,6 @@ export class TripTransferService {
     mode: TransferMode,
     compensation: TransferCompensation,
     amount: number | null,
-    isRoundTrip: boolean,
   ): void {
     const ticketAllowed = this.isPublicMode(mode);
 
@@ -813,15 +1003,11 @@ export class TripTransferService {
       );
     }
 
-    if (
-      isRoundTrip &&
-      !(TRANSFER_ROUND_TRIP_COMPENSATIONS as readonly string[]).includes(compensation)
-    ) {
-      throw new BadRequestException(
-        '«Туда-обратно» бывает только у общих расходов',
-      );
-    }
-
+    /**
+     * «Туда-обратно» здесь не проверяется вовсе: флаг про трансфер и про
+     * деньги одновременно, но не про вид оплаты (28.10.2026). Раньше он
+     * разрешался только у общих расходов, и пара без денег его теряла.
+     */
     if (compensation === 'free') return;
 
     if (amount === null || amount <= 0) {

@@ -53,14 +53,24 @@ import { Trip } from './trip.entity';
  *
  * **Компенсация** (`compensation`): безвозмездно, цена билета, общий расход,
  * общий расход на пассажиров. У рейсов бывает только «цена билета»,
- * у своего транспорта — только общие расходы; у общих есть флаг
- * «туда-обратно» (бензин платят один раз, а не в каждой стороне).
+ * у своего транспорта — только общие расходы.
+ *
+ * **Заброска — это `chain_id` и `stage`** (28.10.2026). Отдельной таблицы
+ * у заброски нет: заказчик сказал «этапы — те же карточки, не новая
+ * сущность», и права, пассажиры, места и деньги у этапа остались прежними.
+ * Цепочка собирает «авто → кони → лодка»; порядок этапов задаёт
+ * `departs_at`, а `stage` сервис перенумеровывает сам, поэтому номер
+ * и порядок не расходятся.
+ *
+ * **`is_round_trip` больше не привязан к компенсации** (28.10.2026): флаг
+ * про трансфер и про деньги одновременно, а не про вид оплаты.
  */
 @Entity('trip_transfer_legs')
 @Index('UQ_trip_transfer_legs_trip', ['tripId', 'id'], { unique: true })
 @Index('IDX_trip_transfer_legs_order', ['tripId', 'direction', 'position', 'id'])
 @Index('IDX_trip_transfer_legs_vehicle', ['vehicleId'])
 @Index('IDX_trip_transfer_legs_round_trip', ['roundTripSourceId'])
+@Index('IDX_trip_transfer_legs_chain', ['tripId', 'chainId', 'stage'])
 @Check(
   'chk_trip_transfer_legs_direction',
   `"direction" IN (${sqlValues(TRANSFER_DIRECTIONS)})`,
@@ -87,9 +97,10 @@ import { Trip } from './trip.entity';
   'chk_trip_transfer_legs_shared',
   `"compensation" NOT IN ('shared', 'sharedPerPassenger') OR "mode" NOT IN (${sqlValues(TRANSFER_PUBLIC_MODES)})`,
 )
+@Check('chk_trip_transfer_legs_stage', '"stage" IS NULL OR "stage" >= 1')
 @Check(
-  'chk_trip_transfer_legs_round_trip',
-  `"is_round_trip" = false OR "compensation" IN ('shared', 'sharedPerPassenger')`,
+  'chk_trip_transfer_legs_chain',
+  `("chain_id" IS NULL) = ("stage" IS NULL)`,
 )
 @Check('chk_trip_transfer_legs_seats', '"seats" IS NULL OR "seats" > 0')
 @Check(
@@ -117,6 +128,27 @@ export class TripTransferLeg {
   /** Порядок внутри стороны: «сначала машины, потом автобус». */
   @Column({ type: 'int', default: 1 })
   position: number;
+
+  /**
+   * Заброска, к которой относится этап. `NULL` — карточка живёт сама.
+   *
+   * Отдельной таблицы нет: цепочка — это просто одинаковый `chain_id`
+   * у нескольких карточек одной стороны. Id присылает клиент (uuid), когда
+   * человек говорит «новая заброска», — так одна ручка и заводит цепочку,
+   * и добавляет в неё этап, без второго запроса.
+   */
+  @Column({ name: 'chain_id', type: 'uuid', nullable: true })
+  chainId: string | null;
+
+  /**
+   * Номер этапа внутри заброски, с единицы. `NULL` — карточка не в цепочке.
+   *
+   * **Производное, а не ввод**: сервис перенумеровывает цепочку при каждой
+   * записи по `departs_at`. Заказчик: порядок задаёт дата отправления,
+   * а не тип транспорта, — лодка может стоять и между конями, и после них.
+   */
+  @Column({ type: 'int', nullable: true })
+  stage: number | null;
 
   /** Время отправления — обязательное. */
   @Column({ name: 'departs_at', type: 'timestamptz' })
@@ -199,7 +231,13 @@ export class TripTransferLeg {
   @Column({ name: 'compensation_amount_rub', type: 'int', nullable: true })
   compensationAmountRub: number | null;
 
-  /** «Туда-обратно» — только у общих расходов. */
+  /**
+   * «Туда-обратно»: карточка — начало пары, зеркало встанет в другую сторону.
+   *
+   * От вида компенсации не зависит (28.10.2026). Ставится только на исходной
+   * карточке: у зеркала флаг всегда `false`, и включать его там нельзя —
+   * иначе пара зеркалилась бы второй раз.
+   */
   @Column({ name: 'is_round_trip', type: 'boolean', default: false })
   isRoundTrip: boolean;
 

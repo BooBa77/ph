@@ -79,7 +79,22 @@ export class TransferLegDto {
   position: number;
 
   @ApiProperty({
-    description: 'Способ доставки',
+    description:
+      'Заброска, к которой относится этап. null — карточка живёт сама',
+    nullable: true,
+  })
+  chainId: string | null;
+
+  @ApiProperty({
+    description:
+      'Номер этапа в заброске с 1. Считается по времени отправления, а не задаётся',
+    nullable: true,
+    example: 2,
+  })
+  stage: number | null;
+
+  @ApiProperty({
+    description: 'Тип транспорта',
     enum: TRANSFER_MODES,
     example: 'car',
   })
@@ -130,6 +145,13 @@ export class TransferLegDto {
   vehicleTitle: string | null;
 
   @ApiProperty({
+    description: 'Госномер транспорта из каталога — чтобы найти машину',
+    nullable: true,
+    example: 'А123ВС38',
+  })
+  vehiclePlate: string | null;
+
+  @ApiProperty({
     description:
       'Исходная карточка пары «туда-обратно». null — карточка живёт сама; заполнено — это зеркало',
     nullable: true,
@@ -154,7 +176,8 @@ export class TransferLegDto {
   compensationAmountRub: number | null;
 
   @ApiProperty({
-    description: '«Туда-обратно»: расход один на две стороны',
+    description:
+      '«Туда-обратно»: карточка — начало пары, зеркало встанет в другую сторону. У зеркала не включается',
     example: false,
   })
   isRoundTrip: boolean;
@@ -214,8 +237,18 @@ export class CreateTransferLegDto {
   @IsIn(TRANSFER_DIRECTIONS, { message: 'Сторона — «туда» или «обратно»' })
   direction: TransferDirection;
 
-  @ApiProperty({ description: 'Способ доставки', enum: TRANSFER_MODES })
-  @IsIn(TRANSFER_MODES, { message: 'Недопустимый способ доставки' })
+  @ApiProperty({
+    description:
+      'Заброска: uuid существующей цепочки, uuid новой (клиент генерирует сам) или null — без заброски',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'У заброски должен быть корректный UUID' })
+  chainId?: string | null;
+
+  @ApiProperty({ description: 'Тип транспорта', enum: TRANSFER_MODES })
+  @IsIn(TRANSFER_MODES, { message: 'Недопустимый тип транспорта' })
   mode: TransferMode;
 
   @ApiProperty({ description: 'Время отправления (ISO)' })
@@ -284,7 +317,8 @@ export class CreateTransferLegDto {
   compensationAmountRub?: number | null;
 
   @ApiProperty({
-    description: '«Туда-обратно»: только у общих расходов',
+    description:
+      '«Туда-обратно»: зеркалит карточку в противоположную сторону. От вида компенсации не зависит',
     required: false,
   })
   @IsOptional()
@@ -312,9 +346,9 @@ export class UpdateTransferLegDto {
   @IsIn(TRANSFER_DIRECTIONS, { message: 'Сторона — «туда» или «обратно»' })
   direction?: TransferDirection;
 
-  @ApiProperty({ description: 'Способ доставки', enum: TRANSFER_MODES, required: false })
+  @ApiProperty({ description: 'Тип транспорта', enum: TRANSFER_MODES, required: false })
   @IsOptional()
-  @IsIn(TRANSFER_MODES, { message: 'Недопустимый способ доставки' })
+  @IsIn(TRANSFER_MODES, { message: 'Недопустимый тип транспорта' })
   mode?: TransferMode;
 
   @ApiProperty({ description: 'Время отправления (ISO)', required: false })
@@ -361,6 +395,16 @@ export class UpdateTransferLegDto {
   @Min(1, { message: 'Некорректный транспорт' })
   vehicleId?: number | null;
 
+  @ApiProperty({
+    description:
+      'Заброска: поля нет — не трогаем, null — выйти из цепочки, uuid — войти или завести',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'У заброски должен быть корректный UUID' })
+  chainId?: string | null;
+
   @ApiProperty({ description: 'Компенсация', enum: TRANSFER_COMPENSATIONS, required: false })
   @IsOptional()
   @IsIn(TRANSFER_COMPENSATIONS, { message: 'Недопустимый вид компенсации' })
@@ -377,7 +421,11 @@ export class UpdateTransferLegDto {
   @Max(10_000_000, { message: 'Слишком большая сумма' })
   compensationAmountRub?: number | null;
 
-  @ApiProperty({ description: '«Туда-обратно»', required: false })
+  @ApiProperty({
+    description:
+      '«Туда-обратно»: включили — зеркало появилось, сняли — ушло. У зеркала включать нельзя',
+    required: false,
+  })
   @IsOptional()
   @IsBoolean({ message: 'Флаг «туда-обратно» — да или нет' })
   isRoundTrip?: boolean;
