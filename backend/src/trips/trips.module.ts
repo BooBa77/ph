@@ -26,6 +26,7 @@ import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
 import { TripTransferPassenger } from './entities/trip-transfer-passenger.entity';
 import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
+import { Vehicle } from './entities/vehicle.entity';
 import { TripsController } from './trips.controller';
 import { TripsService } from './trips.service';
 import { TripMealsController } from './trip-meals.controller';
@@ -33,6 +34,8 @@ import { TripMealsService } from './trip-meals.service';
 import { TripMyMealsController } from './trip-my-meals.controller';
 import { TripTransferController } from './trip-transfer.controller';
 import { TripTransferService } from './trip-transfer.service';
+import { VehiclesController } from './vehicles.controller';
+import { VehiclesService } from './vehicles.service';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
 import { MessageActionsController } from './message-actions.controller';
@@ -69,6 +72,7 @@ import { ObjectsService } from './objects.service';
       TripRouteElement,
       TripTransferLeg,
       TripTransferPassenger,
+      Vehicle,
       TripType,
       TripParticipant,
       TripParticipantRole,
@@ -85,6 +89,7 @@ import { ObjectsService } from './objects.service';
     TripMealsController,
     TripMyMealsController,
     TripTransferController,
+    VehiclesController,
     ObjectsController,
     MessageActionsController,
     ConversationsController,
@@ -93,6 +98,7 @@ import { ObjectsService } from './objects.service';
     TripsService,
     TripMealsService,
     TripTransferService,
+    VehiclesService,
     ObjectsService,
     MessageActionsService,
     ConversationsService,
@@ -101,6 +107,7 @@ import { ObjectsService } from './objects.service';
     TripsService,
     TripMealsService,
     TripTransferService,
+    VehiclesService,
     ObjectsService,
     MessageActionsService,
     ConversationsService,

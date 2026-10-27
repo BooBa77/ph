@@ -213,6 +213,10 @@ describe('Трансфер похода (e2e)', () => {
   afterAll(async () => {
     if (dataSource?.isInitialized) {
       await dataSource.query('DELETE FROM trips WHERE id = $1', [tripId]);
+      await dataSource.query(
+        'DELETE FROM vehicles WHERE owner_user_id = ANY($1::uuid[])',
+        [[organizerId, driverId, memberId]],
+      );
       await dataSource.query('DELETE FROM objects WHERE id = $1', [objectId]);
       await dataSource.query('DELETE FROM roles WHERE code = $1', [
         transferRoleCode,
@@ -304,6 +308,78 @@ describe('Трансфер похода (e2e)', () => {
     expect(legOf(body, busId)?.isOwnVehicle).toBe(false);
     expect(legOf(body, busId)?.ownerUserId).toBeNull();
     expect(legOf(body, busId)?.occupied).toBe(0);
+  });
+
+  it('транспорт выбирают из каталога: способ и места — оттуда', async () => {
+    const created = await request(app.getHttpServer())
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${memberToken}`)
+      .send({ mode: 'car', title: 'Нива', seats: 4, plate: 'А123ВС38' })
+      .expect(201);
+
+    const vehicleId = created.body.id as string;
+    expect(created.body.title).toBe('Нива');
+
+    const list = await request(app.getHttpServer())
+      .get('/api/vehicles')
+      .set('Authorization', `Bearer ${memberToken}`)
+      .expect(200);
+    expect((list.body.vehicles as { id: string }[]).map((row) => row.id)).toContain(
+      vehicleId,
+    );
+
+    // Чужой транспорт в карточку не подставить — его просто нет в каталоге.
+    await request(app.getHttpServer())
+      .post(`/api/trips/${tripId}/transfer/legs`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({
+        direction: 'back',
+        mode: 'car',
+        departsAt: DEPARTS,
+        fromPlace: 'Витязь',
+        toPlace: 'Иркутск',
+        compensation: 'free',
+        vehicleId: Number(vehicleId),
+      })
+      .expect(404);
+
+    // Способ и места присылаем неверные — каталог их перепишет.
+    const body = await createLeg(memberToken, {
+      direction: 'back',
+      mode: 'boat',
+      departsAt: DEPARTS,
+      fromPlace: 'Витязь',
+      toPlace: 'Иркутск',
+      compensation: 'shared',
+      compensationAmountRub: 2000,
+      seats: 9,
+      vehicleId: Number(vehicleId),
+    });
+
+    const leg = body.legs.find((item) => item.vehicleId === vehicleId)!;
+
+    expect(leg.mode).toBe('car');
+    expect(leg.seats).toBe(4);
+    expect(leg.vehicleTitle).toBe('Нива');
+    expect(leg.isOwnVehicle).toBe(true);
+    expect(leg.ownerUserId).toBe(memberId);
+
+    // Транспорт, который уже едет в походе, из каталога не удаляется.
+    await request(app.getHttpServer())
+      .delete(`/api/vehicles/${vehicleId}`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .expect(409);
+
+    // Убрали карточку — транспорт удаляется.
+    await request(app.getHttpServer())
+      .delete(`/api/trips/${tripId}/transfer/legs/${leg.id}`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .delete(`/api/vehicles/${vehicleId}`)
+      .set('Authorization', `Bearer ${memberToken}`)
+      .expect(204);
   });
 
   it('обязательные поля: время, откуда, докуда и способ из списка', async () => {

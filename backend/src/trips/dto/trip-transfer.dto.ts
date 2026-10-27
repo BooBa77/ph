@@ -116,6 +116,19 @@ export class TransferLegDto {
   })
   seats: number | null;
 
+  @ApiProperty({
+    description: 'Транспорт из каталога участника, если выбрали из списка',
+    nullable: true,
+    example: '3',
+  })
+  vehicleId: string | null;
+
+  @ApiProperty({
+    description: 'Название транспорта из каталога: «Нива», «Лодка ПВХ»',
+    nullable: true,
+  })
+  vehicleTitle: string | null;
+
   @ApiProperty({ description: 'Сколько мест занято принятыми пассажирами', example: 3 })
   occupied: number;
 
@@ -236,6 +249,18 @@ export class CreateTransferLegDto {
   @Max(60, { message: 'Больше 60 мест не бывает' })
   seats?: number | null;
 
+  @ApiProperty({
+    description:
+      'Транспорт из моего каталога. Выбрали — способ, места и владелец берутся оттуда',
+    required: false,
+    nullable: true,
+    example: 3,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Транспорт — целое число' })
+  @Min(1, { message: 'Некорректный транспорт' })
+  vehicleId?: number | null;
+
   @ApiProperty({ description: 'Компенсация расходов', enum: TRANSFER_COMPENSATIONS })
   @IsIn(TRANSFER_COMPENSATIONS, { message: 'Недопустимый вид компенсации' })
   compensation: TransferCompensation;
@@ -318,6 +343,16 @@ export class UpdateTransferLegDto {
   @Min(1, { message: 'Мест должно быть хотя бы одно' })
   @Max(60, { message: 'Больше 60 мест не бывает' })
   seats?: number | null;
+
+  @ApiProperty({
+    description: 'Транспорт из моего каталога или null — отвязать',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Транспорт — целое число' })
+  @Min(1, { message: 'Некорректный транспорт' })
+  vehicleId?: number | null;
 
   @ApiProperty({ description: 'Компенсация', enum: TRANSFER_COMPENSATIONS, required: false })
   @IsOptional()

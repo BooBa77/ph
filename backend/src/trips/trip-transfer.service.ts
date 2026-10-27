@@ -19,6 +19,7 @@ import {
 import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
 import { TripTransferPassenger } from './entities/trip-transfer-passenger.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
+import { Vehicle } from './entities/vehicle.entity';
 import { Trip } from './entities/trip.entity';
 import {
   TRANSFER_PERSONAL_MODES,
@@ -100,11 +101,21 @@ export class TripTransferService {
     await this.assertParticipant(manager, trip.id, userId);
 
     const canEditTab = await this.trips.canEditTab(userId, trip, TRANSFER_TAB);
-    const { isOwnVehicle, ownerUserId } = this.resolveOwnership(
-      dto,
-      userId,
-      canEditTab,
-    );
+
+    /**
+     * Транспорт из каталога: способ, места и владелец берутся оттуда.
+     * Это и есть «выбором из имеющихся, а не заполнением полей».
+     */
+    const vehicle =
+      dto.vehicleId != null
+        ? await this.vehicleOrFail(manager, userId, dto.vehicleId)
+        : null;
+
+    const mode = vehicle?.mode ?? dto.mode;
+
+    const { isOwnVehicle, ownerUserId } = vehicle
+      ? { isOwnVehicle: true, ownerUserId: userId }
+      : this.resolveOwnership({ ...dto, mode }, userId, canEditTab);
 
     if (isOwnVehicle) {
       await this.assertTraveler(manager, trip.id, ownerUserId as string);
@@ -114,7 +125,7 @@ export class TripTransferService {
       dto.compensation === 'free' ? null : (dto.compensationAmountRub ?? null);
     const isRoundTrip = dto.isRoundTrip ?? false;
 
-    this.assertCompensation(dto.mode, dto.compensation, amount, isRoundTrip);
+    this.assertCompensation(mode, dto.compensation, amount, isRoundTrip);
 
     const last = await manager.findOne(TripTransferLeg, {
       where: { tripId: trip.id, direction: dto.direction },
@@ -126,13 +137,14 @@ export class TripTransferService {
         tripId: trip.id,
         direction: dto.direction,
         position: (last?.position ?? 0) + 1,
-        mode: dto.mode,
+        mode,
         departsAt: new Date(dto.departsAt),
         fromPlace: this.place(dto.fromPlace, 'Откуда'),
         toPlace: this.place(dto.toPlace, 'Докуда'),
         isOwnVehicle,
         ownerUserId,
-        seats: dto.seats ?? null,
+        seats: vehicle ? vehicle.seats : (dto.seats ?? null),
+        vehicleId: vehicle?.id ?? null,
         compensation: dto.compensation,
         compensationAmountRub: amount,
         isRoundTrip,
@@ -182,8 +194,24 @@ export class TripTransferService {
 
     const mode = dto.mode ?? leg.mode;
 
-    let isOwnVehicle = leg.isOwnVehicle;
-    let ownerUserId = leg.ownerUserId;
+    /** Выбрали транспорт из каталога — способ и места берутся оттуда. */
+    const vehicle =
+      dto.vehicleId != null
+        ? await this.vehicleOrFail(manager, userId, dto.vehicleId)
+        : null;
+
+    let isOwnVehicle = vehicle !== null ? true : leg.isOwnVehicle;
+    let ownerUserId = vehicle !== null ? userId : leg.ownerUserId;
+    let vehicleId =
+      dto.vehicleId === undefined ? leg.vehicleId : (vehicle?.id ?? null);
+    let seats =
+      vehicle !== null
+        ? vehicle.seats
+        : dto.seats !== undefined
+          ? dto.seats
+          : leg.seats;
+
+    const effectiveMode = vehicle?.mode ?? mode;
 
     /**
      * Флаг и владельца меняет только право вкладки. Владелец своей карточки
@@ -195,13 +223,13 @@ export class TripTransferService {
     const ownerChanged =
       dto.ownerUserId !== undefined && dto.ownerUserId !== leg.ownerUserId;
 
-    if ((flagChanged || ownerChanged) && !canEditTab) {
+    if ((flagChanged || ownerChanged) && !canEditTab && vehicle === null) {
       throw new ForbiddenException(
         'Флаг «наше ТС» и владельца меняет организатор или тот, кому роль дала вкладку',
       );
     }
 
-    if (flagChanged) {
+    if (vehicle === null && flagChanged) {
       isOwnVehicle = dto.isOwnVehicle === true;
 
       if (isOwnVehicle) {
@@ -210,7 +238,7 @@ export class TripTransferService {
       } else {
         ownerUserId = null;
       }
-    } else if (ownerChanged) {
+    } else if (vehicle === null && ownerChanged) {
       if (!isOwnVehicle) {
         throw new BadRequestException(
           'Владелец бывает только у своего ТС — у рейса его нет',
@@ -223,7 +251,7 @@ export class TripTransferService {
       }
     }
 
-    if (isOwnVehicle && !this.isPersonalMode(mode)) {
+    if (isOwnVehicle && !this.isPersonalMode(effectiveMode)) {
       throw new BadRequestException(
         'У рейса (автобус, ж/д, корабль, вертолёт) не бывает владельца — снимите «наше ТС» или смените способ',
       );
@@ -237,7 +265,7 @@ export class TripTransferService {
     const isRoundTrip = dto.isRoundTrip ?? leg.isRoundTrip;
 
     this.assertCompensation(
-      mode,
+      effectiveMode,
       compensation,
       compensation === 'free' ? null : amount,
       isRoundTrip,
@@ -257,13 +285,14 @@ export class TripTransferService {
       leg.position = (last?.position ?? 0) + 1;
     }
 
-    leg.mode = mode;
+    leg.mode = effectiveMode;
     if (dto.departsAt !== undefined) leg.departsAt = new Date(dto.departsAt);
     if (dto.fromPlace !== undefined) leg.fromPlace = this.place(dto.fromPlace, 'Откуда');
     if (dto.toPlace !== undefined) leg.toPlace = this.place(dto.toPlace, 'Докуда');
     leg.isOwnVehicle = isOwnVehicle;
     leg.ownerUserId = isOwnVehicle ? ownerUserId : null;
-    if (dto.seats !== undefined) leg.seats = dto.seats;
+    leg.seats = seats;
+    leg.vehicleId = vehicleId;
     leg.compensation = compensation;
     leg.compensationAmountRub = compensation === 'free' ? null : amount;
     leg.isRoundTrip = isRoundTrip;
@@ -470,7 +499,7 @@ export class TripTransferService {
     const [legs, passengers, members, canEdit] = await Promise.all([
       manager.find(TripTransferLeg, {
         where: { tripId: trip.id },
-        relations: { owner: { user: true } },
+        relations: { owner: { user: true }, vehicle: true },
         order: { direction: 'ASC', position: 'ASC', id: 'ASC' },
       }),
       manager.find(TripTransferPassenger, {
@@ -510,14 +539,16 @@ export class TripTransferService {
         id: leg.id,
         direction: leg.direction,
         position: leg.position,
-        mode: leg.mode,
+        mode: leg.vehicle?.mode ?? leg.mode,
         departsAt: leg.departsAt.toISOString(),
         fromPlace: leg.fromPlace,
         toPlace: leg.toPlace,
         isOwnVehicle: leg.isOwnVehicle,
         ownerUserId: leg.ownerUserId,
         ownerName: leg.owner?.user?.displayName ?? null,
-        seats: leg.seats,
+        seats: leg.vehicle?.seats ?? leg.seats,
+        vehicleId: leg.vehicleId,
+        vehicleTitle: leg.vehicle?.title ?? null,
         occupied: accepted.length,
         compensation: leg.compensation,
         compensationAmountRub: leg.compensationAmountRub,
@@ -756,6 +787,26 @@ export class TripTransferService {
     if (!leg) throw new NotFoundException('Карточка трансфера не найдена');
 
     return leg;
+  }
+
+  /**
+   * Транспорт из **своего** каталога или 404: чужих в каталоге нет,
+   * и выбирать чужую машину на вкладке нечего.
+   */
+  private async vehicleOrFail(
+    manager: EntityManager,
+    userId: string,
+    vehicleId: number,
+  ): Promise<Vehicle> {
+    const vehicle = await manager.findOne(Vehicle, {
+      where: { id: String(vehicleId), ownerUserId: userId },
+    });
+
+    if (!vehicle) {
+      throw new NotFoundException('Транспорт не найден в вашем каталоге');
+    }
+
+    return vehicle;
   }
 
   private place(value: string, field: string): string {

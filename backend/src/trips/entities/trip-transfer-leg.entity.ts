@@ -22,6 +22,7 @@ import {
   type TransferMode,
 } from '../trip-transfer.types';
 import { TripParticipant } from './trip-participant.entity';
+import { Vehicle } from './vehicle.entity';
 import { Trip } from './trip.entity';
 
 /**
@@ -58,6 +59,7 @@ import { Trip } from './trip.entity';
 @Entity('trip_transfer_legs')
 @Index('UQ_trip_transfer_legs_trip', ['tripId', 'id'], { unique: true })
 @Index('IDX_trip_transfer_legs_order', ['tripId', 'direction', 'position', 'id'])
+@Index('IDX_trip_transfer_legs_vehicle', ['vehicleId'])
 @Check(
   'chk_trip_transfer_legs_direction',
   `"direction" IN (${sqlValues(TRANSFER_DIRECTIONS)})`,
@@ -156,6 +158,21 @@ export class TripTransferLeg {
   /** Всего мест, включая водителя; `NULL` — не указано, потолка нет. */
   @Column({ type: 'int', nullable: true })
   seats: number | null;
+
+  /**
+   * Транспорт из каталога участника (`vehicles`). Выбрали из списка —
+   * способ, места и владелец берутся оттуда, а не заполняются заново.
+   * `RESTRICT`: транспорт, который едет в походе, из каталога не удаляют.
+   */
+  @Column({ name: 'vehicle_id', type: 'bigint', nullable: true })
+  vehicleId: string | null;
+
+  @ManyToOne(() => Vehicle, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({
+    name: 'vehicle_id',
+    foreignKeyConstraintName: 'FK_trip_transfer_legs_vehicle',
+  })
+  vehicle: Vehicle | null;
 
   /** `free` | `ticket` | `shared` | `sharedPerPassenger`. */
   @Column({ type: 'varchar', length: 20, default: 'free' })
