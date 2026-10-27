@@ -22,6 +22,9 @@ import {
   TRANSFER_MODE_LABELS,
   TRANSFER_PUBLIC_MODES,
   TRANSFER_ROUND_TRIP_COMPENSATIONS,
+  VEHICLE_KINDS,
+  VEHICLE_KIND_LABELS,
+  VEHICLE_KIND_TO_MODE,
   type TransferCompensation,
   type TransferDirection,
   type TransferMode,
@@ -30,6 +33,7 @@ import {
   type TripTransferLeg,
   type TripTransferPassenger,
   type Vehicle,
+  type VehicleKind,
 } from '@/types/trips'
 import TripChat from '@/views/trips/TripChat.vue'
 
@@ -356,7 +360,7 @@ function applyVehicle() {
   const vehicle = selectedVehicle.value
   if (!draft || !vehicle) return
 
-  draft.mode = vehicle.mode
+  draft.mode = VEHICLE_KIND_TO_MODE[vehicle.kind]
   draft.seats = vehicle.seats ?? ''
   draft.isOwnVehicle = true
   draft.ownerUserId = meId.value
@@ -367,11 +371,11 @@ function applyVehicle() {
   }
 }
 
-// ─── «Добавить транспорт» прямо в диалоге ───
+// ─── «Добавить технику» прямо в диалоге ───
 
 interface VehicleDraft {
-  title: string
-  mode: TransferMode
+  kind: VehicleKind
+  brand: string
   seats: string | number
   plate: string
 }
@@ -379,24 +383,18 @@ interface VehicleDraft {
 const vehicleDraft = ref<VehicleDraft | null>(null)
 const vehicleError = ref<string | null>(null)
 
-const personalModes = computed(() =>
-  TRANSFER_MODE_GROUPS.flatMap((group) => group.modes).filter(
-    (mode) => !isPublicMode(mode),
-  ),
-)
-
 function openVehicleForm() {
   vehicleError.value = null
-  vehicleDraft.value = { title: '', mode: 'car', seats: '', plate: '' }
+  vehicleDraft.value = { kind: 'car', brand: '', seats: '', plate: '' }
 }
 
 async function saveVehicle() {
   const draft = vehicleDraft.value
   if (!draft) return
 
-  const title = draft.title.trim()
-  if (!title) {
-    vehicleError.value = 'Название нужно — по нему выбирают в списке'
+  const brand = draft.brand.trim()
+  if (!brand) {
+    vehicleError.value = 'Марка нужна — по ней выбирают в списке'
     return
   }
 
@@ -404,14 +402,14 @@ async function saveVehicle() {
   const seats = rawSeats === '' ? null : Number(rawSeats)
 
   if (seats !== null && (!Number.isInteger(seats) || seats < 1)) {
-    vehicleError.value = 'Мест — целое число, и хотя бы одно'
+    vehicleError.value = 'Вместимость — целое число, и хотя бы одно место'
     return
   }
 
   try {
     const created = await createVehicle({
-      mode: draft.mode,
-      title,
+      kind: draft.kind,
+      brand,
       seats,
       plate: draft.plate.trim() || null,
     })
@@ -782,8 +780,9 @@ const driverOptions = computed(() =>
               >
                 <option value="">— не из списка —</option>
                 <option v-for="vehicle in vehicles" :key="vehicle.id" :value="vehicle.id">
-                  {{ vehicle.title }} · {{ TRANSFER_MODE_LABELS[vehicle.mode]
-                  }}<template v-if="vehicle.seats"> · {{ vehicle.seats }} мест</template>
+                  {{ vehicle.brand }} · {{ VEHICLE_KIND_LABELS[vehicle.kind]
+                  }}<template v-if="vehicle.plate"> · {{ vehicle.plate }}</template
+                  ><template v-if="vehicle.seats"> · {{ vehicle.seats }} мест</template>
                 </option>
               </select>
 
@@ -798,7 +797,7 @@ const driverOptions = computed(() =>
             </div>
 
             <p v-if="selectedVehicle" class="text-xs text-muted" data-test="transfer-vehicle-applied">
-              Способ и места — из каталога: {{ TRANSFER_MODE_LABELS[selectedVehicle.mode] }}<template
+              Способ и места — из техники: {{ TRANSFER_MODE_LABELS[VEHICLE_KIND_TO_MODE[selectedVehicle.kind]] }}<template
                 v-if="selectedVehicle.seats"
               >
                 · {{ selectedVehicle.seats }} мест</template
@@ -812,24 +811,24 @@ const driverOptions = computed(() =>
             class="flex flex-col gap-2 rounded-xl border border-dashed border-border p-2"
             data-test="vehicle-form"
           >
-            <input
-              v-model="vehicleDraft.title"
-              type="text"
-              maxlength="100"
-              placeholder="Название: «Нива»"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="vehicle-title-input"
-            />
-
             <select
-              v-model="vehicleDraft.mode"
+              v-model="vehicleDraft.kind"
               class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="vehicle-mode-input"
+              data-test="vehicle-kind-input"
             >
-              <option v-for="mode in personalModes" :key="mode" :value="mode">
-                {{ TRANSFER_MODE_LABELS[mode] }}
+              <option v-for="kind in VEHICLE_KINDS" :key="kind" :value="kind">
+                {{ VEHICLE_KIND_LABELS[kind] }}
               </option>
             </select>
+
+            <input
+              v-model="vehicleDraft.brand"
+              type="text"
+              maxlength="100"
+              placeholder="Марка: «Нива»"
+              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+              data-test="vehicle-brand-input"
+            />
 
             <div class="flex gap-2">
               <input
@@ -845,7 +844,7 @@ const driverOptions = computed(() =>
                 v-model="vehicleDraft.plate"
                 type="text"
                 maxlength="20"
-                placeholder="Номер"
+                placeholder="Госномер"
                 class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
                 data-test="vehicle-plate-input"
               />

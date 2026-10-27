@@ -14,6 +14,17 @@ import {
   type GearItem,
   type GearKind,
 } from '@/types/gear'
+import {
+  createVehicle,
+  fetchVehicles,
+  removeVehicle,
+} from '@/api/vehicles'
+import {
+  VEHICLE_KINDS,
+  VEHICLE_KIND_LABELS,
+  type Vehicle,
+  type VehicleKind,
+} from '@/types/trips'
 import { formatWeight, formatWeightTotal } from '@/utils/gearWeight'
 
 /**
@@ -211,6 +222,83 @@ async function remove(item: GearItem) {
 }
 
 onMounted(load)
+onMounted(loadVehicles)
+
+// ───────────────────────────── моя техника ─────────────────────────────
+
+/**
+ * «Моя техника» — отдельная секция каталога, а не строки в таблице
+ * снаряжения: у техники своя структура (тип, марка, номер, вместимость),
+ * и одна таблица с весом рюкзака только запутала бы.
+ *
+ * На вкладке «Трансфер» эта техника выбирается из списка, поэтому заводится
+ * она здесь, рядом с тем, что человек и так ведёт.
+ */
+const vehicles = ref<Vehicle[]>([])
+const vehiclesError = ref<string | null>(null)
+
+const newVehicleKind = ref<VehicleKind>('car')
+const newVehicleBrand = ref('')
+const newVehiclePlate = ref('')
+const newVehicleSeats = ref('')
+const isAddingVehicle = ref(false)
+
+async function loadVehicles() {
+  try {
+    vehicles.value = await fetchVehicles()
+  } catch (problem) {
+    vehiclesError.value = messageOf(problem, 'Не удалось загрузить технику')
+  }
+}
+
+async function addVehicle() {
+  const brand = newVehicleBrand.value.trim()
+
+  if (!brand) {
+    vehiclesError.value = 'Марка нужна — по ней техника выбирается в «Трансфере»'
+    return
+  }
+
+  const rawSeats = newVehicleSeats.value.trim()
+  const seats = rawSeats === '' ? null : Number(rawSeats)
+
+  if (seats !== null && (!Number.isInteger(seats) || seats < 1)) {
+    vehiclesError.value = 'Вместимость — целое число, и хотя бы одно место'
+    return
+  }
+
+  isAddingVehicle.value = true
+  vehiclesError.value = null
+
+  try {
+    const created = await createVehicle({
+      kind: newVehicleKind.value,
+      brand,
+      plate: newVehiclePlate.value.trim() || null,
+      seats,
+    })
+
+    vehicles.value = [...vehicles.value, created]
+    newVehicleBrand.value = ''
+    newVehiclePlate.value = ''
+    newVehicleSeats.value = ''
+  } catch (problem) {
+    vehiclesError.value = messageOf(problem, 'Не удалось сохранить технику')
+  } finally {
+    isAddingVehicle.value = false
+  }
+}
+
+async function removeVehicleById(vehicle: Vehicle) {
+  vehiclesError.value = null
+
+  try {
+    await removeVehicle(vehicle.id)
+    vehicles.value = vehicles.value.filter((item) => item.id !== vehicle.id)
+  } catch (problem) {
+    vehiclesError.value = messageOf(problem, 'Не удалось убрать технику')
+  }
+}
 </script>
 
 <template>
@@ -368,5 +456,115 @@ onMounted(load)
         </ul>
       </section>
     </div>
+
+    <!-- Моя техника: своя структура, поэтому отдельной секцией -->
+    <section class="mt-8 flex flex-col gap-3" data-test="vehicles">
+      <h2 class="text-xl font-semibold text-text">Моя техника</h2>
+
+      <p class="text-sm text-muted">
+        Автомобиль, снегоход, квадроцикл, мотоцикл, велосипед или лодка. На вкладке
+        «Трансфер» техника выбирается из этого списка — способ доставки и места подставятся
+        сами.
+      </p>
+
+      <p v-if="vehiclesError" class="text-sm text-red-600" data-test="vehicles-error">
+        {{ vehiclesError }}
+      </p>
+
+      <div class="flex flex-wrap items-end gap-2 rounded-xl border border-border bg-surface p-3">
+        <label class="flex flex-col gap-1 text-xs text-muted">
+          Тип
+          <select
+            v-model="newVehicleKind"
+            class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+            data-test="vehicle-kind"
+          >
+            <option v-for="kind in VEHICLE_KINDS" :key="kind" :value="kind">
+              {{ VEHICLE_KIND_LABELS[kind] }}
+            </option>
+          </select>
+        </label>
+
+        <label class="flex min-w-40 flex-1 flex-col gap-1 text-xs text-muted">
+          Марка
+          <input
+            v-model="newVehicleBrand"
+            type="text"
+            maxlength="100"
+            placeholder="«Нива»"
+            class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+            data-test="vehicle-brand"
+          />
+        </label>
+
+        <label class="flex flex-col gap-1 text-xs text-muted">
+          Госномер
+          <input
+            v-model="newVehiclePlate"
+            type="text"
+            maxlength="20"
+            placeholder="А123ВС38"
+            class="w-32 rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+            data-test="vehicle-plate"
+          />
+        </label>
+
+        <label class="flex flex-col gap-1 text-xs text-muted">
+          Вместимость
+          <input
+            v-model="newVehicleSeats"
+            type="number"
+            min="1"
+            max="60"
+            placeholder="—"
+            class="w-24 rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+            data-test="vehicle-seats"
+          />
+        </label>
+
+        <button
+          type="button"
+          :disabled="isAddingVehicle"
+          class="cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+          data-test="vehicle-add"
+          @click="addVehicle"
+        >
+          Добавить
+        </button>
+      </div>
+
+      <p v-if="vehicles.length === 0" class="text-sm text-muted" data-test="vehicles-empty">
+        Пока ничего не заведено.
+      </p>
+
+      <ul v-else class="flex flex-col gap-2" data-test="vehicles-list">
+        <li
+          v-for="vehicle in vehicles"
+          :key="vehicle.id"
+          class="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border bg-surface p-3"
+          data-test="vehicle-item"
+        >
+          <span class="text-sm text-text">
+            <span class="font-medium" data-test="vehicle-item-brand">{{ vehicle.brand }}</span>
+            · {{ VEHICLE_KIND_LABELS[vehicle.kind] }}
+            <template v-if="vehicle.plate">
+              · <span class="text-muted">{{ vehicle.plate }}</span>
+            </template>
+            · <span class="text-muted">{{
+              vehicle.seats === null ? 'вместимость не указана' : `${vehicle.seats} мест`
+            }}</span>
+          </span>
+
+          <button
+            type="button"
+            class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600"
+            data-test="vehicle-delete"
+            @click="removeVehicleById(vehicle)"
+          >
+            Убрать
+          </button>
+        </li>
+      </ul>
+    </section>
   </section>
 </template>

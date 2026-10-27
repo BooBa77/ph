@@ -310,15 +310,24 @@ describe('Трансфер похода (e2e)', () => {
     expect(legOf(body, busId)?.occupied).toBe(0);
   });
 
-  it('транспорт выбирают из каталога: способ и места — оттуда', async () => {
+  it('техника из каталога: тип, марка, номер и места', async () => {
     const created = await request(app.getHttpServer())
       .post('/api/vehicles')
       .set('Authorization', `Bearer ${memberToken}`)
-      .send({ mode: 'car', title: 'Нива', seats: 4, plate: 'А123ВС38' })
+      .send({ kind: 'car', brand: 'Нива', seats: 4, plate: 'А123ВС38' })
       .expect(201);
 
     const vehicleId = created.body.id as string;
-    expect(created.body.title).toBe('Нива');
+    expect(created.body.brand).toBe('Нива');
+    expect(created.body.kind).toBe('car');
+
+    // Тип, которого нет в «Способах доставки», в каталог всё равно можно:
+    // снегоход, мотоцикл и велосипед — личная техника.
+    await request(app.getHttpServer())
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${memberToken}`)
+      .send({ kind: 'снегоход', brand: 'Буран' })
+      .expect(400);
 
     const list = await request(app.getHttpServer())
       .get('/api/vehicles')
@@ -363,7 +372,6 @@ describe('Трансфер похода (e2e)', () => {
     expect(leg.vehicleTitle).toBe('Нива');
     expect(leg.isOwnVehicle).toBe(true);
     expect(leg.ownerUserId).toBe(memberId);
-
     // Транспорт, который уже едет в походе, из каталога не удаляется.
     await request(app.getHttpServer())
       .delete(`/api/vehicles/${vehicleId}`)

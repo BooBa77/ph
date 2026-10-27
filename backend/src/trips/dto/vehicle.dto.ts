@@ -9,48 +9,43 @@ import {
   Min,
 } from 'class-validator';
 
-import {
-  TRANSFER_PERSONAL_MODES,
-  type TransferMode,
-} from '../trip-transfer.types';
+import { VEHICLE_KINDS, type VehicleKind } from '../trip-transfer.types';
 import type { Vehicle } from '../entities/vehicle.entity';
 
 /**
- * Транспорт участника — каталог, из которого выбирают на «Трансфере».
+ * Личная техника участника — раздел «Моя техника» в «Снаряжении».
  *
- * Только личные способы: автобус, поезд, корабль и вертолёт — рейсы,
- * владельца у них в группе нет (сервер отбивает их 400-м, CHECK — в базе).
+ * Поля ровно те, что заказчик назвал нужными для учёта: тип, марка,
+ * госномер и вместимость (необязательная). Ничего «на будущее» здесь нет:
+ * цвет, год и страховка не просятся и не хранятся.
  */
 export class VehicleDto {
   @ApiProperty({ description: 'Id транспорта', example: '3' })
   id: string;
 
   @ApiProperty({
-    description: 'Способ доставки',
-    enum: TRANSFER_PERSONAL_MODES,
+    description: 'Тип техники',
+    enum: VEHICLE_KINDS,
     example: 'car',
   })
-  mode: TransferMode;
+  kind: VehicleKind;
 
-  @ApiProperty({ description: 'Название', example: 'Нива' })
-  title: string;
-
-  @ApiProperty({
-    description: 'Всего мест, включая водителя. null — не указано',
-    nullable: true,
-    example: 4,
-  })
-  seats: number | null;
+  @ApiProperty({ description: 'Марка', example: 'Нива' })
+  brand: string;
 
   @ApiProperty({
-    description: 'Номер — чтобы найти машину на парковке',
+    description: 'Госномер',
     nullable: true,
     example: 'А123ВС38',
   })
   plate: string | null;
 
-  @ApiProperty({ description: 'Заметка', nullable: true })
-  note: string | null;
+  @ApiProperty({
+    description: 'Вместимость, включая водителя. null — не указана',
+    nullable: true,
+    example: 4,
+  })
+  seats: number | null;
 
   @ApiProperty({ description: 'Когда завели' })
   createdAt: string;
@@ -58,95 +53,85 @@ export class VehicleDto {
   static from(vehicle: Vehicle): VehicleDto {
     return {
       id: vehicle.id,
-      mode: vehicle.mode,
-      title: vehicle.title,
-      seats: vehicle.seats,
+      kind: vehicle.kind,
+      brand: vehicle.brand,
       plate: vehicle.plate,
-      note: vehicle.note,
+      seats: vehicle.seats,
       createdAt: vehicle.createdAt.toISOString(),
     };
   }
 }
 
 export class VehicleListDto {
-  @ApiProperty({ description: 'Мой транспорт', type: [VehicleDto] })
+  @ApiProperty({ description: 'Моя техника', type: [VehicleDto] })
   vehicles: VehicleDto[];
 }
 
 /** Тело `POST /api/vehicles`. */
 export class CreateVehicleDto {
   @ApiProperty({
-    description: 'Способ доставки — только личный',
-    enum: TRANSFER_PERSONAL_MODES,
+    description: 'Тип техники',
+    enum: VEHICLE_KINDS,
     example: 'car',
   })
-  @IsIn(TRANSFER_PERSONAL_MODES, {
-    message:
-      'В каталог попадает только личный транспорт: автобус, ж/д, корабль и вертолёт — рейсы',
-  })
-  mode: TransferMode;
+  @IsIn(VEHICLE_KINDS, { message: 'Недопустимый тип техники' })
+  kind: VehicleKind;
 
-  @ApiProperty({ description: 'Название', example: 'Нива' })
-  @IsString({ message: 'Название должно быть строкой' })
-  @Length(1, 100, { message: 'Название — от 1 до 100 символов' })
-  title: string;
+  @ApiProperty({ description: 'Марка', example: 'Нива' })
+  @IsString({ message: 'Марка должна быть строкой' })
+  @Length(1, 100, { message: 'Марка — от 1 до 100 символов' })
+  brand: string;
 
-  @ApiProperty({ description: 'Всего мест', required: false, nullable: true })
+  @ApiProperty({ description: 'Госномер', required: false, nullable: true })
   @IsOptional()
-  @IsInt({ message: 'Места — целое число' })
-  @Min(1, { message: 'Мест должно быть хотя бы одно' })
-  @Max(60, { message: 'Больше 60 мест не бывает' })
-  seats?: number | null;
-
-  @ApiProperty({ description: 'Номер', required: false, nullable: true })
-  @IsOptional()
-  @IsString({ message: 'Номер должен быть строкой' })
-  @Length(1, 20, { message: 'Номер — до 20 символов' })
+  @IsString({ message: 'Госномер должен быть строкой' })
+  @Length(1, 20, { message: 'Госномер — до 20 символов' })
   plate?: string | null;
 
-  @ApiProperty({ description: 'Заметка', required: false, nullable: true })
+  @ApiProperty({
+    description: 'Вместимость, включая водителя. Не указана — потолка нет',
+    required: false,
+    nullable: true,
+    example: 4,
+  })
   @IsOptional()
-  @IsString({ message: 'Заметка должна быть строкой' })
-  @Length(1, 500, { message: 'Заметка — до 500 символов' })
-  note?: string | null;
+  @IsInt({ message: 'Вместимость — целое число' })
+  @Min(1, { message: 'Вместимость — хотя бы одно место' })
+  @Max(60, { message: 'Больше 60 мест не бывает' })
+  seats?: number | null;
 }
 
 /** Тело `PATCH /api/vehicles/:id` — три состояния поля, как у похода. */
 export class UpdateVehicleDto {
   @ApiProperty({
-    description: 'Способ доставки — только личный',
-    enum: TRANSFER_PERSONAL_MODES,
+    description: 'Тип техники',
+    enum: VEHICLE_KINDS,
     required: false,
   })
   @IsOptional()
-  @IsIn(TRANSFER_PERSONAL_MODES, {
-    message:
-      'В каталоге только личный транспорт: автобус, ж/д, корабль и вертолёт — рейсы',
-  })
-  mode?: TransferMode;
+  @IsIn(VEHICLE_KINDS, { message: 'Недопустимый тип техники' })
+  kind?: VehicleKind;
 
-  @ApiProperty({ description: 'Название', required: false })
+  @ApiProperty({ description: 'Марка', required: false })
   @IsOptional()
-  @IsString({ message: 'Название должно быть строкой' })
-  @Length(1, 100, { message: 'Название — от 1 до 100 символов' })
-  title?: string;
+  @IsString({ message: 'Марка должна быть строкой' })
+  @Length(1, 100, { message: 'Марка — от 1 до 100 символов' })
+  brand?: string;
 
-  @ApiProperty({ description: 'Всего мест или null', required: false, nullable: true })
+  @ApiProperty({ description: 'Госномер или null', required: false, nullable: true })
   @IsOptional()
-  @IsInt({ message: 'Места — целое число' })
-  @Min(1, { message: 'Мест должно быть хотя бы одно' })
-  @Max(60, { message: 'Больше 60 мест не бывает' })
-  seats?: number | null;
-
-  @ApiProperty({ description: 'Номер или null', required: false, nullable: true })
-  @IsOptional()
-  @IsString({ message: 'Номер должен быть строкой' })
-  @Length(1, 20, { message: 'Номер — до 20 символов' })
+  @IsString({ message: 'Госномер должен быть строкой' })
+  @Length(1, 20, { message: 'Госномер — до 20 символов' })
   plate?: string | null;
 
-  @ApiProperty({ description: 'Заметка или null', required: false, nullable: true })
+  @ApiProperty({
+    description: 'Вместимость или null',
+    required: false,
+    nullable: true,
+  })
   @IsOptional()
-  @IsString({ message: 'Заметка должна быть строкой' })
-  @Length(1, 500, { message: 'Заметка — до 500 символов' })
-  note?: string | null;
+  @IsInt({ message: 'Вместимость — целое число' })
+  @Min(1, { message: 'Вместимость — хотя бы одно место' })
+  @Max(60, { message: 'Больше 60 мест не бывает' })
+  seats?: number | null;
 }

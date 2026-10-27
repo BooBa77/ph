@@ -46,11 +46,10 @@ export class VehiclesService {
     const saved = await manager.save(
       manager.create(Vehicle, {
         ownerUserId: userId,
-        mode: dto.mode,
-        title: this.title(dto.title),
+        kind: dto.kind,
+        brand: this.brand(dto.brand),
+        plate: this.optional(dto.plate, 20, 'Госномер'),
         seats: dto.seats ?? null,
-        plate: this.optional(dto.plate, 20, 'Номер'),
-        note: this.optional(dto.note, 500, 'Заметка'),
       }),
     );
 
@@ -65,14 +64,11 @@ export class VehiclesService {
     const manager = this.dataSource.manager;
     const vehicle = await this.findMine(userId, id);
 
-    if (dto.mode !== undefined) vehicle.mode = dto.mode;
-    if (dto.title !== undefined) vehicle.title = this.title(dto.title);
+    if (dto.kind !== undefined) vehicle.kind = dto.kind;
+    if (dto.brand !== undefined) vehicle.brand = this.brand(dto.brand);
     if (dto.seats !== undefined) vehicle.seats = dto.seats;
     if (dto.plate !== undefined) {
-      vehicle.plate = this.optional(dto.plate, 20, 'Номер');
-    }
-    if (dto.note !== undefined) {
-      vehicle.note = this.optional(dto.note, 500, 'Заметка');
+      vehicle.plate = this.optional(dto.plate, 20, 'Госномер');
     }
 
     return VehicleDto.from(await manager.save(vehicle));
@@ -106,14 +102,14 @@ export class VehiclesService {
     return vehicle;
   }
 
-  private title(value: string): string {
-    const title = value.trim();
+  private brand(value: string): string {
+    const brand = value.trim();
 
-    if (title.length === 0) {
-      throw new BadRequestException('Название не может быть пустым');
+    if (brand.length === 0) {
+      throw new BadRequestException('Марка не может быть пустой');
     }
 
-    return title;
+    return brand;
   }
 
   private optional(

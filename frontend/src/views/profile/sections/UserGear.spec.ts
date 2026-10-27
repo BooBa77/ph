@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api/errors'
 import type { GearItem, GearList } from '@/types/gear'
+import type { Vehicle } from '@/types/trips'
 import UserGear from '@/views/profile/sections/UserGear.vue'
 
 /**
@@ -20,9 +21,18 @@ vi.mock('@/api/gear', () => ({
   deleteGearItem: vi.fn(),
 }))
 
+vi.mock('@/api/vehicles', () => ({
+  fetchVehicles: vi.fn(),
+  createVehicle: vi.fn(),
+  updateVehicle: vi.fn(),
+  removeVehicle: vi.fn(),
+}))
+
 import * as api from '@/api/gear'
+import * as vehiclesApi from '@/api/vehicles'
 
 const mocked = vi.mocked(api)
+const mockedVehicles = vi.mocked(vehiclesApi)
 
 function makeItem(overrides: Partial<GearItem> = {}): GearItem {
   return {
@@ -44,8 +54,12 @@ function makeList(items: GearItem[]): GearList {
   }
 }
 
-async function mountSection(items: GearItem[] = [makeItem()]): Promise<VueWrapper> {
+async function mountSection(
+  items: GearItem[] = [makeItem()],
+  vehicles: Vehicle[] = [],
+): Promise<VueWrapper> {
   mocked.listGear.mockResolvedValue(makeList(items))
+  mockedVehicles.fetchVehicles.mockResolvedValue(vehicles)
 
   const wrapper = mount(UserGear)
   await flushPromises()
@@ -206,5 +220,82 @@ describe('UserGear', () => {
     expect(wrapper.find('[data-test="gear-error"]').text()).toContain(
       'У предмета должно быть название',
     )
+  })
+
+  /**
+   * Техника — отдельная секция: у неё своя структура (тип, марка, номер,
+   * вместимость), и в одну таблицу с весом рюкзака она не ложится.
+   */
+  it('показывает технику отдельной секцией', async () => {
+    const wrapper = await mountSection(
+      [makeItem()],
+      [
+        {
+          id: 'veh-1',
+          kind: 'car',
+          brand: 'Нива',
+          plate: 'А123ВС38',
+          seats: 4,
+          createdAt: '2026-10-21T08:00:00.000Z',
+        },
+      ],
+    )
+
+    const section = wrapper.find('[data-test="vehicles"]')
+    expect(section.exists()).toBe(true)
+    expect(section.text()).toContain('Автомобиль')
+    expect(section.text()).toContain('А123ВС38')
+    expect(section.text()).toContain('4 мест')
+  })
+
+  it('заводит технику с типом, маркой, номером и вместимостью', async () => {
+    const wrapper = await mountSection()
+
+    mockedVehicles.createVehicle.mockResolvedValue({
+      id: 'veh-2',
+      kind: 'snowmobile',
+      brand: 'Буран',
+      plate: null,
+      seats: null,
+      createdAt: '2026-10-21T09:00:00.000Z',
+    })
+
+    await wrapper.find('[data-test="vehicle-kind"]').setValue('snowmobile')
+    await wrapper.find('[data-test="vehicle-brand"]').setValue('Буран')
+    await wrapper.find('[data-test="vehicle-add"]').trigger('click')
+    await flushPromises()
+
+    expect(mockedVehicles.createVehicle).toHaveBeenCalledWith({
+      kind: 'snowmobile',
+      brand: 'Буран',
+      plate: null,
+      seats: null,
+    })
+
+    expect(wrapper.find('[data-test="vehicles-list"]').text()).toContain('Снегоход')
+  })
+
+  it('убирает технику из списка', async () => {
+    mockedVehicles.removeVehicle.mockResolvedValue(undefined)
+
+    const wrapper = await mountSection(
+      [makeItem()],
+      [
+        {
+          id: 'veh-1',
+          kind: 'boat',
+          brand: 'Прогресс',
+          plate: null,
+          seats: 3,
+          createdAt: '2026-10-21T08:00:00.000Z',
+        },
+      ],
+    )
+
+    await wrapper.find('[data-test="vehicle-delete"]').trigger('click')
+    await flushPromises()
+
+    expect(mockedVehicles.removeVehicle).toHaveBeenCalledWith('veh-1')
+    expect(wrapper.find('[data-test="vehicles-empty"]').exists()).toBe(true)
   })
 })

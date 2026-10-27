@@ -36,7 +36,16 @@ export const TRANSFER_MODE_GROUPS = [
   {
     code: 'land',
     label: 'Земля',
-    modes: ['car', 'bus', 'train', 'horses', 'atv'],
+    modes: [
+      'car',
+      'bus',
+      'train',
+      'motorcycle',
+      'snowmobile',
+      'bicycle',
+      'horses',
+      'atv',
+    ],
   },
   {
     code: 'water',
@@ -65,6 +74,9 @@ export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
   car: 'Авто',
   bus: 'Автобус',
   train: 'Ж/д',
+  motorcycle: 'Мотоцикл',
+  snowmobile: 'Снегоход',
+  bicycle: 'Велосипед',
   horses: 'Кони',
   atv: 'Квадроцикл',
   boat: 'Лодка',
@@ -72,6 +84,44 @@ export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
   airboat: 'Аэролодка',
   helicopter: 'Вертолёт',
   other: 'Другое',
+};
+
+/**
+ * Типы личного транспорта — каталог «Моя техника».
+ *
+ * Это **не** способы доставки: у способа есть рейсы (автобус, поезд, корабль,
+ * вертолёт), а у личной техники — только то, что человек держит сам.
+ * Связь между ними одна и однозначная (`VEHICLE_KIND_TO_MODE`), поэтому
+ * карточка «Трансфера» из выбранной техники понимает способ сама.
+ */
+export const VEHICLE_KINDS = [
+  'car',
+  'snowmobile',
+  'atv',
+  'motorcycle',
+  'bicycle',
+  'boat',
+] as const;
+
+export type VehicleKind = (typeof VEHICLE_KINDS)[number];
+
+export const VEHICLE_KIND_LABELS: Record<VehicleKind, string> = {
+  car: 'Автомобиль',
+  snowmobile: 'Снегоход',
+  atv: 'Квадроцикл',
+  motorcycle: 'Мотоцикл',
+  bicycle: 'Велосипед',
+  boat: 'Лодка',
+};
+
+/** Во что превращается тип техники в карточке перемещения. */
+export const VEHICLE_KIND_TO_MODE: Record<VehicleKind, TransferMode> = {
+  car: 'car',
+  snowmobile: 'snowmobile',
+  atv: 'atv',
+  motorcycle: 'motorcycle',
+  bicycle: 'bicycle',
+  boat: 'boat',
 };
 
 /**

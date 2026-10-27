@@ -26,6 +26,7 @@ import {
   TRANSFER_PUBLIC_MODES,
   TRANSFER_ROUND_TRIP_COMPENSATIONS,
   TRANSFER_TAB,
+  VEHICLE_KIND_TO_MODE,
   type TransferCompensation,
   type TransferMode,
   type TransferPassengerStatus,
@@ -111,7 +112,7 @@ export class TripTransferService {
         ? await this.vehicleOrFail(manager, userId, dto.vehicleId)
         : null;
 
-    const mode = vehicle?.mode ?? dto.mode;
+    const mode = vehicle ? VEHICLE_KIND_TO_MODE[vehicle.kind] : dto.mode;
 
     const { isOwnVehicle, ownerUserId } = vehicle
       ? { isOwnVehicle: true, ownerUserId: userId }
@@ -211,7 +212,9 @@ export class TripTransferService {
           ? dto.seats
           : leg.seats;
 
-    const effectiveMode = vehicle?.mode ?? mode;
+    const effectiveMode = vehicle
+      ? VEHICLE_KIND_TO_MODE[vehicle.kind]
+      : mode;
 
     /**
      * Флаг и владельца меняет только право вкладки. Владелец своей карточки
@@ -539,7 +542,9 @@ export class TripTransferService {
         id: leg.id,
         direction: leg.direction,
         position: leg.position,
-        mode: leg.vehicle?.mode ?? leg.mode,
+        mode: leg.vehicle
+          ? VEHICLE_KIND_TO_MODE[leg.vehicle.kind]
+          : leg.mode,
         departsAt: leg.departsAt.toISOString(),
         fromPlace: leg.fromPlace,
         toPlace: leg.toPlace,
@@ -548,7 +553,7 @@ export class TripTransferService {
         ownerName: leg.owner?.user?.displayName ?? null,
         seats: leg.vehicle?.seats ?? leg.seats,
         vehicleId: leg.vehicleId,
-        vehicleTitle: leg.vehicle?.title ?? null,
+        vehicleTitle: leg.vehicle?.brand ?? null,
         occupied: accepted.length,
         compensation: leg.compensation,
         compensationAmountRub: leg.compensationAmountRub,

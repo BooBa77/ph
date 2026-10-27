@@ -463,14 +463,13 @@ describe('TripTransfer', () => {
     expect(mocks.removeTransferLeg).toHaveBeenCalledWith('1', '2')
   })
 
-  it('транспорт выбирают из каталога, а не заполняют поля заново', async () => {
+  it('технику выбирают из каталога, а не заполняют поля заново', async () => {
     const niva: Vehicle = {
       id: '7',
-      mode: 'car',
-      title: 'Нива',
+      kind: 'car',
+      brand: 'Нива',
       seats: 4,
       plate: 'А123ВС38',
-      note: null,
       createdAt: '2026-10-01T10:00:00.000Z',
     }
 
@@ -523,23 +522,22 @@ describe('TripTransfer', () => {
 
     mocks.createVehicle.mockResolvedValue({
       id: '9',
-      mode: 'atv',
-      title: 'Квадрик',
+      kind: 'atv',
+      brand: 'Квадрик',
       seats: 2,
       plate: null,
-      note: null,
       createdAt: '2026-10-01T10:00:00.000Z',
     })
 
-    await wrapper.find('[data-test="vehicle-title-input"]').setValue('Квадрик')
-    await wrapper.find('[data-test="vehicle-mode-input"]').setValue('atv')
+    await wrapper.find('[data-test="vehicle-brand-input"]').setValue('Квадрик')
+    await wrapper.find('[data-test="vehicle-kind-input"]').setValue('atv')
     await wrapper.find('[data-test="vehicle-seats-input"]').setValue('2')
     await wrapper.find('[data-test="vehicle-save"]').trigger('click')
     await flushPromises()
 
     expect(mocks.createVehicle).toHaveBeenCalledWith({
-      mode: 'atv',
-      title: 'Квадрик',
+      kind: 'atv',
+      brand: 'Квадрик',
       seats: 2,
       plate: null,
     })

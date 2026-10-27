@@ -11,33 +11,27 @@ import {
 } from 'typeorm';
 
 import { sqlValues } from '../../users/sport-experience.types';
-import {
-  TRANSFER_PERSONAL_MODES,
-  type TransferMode,
-} from '../trip-transfer.types';
+import { VEHICLE_KINDS, type VehicleKind } from '../trip-transfer.types';
 import { User } from '../../users/entities/user.entity';
 
 /**
- * Транспорт участника — каталог, как снаряжение.
+ * Личный транспорт участника — раздел «Моя техника» в «Снаряжении».
  *
- * Владелец один раз заводит «Нива, 4 места, А123ВС» и дальше **выбирает
- * из списка** на вкладке «Трансфер», а не заполняет каждый раз способ,
- * места и номер. Это прямое продолжение решения по снаряжению: каталог
- * отвечает «что у меня есть», карточка похода — «что из этого едет».
+ * Это **не** способ доставки и не карточка перемещения: здесь то, что
+ * человек держит сам — автомобиль, снегоход, квадроцикл, мотоцикл,
+ * велосипед, лодка. На вкладке «Трансфер» техника выбирается из списка,
+ * и карточка сама понимает, каким способом она едет
+ * (`VEHICLE_KIND_TO_MODE`).
  *
- * **Только личный транспорт.** У автобуса, поезда, корабля и вертолёта
- * владельца в группе нет — это рейсы, и в каталоге они не живут (CHECK
- * по списку личных способов).
+ * Заводится один раз: «Нива, А123ВС38, 4 места». Дальше это выбор из списка,
+ * а не заполнение полей в каждой поездке.
  *
- * Удаление — `RESTRICT` со стороны карточки: транспорт, который уже едет
- * в походе, нельзя выдернуть из каталога молча (каталог отвечает 409).
+ * `RESTRICT` со стороны карточки: транспорт, который уже едет в походе,
+ * из каталога не удаляется молча (409).
  */
 @Entity('vehicles')
 @Index('IDX_vehicles_owner', ['ownerUserId', 'id'])
-@Check(
-  'chk_vehicles_mode',
-  `"mode" IN (${sqlValues(TRANSFER_PERSONAL_MODES)})`,
-)
+@Check('chk_vehicles_kind', `"kind" IN (${sqlValues(VEHICLE_KINDS)})`)
 @Check('chk_vehicles_seats', '"seats" IS NULL OR "seats" > 0')
 export class Vehicle {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -53,24 +47,21 @@ export class Vehicle {
   })
   owner: User;
 
-  /** Способ доставки: `car`, `horses`, `atv`, `boat`, `airboat`, `other`. */
+  /** `car` | `snowmobile` | `atv` | `motorcycle` | `bicycle` | `boat`. */
   @Column({ type: 'varchar', length: 20 })
-  mode: TransferMode;
+  kind: VehicleKind;
 
-  /** «Нива», «Лодка ПВХ», «Квадроцикл». */
+  /** Марка: «Нива», «Буран», «Прогресс». */
   @Column({ type: 'varchar', length: 100 })
-  title: string;
+  brand: string;
 
-  /** Всего мест, включая водителя. `NULL` — не знаю. */
-  @Column({ type: 'int', nullable: true })
-  seats: number | null;
-
-  /** Номер — чтобы найти машину на парковке. */
+  /** Госномер — чтобы найти машину на парковке. */
   @Column({ type: 'varchar', length: 20, nullable: true })
   plate: string | null;
 
-  @Column({ type: 'varchar', length: 500, nullable: true })
-  note: string | null;
+  /** Вместимость, включая водителя. `NULL` — не знаю. */
+  @Column({ type: 'int', nullable: true })
+  seats: number | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

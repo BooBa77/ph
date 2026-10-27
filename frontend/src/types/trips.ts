@@ -686,7 +686,11 @@ export const TRANSFER_DIRECTION_LABELS: Record<TransferDirection, string> = {
  * «Пешком» убрано 27.10.2026: пеший переход — это маршрут, а не заброска.
  */
 export const TRANSFER_MODE_GROUPS = [
-  { code: 'land', label: 'Земля', modes: ['car', 'bus', 'train', 'horses', 'atv'] },
+  {
+    code: 'land',
+    label: 'Земля',
+    modes: ['car', 'bus', 'train', 'motorcycle', 'snowmobile', 'bicycle', 'horses', 'atv'],
+  },
   { code: 'water', label: 'Вода', modes: ['boat', 'ship', 'airboat'] },
   { code: 'air', label: 'Воздух', modes: ['helicopter'] },
   { code: 'other', label: 'Другое', modes: ['other'] },
@@ -699,6 +703,9 @@ export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
   car: 'Авто',
   bus: 'Автобус',
   train: 'Ж/д',
+  motorcycle: 'Мотоцикл',
+  snowmobile: 'Снегоход',
+  bicycle: 'Велосипед',
   horses: 'Кони',
   atv: 'Квадроцикл',
   boat: 'Лодка',
@@ -834,28 +841,57 @@ export interface TransferLegInput {
 }
 
 /**
- * Транспорт участника — каталог, как снаряжение.
+ * Типы личной техники — раздел «Моя техника» в «Снаряжении».
  *
- * Заводится один раз («Нива, 4 места, А123ВС»), а на «Трансфере» выбирается
- * из списка: способ, места и владелец приходят из каталога.
+ * Это не способы доставки: у способа есть рейсы (автобус, поезд, корабль,
+ * вертолёт), а личная техника — то, что человек держит сам. Связь
+ * «тип → способ» однозначна, поэтому карточка «Трансфера» понимает способ
+ * по выбранной технике сама.
+ */
+export const VEHICLE_KINDS = ['car', 'snowmobile', 'atv', 'motorcycle', 'bicycle', 'boat'] as const
+export type VehicleKind = (typeof VEHICLE_KINDS)[number]
+
+export const VEHICLE_KIND_LABELS: Record<VehicleKind, string> = {
+  car: 'Автомобиль',
+  snowmobile: 'Снегоход',
+  atv: 'Квадроцикл',
+  motorcycle: 'Мотоцикл',
+  bicycle: 'Велосипед',
+  boat: 'Лодка',
+}
+
+/** Во что превращается тип техники в карточке перемещения. */
+export const VEHICLE_KIND_TO_MODE: Record<VehicleKind, TransferMode> = {
+  car: 'car',
+  snowmobile: 'snowmobile',
+  atv: 'atv',
+  motorcycle: 'motorcycle',
+  bicycle: 'bicycle',
+  boat: 'boat',
+}
+
+/**
+ * Личная техника участника.
+ *
+ * Поля ровно те, что нужны для учёта: тип, марка, госномер и вместимость
+ * (необязательная). На «Трансфере» техника выбирается из списка, и способ
+ * с местами приходят отсюда.
  */
 export interface Vehicle {
   id: string
-  mode: TransferMode
-  title: string
-  seats: number | null
+  kind: VehicleKind
+  brand: string
   plate: string | null
-  note: string | null
+  seats: number | null
   createdAt: string
 }
 
-/** Тело создания и правки транспорта в каталоге. */
+/** Тело создания и правки техники в каталоге. */
 export interface VehicleInput {
-  mode: TransferMode
-  title: string
-  seats?: number | null
+  kind: VehicleKind
+  brand: string
   plate?: string | null
-  note?: string | null
+  seats?: number | null
 }
 
 /** Строка чек-листа покупок: продукт раскладки и его отметки. */
