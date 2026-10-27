@@ -787,6 +787,9 @@ export interface TripTransferLeg {
   ownerUserId: string | null
   ownerName: string | null
   seats: number | null
+  /** Транспорт из каталога участника, если выбрали из списка. */
+  vehicleId: string | null
+  vehicleTitle: string | null
   /** Сколько мест занято принятыми пассажирами. Считает бэкенд. */
   occupied: number
   compensation: TransferCompensation
@@ -822,9 +825,36 @@ export interface TransferLegInput {
   isOwnVehicle?: boolean
   ownerUserId?: string | null
   seats?: number | null
+  /** Транспорт из каталога: способ и места берутся оттуда. */
+  vehicleId?: number | null
   compensation: TransferCompensation
   compensationAmountRub?: number | null
   isRoundTrip?: boolean
+  note?: string | null
+}
+
+/**
+ * Транспорт участника — каталог, как снаряжение.
+ *
+ * Заводится один раз («Нива, 4 места, А123ВС»), а на «Трансфере» выбирается
+ * из списка: способ, места и владелец приходят из каталога.
+ */
+export interface Vehicle {
+  id: string
+  mode: TransferMode
+  title: string
+  seats: number | null
+  plate: string | null
+  note: string | null
+  createdAt: string
+}
+
+/** Тело создания и правки транспорта в каталоге. */
+export interface VehicleInput {
+  mode: TransferMode
+  title: string
+  seats?: number | null
+  plate?: string | null
   note?: string | null
 }
 

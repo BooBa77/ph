@@ -12,6 +12,7 @@ import {
   removeTransferPassenger,
   updateTransferLeg,
 } from '@/api/trips'
+import { createVehicle, fetchVehicles } from '@/api/vehicles'
 import { useAuthStore } from '@/stores/auth'
 import {
   TRANSFER_COMPENSATIONS,
@@ -28,6 +29,7 @@ import {
   type TripTransfer,
   type TripTransferLeg,
   type TripTransferPassenger,
+  type Vehicle,
 } from '@/types/trips'
 import TripChat from '@/views/trips/TripChat.vue'
 
@@ -70,6 +72,7 @@ const actionError = ref<string | null>(null)
 const collapsed = ref<Set<string>>(new Set())
 
 const meId = computed(() => auth.user?.id ?? '')
+const vehicles = ref<Vehicle[]>([])
 const canEditTab = computed(() => plan.value?.canEdit ?? false)
 const travelers = computed(() => plan.value?.travelers ?? [])
 const legs = computed(() => plan.value?.legs ?? [])
@@ -107,6 +110,16 @@ async function load() {
     plan.value = null
   } finally {
     isLoading.value = false
+  }
+
+  /**
+   * Каталог транспорта — отдельно и необязательно: без него вкладка
+   * работает, просто выбрать готовую машину будет не из чего.
+   */
+  try {
+    vehicles.value = await fetchVehicles()
+  } catch {
+    vehicles.value = []
   }
 }
 
@@ -228,6 +241,8 @@ interface LegDraft {
   toPlace: string
   /** `datetime-local` — местное «YYYY-MM-DDTHH:mm». */
   departsAt: string
+  /** Транспорт из каталога: `''` — не выбран, режим и места вводим руками. */
+  vehicleId: string
   isOwnVehicle: boolean
   ownerUserId: string
   seats: string | number
@@ -291,6 +306,7 @@ function openLegDialog(direction: TransferDirection, leg: TripTransferLeg | null
         fromPlace: leg.fromPlace,
         toPlace: leg.toPlace,
         departsAt: toLocalInput(leg.departsAt),
+        vehicleId: leg.vehicleId ?? '',
         isOwnVehicle: leg.isOwnVehicle,
         ownerUserId: leg.ownerUserId ?? meId.value,
         seats: leg.seats ?? '',
@@ -306,6 +322,7 @@ function openLegDialog(direction: TransferDirection, leg: TripTransferLeg | null
         fromPlace: '',
         toPlace: '',
         departsAt: '',
+        vehicleId: '',
         isOwnVehicle: false,
         ownerUserId: meId.value,
         seats: '',
@@ -327,6 +344,90 @@ function changeMode() {
   }
 
   if (isPublicMode(draft.mode)) draft.isOwnVehicle = false
+}
+
+/** Выбранный транспорт каталога: у него свои способ и места. */
+const selectedVehicle = computed(
+  () => vehicles.value.find((vehicle) => vehicle.id === legDraft.value?.vehicleId) ?? null,
+)
+
+function applyVehicle() {
+  const draft = legDraft.value
+  const vehicle = selectedVehicle.value
+  if (!draft || !vehicle) return
+
+  draft.mode = vehicle.mode
+  draft.seats = vehicle.seats ?? ''
+  draft.isOwnVehicle = true
+  draft.ownerUserId = meId.value
+
+  if (!allowedCompensations.value.includes(draft.compensation)) {
+    draft.compensation = 'free'
+    draft.isRoundTrip = false
+  }
+}
+
+// ─── «Добавить транспорт» прямо в диалоге ───
+
+interface VehicleDraft {
+  title: string
+  mode: TransferMode
+  seats: string | number
+  plate: string
+}
+
+const vehicleDraft = ref<VehicleDraft | null>(null)
+const vehicleError = ref<string | null>(null)
+
+const personalModes = computed(() =>
+  TRANSFER_MODE_GROUPS.flatMap((group) => group.modes).filter(
+    (mode) => !isPublicMode(mode),
+  ),
+)
+
+function openVehicleForm() {
+  vehicleError.value = null
+  vehicleDraft.value = { title: '', mode: 'car', seats: '', plate: '' }
+}
+
+async function saveVehicle() {
+  const draft = vehicleDraft.value
+  if (!draft) return
+
+  const title = draft.title.trim()
+  if (!title) {
+    vehicleError.value = 'Название нужно — по нему выбирают в списке'
+    return
+  }
+
+  const rawSeats = String(draft.seats).trim()
+  const seats = rawSeats === '' ? null : Number(rawSeats)
+
+  if (seats !== null && (!Number.isInteger(seats) || seats < 1)) {
+    vehicleError.value = 'Мест — целое число, и хотя бы одно'
+    return
+  }
+
+  try {
+    const created = await createVehicle({
+      mode: draft.mode,
+      title,
+      seats,
+      plate: draft.plate.trim() || null,
+    })
+
+    vehicles.value = [...vehicles.value, created]
+
+    if (legDraft.value) {
+      legDraft.value.vehicleId = created.id
+      applyVehicle()
+    }
+
+    vehicleDraft.value = null
+  } catch (problem) {
+    vehicleError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось сохранить транспорт'
+  }
 }
 
 async function saveLeg() {
@@ -372,6 +473,7 @@ async function saveLeg() {
     isOwnVehicle: draft.isOwnVehicle,
     ownerUserId: draft.isOwnVehicle ? draft.ownerUserId : null,
     seats,
+    vehicleId: draft.vehicleId === '' ? null : Number(draft.vehicleId),
     compensation: draft.compensation,
     compensationAmountRub: draft.compensation === 'free' ? null : amount,
     isRoundTrip: draft.isRoundTrip,
@@ -439,6 +541,9 @@ const driverOptions = computed(() =>
               </span>
 
               <span class="flex flex-wrap gap-x-2 text-xs text-muted" data-test="transfer-leg-summary">
+                <span v-if="leg.vehicleTitle" data-test="transfer-leg-vehicle">
+                  {{ leg.vehicleTitle }}
+                </span>
                 <span v-if="leg.isOwnVehicle" data-test="transfer-leg-own">
                   Наше ТС<template v-if="leg.ownerName"> · {{ leg.ownerName }}</template>
                 </span>
@@ -643,7 +748,8 @@ const driverOptions = computed(() =>
             {{ TRANSFER_DIRECTION_LABELS[legDraft.direction] }}
           </h3>
 
-          <label class="flex flex-col gap-1 text-sm text-muted">
+          <!-- Способ и места — от каталога, если транспорт выбран из списка -->
+          <label v-if="!selectedVehicle" class="flex flex-col gap-1 text-sm text-muted">
             Способ доставки
             <select
               v-model="legDraft.mode"
@@ -662,6 +768,102 @@ const driverOptions = computed(() =>
               </optgroup>
             </select>
           </label>
+
+          <!-- Транспорт из каталога: способ и места приходят оттуда -->
+          <div class="flex flex-col gap-1 text-sm text-muted">
+            <span>Мой транспорт</span>
+
+            <div class="flex flex-wrap gap-2">
+              <select
+                v-model="legDraft.vehicleId"
+                class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+                data-test="transfer-vehicle-input"
+                @change="applyVehicle"
+              >
+                <option value="">— не из списка —</option>
+                <option v-for="vehicle in vehicles" :key="vehicle.id" :value="vehicle.id">
+                  {{ vehicle.title }} · {{ TRANSFER_MODE_LABELS[vehicle.mode]
+                  }}<template v-if="vehicle.seats"> · {{ vehicle.seats }} мест</template>
+                </option>
+              </select>
+
+              <button
+                type="button"
+                class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors hover:border-primary"
+                data-test="transfer-vehicle-new"
+                @click="openVehicleForm"
+              >
+                Добавить
+              </button>
+            </div>
+
+            <p v-if="selectedVehicle" class="text-xs text-muted" data-test="transfer-vehicle-applied">
+              Способ и места — из каталога: {{ TRANSFER_MODE_LABELS[selectedVehicle.mode] }}<template
+                v-if="selectedVehicle.seats"
+              >
+                · {{ selectedVehicle.seats }} мест</template
+              >
+            </p>
+          </div>
+
+          <!-- Завести транспорт, не уходя из карточки -->
+          <div
+            v-if="vehicleDraft"
+            class="flex flex-col gap-2 rounded-xl border border-dashed border-border p-2"
+            data-test="vehicle-form"
+          >
+            <input
+              v-model="vehicleDraft.title"
+              type="text"
+              maxlength="100"
+              placeholder="Название: «Нива»"
+              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+              data-test="vehicle-title-input"
+            />
+
+            <select
+              v-model="vehicleDraft.mode"
+              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+              data-test="vehicle-mode-input"
+            >
+              <option v-for="mode in personalModes" :key="mode" :value="mode">
+                {{ TRANSFER_MODE_LABELS[mode] }}
+              </option>
+            </select>
+
+            <div class="flex gap-2">
+              <input
+                v-model="vehicleDraft.seats"
+                type="number"
+                min="1"
+                max="60"
+                placeholder="Мест"
+                class="w-24 rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+                data-test="vehicle-seats-input"
+              />
+              <input
+                v-model="vehicleDraft.plate"
+                type="text"
+                maxlength="20"
+                placeholder="Номер"
+                class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+                data-test="vehicle-plate-input"
+              />
+            </div>
+
+            <p v-if="vehicleError" class="text-sm text-red-600" data-test="vehicle-error">
+              {{ vehicleError }}
+            </p>
+
+            <button
+              type="button"
+              class="cursor-pointer self-start rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90"
+              data-test="vehicle-save"
+              @click="saveVehicle"
+            >
+              Сохранить в каталог
+            </button>
+          </div>
 
           <label class="flex flex-col gap-1 text-sm text-muted">
             Откуда
@@ -696,55 +898,57 @@ const driverOptions = computed(() =>
           </label>
 
           <!-- «Наше ТС» — только тому, кому роль дала вкладку -->
-          <label
-            v-if="canFlagOwnVehicle"
-            class="flex cursor-pointer items-center gap-2 text-sm text-text"
-          >
-            <input
-              v-model="legDraft.isOwnVehicle"
-              type="checkbox"
-              class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
-              data-test="transfer-own-input"
-            />
-            Наше ТС
-            <span class="text-xs text-muted">— заявки на него принимает владелец</span>
-          </label>
-
-          <label
-            v-if="legDraft.isOwnVehicle"
-            class="flex flex-col gap-1 text-sm text-muted"
-          >
-            Владелец ТС
-            <select
-              v-model="legDraft.ownerUserId"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="transfer-owner-input"
+          <template v-if="!selectedVehicle">
+            <label
+              v-if="canFlagOwnVehicle"
+              class="flex cursor-pointer items-center gap-2 text-sm text-text"
             >
-              <option v-for="person in driverOptions" :key="person.userId" :value="person.userId">
-                {{ person.displayName }}
-              </option>
-            </select>
-          </label>
+              <input
+                v-model="legDraft.isOwnVehicle"
+                type="checkbox"
+                class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                data-test="transfer-own-input"
+              />
+              Наше ТС
+              <span class="text-xs text-muted">— заявки на него принимает владелец</span>
+            </label>
 
-          <p
-            v-else-if="!canEditTab && !isPublicMode(legDraft.mode)"
-            class="text-xs text-muted"
-            data-test="transfer-own-hint"
-          >
-            Свой транспорт попадёт как «наше ТС»: заявки будете принимать вы
-          </p>
+            <label
+              v-if="legDraft.isOwnVehicle"
+              class="flex flex-col gap-1 text-sm text-muted"
+            >
+              Владелец ТС
+              <select
+                v-model="legDraft.ownerUserId"
+                class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+                data-test="transfer-owner-input"
+              >
+                <option v-for="person in driverOptions" :key="person.userId" :value="person.userId">
+                  {{ person.displayName }}
+                </option>
+              </select>
+            </label>
 
-          <label class="flex flex-col gap-1 text-sm text-muted">
-            Всего мест, включая водителя — можно не заполнять
-            <input
-              v-model="legDraft.seats"
-              type="number"
-              min="1"
-              max="60"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="transfer-seats-input"
-            />
-          </label>
+            <p
+              v-else-if="!canEditTab && !isPublicMode(legDraft.mode)"
+              class="text-xs text-muted"
+              data-test="transfer-own-hint"
+            >
+              Свой транспорт попадёт как «наше ТС»: заявки будете принимать вы
+            </p>
+
+            <label class="flex flex-col gap-1 text-sm text-muted">
+              Всего мест, включая водителя — можно не заполнять
+              <input
+                v-model="legDraft.seats"
+                type="number"
+                min="1"
+                max="60"
+                class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+                data-test="transfer-seats-input"
+              />
+            </label>
+          </template>
 
           <label class="flex flex-col gap-1 text-sm text-muted">
             Компенсация расходов

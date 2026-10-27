@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { User } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
-import type { Trip, TripTransfer } from '@/types/trips'
+import type { Trip, TripTransfer, Vehicle } from '@/types/trips'
 import TripTransferView from '@/views/trips/TripTransfer.vue'
 
 /**
@@ -29,6 +29,8 @@ const mocks = vi.hoisted(() => ({
   removeTransferPassenger: vi.fn(),
   listTripMessages: vi.fn(),
   sendTripMessage: vi.fn(),
+  fetchVehicles: vi.fn(),
+  createVehicle: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
@@ -42,6 +44,11 @@ vi.mock('@/api/trips', () => ({
   removeTransferPassenger: mocks.removeTransferPassenger,
   listTripMessages: mocks.listTripMessages,
   sendTripMessage: mocks.sendTripMessage,
+}))
+
+vi.mock('@/api/vehicles', () => ({
+  fetchVehicles: mocks.fetchVehicles,
+  createVehicle: mocks.createVehicle,
 }))
 
 const ME = 'demo-me'
@@ -113,6 +120,8 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         ownerUserId: ME,
         ownerName: 'Олег',
         seats: 4,
+        vehicleId: null,
+        vehicleTitle: null,
         occupied: 1,
         compensation: 'shared',
         compensationAmountRub: 3000,
@@ -137,6 +146,8 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         ownerUserId: null,
         ownerName: null,
         seats: null,
+        vehicleId: null,
+        vehicleTitle: null,
         occupied: 1,
         compensation: 'ticket',
         compensationAmountRub: 500,
@@ -158,6 +169,8 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         ownerUserId: null,
         ownerName: null,
         seats: null,
+        vehicleId: null,
+        vehicleTitle: null,
         occupied: 0,
         compensation: 'sharedPerPassenger',
         compensationAmountRub: 1200,
@@ -172,8 +185,9 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
   }
 }
 
-async function mountTransfer(plan: TripTransfer = makePlan()) {
+async function mountTransfer(plan: TripTransfer = makePlan(), vehicles: Vehicle[] = []) {
   mocks.fetchTripTransfer.mockResolvedValue(plan)
+  mocks.fetchVehicles.mockResolvedValue(vehicles)
   mocks.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
 
   const wrapper = mount(TripTransferView, { props: { trip: TRIP } })
@@ -291,6 +305,7 @@ describe('TripTransfer', () => {
       isOwnVehicle: false,
       ownerUserId: null,
       seats: 4,
+      vehicleId: null,
       compensation: 'shared',
       compensationAmountRub: 1500,
       isRoundTrip: true,
@@ -446,6 +461,92 @@ describe('TripTransfer', () => {
     await flushPromises()
 
     expect(mocks.removeTransferLeg).toHaveBeenCalledWith('1', '2')
+  })
+
+  it('транспорт выбирают из каталога, а не заполняют поля заново', async () => {
+    const niva: Vehicle = {
+      id: '7',
+      mode: 'car',
+      title: 'Нива',
+      seats: 4,
+      plate: 'А123ВС38',
+      note: null,
+      createdAt: '2026-10-01T10:00:00.000Z',
+    }
+
+    const wrapper = await mountTransfer(makePlan(), [niva])
+
+    expect(mocks.fetchVehicles).toHaveBeenCalled()
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+
+    // Каталог виден в выборе: «Нива · Авто · 4 мест».
+    expect(wrapper.find('[data-test="transfer-vehicle-input"]').text()).toContain('Нива')
+
+    // Пока транспорт не выбран, способ и места вводятся руками.
+    expect(wrapper.find('[data-test="transfer-mode-input"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="transfer-seats-input"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="transfer-vehicle-input"]').setValue('7')
+
+    // Выбрали из каталога — способ и места приходят оттуда.
+    expect(wrapper.find('[data-test="transfer-mode-input"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="transfer-seats-input"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="transfer-vehicle-applied"]').text()).toContain('4 мест')
+
+    mocks.createTransferLeg.mockResolvedValue(makePlan())
+    await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
+    await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
+    await wrapper.find('[data-test="transfer-departure-input"]').setValue('2027-05-05T09:00')
+    await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createTransferLeg).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({
+        vehicleId: 7,
+        mode: 'car',
+        seats: 4,
+        isOwnVehicle: true,
+        ownerUserId: ME,
+      }),
+    )
+  })
+
+  it('транспорт можно завести прямо в карточке', async () => {
+    const wrapper = await mountTransfer()
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+    await wrapper.find('[data-test="transfer-vehicle-new"]').trigger('click')
+
+    expect(wrapper.find('[data-test="vehicle-form"]').exists()).toBe(true)
+
+    mocks.createVehicle.mockResolvedValue({
+      id: '9',
+      mode: 'atv',
+      title: 'Квадрик',
+      seats: 2,
+      plate: null,
+      note: null,
+      createdAt: '2026-10-01T10:00:00.000Z',
+    })
+
+    await wrapper.find('[data-test="vehicle-title-input"]').setValue('Квадрик')
+    await wrapper.find('[data-test="vehicle-mode-input"]').setValue('atv')
+    await wrapper.find('[data-test="vehicle-seats-input"]').setValue('2')
+    await wrapper.find('[data-test="vehicle-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createVehicle).toHaveBeenCalledWith({
+      mode: 'atv',
+      title: 'Квадрик',
+      seats: 2,
+      plate: null,
+    })
+
+    // Новый транспорт сразу выбран в карточке — и способ уже его.
+    expect(wrapper.find('[data-test="transfer-vehicle-applied"]').text()).toContain('Квадроцикл')
+    expect(wrapper.find('[data-test="vehicle-form"]').exists()).toBe(false)
   })
 
   it('отказ сервера показывается словами', async () => {
