@@ -122,6 +122,7 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         seats: 4,
         vehicleId: null,
         vehicleTitle: null,
+        sourceLegId: null,
         occupied: 1,
         compensation: 'shared',
         compensationAmountRub: 3000,
@@ -148,6 +149,7 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         seats: null,
         vehicleId: null,
         vehicleTitle: null,
+        sourceLegId: null,
         occupied: 1,
         compensation: 'ticket',
         compensationAmountRub: 500,
@@ -171,6 +173,7 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         seats: null,
         vehicleId: null,
         vehicleTitle: null,
+        sourceLegId: null,
         occupied: 0,
         compensation: 'sharedPerPassenger',
         compensationAmountRub: 1200,
@@ -220,8 +223,10 @@ describe('TripTransfer', () => {
     const there = wrapper.find('[data-test="transfer-area-there"]')
     const back = wrapper.find('[data-test="transfer-area-back"]')
 
-    expect(there.text()).toContain('Туда · 2')
-    expect(back.text()).toContain('Обратно · 1')
+    expect(there.text()).toContain('Туда')
+    expect(back.text()).toContain('Обратно')
+    // Счётчика карточек в подписи секции больше нет.
+    expect(there.text()).not.toContain('Туда ·')
 
     // Карточки первой стороны — в первой области, обратная — во второй.
     expect(there.findAll('[data-test="transfer-leg"]')).toHaveLength(2)
@@ -236,6 +241,9 @@ describe('TripTransfer', () => {
     )
     expect(first.find('[data-test="transfer-leg-own"]').text()).toContain('Наше ТС')
     expect(first.find('[data-test="transfer-leg-seats"]').text()).toBe('1 из 4')
+
+    // У автобуса мест не бывает — «мест не указано» там не пишем.
+    expect(legCard(wrapper, '2')!.find('[data-test="transfer-leg-seats"]').exists()).toBe(false)
     // Сумма форматируется с неразрывным пробелом, поэтому проверяем части.
     const compensation = first.find('[data-test="transfer-leg-compensation"]').text()
     expect(compensation).toContain('Общий расход')

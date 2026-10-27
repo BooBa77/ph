@@ -172,8 +172,16 @@ function departureText(iso: string): string {
   })
 }
 
+/**
+ * Места есть не у всего: у рейса место даёт билет, у велосипеда его нет
+ * вовсе — писать там «мест не указано» не о чем.
+ */
+function hasSeats(leg: TripTransferLeg): boolean {
+  return !isPublicMode(leg.mode) && leg.mode !== 'bicycle'
+}
+
 function seatsText(leg: TripTransferLeg): string {
-  return leg.seats === null ? 'мест не указано' : `${leg.occupied} из ${leg.seats}`
+  return `${leg.occupied} из ${leg.seats ?? 0}`
 }
 
 /**
@@ -198,6 +206,11 @@ function accepted(leg: TripTransferLeg): TripTransferPassenger[] {
 function requested(leg: TripTransferLeg): TripTransferPassenger[] {
   return leg.passengers.filter((person) => person.status === 'requested')
 }
+
+/** В «Трансфере» велосипед не выбирают: он не возит группу. */
+const vehiclesForTransfer = computed(() =>
+  vehicles.value.filter((vehicle) => vehicle.kind !== 'bicycle'),
+)
 
 /** Кого ещё нет в карточке — их и предлагаем посадить. */
 function outsiders(leg: TripTransferLeg) {
@@ -514,7 +527,7 @@ const driverOptions = computed(() =>
         :data-test="`transfer-area-${section.direction}`"
       >
         <summary class="cursor-pointer select-none text-sm" :class="section.title">
-          {{ TRANSFER_DIRECTION_LABELS[section.direction] }} · {{ section.legs.length }}
+          {{ TRANSFER_DIRECTION_LABELS[section.direction] }}
         </summary>
 
         <p v-if="section.legs.length === 0" class="text-sm text-muted">
@@ -545,7 +558,13 @@ const driverOptions = computed(() =>
                 <span v-if="leg.isOwnVehicle" data-test="transfer-leg-own">
                   Наше ТС<template v-if="leg.ownerName"> · {{ leg.ownerName }}</template>
                 </span>
-                <span data-test="transfer-leg-seats">{{ seatsText(leg) }}</span>
+                <span
+                  v-if="hasSeats(leg)"
+                  class="text-xs text-muted"
+                  data-test="transfer-leg-seats"
+                >
+                  {{ seatsText(leg) }}
+                </span>
                 <span data-test="transfer-leg-compensation">{{ compensationText(leg) }}</span>
               </span>
             </div>
@@ -778,8 +797,8 @@ const driverOptions = computed(() =>
                 data-test="transfer-vehicle-input"
                 @change="applyVehicle"
               >
-                <option value="">— не из списка —</option>
-                <option v-for="vehicle in vehicles" :key="vehicle.id" :value="vehicle.id">
+                <option value="">не используется</option>
+                <option v-for="vehicle in vehiclesForTransfer" :key="vehicle.id" :value="vehicle.id">
                   {{ vehicle.brand }} · {{ VEHICLE_KIND_LABELS[vehicle.kind]
                   }}<template v-if="vehicle.plate"> · {{ vehicle.plate }}</template
                   ><template v-if="vehicle.seats"> · {{ vehicle.seats }} мест</template>
@@ -860,7 +879,16 @@ const driverOptions = computed(() =>
               data-test="vehicle-save"
               @click="saveVehicle"
             >
-              Сохранить в каталог
+              Сохранить в моём снаряжении
+            </button>
+
+            <button
+              type="button"
+              class="cursor-pointer self-start rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-text"
+              data-test="vehicle-cancel"
+              @click="vehicleDraft = null"
+            >
+              Отмена
             </button>
           </div>
 
@@ -936,7 +964,10 @@ const driverOptions = computed(() =>
               Свой транспорт попадёт как «наше ТС»: заявки будете принимать вы
             </p>
 
-            <label class="flex flex-col gap-1 text-sm text-muted">
+            <label
+              v-if="!isPublicMode(legDraft.mode) && legDraft.mode !== 'bicycle'"
+              class="flex flex-col gap-1 text-sm text-muted"
+            >
               Всего мест, включая водителя — можно не заполнять
               <input
                 v-model="legDraft.seats"

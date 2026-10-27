@@ -18,6 +18,7 @@ import {
   createVehicle,
   fetchVehicles,
   removeVehicle,
+  updateVehicle,
 } from '@/api/vehicles'
 import {
   VEHICLE_KINDS,
@@ -243,6 +244,26 @@ const newVehiclePlate = ref('')
 const newVehicleSeats = ref('')
 const isAddingVehicle = ref(false)
 
+/** Что правим: 
+ull — заводим новое, иначе id техники в форме. */
+const editingVehicleId = ref<string | null>(null)
+
+function startEditVehicle(vehicle: Vehicle) {
+  vehiclesError.value = null
+  editingVehicleId.value = vehicle.id
+  newVehicleKind.value = vehicle.kind
+  newVehicleBrand.value = vehicle.brand
+  newVehiclePlate.value = vehicle.plate ?? ''
+  newVehicleSeats.value = vehicle.seats === null ? '' : String(vehicle.seats)
+}
+
+function cancelEditVehicle() {
+  editingVehicleId.value = null
+  newVehicleBrand.value = ''
+  newVehiclePlate.value = ''
+  newVehicleSeats.value = ''
+}
+
 async function loadVehicles() {
   try {
     vehicles.value = await fetchVehicles()
@@ -271,14 +292,24 @@ async function addVehicle() {
   vehiclesError.value = null
 
   try {
-    const created = await createVehicle({
+    const input = {
       kind: newVehicleKind.value,
       brand,
       plate: newVehiclePlate.value.trim() || null,
       seats,
-    })
+    }
 
-    vehicles.value = [...vehicles.value, created]
+    if (editingVehicleId.value !== null) {
+      const updated = await updateVehicle(editingVehicleId.value, input)
+      vehicles.value = vehicles.value.map((item) =>
+        item.id === updated.id ? updated : item,
+      )
+      cancelEditVehicle()
+    } else {
+      const created = await createVehicle(input)
+      vehicles.value = [...vehicles.value, created]
+    }
+
     newVehicleBrand.value = ''
     newVehiclePlate.value = ''
     newVehicleSeats.value = ''
@@ -529,7 +560,17 @@ async function removeVehicleById(vehicle: Vehicle) {
           data-test="vehicle-add"
           @click="addVehicle"
         >
-          Добавить
+          {{ editingVehicleId === null ? 'Добавить' : 'Сохранить' }}
+        </button>
+
+        <button
+          v-if="editingVehicleId !== null"
+          type="button"
+          class="cursor-pointer rounded-xl border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-text"
+          data-test="vehicle-edit-cancel"
+          @click="cancelEditVehicle"
+        >
+          Отмена
         </button>
       </div>
 
@@ -555,14 +596,25 @@ async function removeVehicleById(vehicle: Vehicle) {
             }}</span>
           </span>
 
-          <button
-            type="button"
-            class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600"
-            data-test="vehicle-delete"
-            @click="removeVehicleById(vehicle)"
-          >
-            Убрать
-          </button>
+          <span class="flex gap-2">
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-text transition-colors hover:border-primary"
+              data-test="vehicle-edit"
+              @click="startEditVehicle(vehicle)"
+            >
+              Править
+            </button>
+
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600"
+              data-test="vehicle-delete"
+              @click="removeVehicleById(vehicle)"
+            >
+              Убрать
+            </button>
+          </span>
         </li>
       </ul>
     </section>

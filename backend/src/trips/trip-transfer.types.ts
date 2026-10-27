@@ -38,6 +38,10 @@ export const TRANSFER_MODE_GROUPS = [
     label: 'Земля',
     modes: [
       'car',
+      'suv',
+      'truck',
+      'tractor',
+      'crawler',
       'bus',
       'train',
       'motorcycle',
@@ -71,7 +75,11 @@ export const TRANSFER_MODES = TRANSFER_MODE_GROUPS.flatMap(
 export type TransferMode = (typeof TRANSFER_MODE_GROUPS)[number]['modes'][number];
 
 export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
-  car: 'Авто',
+  car: 'Автомобиль',
+  suv: 'Внедорожник',
+  truck: 'Грузовик',
+  tractor: 'Трактор',
+  crawler: 'Вездеход',
   bus: 'Автобус',
   train: 'Ж/д',
   motorcycle: 'Мотоцикл',
@@ -96,10 +104,10 @@ export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
  */
 export const VEHICLE_KINDS = [
   'car',
+  'bicycle',
   'snowmobile',
   'atv',
   'motorcycle',
-  'bicycle',
   'boat',
 ] as const;
 

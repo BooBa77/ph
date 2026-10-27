@@ -60,6 +60,7 @@ import { Trip } from './trip.entity';
 @Index('UQ_trip_transfer_legs_trip', ['tripId', 'id'], { unique: true })
 @Index('IDX_trip_transfer_legs_order', ['tripId', 'direction', 'position', 'id'])
 @Index('IDX_trip_transfer_legs_vehicle', ['vehicleId'])
+@Index('IDX_trip_transfer_legs_round_trip', ['roundTripSourceId'])
 @Check(
   'chk_trip_transfer_legs_direction',
   `"direction" IN (${sqlValues(TRANSFER_DIRECTIONS)})`,
@@ -173,6 +174,22 @@ export class TripTransferLeg {
     foreignKeyConstraintName: 'FK_trip_transfer_legs_vehicle',
   })
   vehicle: Vehicle | null;
+
+  /**
+   * Исходная карточка пары «туда-обратно». NULL — карточка живёт сама;
+   * заполнено — это зеркало: пассажиры приходят из исходной, уходят вместе
+   * с ней и вместе с ней удаляются (каскад), а изменения здесь на исходную
+   * не влияют — так решил заказчик 27.10.2026.
+   */
+  @Column({ name: 'round_trip_source_id', type: 'bigint', nullable: true })
+  roundTripSourceId: string | null;
+
+  @ManyToOne(() => TripTransferLeg, { onDelete: 'CASCADE', nullable: true })
+  @JoinColumn({
+    name: 'round_trip_source_id',
+    foreignKeyConstraintName: 'FK_trip_transfer_legs_round_trip',
+  })
+  roundTripSource: TripTransferLeg | null;
 
   /** `free` | `ticket` | `shared` | `sharedPerPassenger`. */
   @Column({ type: 'varchar', length: 20, default: 'free' })

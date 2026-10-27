@@ -689,7 +689,20 @@ export const TRANSFER_MODE_GROUPS = [
   {
     code: 'land',
     label: 'Земля',
-    modes: ['car', 'bus', 'train', 'motorcycle', 'snowmobile', 'bicycle', 'horses', 'atv'],
+    modes: [
+      'car',
+      'suv',
+      'truck',
+      'tractor',
+      'crawler',
+      'bus',
+      'train',
+      'motorcycle',
+      'snowmobile',
+      'bicycle',
+      'horses',
+      'atv',
+    ],
   },
   { code: 'water', label: 'Вода', modes: ['boat', 'ship', 'airboat'] },
   { code: 'air', label: 'Воздух', modes: ['helicopter'] },
@@ -700,7 +713,11 @@ export const TRANSFER_MODES = TRANSFER_MODE_GROUPS.flatMap((group) => group.mode
 export type TransferMode = (typeof TRANSFER_MODE_GROUPS)[number]['modes'][number]
 
 export const TRANSFER_MODE_LABELS: Record<TransferMode, string> = {
-  car: 'Авто',
+  car: 'Автомобиль',
+  suv: 'Внедорожник',
+  truck: 'Грузовик',
+  tractor: 'Трактор',
+  crawler: 'Вездеход',
   bus: 'Автобус',
   train: 'Ж/д',
   motorcycle: 'Мотоцикл',
@@ -797,6 +814,8 @@ export interface TripTransferLeg {
   /** Транспорт из каталога участника, если выбрали из списка. */
   vehicleId: string | null
   vehicleTitle: string | null
+  /** Исходная карточка пары «туда-обратно»: заполнено — это зеркало. */
+  sourceLegId: string | null
   /** Сколько мест занято принятыми пассажирами. Считает бэкенд. */
   occupied: number
   compensation: TransferCompensation
@@ -848,7 +867,7 @@ export interface TransferLegInput {
  * «тип → способ» однозначна, поэтому карточка «Трансфера» понимает способ
  * по выбранной технике сама.
  */
-export const VEHICLE_KINDS = ['car', 'snowmobile', 'atv', 'motorcycle', 'bicycle', 'boat'] as const
+export const VEHICLE_KINDS = ['car', 'bicycle', 'snowmobile', 'atv', 'motorcycle', 'boat'] as const
 export type VehicleKind = (typeof VEHICLE_KINDS)[number]
 
 export const VEHICLE_KIND_LABELS: Record<VehicleKind, string> = {

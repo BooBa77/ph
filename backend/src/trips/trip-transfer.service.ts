@@ -28,6 +28,7 @@ import {
   TRANSFER_TAB,
   VEHICLE_KIND_TO_MODE,
   type TransferCompensation,
+  type TransferDirection,
   type TransferMode,
   type TransferPassengerStatus,
 } from './trip-transfer.types';
@@ -144,7 +145,7 @@ export class TripTransferService {
         toPlace: this.place(dto.toPlace, 'Докуда'),
         isOwnVehicle,
         ownerUserId,
-        seats: vehicle ? vehicle.seats : (dto.seats ?? null),
+        seats: this.seatsFor(mode, vehicle ? vehicle.seats : (dto.seats ?? null)),
         vehicleId: vehicle?.id ?? null,
         compensation: dto.compensation,
         compensationAmountRub: amount,
@@ -163,6 +164,12 @@ export class TripTransferService {
         status: 'accepted',
       });
     }
+
+    /**
+     * «Туда-обратно» — это не подпись про расход, а **пара карточек**:
+     * зеркальная встаёт в обратную область с теми же людьми.
+     */
+    if (leg.isRoundTrip) await this.createMirror(manager, trip.id, leg);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -205,12 +212,14 @@ export class TripTransferService {
     let ownerUserId = vehicle !== null ? userId : leg.ownerUserId;
     let vehicleId =
       dto.vehicleId === undefined ? leg.vehicleId : (vehicle?.id ?? null);
-    let seats =
+    let seats = this.seatsFor(
+      vehicle ? VEHICLE_KIND_TO_MODE[vehicle.kind] : (dto.mode ?? leg.mode),
       vehicle !== null
         ? vehicle.seats
         : dto.seats !== undefined
           ? dto.seats
-          : leg.seats;
+          : leg.seats,
+    );
 
     const effectiveMode = vehicle
       ? VEHICLE_KIND_TO_MODE[vehicle.kind]
@@ -308,6 +317,9 @@ export class TripTransferService {
       await this.placePassenger(manager, trip.id, leg.id, leg.ownerUserId, 'accepted');
     }
 
+    // Флаг «туда-обратно» включили или сняли — зеркало появляется или уходит.
+    await this.syncMirrorExistence(manager, trip.id, leg);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -370,6 +382,8 @@ export class TripTransferService {
       status,
     });
 
+    await this.syncToMirror(manager, trip.id, leg, userId, status);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -410,6 +424,8 @@ export class TripTransferService {
       status,
     });
 
+    await this.syncToMirror(manager, trip.id, leg, dto.userId, status);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -445,6 +461,8 @@ export class TripTransferService {
 
     row.status = 'accepted';
     await manager.save(row);
+
+    await this.syncToMirror(manager, trip.id, leg, targetUserId, 'accepted');
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -482,9 +500,150 @@ export class TripTransferService {
 
     await manager.delete(TripTransferPassenger, { id: row.id });
 
+    // Ушёл из «туда» — уходит и из обратного. Обратное на исходное не влияет.
+    await this.removeFromMirror(manager, leg, targetUserId);
+
     return this.buildPlan(manager, trip, userId);
   }
 
+  // ───────────────────────── пара «туда-обратно» ─────────────────────────
+
+  /**
+   * Зеркало пары «туда-обратно»: обратная карточка с теми же людьми.
+   *
+   * Точки меняются местами, способ, места, владелец, техника и компенсация
+   * копируются. Время — тоже: обратный выезд человек поправит сам, если
+   * он другой, а выдумывать дату за него не наше дело.
+   */
+  private async createMirror(
+    manager: EntityManager,
+    tripId: string,
+    source: TripTransferLeg,
+  ): Promise<void> {
+    const direction: TransferDirection =
+      source.direction === 'there' ? 'back' : 'there';
+
+    const last = await manager.findOne(TripTransferLeg, {
+      where: { tripId, direction },
+      order: { position: 'DESC', id: 'DESC' },
+    });
+
+    const mirror = await manager.save(
+      manager.create(TripTransferLeg, {
+        tripId,
+        direction,
+        position: (last?.position ?? 0) + 1,
+        mode: source.mode,
+        departsAt: source.departsAt,
+        fromPlace: source.toPlace,
+        toPlace: source.fromPlace,
+        isOwnVehicle: source.isOwnVehicle,
+        ownerUserId: source.ownerUserId,
+        seats: source.seats,
+        vehicleId: source.vehicleId,
+        compensation: source.compensation,
+        compensationAmountRub: source.compensationAmountRub,
+        isRoundTrip: false,
+        roundTripSourceId: source.id,
+        note: null,
+      }),
+    );
+
+    const people = await manager.find(TripTransferPassenger, {
+      where: { legId: source.id },
+    });
+
+    for (const person of people) {
+      await manager.insert(TripTransferPassenger, {
+        tripId,
+        legId: mirror.id,
+        userId: person.userId,
+        status: person.status,
+      });
+    }
+  }
+
+  private async mirrorOf(
+    manager: EntityManager,
+    leg: TripTransferLeg,
+  ): Promise<TripTransferLeg | null> {
+    return manager.findOne(TripTransferLeg, {
+      where: { roundTripSourceId: leg.id },
+    });
+  }
+
+  /** Пассажир появился в исходной — появляется и в обратной. */
+  private async syncToMirror(
+    manager: EntityManager,
+    tripId: string,
+    leg: TripTransferLeg,
+    userId: string,
+    status: TransferPassengerStatus,
+  ): Promise<void> {
+    if (!leg.isRoundTrip) return;
+
+    const mirror = await this.mirrorOf(manager, leg);
+    if (!mirror) return;
+
+    const row = await manager.findOne(TripTransferPassenger, {
+      where: { legId: mirror.id, userId },
+    });
+
+    if (row) {
+      if (row.status !== status && status === 'accepted') {
+        row.status = status;
+        await manager.save(row);
+      }
+      return;
+    }
+
+    await manager.insert(TripTransferPassenger, {
+      tripId,
+      legId: mirror.id,
+      userId,
+      status,
+    });
+  }
+
+  /** Ушёл из исходной — уходит и из обратной. */
+  private async removeFromMirror(
+    manager: EntityManager,
+    leg: TripTransferLeg,
+    userId: string,
+  ): Promise<void> {
+    if (!leg.isRoundTrip) return;
+
+    const mirror = await this.mirrorOf(manager, leg);
+    if (!mirror) return;
+
+    await manager.delete(TripTransferPassenger, { legId: mirror.id, userId });
+  }
+
+  /** Флаг включили — зеркало появляется; сняли — уходит. */
+  private async syncMirrorExistence(
+    manager: EntityManager,
+    tripId: string,
+    leg: TripTransferLeg,
+  ): Promise<void> {
+    const mirror = await this.mirrorOf(manager, leg);
+
+    if (leg.isRoundTrip && !mirror) {
+      await this.createMirror(manager, tripId, leg);
+      return;
+    }
+
+    if (!leg.isRoundTrip && mirror) {
+      await manager.delete(TripTransferLeg, { id: mirror.id });
+    }
+  }
+
+  /**
+   * Места у рейсов и велосипеда не спрашиваем: у автобуса и поезда место
+   * даёт билет, у велосипеда его нет вовсе.
+   */
+  private seatsFor(mode: TransferMode, seats: number | null): number | null {
+    return this.isPublicMode(mode) || mode === 'bicycle' ? null : seats;
+  }
   // ───────────────────────────── сборка ответа ─────────────────────────────
 
   /**
@@ -503,7 +662,7 @@ export class TripTransferService {
       manager.find(TripTransferLeg, {
         where: { tripId: trip.id },
         relations: { owner: { user: true }, vehicle: true },
-        order: { direction: 'ASC', position: 'ASC', id: 'ASC' },
+        order: { direction: 'ASC', departsAt: 'ASC', id: 'ASC' },
       }),
       manager.find(TripTransferPassenger, {
         where: { tripId: trip.id },
@@ -554,6 +713,7 @@ export class TripTransferService {
         seats: leg.vehicle?.seats ?? leg.seats,
         vehicleId: leg.vehicleId,
         vehicleTitle: leg.vehicle?.brand ?? null,
+        sourceLegId: leg.roundTripSourceId,
         occupied: accepted.length,
         compensation: leg.compensation,
         compensationAmountRub: leg.compensationAmountRub,

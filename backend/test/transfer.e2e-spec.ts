@@ -714,6 +714,64 @@ describe('Трансфер похода (e2e)', () => {
     expect(after.travelers.map((person) => person.userId)).not.toContain(memberId);
   });
 
+  it('«туда-обратно» зеркалит карточку с людьми, и только в одну сторону', async () => {
+    const body = await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: DEPARTS,
+      fromPlace: 'Иркутск, парк',
+      toPlace: 'Витязь, тропа',
+      compensation: 'shared',
+      compensationAmountRub: 4000,
+      isRoundTrip: true,
+    });
+
+    const source = body.legs.find(
+      (leg) => leg.isRoundTrip && leg.fromPlace === 'Иркутск, парк',
+    )!;
+    const mirror = body.legs.find((leg) => leg.sourceLegId === source.id)!;
+
+    expect(source.sourceLegId).toBeNull();
+    expect(mirror.direction).toBe('back');
+    expect(mirror.fromPlace).toBe('Витязь, тропа');
+    expect(mirror.toPlace).toBe('Иркутск, парк');
+    // Владелец скопирован в обе карточки.
+    expect(mirror.passengers.length).toBe(source.passengers.length);
+
+    // Пришёл пассажир в исходную — он же в обратной.
+    await request(app.getHttpServer())
+      .post(`/api/trips/${tripId}/transfer/legs/${source.id}/passengers`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ userId: driverId })
+      .expect(200);
+
+    const afterAdd = await plan(organizerToken);
+    expect(passengerOf(afterAdd, source.id, driverId)).toBeDefined();
+    expect(passengerOf(afterAdd, mirror.id, driverId)).toBeDefined();
+
+    // Ушёл из исходной — уходит из обратной.
+    await request(app.getHttpServer())
+      .delete(`/api/trips/${tripId}/transfer/legs/${source.id}/passengers/${driverId}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .expect(200);
+
+    const afterLeave = await plan(organizerToken);
+    expect(passengerOf(afterLeave, mirror.id, driverId)).toBeUndefined();
+
+  });
+
+  it('карточки в секции идут по времени отправления', async () => {
+    const body = await plan(organizerToken);
+
+    for (const direction of ['there', 'back'] as const) {
+      const times = body.legs
+        .filter((leg) => leg.direction === direction)
+        .map((leg) => new Date(leg.departsAt).getTime());
+
+      const sorted = [...times].sort((left, right) => left - right);
+      expect(times).toEqual(sorted);
+    }
+  });
   it('чат трансфера видит только состав', async () => {
     const chats = await request(app.getHttpServer())
       .get(`/api/trips/${tripId}/chats`)

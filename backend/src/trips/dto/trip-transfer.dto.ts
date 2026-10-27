@@ -129,6 +129,13 @@ export class TransferLegDto {
   })
   vehicleTitle: string | null;
 
+  @ApiProperty({
+    description:
+      'Исходная карточка пары «туда-обратно». null — карточка живёт сама; заполнено — это зеркало',
+    nullable: true,
+  })
+  sourceLegId: string | null;
+
   @ApiProperty({ description: 'Сколько мест занято принятыми пассажирами', example: 3 })
   occupied: number;
 
