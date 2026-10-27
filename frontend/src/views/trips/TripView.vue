@@ -75,14 +75,10 @@ const organizer = ref<PublicUser | null>(null)
  * переставлять меню на каждой новой вкладке (Ф7).
  */
 /**
- * Вкладки, у которых уже есть экран. Порядок — порядок в меню.
- *
- * «Чаты» отдельной вкладкой больше нет: гостевой чат живёт на «Гостевой»,
- * членский — на «Участниках» (решение 21.10.2026: чат — тема вкладки).
- *
- * **«Трансфер» пока на заглушках**: вид согласовывается с заказчиком до
- * миграций (`TripTransfer.vue` — макет с примерными данными). Вкладка
- * открывается, но сохранения в ней нет, и экран говорит об этом прямо.
+ * «Трансфер»: строки заброски, машины и пассажиры. Права на правку
+ * (в том числе «свою машину водитель правит сам») считает бэкенд и отдаёт
+ * в самой вкладке (`plan.canEdit` и `car.canEdit`) — матрицу ролей фронт
+ * не повторяет.
  */
 const IMPLEMENTED: TripTabCode[] = ['guest', 'members', 'meals', 'transfer']
 
@@ -115,11 +111,9 @@ const canEditMeals = computed(
  * «Трансфер» правят организатор, соорганизатор и водитель (роль `driver`
  * получает вкладку сидом `seed-role-tabs`). Свою машину водитель правит
  * и без права на вкладку — это решает бэкенд, экран лишь не рисует то,
- * что заведомо не сработает.
+ * что заведомо не сработает. Поэтому отдельного флага страница не считает:
+ * вкладка спрашивает права у своего ответа.
  */
-const canEditTransfer = computed(
-  () => permissions.value.find((permission) => permission.code === 'transfer')?.canEdit ?? false,
-)
 
 /** Править поход может только организатор. */
 const isOrganizer = computed(
@@ -361,11 +355,7 @@ async function toggleRecruitment() {
         :can-edit="canEditMeals"
       />
 
-      <TripTransfer
-        v-else-if="activeTab === 'transfer'"
-        :trip="trip"
-        :can-edit="canEditTransfer"
-      />
+      <TripTransfer v-else-if="activeTab === 'transfer'" :trip="trip" />
 
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» появится вместе

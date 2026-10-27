@@ -19,6 +19,9 @@ import type {
   TripParticipant,
   TripRequest,
   TripTabPermission,
+  TripTransfer,
+  TransferCarInput,
+  TransferLegInput,
   TripTypeList,
   RequestDirection,
   UpdateTripRequest,
@@ -626,4 +629,141 @@ export async function updateMyMealCheck(
   )
 
   return response.checks
+}
+
+// ─────────────────────────── трансфер похода ───────────────────────────
+
+/**
+ * Все ручки «Трансфера» возвращают вкладку целиком.
+ *
+ * Так решил бэкенд, и это перенесено сюда без исключений: на экране места
+ * в машине, «без машины» и состав строки — числа от двух таблиц, и собирать
+ * их из частичного ответа значит однажды показать «3 из 5» там, где «4 из 5».
+ * Поэтому ни одна функция здесь не возвращает что-то кроме `TripTransfer`.
+ */
+
+/** Общий путь строки: `/trips/:id/transfer/legs/:legId`. */
+function legPath(tripId: string, legId: string): string {
+  return `/trips/${tripId}/transfer/legs/${legId}`
+}
+
+/** GET /api/trips/:id/transfer — вкладка целиком. */
+export async function fetchTripTransfer(tripId: string): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(`/trips/${tripId}/transfer`)
+}
+
+/** POST /api/trips/:id/transfer/legs — новая строка заброски. */
+export async function createTransferLeg(
+  tripId: string,
+  input: TransferLegInput,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(`/trips/${tripId}/transfer/legs`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+/** PATCH .../legs/:legId — правка строки: три состояния поля, как у похода. */
+export async function updateTransferLeg(
+  tripId: string,
+  legId: string,
+  patch: Partial<TransferLegInput>,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(legPath(tripId, legId), {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+/** DELETE .../legs/:legId — убрать строку вместе с машинами и пассажирами. */
+export async function removeTransferLeg(
+  tripId: string,
+  legId: string,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(legPath(tripId, legId), { method: 'DELETE' })
+}
+
+/**
+ * POST .../legs/:legId/return — «вернуться так же».
+ *
+ * Копия строки с обратными точками, машинами и людьми; даты в копии нет
+ * намеренно — обратный выезд в этот момент обычно ещё неизвестен.
+ */
+export async function returnTransferLeg(
+  tripId: string,
+  legId: string,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/return`, {
+    method: 'POST',
+  })
+}
+
+/** POST .../legs/:legId/passengers — поставить человека в строку. */
+export async function addTransferPassenger(
+  tripId: string,
+  legId: string,
+  userId: string,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/passengers`, {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  })
+}
+
+/** PUT .../passengers/:userId — место в машине; `null` — «без машины». */
+export async function seatTransferPassenger(
+  tripId: string,
+  legId: string,
+  userId: string,
+  carId: string | null,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/passengers/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ carId: carId === null ? null : Number(carId) }),
+  })
+}
+
+/** DELETE .../passengers/:userId — снять человека со строки. */
+export async function removeTransferPassenger(
+  tripId: string,
+  legId: string,
+  userId: string,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/passengers/${userId}`, {
+    method: 'DELETE',
+  })
+}
+
+/** POST .../legs/:legId/cars — машина в строке. */
+export async function createTransferCar(
+  tripId: string,
+  legId: string,
+  input: TransferCarInput,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/cars`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+}
+
+/** PATCH .../cars/:carId — водитель, места, телефон, заметка. */
+export async function updateTransferCar(
+  tripId: string,
+  carId: string,
+  patch: Partial<TransferCarInput>,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(`/trips/${tripId}/transfer/cars/${carId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+/** DELETE .../cars/:carId — убрать машину: пассажиры останутся в строке. */
+export async function removeTransferCar(
+  tripId: string,
+  carId: string,
+): Promise<TripTransfer> {
+  return apiFetch<TripTransfer>(`/trips/${tripId}/transfer/cars/${carId}`, {
+    method: 'DELETE',
+  })
 }

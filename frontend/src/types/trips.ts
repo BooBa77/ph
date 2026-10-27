@@ -425,14 +425,26 @@ export interface RoleOption {
 
 // ─────────────────────────── переписка ───────────────────────────
 
-/** Виды чатов похода: гостевой видят все, членский и питания — только состав. */
-export const CHAT_KINDS = ['trip_guest', 'trip_members', 'trip_meals'] as const
+/**
+ * Виды чатов похода: гостевой видят все, остальные — только состав.
+ *
+ * Чат — тема вкладки (решение 21.10.2026): гостевой живёт на «Гостевой»,
+ * членский — на «Участниках», питания — в «Питании», трансфера —
+ * в «Трансфере».
+ */
+export const CHAT_KINDS = [
+  'trip_guest',
+  'trip_members',
+  'trip_meals',
+  'trip_transfer',
+] as const
 export type ChatKind = (typeof CHAT_KINDS)[number]
 
 export const CHAT_KIND_LABELS: Record<ChatKind, string> = {
   trip_guest: 'Гостевой чат',
   trip_members: 'Чат участников',
   trip_meals: 'Чат питания',
+  trip_transfer: 'Чат трансфера',
 }
 
 /** Сообщение чата похода. `senderId === null` — системное. */
@@ -710,20 +722,25 @@ export interface TripTransferPerson {
  * (правило `gear-distribution.md` §6: первого попавшегося не подставляем).
  */
 export interface TripTransferPassenger extends TripTransferPerson {
-  carId: number | null
+  carId: string | null
 }
 
 /** Машина строки заброски. */
 export interface TripTransferCar {
-  id: number
+  id: string
   ownership: TransferCarOwnership
   /** Водитель-участник: `null` у наёмной машины. */
   driverUserId: string | null
-  /** Имя водителя: у своей — из состава, у наёмной — как его зовут. */
+  /** Имя водителя: у своей — из профиля, у наёмной — вписанное. */
   driverName: string
   driverPhone: string | null
   /** Всего мест, включая водителя; `null` — «не знаю», потолка нет. */
   seats: number | null
+  /**
+   * Сколько мест занято. Считает бэкенд: пассажиры машины плюс водитель,
+   * если он наёмный и в составе его нет — место он всё равно занимает.
+   */
+  occupied: number
   /**
    * Правит ли смотрящий эту машину. Считает бэкенд: право на вкладку,
    * организатор или сам водитель. Фронт матрицу не повторяет.
@@ -733,7 +750,7 @@ export interface TripTransferCar {
 
 /** Строка заброски: когда, откуда, куда и на чём. */
 export interface TripTransferLeg {
-  id: number
+  id: string
   /** Порядок строк: «сначала туда, потом обратно» — это порядок, а не даты. */
   position: number
   /** Выезд; `null` — «время уточняется», а не «неизвестно навсегда». */
@@ -747,7 +764,7 @@ export interface TripTransferLeg {
 }
 
 /**
- * Вкладка «Трансфер» целиком.
+ * Вкладка «Трансфер» целиком (`GET /api/trips/:id/transfer`).
  *
  * `meetingPlace` живёт в `trips`, а не среди строк: у места сбора нет ни
  * даты, ни вида, ни машины, и превращать его в первую заброску значило бы
@@ -756,7 +773,31 @@ export interface TripTransferLeg {
  */
 export interface TripTransfer {
   meetingPlace: string | null
+  /** Может ли смотрящий править строки — считает бэкенд по ролям. */
+  canEdit: boolean
+  /** Кого можно посадить: участники, которые идут. */
+  travelers: TripTransferPerson[]
   legs: TripTransferLeg[]
+}
+
+/** Что уходит на сервер при создании строки. */
+export interface TransferLegInput {
+  mode: TransferMode
+  fromPlace: string
+  toPlace: string
+  /** ISO или ничего — «время уточняется». */
+  departsAt?: string | null
+  note?: string | null
+}
+
+/** Машина: своя — с водителем из состава, наёмная — с именем и телефоном. */
+export interface TransferCarInput {
+  ownership: TransferCarOwnership
+  driverUserId?: string | null
+  driverName?: string | null
+  driverPhone?: string | null
+  seats?: number | null
+  note?: string | null
 }
 
 /** Строка чек-листа покупок: продукт раскладки и его отметки. */

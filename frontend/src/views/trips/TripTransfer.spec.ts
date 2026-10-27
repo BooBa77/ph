@@ -1,28 +1,58 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { User } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
-import type { Trip } from '@/types/trips'
-import TripTransfer from '@/views/trips/TripTransfer.vue'
+import type { Trip, TripTransfer } from '@/types/trips'
+import TripTransferView from '@/views/trips/TripTransfer.vue'
 
 /**
- * Макет вкладки «Трансфер».
+ * Вкладка «Трансфер» на настоящем API (моки — только HTTP).
  *
- * Пока у вкладки нет API, проверяется не «сохранилось ли», а **правила,
- * которые экран обязан показать**: маршрут строки, места в машине считаются
- * вместе с водителем, «без машины» — это `carId: null`, «вернуться так же»
- * копирует строку с обратными точками и без даты, убрать машину — значит
- * освободить её пассажиров, а не выкинуть их из строки.
- *
- * Отдельная пара тестов — про права: свою машину водитель правит и без
- * права на вкладку, чужую наёмную — нет, а снять себя со строки человек
- * может всегда (это и есть «пассажир может отказаться»).
+ * Проверяется то, ради чего экран существует: места считаются вместе
+ * с водителем (числа приходят с бэкенда), «без машины» — это `carId: null`,
+ * «вернуться так же» уходит в свою ручку, права берутся из ответа
+ * (`plan.canEdit`, `car.canEdit`), а снять себя из машины человек может
+ * всегда — это и есть «пассажир может отказаться».
  */
+const mocks = vi.hoisted(() => ({
+  fetchTripTransfer: vi.fn(),
+  createTransferLeg: vi.fn(),
+  updateTransferLeg: vi.fn(),
+  removeTransferLeg: vi.fn(),
+  returnTransferLeg: vi.fn(),
+  addTransferPassenger: vi.fn(),
+  seatTransferPassenger: vi.fn(),
+  removeTransferPassenger: vi.fn(),
+  createTransferCar: vi.fn(),
+  updateTransferCar: vi.fn(),
+  removeTransferCar: vi.fn(),
+  listTripMessages: vi.fn(),
+  sendTripMessage: vi.fn(),
+}))
+
+vi.mock('@/api/trips', () => ({
+  fetchTripTransfer: mocks.fetchTripTransfer,
+  createTransferLeg: mocks.createTransferLeg,
+  updateTransferLeg: mocks.updateTransferLeg,
+  removeTransferLeg: mocks.removeTransferLeg,
+  returnTransferLeg: mocks.returnTransferLeg,
+  addTransferPassenger: mocks.addTransferPassenger,
+  seatTransferPassenger: mocks.seatTransferPassenger,
+  removeTransferPassenger: mocks.removeTransferPassenger,
+  createTransferCar: mocks.createTransferCar,
+  updateTransferCar: mocks.updateTransferCar,
+  removeTransferCar: mocks.removeTransferCar,
+  listTripMessages: mocks.listTripMessages,
+  sendTripMessage: mocks.sendTripMessage,
+}))
+
+const ME = 'demo-me'
+
 function makeUser(): User {
   return {
-    id: 'demo-me',
+    id: ME,
     displayName: 'Олег',
     location: null,
     avatarUrl: null,
@@ -61,10 +91,101 @@ const TRIP: Trip = {
   updatedAt: '2026-10-14T10:00:00.000Z',
 }
 
-function mountTransfer(options: { canEdit?: boolean; trip?: Partial<Trip> } = {}) {
-  return mount(TripTransfer, {
-    props: { trip: { ...TRIP, ...options.trip }, canEdit: options.canEdit ?? true },
+/**
+ * Вкладка, какой её отдаёт бэкенд: две строки, своя и наёмная машины,
+ * Марина «без машины». Права — как в жизни: смотрящий организатор
+ * (`canEdit: true`), своя машина правится, наёмная — нет.
+ */
+function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
+  const plan: TripTransfer = {
+    meetingPlace: null,
+    canEdit: true,
+    travelers: [
+      { userId: ME, displayName: 'Олег' },
+      { userId: 'demo-anna', displayName: 'Анна' },
+      { userId: 'demo-petr', displayName: 'Пётр' },
+      { userId: 'demo-marina', displayName: 'Марина' },
+    ],
+    legs: [
+      {
+        id: '1',
+        position: 1,
+        departsAt: new Date(2026, 10, 7, 8, 0).toISOString(),
+        fromPlace: 'Иркутск, автовокзал',
+        toPlace: 'Олхинское плато, Витязь',
+        mode: 'car',
+        note: null,
+        cars: [
+          {
+            id: '11',
+            ownership: 'own',
+            driverUserId: ME,
+            driverName: 'Олег',
+            driverPhone: null,
+            seats: 5,
+            occupied: 2,
+            canEdit: true,
+          },
+          {
+            id: '12',
+            ownership: 'hired',
+            driverUserId: null,
+            driverName: 'Сергей',
+            driverPhone: '+7 902 111-22-33',
+            seats: 4,
+            occupied: 3,
+            canEdit: false,
+          },
+        ],
+        passengers: [
+          { userId: ME, displayName: 'Олег', carId: '11' },
+          { userId: 'demo-anna', displayName: 'Анна', carId: '11' },
+          { userId: 'demo-petr', displayName: 'Пётр', carId: '12' },
+          { userId: 'demo-marina', displayName: 'Марина', carId: null },
+        ],
+      },
+      {
+        id: '2',
+        position: 2,
+        departsAt: new Date(2026, 10, 9, 18, 0).toISOString(),
+        fromPlace: 'Олхинское плато, Витязь',
+        toPlace: 'Иркутск, автовокзал',
+        mode: 'bus',
+        note: null,
+        cars: [],
+        passengers: [
+          { userId: ME, displayName: 'Олег', carId: null },
+          { userId: 'demo-anna', displayName: 'Анна', carId: null },
+          { userId: 'demo-petr', displayName: 'Пётр', carId: null },
+          { userId: 'demo-marina', displayName: 'Марина', carId: null },
+        ],
+      },
+    ],
+    ...overrides,
+  }
+
+  /**
+   * `car.canEdit` — это ровно то, что считает бэкенд: право на вкладку
+   * открывает все машины, а без него — только свою. Выводим флаг из плана,
+   * чтобы фикстура не врала о правах.
+   */
+  for (const car of plan.legs.flatMap((leg) => leg.cars)) {
+    car.canEdit = plan.canEdit || car.driverUserId === ME
+  }
+
+  return plan
+}
+
+async function mountTransfer(plan: TripTransfer = makePlan()) {
+  mocks.fetchTripTransfer.mockResolvedValue(plan)
+  mocks.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
+
+  const wrapper = mount(TripTransferView, {
+    props: { trip: TRIP },
   })
+  await flushPromises()
+
+  return wrapper
 }
 
 describe('TripTransfer', () => {
@@ -73,12 +194,13 @@ describe('TripTransfer', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     useAuthStore().setAuth(makeUser(), 'token')
+    vi.clearAllMocks()
   })
 
   it('показывает строки заброски, машины и состав', async () => {
-    const wrapper = mountTransfer()
-    await flushPromises()
+    const wrapper = await mountTransfer()
 
+    expect(mocks.fetchTripTransfer).toHaveBeenCalledWith('1')
     expect(wrapper.findAll('[data-test="transfer-leg"]')).toHaveLength(2)
 
     const legs = wrapper.findAll('[data-test="transfer-leg"]')
@@ -89,34 +211,27 @@ describe('TripTransfer', () => {
     expect(legs[1]?.find('[data-test="transfer-leg-mode"]').text()).toContain('Автобус')
 
     expect(wrapper.findAll('[data-test="transfer-car"]')).toHaveLength(2)
-    expect(wrapper.text()).toContain('Анна')
     expect(wrapper.text()).toContain('Сергей')
   })
 
-  it('считает места вместе с водителем: у наёмной он тоже занимает место', async () => {
-    const wrapper = mountTransfer()
-    await flushPromises()
+  it('места приходят с бэкенда: у наёмной машины место водителя занято', async () => {
+    const wrapper = await mountTransfer()
 
     const seats = wrapper.findAll('[data-test="transfer-car-seats"]')
-    // Своя машина: я и Анна, водитель — я, отдельного места ему не нужно.
     expect(seats[0]?.text()).toBe('2 из 5')
-    // Наёмная: Пётр и Игорь плюс водитель без аккаунта.
     expect(seats[1]?.text()).toBe('3 из 4')
   })
 
-  it('показывает место сбора отдельной строкой и честно молчит, когда его нет', async () => {
-    const empty = mountTransfer()
-    await flushPromises()
+  it('показывает место сбора из похода и честно молчит, когда его нет', async () => {
+    const empty = await mountTransfer()
     expect(empty.find('[data-test="transfer-meeting-text"]').text()).toBe('не указано')
 
-    const filled = mountTransfer({ trip: { meetingPlace: 'Иркутск, платформа 1' } })
-    await flushPromises()
+    const filled = await mountTransfer(makePlan({ meetingPlace: 'Иркутск, платформа 1' }))
     expect(filled.find('[data-test="transfer-meeting-text"]').text()).toBe('Иркутск, платформа 1')
   })
 
   it('подписывает «без машины» тех, кому места не досталось', async () => {
-    const wrapper = mountTransfer()
-    await flushPromises()
+    const wrapper = await mountTransfer()
 
     const firstLeg = wrapper.findAll('[data-test="transfer-leg"]')[0]
     expect(firstLeg?.text()).toContain('Без машины')
@@ -125,127 +240,206 @@ describe('TripTransfer', () => {
     ])
   })
 
-  it('сажает нераспределённого в машину', async () => {
-    const wrapper = mountTransfer()
+  it('сажает нераспределённого в машину через API', async () => {
+    const wrapper = await mountTransfer()
+
+    const seated = makePlan()
+    seated.legs[0]!.passengers = seated.legs[0]!.passengers.map((person) =>
+      person.userId === 'demo-marina' ? { ...person, carId: '11' } : person,
+    )
+    const car = seated.legs[0]!.cars[0]!
+    car.occupied = 3
+    mocks.seatTransferPassenger.mockResolvedValue(seated)
+
+    await wrapper.find('[data-test="transfer-choose-car-demo-marina"]').setValue('11')
     await flushPromises()
 
-    const choose = wrapper.find('[data-test="transfer-choose-car-demo-marina"]')
-    await choose.setValue('11')
-
+    expect(mocks.seatTransferPassenger).toHaveBeenCalledWith('1', '1', 'demo-marina', '11')
     const firstLeg = wrapper.findAll('[data-test="transfer-leg"]')[0]
-    expect(firstLeg?.findAll('[data-test="transfer-car"]')[0]?.text()).toContain('Марина')
-    // В строке нераспределённых не осталось — «все по машинам».
     expect(firstLeg?.findAll('[data-test="transfer-passenger"]')).toHaveLength(0)
     expect(firstLeg?.text()).toContain('все по машинам')
   })
 
-  it('снятие пассажира возвращает его в «без машины»', async () => {
-    const wrapper = mountTransfer()
+  it('снятие пассажира уходит в API и возвращает его в «без машины»', async () => {
+    const wrapper = await mountTransfer()
+
+    const freed = makePlan()
+    freed.legs[0]!.passengers = freed.legs[0]!.passengers.map((person) =>
+      person.userId === ME ? { ...person, carId: null } : person,
+    )
+    mocks.seatTransferPassenger.mockResolvedValue(freed)
+
+    await wrapper.find(`[data-test="transfer-unseat-${ME}"]`).trigger('click')
     await flushPromises()
 
-    await wrapper.find('[data-test="transfer-unseat-demo-anna"]').trigger('click')
-
+    expect(mocks.seatTransferPassenger).toHaveBeenCalledWith('1', '1', ME, null)
     const firstLeg = wrapper.findAll('[data-test="transfer-leg"]')[0]
-    // Анна больше не сидит в машине: её крестика там нет, а в списке
-    // нераспределённых она есть.
-    expect(wrapper.find('[data-test="transfer-unseat-demo-anna"]').exists()).toBe(false)
     expect(firstLeg?.findAll('[data-test="transfer-passenger"]').map((item) => item.text())).toEqual(
-      expect.arrayContaining([expect.stringContaining('Анна'), expect.stringContaining('Марина')]),
+      expect.arrayContaining([expect.stringContaining('Олег'), expect.stringContaining('Марина')]),
     )
   })
 
-  it('убранная машина оставляет своих пассажиров в строке нераспределёнными', async () => {
-    const wrapper = mountTransfer()
-    await flushPromises()
+  it('убирает машину запросом, а пассажиры остаются в строке', async () => {
+    const wrapper = await mountTransfer()
+
+    const withoutCar = makePlan()
+    withoutCar.legs[0]!.cars = [withoutCar.legs[0]!.cars[0]!]
+    withoutCar.legs[0]!.passengers = withoutCar.legs[0]!.passengers.map((person) => ({
+      ...person,
+      carId: person.carId === '12' ? null : person.carId,
+    }))
+    mocks.removeTransferCar.mockResolvedValue(withoutCar)
 
     await wrapper.find('[data-test="transfer-remove-car-12"]').trigger('click')
-
-    expect(wrapper.findAll('[data-test="transfer-car"]')).toHaveLength(1)
-    // Пётр и Игорь ехали наёмной — теперь их можно посадить в оставшуюся.
-    expect(wrapper.find('[data-test="transfer-choose-car-demo-petr"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="transfer-choose-car-demo-igor"]').exists()).toBe(true)
-  })
-
-  it('«вернуться так же» копирует строку с обратными точками и без даты', async () => {
-    const wrapper = mountTransfer()
     await flushPromises()
 
+    expect(mocks.removeTransferCar).toHaveBeenCalledWith('1', '12')
+    expect(wrapper.findAll('[data-test="transfer-car"]')).toHaveLength(1)
+    // Пётр ехал наёмной — теперь он в «без машины», но из строки не пропал.
+    const firstLeg = wrapper.findAll('[data-test="transfer-leg"]')[0]
+    expect(firstLeg?.text()).toContain('Пётр')
+  })
+
+  it('«вернуться так же» уходит в свою ручку и рисует копию', async () => {
+    const wrapper = await mountTransfer()
+
+    const copied = makePlan()
+    copied.legs.push({
+      ...copied.legs[0]!,
+      id: '3',
+      position: 3,
+      departsAt: null,
+      fromPlace: 'Олхинское плато, Витязь',
+      toPlace: 'Иркутск, автовокзал',
+    })
+    mocks.returnTransferLeg.mockResolvedValue(copied)
+
     await wrapper.findAll('[data-test="transfer-return"]')[0]?.trigger('click')
+    await flushPromises()
+
+    expect(mocks.returnTransferLeg).toHaveBeenCalledWith('1', '1')
 
     const legs = wrapper.findAll('[data-test="transfer-leg"]')
     expect(legs).toHaveLength(3)
     expect(legs[2]?.find('[data-test="transfer-leg-places"]').text()).toContain(
       'Олхинское плато, Витязь → Иркутск, автовокзал',
     )
-    // Дату обратного выезда не выдумываем: «время уточняется».
     expect(legs[2]?.find('[data-test="transfer-leg-mode"]').text()).toContain('время уточняется')
-    // Машины и люди — «так же»: две машины и весь состав строки.
-    expect(legs[2]?.findAll('[data-test="transfer-car"]')).toHaveLength(2)
   })
 
   it('без права на вкладку правится только своя машина', async () => {
-    const wrapper = mountTransfer({ canEdit: false })
-    await flushPromises()
+    const wrapper = await mountTransfer(makePlan({ canEdit: false }))
 
     expect(wrapper.find('[data-test="transfer-add-leg"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="transfer-add-car"]').exists()).toBe(false)
-    // Своя машина (id 11) — можно снять пассажира; наёмная (12) — нет.
+    expect(wrapper.find('[data-test="transfer-remove-leg"]').exists()).toBe(false)
+    // Своя машина (11) — можно снять пассажира; наёмная (12) — нет.
     expect(wrapper.find('[data-test="transfer-unseat-demo-anna"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="transfer-unseat-demo-petr"]').exists()).toBe(false)
   })
 
-  it('снять себя со строки можно даже без права на вкладку', async () => {
-    const wrapper = mountTransfer({ canEdit: false })
-    await flushPromises()
+  it('себя из машины можно снять даже в чужой', async () => {
+    // Наёмную машину Олег не правит, но он в ней едет — и вправе выйти.
+    const plan = makePlan({ canEdit: false })
+    plan.legs[0]!.passengers = plan.legs[0]!.passengers.map((person) =>
+      person.userId === ME ? { ...person, carId: '12' } : person,
+    )
 
-    await wrapper.find('[data-test="transfer-unseat-demo-me"]').trigger('click')
-    await flushPromises()
+    const wrapper = await mountTransfer(plan)
 
-    // Я в «без машины», и крестик у меня есть, хотя прав на вкладку нет.
-    expect(wrapper.find('[data-test="transfer-drop-demo-me"]').exists()).toBe(true)
-    // У чужого человека крестика нет — снимать его может только ведущий.
-    expect(wrapper.find('[data-test="transfer-drop-demo-anna"]').exists()).toBe(false)
+    expect(wrapper.find(`[data-test="transfer-unseat-${ME}"]`).exists()).toBe(true)
+    // А снять чужого человека из чужой (наёмной) машины — нельзя.
+    expect(wrapper.find('[data-test="transfer-unseat-demo-petr"]').exists()).toBe(false)
   })
 
-  it('добавляет строку: точки обязательны, дата необязательна', async () => {
-    const wrapper = mountTransfer()
-    await flushPromises()
+  it('новая строка: точки обязательны, дата необязательна', async () => {
+    const wrapper = await mountTransfer()
 
     await wrapper.find('[data-test="transfer-add-leg"]').trigger('click')
     await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
 
     expect(wrapper.find('[data-test="transfer-leg-error"]').text()).toContain('откуда и куда')
+    expect(mocks.createTransferLeg).not.toHaveBeenCalled()
+
+    mocks.createTransferLeg.mockResolvedValue(makePlan())
 
     await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
     await wrapper.find('[data-test="transfer-to-input"]').setValue('Большое Голоустное')
     await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
+    await flushPromises()
 
-    const legs = wrapper.findAll('[data-test="transfer-leg"]')
-    expect(legs).toHaveLength(3)
-    expect(legs[2]?.text()).toContain('Иркутск → Большое Голоустное')
-    expect(legs[2]?.text()).toContain('время уточняется')
+    expect(mocks.createTransferLeg).toHaveBeenCalledWith('1', {
+      mode: 'car',
+      fromPlace: 'Иркутск',
+      toPlace: 'Большое Голоустное',
+      departsAt: null,
+      note: null,
+    })
   })
 
-  it('наёмной машине нужно имя водителя, а места считаются', async () => {
-    const wrapper = mountTransfer()
-    await flushPromises()
+  it('наёмной машине нужно имя водителя, и места уходят числом', async () => {
+    const wrapper = await mountTransfer()
 
     await wrapper.findAll('[data-test="transfer-add-car"]')[0]?.trigger('click')
     await wrapper.find('[data-test="transfer-ownership-input"]').setValue('hired')
     await wrapper.find('[data-test="transfer-car-save"]').trigger('click')
 
     expect(wrapper.find('[data-test="transfer-car-error"]').text()).toContain('имя водителя')
+    expect(mocks.createTransferCar).not.toHaveBeenCalled()
+
+    mocks.createTransferCar.mockResolvedValue(makePlan())
 
     await wrapper.find('[data-test="transfer-driver-name-input"]').setValue('Гарик')
     await wrapper.find('[data-test="transfer-driver-phone-input"]').setValue('+7 902 000-00-00')
     await wrapper.find('[data-test="transfer-seats-input"]').setValue('3')
     await wrapper.find('[data-test="transfer-car-save"]').trigger('click')
+    await flushPromises()
 
-    expect(wrapper.findAll('[data-test="transfer-car"]')).toHaveLength(3)
-    const legs = wrapper.findAll('[data-test="transfer-leg"]')
-    expect(legs[0]?.text()).toContain('Наёмная')
-    expect(legs[0]?.text()).toContain('+7 902 000-00-00')
-    // Место водителя занято сразу, даже если он не в составе.
-    expect(wrapper.findAll('[data-test="transfer-car-seats"]')[2]?.text()).toBe('1 из 3')
+    expect(mocks.createTransferCar).toHaveBeenCalledWith('1', '1', {
+      ownership: 'hired',
+      driverUserId: null,
+      driverName: 'Гарик',
+      driverPhone: '+7 902 000-00-00',
+      seats: 3,
+    })
+  })
+
+  it('правит машину тем же диалогом, но без смены вида', async () => {
+    const wrapper = await mountTransfer()
+    mocks.updateTransferCar.mockResolvedValue(makePlan())
+
+    await wrapper.find('[data-test="transfer-edit-car-12"]').trigger('click')
+
+    // Вид машины при правке не меняется — это другая машина, а не поле.
+    expect(wrapper.find('[data-test="transfer-ownership-input"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="transfer-ownership-fixed"]').text()).toContain('Наёмная')
+
+    await wrapper.find('[data-test="transfer-seats-input"]').setValue('6')
+    await wrapper.find('[data-test="transfer-car-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateTransferCar).toHaveBeenCalledWith('1', '12', {
+      driverUserId: undefined,
+      driverName: 'Сергей',
+      driverPhone: '+7 902 111-22-33',
+      seats: 6,
+    })
+  })
+
+  it('показывает отказ сервера словами, а не молчит', async () => {
+    const wrapper = await mountTransfer()
+    mocks.removeTransferCar.mockRejectedValue(new Error('сеть'))
+
+    await wrapper.find('[data-test="transfer-remove-car-12"]').trigger('click')
+    await flushPromises()
+
+    // Неизвестная ошибка — понятный текст, а не пустой экран.
+    expect(wrapper.find('[data-test="transfer-action-error"]').text()).toContain('попробуйте')
+  })
+
+  it('чат трансфера — часть вкладки, а не отдельный раздел', async () => {
+    const wrapper = await mountTransfer()
+
+    expect(mocks.listTripMessages).toHaveBeenCalledWith('1', 'trip_transfer')
+    expect(wrapper.find('[data-test="trip-chat"]').exists()).toBe(true)
   })
 })
