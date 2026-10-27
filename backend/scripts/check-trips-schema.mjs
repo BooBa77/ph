@@ -399,6 +399,108 @@ await check(
   [parentId],
 );
 
+// ─── Трансфер: строки, машины, пассажиры ───
+/**
+ * Здесь проверяются те же правила, что и в сервисе, но **базой**: вид
+ * строки из списка, своя машина только с водителем, наёмная — только
+ * с именем, пассажир только из состава, один человек в строке один раз.
+ * Плюс два каскада, на которых держится вкладка: удалили машину — пассажир
+ * остался без места, но в строке; удалили поход — ушло всё.
+ */
+const legId = (
+  await client.query(
+    `INSERT INTO trip_transfer_legs (trip_id, position, from_place, to_place, mode)
+     VALUES ($1, 1, 'Иркутск, автовокзал', 'Олхинское плато', 'car')
+     RETURNING id`,
+    [tripId],
+  )
+).rows[0].id;
+
+await check(
+  'трансфер: вид строки вне списка запрещён',
+  'fail',
+  `UPDATE trip_transfer_legs SET mode = 'вертолёт' WHERE id = $1`,
+  [legId],
+);
+
+await check(
+  'трансфер: своя машина без водителя из состава запрещена',
+  'fail',
+  `INSERT INTO trip_transfer_cars (trip_id, leg_id, ownership, seats)
+   VALUES ($1, $2, 'own', 4)`,
+  [tripId, legId],
+);
+
+await check(
+  'трансфер: наёмная машина без имени водителя запрещена',
+  'fail',
+  `INSERT INTO trip_transfer_cars (trip_id, leg_id, ownership, seats)
+   VALUES ($1, $2, 'hired', 4)`,
+  [tripId, legId],
+);
+
+await check(
+  'трансфер: мест ноль запрещено',
+  'fail',
+  `INSERT INTO trip_transfer_cars
+     (trip_id, leg_id, ownership, driver_name, seats)
+   VALUES ($1, $2, 'hired', 'Сергей', 0)`,
+  [tripId, legId],
+);
+
+const ownCarId = (
+  await client.query(
+    `INSERT INTO trip_transfer_cars
+       (trip_id, leg_id, ownership, driver_user_id, seats)
+     VALUES ($1, $2, 'own', $3, 4) RETURNING id`,
+    [tripId, legId, user1],
+  )
+).rows[0].id;
+
+await client.query(
+  `INSERT INTO trip_transfer_cars
+     (trip_id, leg_id, ownership, driver_name, driver_phone, seats)
+   VALUES ($1, $2, 'hired', 'Сергей', '+7 902 111-22-33', 4)`,
+  [tripId, legId],
+);
+
+await check(
+  'трансфер: пассажир не из состава похода запрещён',
+  'fail',
+  `INSERT INTO trip_transfer_passengers (trip_id, leg_id, user_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, legId, user2],
+);
+
+const passengerId = (
+  await client.query(
+    `INSERT INTO trip_transfer_passengers (trip_id, leg_id, user_id, car_id)
+     VALUES ($1, $2, $3, $4) RETURNING id`,
+    [tripId, legId, user1, ownCarId],
+  )
+).rows[0].id;
+
+await check(
+  'трансфер: второй раз в той же строке запрещён',
+  'fail',
+  `INSERT INTO trip_transfer_passengers (trip_id, leg_id, user_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, legId, user1],
+);
+
+await client.query(`DELETE FROM trip_transfer_cars WHERE id = $1`, [ownCarId]);
+const freedSeat = await client.query(
+  `SELECT car_id FROM trip_transfer_passengers WHERE id = $1`,
+  [passengerId],
+);
+const seatFreed = freedSeat.rows[0]?.car_id === null;
+if (!seatFreed) failed += 1;
+rows.push([
+  seatFreed ? 'ok' : 'МАШИНА НЕ ОТПУСТИЛА',
+  'трансфер: удаление машины освобождает пассажира (SET NULL)',
+  '',
+]);
+
 // ─── Каскад при удалении похода ───
 /**
  * Две проверки — пара, и смысл у них общий: триггер организатора не
@@ -414,7 +516,10 @@ const counts = `
          (SELECT count(*) FROM messages WHERE conversation_id = $2)::int AS messages,
          (SELECT count(*) FROM trip_date_variants WHERE trip_id = $1)::int AS variants,
          (SELECT count(*) FROM trip_participant_roles WHERE trip_id = $1)::int AS roles,
-         (SELECT count(*) FROM trip_types WHERE trip_id = $1)::int AS types
+         (SELECT count(*) FROM trip_types WHERE trip_id = $1)::int AS types,
+         (SELECT count(*) FROM trip_transfer_legs WHERE trip_id = $1)::int AS transfer_legs,
+         (SELECT count(*) FROM trip_transfer_cars WHERE trip_id = $1)::int AS transfer_cars,
+         (SELECT count(*) FROM trip_transfer_passengers WHERE trip_id = $1)::int AS transfer_people
 `;
 const before = (await client.query(counts, [tripId, conversationId])).rows[0];
 await check(
@@ -431,11 +536,14 @@ const cascadeClean =
   after.messages === 0 &&
   after.variants === 0 &&
   after.roles === 0 &&
-  after.types === 0;
+  after.types === 0 &&
+  after.transfer_legs === 0 &&
+  after.transfer_cars === 0 &&
+  after.transfer_people === 0;
 if (!cascadeClean) failed += 1;
 rows.push([
   cascadeClean ? 'ok' : 'ОСТАЛСЯ МУСОР',
-  `каскад убрал за походом (было: участников ${before.participants}, чатов ${before.chats}, сообщений ${before.messages}, вариантов ${before.variants}, ролей ${before.roles}, типов ${before.types})`,
+  `каскад убрал за походом (было: участников ${before.participants}, чатов ${before.chats}, сообщений ${before.messages}, вариантов ${before.variants}, ролей ${before.roles}, типов ${before.types}, строк трансфера ${before.transfer_legs}, машин ${before.transfer_cars}, пассажиров ${before.transfer_people})`,
   '',
 ]);
 

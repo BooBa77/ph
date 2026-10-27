@@ -79,11 +79,19 @@ export type RequestDirection = (typeof REQUEST_DIRECTIONS)[number];
 /**
  * Виды чатов похода.
  *
- * Создаются оба сразу при создании похода, даже если поход приватный:
+ * Создаются все сразу при создании похода, даже если поход приватный:
  * чат существует всегда, а кто в него впущен — вопрос доступа, а не
- * наличия строки.
+ * наличия строки. Чат — тема вкладки (решение 21.10.2026): гостевой живёт
+ * на «Гостевой», членский — на «Участниках», питания — в «Питании»,
+ * трансфера — в «Трансфере». Новый вид чата — строка в этом списке,
+ * а не миграция: колонка `kind` без CHECK.
  */
-export const CHAT_KINDS = ['trip_guest', 'trip_members', 'trip_meals'] as const;
+export const CHAT_KINDS = [
+  'trip_guest',
+  'trip_members',
+  'trip_meals',
+  'trip_transfer',
+] as const;
 
 export type ChatKind = (typeof CHAT_KINDS)[number];
 

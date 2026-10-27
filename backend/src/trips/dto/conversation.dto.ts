@@ -60,10 +60,15 @@ export class ConversationDto {
   /**
    * Подпись чата похода. Личные подписываются именем собеседника — оно
    * приходит в `peer`, а не строкой: по нему ещё рисуется аватарка.
+   *
+   * Подписи вкладок здесь тоже есть: чат «Питания» и «Трансфера» попадает
+   * в общий список диалогов, и без своей строки он назывался бы «Диалог».
    */
   static titleOf(conversation: Conversation, peerName: string | null): string {
     if (conversation.kind === 'trip_guest') return 'Гостевой чат';
     if (conversation.kind === 'trip_members') return 'Чат участников';
+    if (conversation.kind === 'trip_meals') return 'Чат питания';
+    if (conversation.kind === 'trip_transfer') return 'Чат трансфера';
     return peerName ?? 'Диалог';
   }
 

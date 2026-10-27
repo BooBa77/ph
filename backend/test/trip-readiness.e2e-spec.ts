@@ -201,6 +201,7 @@ describe('Готовность похода (e2e)', () => {
       'trip_guest',
       'trip_meals',
       'trip_members',
+      'trip_transfer',
     ]);
   });
 

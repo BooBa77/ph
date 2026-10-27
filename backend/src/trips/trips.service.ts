@@ -56,6 +56,7 @@ import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
 import { MEMBERS_TAB, TRIP_TABS, type TripTab } from './trip-tabs';
+import { PARTICIPANT_ONLY_CHAT_KINDS } from './trip-transfer.types';
 import {
   CHAT_KINDS,
   DEFAULT_TRIP_TYPE_CODE,
@@ -236,6 +237,7 @@ export class TripsService {
               { kind: 'trip_guest', tripId: trip.id },
               { kind: 'trip_members', tripId: trip.id },
               { kind: 'trip_meals', tripId: trip.id },
+              { kind: 'trip_transfer', tripId: trip.id },
             ],
       );
 
@@ -471,7 +473,12 @@ export class TripsService {
 
     // Гостевой чат у мечты уже есть; членский появляется здесь. Проверка
     // на существование нужна и для старых мечт, созданных до правила.
-    for (const kind of ['trip_guest', 'trip_members', 'trip_meals'] as const) {
+    for (const kind of [
+      'trip_guest',
+      'trip_members',
+      'trip_meals',
+      'trip_transfer',
+    ] as const) {
       const hasChat = await manager.exists(Conversation, {
         where: { tripId: trip.id, kind },
       });
@@ -1951,6 +1958,18 @@ export class TripsService {
   // ─────────────────────────── переписка ───────────────────────────
 
   /**
+   * Чат только для состава: членский, питания, трансфера.
+   *
+   * Гостевой видят все, кому виден публичный поход. Признак «только своим»
+   * живёт одним списком (`PARTICIPANT_ONLY_CHAT_KINDS`), потому что правило
+   * проверяется в трёх местах, и третья копия условия однажды разошлась бы
+   * с первыми двумя — ровно так новый чат вкладки и открылся бы гостю.
+   */
+  private isMemberOnlyChat(kind: ChatKind): boolean {
+    return (PARTICIPANT_ONLY_CHAT_KINDS as readonly ChatKind[]).includes(kind);
+  }
+
+  /**
    * Чат похода и право им пользоваться.
    *
    * Правила из `docs/ph/trips.md`, раздел 6, и они разные для двух чатов:
@@ -1973,14 +1992,14 @@ export class TripsService {
         where: { tripId: trip.id, userId },
       })) > 0;
 
-    const allowed =
-      kind === 'trip_members' || kind === 'trip_meals'
-        ? isParticipant
-        : isParticipant || trip.visibility === 'public';
+    const memberOnly = this.isMemberOnlyChat(kind);
+    const allowed = memberOnly
+      ? isParticipant
+      : isParticipant || trip.visibility === 'public';
 
     if (!allowed) {
       throw new ForbiddenException(
-        kind === 'trip_members' || kind === 'trip_meals'
+        memberOnly
           ? 'Этот чат доступен только участникам похода'
           : 'Этот чат похода вам недоступен',
       );
@@ -2028,10 +2047,10 @@ export class TripsService {
       const kind = chat.kind as ChatKind;
       if (!CHAT_KINDS.includes(kind)) continue;
 
-      const allowed =
-        kind === 'trip_members' || kind === 'trip_meals'
-          ? isParticipant
-          : isParticipant || trip.visibility === 'public';
+      const memberOnly = this.isMemberOnlyChat(kind);
+      const allowed = memberOnly
+        ? isParticipant
+        : isParticipant || trip.visibility === 'public';
       if (!allowed) continue;
 
       const last = await manager.findOne(Message, {
