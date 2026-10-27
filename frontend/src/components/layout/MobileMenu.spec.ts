@@ -68,7 +68,14 @@ async function mountMenu(router: Router = makeRouter()) {
 
 /** Открыть панель так же, как её открывает кнопка в шапке. */
 async function openMenu(wrapper: Awaited<ReturnType<typeof mountMenu>>['wrapper']) {
-  useMobileMenuStore().open()
+  useMobileMenuStore().openSite()
+  await flushPromises()
+  return wrapper
+}
+
+/** Открыть вкладки похода — так же, как кнопка рядом с заголовком. */
+async function openTripMenu(wrapper: Awaited<ReturnType<typeof mountMenu>>['wrapper']) {
+  useMobileMenuStore().openTrip()
   await flushPromises()
   return wrapper
 }
@@ -97,7 +104,7 @@ describe('MobileMenu', () => {
     expect(wrapper.text()).toContain('Настройки')
   })
 
-  it('с контекстом страницы показывает её пункты вместо разделов сайта', async () => {
+  it('по кнопке похода показывает вкладки похода, а не разделы сайта', async () => {
     const { wrapper } = await mountMenu()
     useMobileMenuStore().setContext({
       title: 'Разделы похода',
@@ -107,13 +114,27 @@ describe('MobileMenu', () => {
         { key: 'sport', label: 'Спорт', icon: 'sport', iconSet: 'trip', available: false },
       ],
     })
-    await openMenu(wrapper)
+    await openTripMenu(wrapper)
 
     expect(wrapper.get('[data-test="mobile-menu-title"]').text()).toBe('Разделы похода')
     expect(wrapper.findAll('[data-test="mobile-menu-link"]')).toHaveLength(0)
 
     const tabs = wrapper.findAll('[data-test="mobile-menu-tab"]')
     expect(tabs.map((tab) => tab.text())).toEqual(['Гостевая', 'Питание', 'Спорт скоро'])
+  })
+
+  it('в меню сайта вкладок похода нет, даже если страница их положила', async () => {
+    const { wrapper } = await mountMenu()
+    useMobileMenuStore().setContext({
+      title: 'Разделы похода',
+      items: [{ key: 'guest', label: 'Гостевая', icon: 'guest', iconSet: 'trip' }],
+    })
+    await openMenu(wrapper)
+
+    // Два меню не подменяют друг друга: шапка всегда открывает сайт.
+    expect(wrapper.get('[data-test="mobile-menu-title"]').text()).toBe('Разделы сайта')
+    expect(wrapper.findAll('[data-test="mobile-menu-tab"]')).toHaveLength(0)
+    expect(wrapper.findAll('[data-test="mobile-menu-link"]')).toHaveLength(10)
   })
 
   it('подсвечивает активную вкладку похода', async () => {
@@ -125,7 +146,7 @@ describe('MobileMenu', () => {
         { key: 'meals', label: 'Питание', icon: 'meals', iconSet: 'trip', active: true },
       ],
     })
-    await openMenu(wrapper)
+    await openTripMenu(wrapper)
 
     const tabs = wrapper.findAll('[data-test="mobile-menu-tab"]')
     expect(tabs[1]?.attributes('aria-current')).toBe('page')
@@ -142,7 +163,7 @@ describe('MobileMenu', () => {
         { key: 'sport', label: 'Спорт', icon: 'sport', iconSet: 'trip', available: false, onSelect },
       ],
     })
-    await openMenu(wrapper)
+    await openTripMenu(wrapper)
 
     const tab = wrapper.get('[data-test="mobile-menu-tab"]')
     expect(tab.attributes('disabled')).toBeDefined()
@@ -161,7 +182,7 @@ describe('MobileMenu', () => {
       title: 'Разделы похода',
       items: [{ key: 'meals', label: 'Питание', icon: 'meals', iconSet: 'trip', onSelect }],
     })
-    await openMenu(wrapper)
+    await openTripMenu(wrapper)
 
     await wrapper.get('[data-test="mobile-menu-tab"]').trigger('click')
     await flushPromises()
@@ -263,7 +284,7 @@ describe('MobileMenu', () => {
       title: 'Разделы похода',
       items: [{ key: 'guest', label: 'Гостевая', icon: 'guest', iconSet: 'trip' }],
     })
-    await openMenu(wrapper)
+    await openTripMenu(wrapper)
 
     expect(wrapper.findAll('button').some((item) => item.text() === 'Выйти')).toBe(false)
   })

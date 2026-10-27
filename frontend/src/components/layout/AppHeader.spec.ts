@@ -104,8 +104,12 @@ describe('AppHeader', () => {
 
     await button.trigger('click')
 
-    expect(menu.isOpen).toBe(true)
+    expect(menu.isSiteOpen).toBe(true)
     expect(button.attributes('aria-expanded')).toBe('true')
+
+    // Повторный клик закрывает: кнопка одна.
+    await button.trigger('click')
+    expect(menu.isOpen).toBe(false)
   })
 
   it('стоит в углу, сразу за кнопкой профиля', async () => {

@@ -30,11 +30,16 @@ const { isConfirming, isLoggingOut, ask, cancel, confirm } = useLogout()
 /** Панель: нужен фокус после открытия. */
 const panel = ref<HTMLElement | null>(null)
 
-const title = computed(() => menu.context?.title ?? 'Разделы сайта')
+/** Какое меню открыто: за ним и содержимое. */
+const isSiteMenu = computed(() => menu.mode === 'site')
 
-/** Разделы сайта или контекст страницы (вкладки похода). */
+const title = computed(() =>
+  isSiteMenu.value ? 'Разделы сайта' : (menu.context?.title ?? 'Разделы похода'),
+)
+
+/** Разделы сайта или вкладки похода — что открыли, то и показываем. */
 const entries = computed<MobileMenuEntry[]>(() => {
-  if (menu.context) return menu.context.items
+  if (!isSiteMenu.value) return menu.context?.items ?? []
   return SITE_SECTIONS.map((section) => ({
     key: section.to,
     label: section.label,
@@ -42,9 +47,6 @@ const entries = computed<MobileMenuEntry[]>(() => {
     to: section.to,
   }))
 })
-
-/** Меню разделов сайта — единственное, где есть выход из аккаунта. */
-const isSiteMenu = computed(() => menu.context === null)
 
 /**
  * Имена иконок двух наборов в шаблоне одного типа. Приведение типов живёт

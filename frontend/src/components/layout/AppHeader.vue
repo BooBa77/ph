@@ -23,6 +23,11 @@ import logoUrl from '@/assets/logo.svg'
  * в этой полосе и открывал «остальное». Полоса убрана: меню одно, кнопок
  * для него одна, и стоит она в шапке — там, где её ищут.
  *
+ * **Кнопка открывает только разделы сайта** — на любой странице, включая
+ * поход. Вкладки похода открываются своей кнопкой рядом с заголовком
+ * раздела: одна кнопка на два разных меню путала, и с похода нельзя было
+ * дотянуться до разделов сайта.
+ *
  * Кнопка показывается только на узком экране (`md:hidden`): на десктопе
  * меню уже стоит колонкой слева, второй способ открыть те же разделы
  * заставлял бы выбирать.
@@ -79,17 +84,18 @@ const profilePath = computed(() => appStore.lastProfilePath)
         <span class="mr-1 truncate">{{ auth.user.displayName }}</span>
       </RouterLink>
 
-      <!-- Меню — последним, в самом углу (решение заказчика 26.10.2026):
-           кнопка у края экрана, сразу за профилем. На десктопе скрыта -->
+      <!-- Меню: на мобиле открывает разделы сайта — всегда, на любой
+           странице. Вкладки похода открываются своей кнопкой на странице
+           похода (решение заказчика 26.10.2026) -->
       <button
         id="site-menu-button"
         type="button"
         class="flex h-11 w-11 cursor-pointer items-center justify-center rounded-full text-text transition-colors hover:bg-bg focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-primary md:hidden"
-        :aria-expanded="menu.isOpen"
+        :aria-expanded="menu.isSiteOpen"
         aria-controls="site-mobile-menu"
         aria-label="Меню"
         data-test="menu-button"
-        @click="menu.toggle()"
+        @click="menu.toggleSite()"
       >
         <span class="block h-6 w-6"><SidebarIcon name="menu" /></span>
       </button>
