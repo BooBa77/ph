@@ -48,11 +48,19 @@ import TripChat from '@/views/trips/TripChat.vue'
  *
  * **Заброска — цепочка этапов из тех же карточек** (28.10.2026). Заказчик:
  * «этапы — те же карточки, не новая сущность». Карточки с одинаковым
- * `chainId` собираются в блок внутри своей стороны: «авто → кони → лодка».
- * Права, пассажиры, места и деньги у этапа прежние — новых правил нет,
- * поэтому и на экране это те же плашки, только с номером этапа и общей
- * подписью. Порядок этапов задаёт время отправления: номер считает бэкенд,
- * и лодка спокойно стоит и между конями, и после них.
+ * `chainId` собираются в блок: «авто → кони → лодка». Права, пассажиры,
+ * места и деньги у этапа прежние — новых правил нет, поэтому и на экране
+ * это те же плашки, только с номером этапа и общей подписью.
+ *
+ * **Заброска бывает и парой.** Этапы одной цепочки могут стоять в обеих
+ * сторонах: в «Туда» этапы 1–2, в «Обратно» — 3–4, и номер заброски у них
+ * общий. Поэтому подпись говорит, какие именно этапы здесь, а не сколько
+ * их в этой области. Порядок задаёт время отправления: номер считает
+ * бэкенд, и лодка спокойно стоит и между конями, и после них.
+ *
+ * **Пара «туда-обратно» — это одна поездка на два конца.** Зеркало
+ * наследует пассажиров и оплату; флаг и цена живут на исходной карточке,
+ * а у зеркала вместо них подсказка.
  *
  * **Две области, «Туда» и «Обратно»** — как разделы «Питания»: свои цвета,
  * своя кнопка «Добавить трансфер», свой порядок карточек. Сторона — поле
@@ -105,26 +113,88 @@ const legsBack = computed(() => legs.value.filter((leg) => leg.direction === 'ba
 interface LegGroup {
   key: string
   chainId: string | null
-  /** Номер заброски внутри стороны; `null` — карточка сама по себе. */
-  number: number | null
   legs: TripTransferLeg[]
 }
+
+/** Заброска целиком: одна на обе стороны, если этапы есть и там, и там. */
+interface ChainMeta {
+  id: string
+  /** Номер заброски в походе — одинаковый в «Туда» и в «Обратно». */
+  number: number
+  /** Сколько всего этапов в цепочке. */
+  count: number
+  from: string
+  to: string
+  /** Этапы есть в обеих сторонах — маршрут парой, а не в один конец. */
+  both: boolean
+}
+
+/**
+ * Заброски похода целиком.
+ *
+ * Номер считается по времени первого этапа и не зависит от стороны:
+ * заброска «туда и обратно» — одна, и в обеих областях она подписана
+ * одинаково. Этапы при этом стоят в своих сторонах и нумеруются сквозь
+ * всю цепочку: 1–2 в «Туда», 3–4 в «Обратно».
+ */
+const chains = computed(() => {
+  const byId = new Map<string, TripTransferLeg[]>()
+
+  for (const leg of legs.value) {
+    if (leg.chainId === null) continue
+
+    const list = byId.get(leg.chainId) ?? []
+    list.push(leg)
+    byId.set(leg.chainId, list)
+  }
+
+  const time = (list: TripTransferLeg[]) =>
+    Math.min(...list.map((leg) => new Date(leg.departsAt).getTime()))
+
+  const ordered = [...byId.entries()].sort((left, right) => time(left[1]) - time(right[1]))
+  const meta = new Map<string, ChainMeta>()
+
+  ordered.forEach(([id, list], index) => {
+    const stages = [...list].sort((left, right) => (left.stage ?? 0) - (right.stage ?? 0))
+    const first = stages[0]
+
+    /**
+     * Куда заброска везёт: конец той стороны, с которой она началась.
+     * У пары это конечная «туда», а не возвращение домой — «Иркутск →
+     * Витязь» говорит о поездке больше, чем «Иркутск → Иркутск».
+     */
+    const outward = stages.filter((leg) => leg.direction === first?.direction)
+    const arrive = outward[outward.length - 1]
+
+    meta.set(id, {
+      id,
+      number: index + 1,
+      count: stages.length,
+      from: first?.fromPlace ?? '',
+      to: arrive?.toPlace ?? '',
+      both:
+        stages.some((leg) => leg.direction === 'there') &&
+        stages.some((leg) => leg.direction === 'back'),
+    })
+  })
+
+  return meta
+})
 
 /**
  * Собрать карточки стороны в блоки.
  *
  * Карточки приходят уже упорядоченными бэкендом — заброска идёт одним
  * блоком по времени своего первого этапа. Здесь остаётся только сшить
- * соседние карточки одного `chainId` и пронумеровать заброски.
+ * соседние карточки одного `chainId`.
  */
 function groupLegs(list: TripTransferLeg[]): LegGroup[] {
   const groups: LegGroup[] = []
   const byChain = new Map<string, LegGroup>()
-  let number = 0
 
   for (const leg of list) {
     if (leg.chainId === null) {
-      groups.push({ key: leg.id, chainId: null, number: null, legs: [leg] })
+      groups.push({ key: leg.id, chainId: null, legs: [leg] })
       continue
     }
 
@@ -135,11 +205,9 @@ function groupLegs(list: TripTransferLeg[]): LegGroup[] {
       continue
     }
 
-    number += 1
     const group: LegGroup = {
       key: `chain-${leg.chainId}`,
       chainId: leg.chainId,
-      number,
       legs: [leg],
     }
 
@@ -253,14 +321,37 @@ function stagesWord(count: number): string {
   return 'этапов'
 }
 
-/** «Иркутск → Витязь» — от первой точки заброски до последней. */
-function chainRoute(group: LegGroup): string {
-  const first = group.legs[0]
-  const last = group.legs[group.legs.length - 1]
+/**
+ * Подпись заброски: номер в походе, какие этапы здесь и весь маршрут.
+ *
+ * Этапы одной заброски могут стоять в обеих сторонах, поэтому в блоке
+ * показываем не «сколько этапов в этой области», а какие именно: «этапы
+ * 1–2 из 4» в «Туда» и «этапы 3–4 из 4» в «Обратно» — одна и та же
+ * заброска, и это видно по номерам.
+ */
+function chainTitle(group: LegGroup): string {
+  const meta = group.chainId === null ? undefined : chains.value.get(group.chainId)
+  if (meta === undefined) return ''
 
-  if (first === undefined || last === undefined) return ''
+  const stages = group.legs
+    .map((leg) => leg.stage ?? 0)
+    .sort((left, right) => left - right)
 
-  return `${first.fromPlace} → ${last.toPlace}`
+  const first = stages[0] ?? 0
+  const last = stages[stages.length - 1] ?? 0
+
+  /**
+   * Вся цепочка в этой стороне — просто «2 этапа». Только часть — тогда
+   * номера: «этапы 1–2 из 4», и рядом, в другой стороне, будет «3–4 из 4».
+   */
+  const part =
+    group.legs.length === meta.count
+      ? `${meta.count} ${stagesWord(meta.count)}`
+      : first === last
+        ? `этап ${first} из ${meta.count}`
+        : `этапы ${first}–${last} из ${meta.count}`
+
+  return `Заброска ${meta.number} · ${part} · ${meta.from} → ${meta.to}`
 }
 
 function accepted(leg: TripTransferLeg): TripTransferPassenger[] {
@@ -446,33 +537,36 @@ const allowedCompensations = computed<TransferCompensation[]>(() => {
 
 const isAmountNeeded = computed(() => legDraft.value?.compensation !== 'free')
 
-/** «Туда-обратно» — только у исходной карточки: зеркало не зеркалится. */
-const isRoundTripAvailable = computed(
-  () => legDraft.value !== null && legDraft.value.sourceLegId === null,
+/**
+ * Карточка-зеркало пары.
+ *
+ * У неё нет ни флага «туда-обратно», ни своей оплаты: пара — это одна
+ * поездка, и оба конца у неё общие. Показываем одну подсказку вместо двух
+ * полей, которые всё равно ничего не решают.
+ */
+const isMirror = computed(
+  () => legDraft.value !== null && legDraft.value.sourceLegId !== null,
 )
 
-/** Флаг «наше ТС» — только тому, кому роль дала вкладку. */
+/** Флаг «наше ТС» — только тому, кому право вкладки дало флаг. */
 const canFlagOwnVehicle = computed(
   () => canEditTab.value && legDraft.value !== null && !isPublicMode(legDraft.value.mode),
 )
 
-/** Заброски этой стороны — из чего выбирать в диалоге. */
-const chainChoices = computed(() => {
-  const draft = legDraft.value
-  if (!draft) return []
-
-  const counts = new Map<string, number>()
-
-  for (const leg of legs.value) {
-    if (leg.direction !== draft.direction || leg.chainId === null) continue
-    counts.set(leg.chainId, (counts.get(leg.chainId) ?? 0) + 1)
-  }
-
-  return [...counts.entries()].map(([id, count], index) => ({
-    id,
-    label: `Заброска ${index + 1} · ${count} ${stagesWord(count)}`,
-  }))
-})
+/**
+ * Заброски похода — из чего выбирать в диалоге.
+ *
+ * Сторона не важна: заброска бывает и в один конец, и парой, поэтому
+ * добавлять этап в неё можно с любой стороны.
+ */
+const chainChoices = computed(() =>
+  [...chains.value.values()].map((meta) => ({
+    id: meta.id,
+    label: `Заброска ${meta.number} · ${meta.count} ${stagesWord(meta.count)}${
+      meta.both ? ' · туда и обратно' : ''
+    }`,
+  })),
+)
 
 /** uuid новой заброски. Клиент придумывает сам — отдельной ручки нет. */
 function newChainId(): string {
@@ -753,8 +847,7 @@ const driverOptions = computed(() =>
             class="text-xs font-medium text-muted"
             data-test="transfer-chain-title"
           >
-            Заброска {{ group.number }} · {{ group.legs.length }}
-            {{ stagesWord(group.legs.length) }} · {{ chainRoute(group) }}
+            {{ chainTitle(group) }}
           </p>
 
           <article
@@ -1198,7 +1291,8 @@ const driverOptions = computed(() =>
               <option value="new">Новая заброска</option>
             </select>
             <span class="text-xs text-muted">
-              Этапы заброски идут по времени отправления: авто → кони → лодка
+              Этапы идут по времени отправления: авто → кони → лодка. В заброску можно
+              добавить и обратные этапы — тогда она пара
             </span>
           </label>
 
@@ -1258,51 +1352,56 @@ const driverOptions = computed(() =>
             </label>
           </template>
 
-          <label class="flex flex-col gap-1 text-sm text-muted">
-            Компенсация расходов
-            <select
-              v-model="legDraft.compensation"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="transfer-compensation-input"
-            >
-              <option v-for="value in allowedCompensations" :key="value" :value="value">
-                {{ TRANSFER_COMPENSATION_LABELS[value] }}
-              </option>
-            </select>
-          </label>
-
-          <label
-            v-if="isAmountNeeded"
-            class="flex flex-col gap-1 text-sm text-muted"
-          >
-            Сумма, рублей
-            <input
-              v-model="legDraft.amount"
-              type="number"
-              min="1"
-              max="1000000"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="transfer-amount-input"
-            />
-          </label>
-
-          <label
-            v-if="isRoundTripAvailable"
-            class="flex cursor-pointer items-center gap-2 text-sm text-text"
-          >
-            <input
-              v-model="legDraft.isRoundTrip"
-              type="checkbox"
-              class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
-              data-test="transfer-round-trip-input"
-            />
-            Туда-обратно
-            <span class="text-xs text-muted">— карточка появится и в обратной стороне</span>
-          </label>
-
-          <p v-else class="text-xs text-muted" data-test="transfer-round-trip-hint">
-            Это обратная карточка пары — «туда-обратно» ставится на исходной
+          <!--
+            У пары одна оплата и один флаг: и то и другое задаётся
+            на исходной карточке. У зеркала вместо двух полей — подсказка,
+            иначе человек ищет, где тут поставить цену.
+          -->
+          <p v-if="isMirror" class="text-xs text-muted" data-test="transfer-mirror-hint">
+            Это обратная карточка пары. «Туда-обратно» и оплата задаются на исходной —
+            здесь они только показываются
           </p>
+
+          <template v-else>
+            <label class="flex flex-col gap-1 text-sm text-muted">
+              Компенсация расходов
+              <select
+                v-model="legDraft.compensation"
+                class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+                data-test="transfer-compensation-input"
+              >
+                <option v-for="value in allowedCompensations" :key="value" :value="value">
+                  {{ TRANSFER_COMPENSATION_LABELS[value] }}
+                </option>
+              </select>
+            </label>
+
+            <label
+              v-if="isAmountNeeded"
+              class="flex flex-col gap-1 text-sm text-muted"
+            >
+              Сумма, рублей
+              <input
+                v-model="legDraft.amount"
+                type="number"
+                min="1"
+                max="1000000"
+                class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+                data-test="transfer-amount-input"
+              />
+            </label>
+
+            <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+              <input
+                v-model="legDraft.isRoundTrip"
+                type="checkbox"
+                class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                data-test="transfer-round-trip-input"
+              />
+              Туда-обратно
+              <span class="text-xs text-muted">— карточка появится и в обратной стороне</span>
+            </label>
+          </template>
 
           <label class="flex flex-col gap-1 text-sm text-muted">
             Заметка

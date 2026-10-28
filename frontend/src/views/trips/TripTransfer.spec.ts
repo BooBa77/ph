@@ -367,14 +367,16 @@ describe('TripTransfer', () => {
 
     await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
 
-    // По умолчанию «безвозмездно» — и флаг всё равно есть: он не про деньги.
+    // По умолчанию «безвозмездно» — и флаг всё равно есть: билет
+    // туда-обратно тоже бывает, дело не в виде компенсации.
     expect(wrapper.find('[data-test="transfer-compensation-input"]').element).toHaveProperty(
       'value',
       'free',
     )
     expect(wrapper.find('[data-test="transfer-round-trip-input"]').exists()).toBe(true)
 
-    // У зеркала пары флага нет: второй пары не бывает.
+    // У зеркала пары нет ни флага, ни своей оплаты: пара — одна поездка,
+    // и деньги с флагом задаются на исходной карточке.
     const plan = makePlan()
     plan.legs[2]!.sourceLegId = '1'
 
@@ -382,7 +384,8 @@ describe('TripTransfer', () => {
     await mirror.find('[data-test="transfer-edit-3"]').trigger('click')
 
     expect(mirror.find('[data-test="transfer-round-trip-input"]').exists()).toBe(false)
-    expect(mirror.find('[data-test="transfer-round-trip-hint"]').exists()).toBe(true)
+    expect(mirror.find('[data-test="transfer-compensation-input"]').exists()).toBe(false)
+    expect(mirror.find('[data-test="transfer-mirror-hint"]').text()).toContain('исходной')
   })
 
   it('без суммы компенсации карточку не сохранить', async () => {
@@ -438,6 +441,32 @@ describe('TripTransfer', () => {
       .map((node) => node.text())
     expect(stages[0]).toContain('этап 1')
     expect(stages[1]).toContain('этап 2')
+  })
+
+  it('заброска может быть парой: этапы расходятся по сторонам', async () => {
+    const plan = makePlan()
+    const chain = '0191f0a0-0000-4000-8000-000000000002'
+
+    // «Туда»: авто и кони. «Обратно»: те же этапы в обратном порядке,
+    // и это по-прежнему одна заброска с общим номером.
+    plan.legs = [
+      { ...plan.legs[0]!, id: 't1', chainId: chain, stage: 1, direction: 'there' },
+      { ...plan.legs[1]!, id: 't2', chainId: chain, stage: 2, direction: 'there' },
+      { ...plan.legs[2]!, id: 'b1', chainId: chain, stage: 3, direction: 'back' },
+      { ...plan.legs[2]!, id: 'b2', chainId: chain, stage: 4, direction: 'back' },
+    ]
+
+    const wrapper = await mountTransfer(plan)
+
+    const thereTitle = wrapper.find('[data-test="transfer-area-there"] [data-test="transfer-chain-title"]').text()
+    const backTitle = wrapper.find('[data-test="transfer-area-back"] [data-test="transfer-chain-title"]').text()
+
+    // Одна и та же заброска, но в каждой стороне — свои этапы.
+    expect(thereTitle).toContain('Заброска 1 · этапы 1–2 из 4')
+    expect(backTitle).toContain('Заброска 1 · этапы 3–4 из 4')
+
+    // Маршрут пары — до конечной «туда», а не «Иркутск → Иркутск».
+    expect(thereTitle).toContain('Иркутск, автовокзал → Олхинское плато, Витязь')
   })
 
   it('карточку можно положить в заброску — новую или существующую', async () => {
