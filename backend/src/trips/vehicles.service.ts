@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, In, IsNull } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull } from 'typeorm';
 
 import {
   CreateVehicleDto,
@@ -45,12 +45,16 @@ export class VehiclesService {
   async create(userId: string, dto: CreateVehicleDto): Promise<VehicleDto> {
     const manager = this.dataSource.manager;
 
+    const brand = this.brand(dto.brand);
+    const plate = this.optional(dto.plate, 10, 'Госномер');
+    await this.assertNotDuplicated(manager, userId, brand, plate);
+
     const saved = await manager.save(
       manager.create(Vehicle, {
         ownerUserId: userId,
         kind: dto.kind,
-        brand: this.brand(dto.brand),
-        plate: this.optional(dto.plate, 10, 'Госномер'),
+        brand,
+        plate,
         seats: dto.seats ?? null,
       }),
     );
@@ -73,7 +77,49 @@ export class VehiclesService {
       vehicle.plate = this.optional(dto.plate, 10, 'Госномер');
     }
 
+    await this.assertNotDuplicated(
+      manager,
+      userId,
+      vehicle.brand,
+      vehicle.plate,
+      vehicle.id,
+    );
+
     return VehicleDto.from(await manager.save(vehicle));
+  }
+
+  /**
+   * Две одинаковые машины в каталоге не нужны.
+   *
+   * Заказчик 28.10.2026: «добавь проверку по „владелец + марка + номер“».
+   * Сравниваем без учёта регистра и лишних пробелов: «Нива» и «нива»,
+   * «222» и «222 » — одна машина. Без номера сравнивать нечего: две «Нивы»
+   * без номеров — законная ситуация, различать их нечем.
+   */
+  private async assertNotDuplicated(
+    manager: EntityManager,
+    ownerUserId: string,
+    brand: string,
+    plate: string | null,
+    exceptId?: string,
+  ): Promise<void> {
+    if (plate === null) return;
+
+    const query = manager
+      .createQueryBuilder(Vehicle, 'vehicle')
+      .where('vehicle.owner_user_id = :ownerUserId', { ownerUserId })
+      .andWhere('LOWER(TRIM(vehicle.brand)) = LOWER(:brand)', { brand })
+      .andWhere('LOWER(TRIM(vehicle.plate)) = LOWER(:plate)', { plate });
+
+    if (exceptId !== undefined) {
+      query.andWhere('vehicle.id <> :exceptId', { exceptId });
+    }
+
+    if ((await query.getOne()) !== null) {
+      throw new ConflictException(
+        'Такая машина уже есть в вашем снаряжении — выберите её из списка',
+      );
+    }
   }
 
   /**

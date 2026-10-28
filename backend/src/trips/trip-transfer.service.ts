@@ -147,6 +147,10 @@ export class TripTransferService {
 
     this.assertWithinTrip(trip, new Date(dto.departsAt));
 
+    if (dto.isStage === true) {
+      await this.assertStageInsideWindow(manager, trip.id, new Date(dto.departsAt));
+    }
+
     const last = await manager.findOne(TripTransferLeg, {
       where: { tripId: trip.id, direction: dto.direction },
       order: { position: 'DESC', id: 'DESC' },
@@ -352,6 +356,20 @@ export class TripTransferService {
     leg.mode = effectiveMode;
     if (dto.departsAt !== undefined) leg.departsAt = new Date(dto.departsAt);
     this.assertWithinTrip(trip, leg.departsAt);
+
+    if (leg.isStage) {
+      await this.assertStageInsideWindow(manager, trip.id, leg.departsAt, leg.id);
+
+      // У этапа уже есть пассажиры — проверяем по каждому: у людей
+      // свои рейсы туда и обратно, и «воевать» с чужим выездом нельзя.
+      const seated = await manager.find(TripTransferPassenger, {
+        where: { legId: leg.id, status: 'accepted' },
+      });
+
+      for (const person of seated) {
+        await this.assertStageFitsRider(manager, leg, person.userId);
+      }
+    }
     if (dto.fromPlace !== undefined) leg.fromPlace = this.place(dto.fromPlace, 'Откуда');
     if (dto.toPlace !== undefined) leg.toPlace = this.place(dto.toPlace, 'Докуда');
     leg.isOwnVehicle = isOwnVehicle;
@@ -378,7 +396,13 @@ export class TripTransferService {
     // Флаг «туда-обратно» включили или сняли — зеркало появляется или уходит.
     await this.syncMirrorExistence(manager, trip.id, leg);
 
-    // Оплата у пары одна: задали её на исходной — она же и в зеркале.
+    /**
+     * Пара едет одним способом: сменили тип на исходном — он же и в зеркале.
+     * Заказчик 28.10.2026: «изменяем тип транспорта… ожидается, что
+     * изменения перенесутся и в „обратно“». Оплата — отдельно: у своего
+     * и наёмного она общая, у рейса билет на каждом конце свой.
+     */
+    await this.syncMirrorTransport(manager, leg);
     await this.syncMoneyToMirror(manager, leg);
 
     return this.buildPlan(manager, trip, userId);
@@ -658,6 +682,48 @@ export class TripTransferService {
     return manager.findOne(TripTransferLeg, {
       where: { roundTripSourceId: leg.id },
     });
+  }
+
+  /**
+   * Тип транспорта пары один на два конца.
+   *
+   * Сменили «Ж/д» на «Автомобиль» на исходном рейсе — обратный становится
+   * автомобилем тоже: пара и значит «вернуться тем же способом». Места
+   * и техника переезжают вместе с типом, иначе в обратном остался бы
+   * вагон с четырьмя местами.
+   *
+   * Оплату трогаем только тогда, когда она перестала подходить к новому
+   * типу: у общественного должен быть билет, у своего — не билет.
+   */
+  private async syncMirrorTransport(
+    manager: EntityManager,
+    leg: TripTransferLeg,
+  ): Promise<void> {
+    if (!leg.isRoundTrip) return;
+
+    const mirror = await this.mirrorOf(manager, leg);
+    if (!mirror) return;
+
+    mirror.mode = leg.mode;
+    mirror.seats = leg.seats;
+    mirror.isOwnVehicle = leg.isOwnVehicle;
+    mirror.ownerUserId = leg.ownerUserId;
+    mirror.vehicleId = leg.vehicleId;
+
+    const publicMode = this.isPublicMode(mirror.mode);
+
+    if (mirror.compensation === 'ticket' && !publicMode) {
+      mirror.compensation = leg.compensation;
+      mirror.compensationAmountRub = leg.compensationAmountRub;
+    } else if (
+      publicMode &&
+      (mirror.compensation === 'shared' ||
+        mirror.compensation === 'sharedPerPassenger')
+    ) {
+      mirror.compensation = 'ticket';
+    }
+
+    await manager.save(mirror);
   }
 
   /**
@@ -1241,6 +1307,103 @@ export class TripTransferService {
     }
 
     await this.assertPairOrder(manager, leg, { userId });
+    await this.assertStageFitsRider(manager, leg, userId);
+  }
+
+  /**
+   * Заброска между приездом и возвращением — **по человеку**.
+   *
+   * Заказчик 28.10.2026: «выезд у участников может различаться, поэтому
+   * это на уровне участников. Трегубов выезжает на поезде 24 октября
+   * в 17:34, обратный рейс стоит 24 октября в 17:34, ехать на тракторе
+   * 25 октября в 23:40 он не может». Поэтому этап не раньше последнего
+   * его «туда» и не позже первого «обратно».
+   */
+  private async assertStageFitsRider(
+    manager: EntityManager,
+    stage: TripTransferLeg,
+    userId: string,
+  ): Promise<void> {
+    if (!stage.isStage) return;
+
+    const [legs, riders] = await Promise.all([
+      manager.find(TripTransferLeg, { where: { tripId: stage.tripId } }),
+      manager.find(TripTransferPassenger, {
+        where: { tripId: stage.tripId, userId, status: 'accepted' },
+      }),
+    ]);
+
+    const byId = new Map(legs.map((leg) => [leg.id, leg]));
+    const own = riders
+      .map((row) => byId.get(row.legId))
+      .filter((leg): leg is TripTransferLeg => leg !== undefined)
+      .filter((leg) => !leg.isStage && leg.id !== stage.id);
+
+    const earliest = (list: TripTransferLeg[]) =>
+      list.length === 0
+        ? null
+        : Math.min(...list.map((leg) => leg.departsAt.getTime()));
+
+    const latest = (list: TripTransferLeg[]) =>
+      list.length === 0
+        ? null
+        : Math.max(...list.map((leg) => leg.departsAt.getTime()));
+
+    const arrives = latest(own.filter((leg) => leg.direction === 'there'));
+    const leaves = earliest(own.filter((leg) => leg.direction === 'back'));
+    const time = stage.departsAt.getTime();
+
+    if (arrives !== null && time < arrives) {
+      throw new BadRequestException(
+        'Заброска раньше, чем участник приехал — поправьте время',
+      );
+    }
+
+    if (leaves !== null && time > leaves) {
+      throw new BadRequestException(
+        'Заброска позже, чем участник уехал — поправьте время',
+      );
+    }
+  }
+
+  /**
+   * Заброска внутри выезда — пока пассажиров нет.
+   *
+   * У пустого этапа проверять нечего: смотрим на крайние рейсы похода —
+   * этап не раньше первого «туда» и не позже последнего «обратно».
+   */
+  private async assertStageInsideWindow(
+    manager: EntityManager,
+    tripId: string,
+    departsAt: Date,
+    exceptLegId?: string,
+  ): Promise<void> {
+    const legs = (
+      await manager.find(TripTransferLeg, { where: { tripId } })
+    ).filter((leg) => !leg.isStage && leg.id !== exceptLegId);
+
+    const there = legs.filter((leg) => leg.direction === 'there');
+    const back = legs.filter((leg) => leg.direction === 'back');
+    const time = departsAt.getTime();
+
+    const firstOut = there.length
+      ? Math.min(...there.map((leg) => leg.departsAt.getTime()))
+      : null;
+    const lastBack = back.length
+      ? Math.max(...back.map((leg) => leg.departsAt.getTime()))
+      : null;
+
+    if (firstOut !== null && time < firstOut) {
+      throw new BadRequestException(
+        'Заброска раньше выезда — поправьте время',
+      );
+    }
+
+    if (lastBack !== null && time > lastBack) {
+      throw new BadRequestException(
+        'Заброска позже возвращения — поправьте время',
+      );
+    }
   }
 
   /** Поставить человека в карточку, не падая на повторной вставке. */

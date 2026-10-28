@@ -372,6 +372,20 @@ describe('Трансфер похода (e2e)', () => {
       vehicleId,
     );
 
+    // Та же машина второй раз — 409: «владелец + марка + номер».
+    await request(app.getHttpServer())
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${memberToken}`)
+      .send({ kind: 'car', brand: ' нива ', seats: 5, plate: 'а123вс38' })
+      .expect(409);
+
+    // Без номера сравнивать нечего: две «Нивы» без номеров — законно.
+    await request(app.getHttpServer())
+      .post('/api/vehicles')
+      .set('Authorization', `Bearer ${memberToken}`)
+      .send({ kind: 'car', brand: 'Нива' })
+      .expect(201);
+
     // Чужой транспорт в карточку не подставить — его просто нет в каталоге.
     await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs`)
@@ -1278,6 +1292,94 @@ describe('Трансфер похода (e2e)', () => {
         [tripId],
       );
     }
+  });
+
+  it('смена типа переносится в обратный рейс и новых не плодит', async () => {
+    const body = await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'train',
+      departsAt: '2026-12-02T06:00:00.000Z',
+      fromPlace: 'Иркутск, пригородный вокзал',
+      toPlace: 'Слюдянка',
+      compensation: 'ticket',
+      compensationAmountRub: 300,
+      isRoundTrip: true,
+    });
+
+    const source = body.legs.find(
+      (leg) => leg.isRoundTrip && leg.fromPlace === 'Иркутск, пригородный вокзал',
+    )!;
+    const mirror = body.legs.find((leg) => leg.sourceLegId === source.id)!;
+    const before = body.legs.length;
+
+    const changed = await request(app.getHttpServer())
+      .patch(`/api/trips/${tripId}/transfer/legs/${source.id}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ mode: 'car', compensation: 'free' })
+      .expect(200);
+
+    // Ни одной новой карточки: правится та же самая.
+    expect(changed.body.legs.length).toBe(before);
+
+    const sourceAfter = changed.body.legs.find(
+      (leg: { id: string }) => leg.id === source.id,
+    );
+    const mirrorAfter = changed.body.legs.find(
+      (leg: { id: string }) => leg.id === mirror.id,
+    );
+
+    expect(sourceAfter.mode).toBe('car');
+    // Пара едет одним способом: обратный тоже стал автомобилем.
+    expect(mirrorAfter.mode).toBe('car');
+    expect(mirrorAfter.compensation).toBe('free');
+  });
+
+  it('заброска не выходит за выезд и возвращение', async () => {
+    await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'bus',
+      departsAt: '2026-12-05T06:00:00.000Z',
+      fromPlace: 'Иркутск, застава',
+      toPlace: 'Витязь',
+      compensation: 'ticket',
+      compensationAmountRub: 400,
+    });
+
+    await createLeg(organizerToken, {
+      direction: 'back',
+      mode: 'bus',
+      departsAt: '2026-12-07T18:00:00.000Z',
+      fromPlace: 'Витязь',
+      toPlace: 'Иркутск, застава',
+      compensation: 'ticket',
+      compensationAmountRub: 400,
+    });
+
+    // Трактор после возвращения группы — нельзя.
+    await request(app.getHttpServer())
+      .post(`/api/trips/${tripId}/transfer/legs`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({
+        direction: 'there',
+        isStage: true,
+        mode: 'tractor',
+        departsAt: '2026-12-08T03:00:00.000Z',
+        fromPlace: 'Витязь',
+        toPlace: 'Сухой ручей',
+        compensation: 'free',
+      })
+      .expect(400);
+
+    // Между выездом и возвращением — можно.
+    await createLeg(organizerToken, {
+      direction: 'there',
+      isStage: true,
+      mode: 'tractor',
+      departsAt: '2026-12-06T03:00:00.000Z',
+      fromPlace: 'Витязь',
+      toPlace: 'Сухой ручей',
+      compensation: 'free',
+    });
   });
 
   it('чат трансфера видит только состав', async () => {
