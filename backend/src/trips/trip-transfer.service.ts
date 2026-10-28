@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, In } from 'typeorm';
 
 import {
   AddTransferPassengerDto,
@@ -51,6 +51,7 @@ import { TripsService } from './trips.service';
  * | присоединиться | участник, который идёт: на рейс — сразу, на чужое ТС — заявкой |
  * | принять заявку, посадить другого | владелец ТС или право на вкладку |
  * | уйти | сам человек, в любом статусе |
+ * | второй рейс того же направления | нельзя: заявка и заброска — можно |
  *
  * «Владелец принимает» — решение заказчика 27.10.2026: место в чужой машине
  * даёт тот, чья это машина, а не организатор. На рейсе спрашивать некого —
@@ -78,6 +79,15 @@ import { TripsService } from './trips.service';
  * свободно; удаление исходного удаляет и обратный (каскад).
  * Оплата общая только у своего и наёмного транспорта — у рейсов билеты
  * стоят на обеих карточках и могут отличаться по цене.
+ *
+ * ## Один рейс
+ *
+ * «У каждого пользователя может быть по одному рейсу туда-обратно»
+ * (заказчик 28.10.2026). Второго рейса того же направления не бывает —
+ * ни посадкой, ни принятием заявки, ни владельцем в своём ТС. Заявки
+ * и заброски правило не касаются: заявка место не занимает, а этапы —
+ * внутренние переезды, а не дорога от дома. Подробности —
+ * в `assertSingleRide`.
  */
 @Injectable()
 export class TripTransferService {
@@ -134,16 +144,44 @@ export class TripTransferService {
       ? { isOwnVehicle: true, ownerUserId: userId }
       : this.resolveOwnership({ ...dto, mode }, userId, canEditTab);
 
+    const isStage = dto.isStage ?? false;
+    const isRoundTrip = dto.isRoundTrip ?? false;
+
     if (isOwnVehicle) {
-      await this.assertTraveler(manager, trip.id, ownerUserId as string);
+      const owner = ownerUserId as string;
+      await this.assertTraveler(manager, trip.id, owner);
+
+      /**
+       * Владельца сервис сажает в его же ТС сам, и правило «один рейс»
+       * распространяется и на него: иначе вторую машину можно было бы
+       * завести на человека, который уже уехал другим рейсом. У пары
+       * проверяются оба конца — в зеркало он тоже попадает.
+       */
+      await this.assertSingleRide(
+        manager,
+        trip.id,
+        dto.direction,
+        isStage,
+        owner,
+        null,
+      );
+
+      if (isRoundTrip) {
+        await this.assertSingleRide(
+          manager,
+          trip.id,
+          this.otherDirection(dto.direction),
+          isStage,
+          owner,
+          null,
+        );
+      }
     }
 
     const amount =
       dto.compensation === 'free' ? null : (dto.compensationAmountRub ?? null);
 
     this.assertCompensation(mode, dto.compensation, amount);
-
-    const isRoundTrip = dto.isRoundTrip ?? false;
 
     this.assertWithinTrip(trip, new Date(dto.departsAt));
 
@@ -157,7 +195,7 @@ export class TripTransferService {
         tripId: trip.id,
         direction: dto.direction,
         position: (last?.position ?? 0) + 1,
-        isStage: dto.isStage ?? false,
+        isStage,
         mode,
         departsAt: new Date(dto.departsAt),
         fromPlace: this.place(dto.fromPlace, 'Откуда'),
@@ -213,6 +251,12 @@ export class TripTransferService {
 
     const leg = await this.legOrFail(manager, trip.id, legId);
     const canEditTab = await this.trips.canEditTab(userId, trip, TRANSFER_TAB);
+
+    /** Что было до правки: от этого зависит, кого сажает сервис сам. */
+    const previousOwnerId = leg.ownerUserId;
+    const wasRoundTrip = leg.isRoundTrip;
+    const previousDirection = leg.direction;
+    const previousStage = leg.isStage;
 
     if (leg.ownerUserId !== userId && !canEditTab) {
       throw new ForbiddenException(
@@ -365,6 +409,82 @@ export class TripTransferService {
     leg.compensationAmountRub = compensation === 'free' ? null : amount;
     leg.isRoundTrip = isRoundTrip;
     if (dto.note !== undefined) leg.note = this.note(dto.note);
+
+    /**
+     * Посадки, которые сервис делает сам, проходят те же правила, что
+     * и ручные: новый владелец садится в свой рейс, а включение пары
+     * копирует уже посаженных в зеркало. Проверяем **до** записи — иначе
+     * 400 пришла бы на сохранённую карточку (те же грабли, что у дат пары).
+     */
+    if (
+      leg.isOwnVehicle &&
+      leg.ownerUserId !== null &&
+      leg.ownerUserId !== previousOwnerId
+    ) {
+      await this.assertSingleRide(
+        manager,
+        trip.id,
+        leg.direction,
+        leg.isStage,
+        leg.ownerUserId,
+        leg.id,
+      );
+
+      if (isRoundTrip) {
+        await this.assertSingleRide(
+          manager,
+          trip.id,
+          this.otherDirection(leg.direction),
+          leg.isStage,
+          leg.ownerUserId,
+          leg.id,
+        );
+      }
+    }
+
+    if (isRoundTrip && !wasRoundTrip) {
+      const seated = await manager.find(TripTransferPassenger, {
+        where: { legId: leg.id, status: 'accepted' },
+      });
+
+      for (const person of seated) {
+        await this.assertSingleRide(
+          manager,
+          trip.id,
+          this.otherDirection(leg.direction),
+          leg.isStage,
+          person.userId,
+          null,
+        );
+      }
+    }
+
+    /**
+     * Карточка переехала в другую сторону или перестала быть заброской —
+     * её пассажиры начинают считаться в новом направлении. Без проверки
+     * человек, у которого уже есть рейс там, получил бы второй правкой
+     * карточки, а не посадкой.
+     */
+    const countedDifferently =
+      (leg.direction !== previousDirection || leg.isStage !== previousStage) &&
+      !leg.isStage;
+
+    if (countedDifferently) {
+      const seated = await manager.find(TripTransferPassenger, {
+        where: { legId: leg.id, status: 'accepted' },
+      });
+
+      for (const person of seated) {
+        await this.assertSingleRide(
+          manager,
+          trip.id,
+          leg.direction,
+          leg.isStage,
+          person.userId,
+          leg.id,
+        );
+      }
+    }
 
     await manager.save(leg);
 
@@ -1075,13 +1195,36 @@ export class TripTransferService {
         Number(left.id) - Number(right.id);
     });
 
+    /**
+     * Направления, в которых у смотрящего уже есть рейс: второй не сажаем
+     * (`assertSingleRide`), поэтому и кнопки «Присоединиться» там быть
+     * не должно — правило одно, и UI не должен предлагать невозможное.
+     * Заброски не в счёт: этап — внутренний переезд, а не дорога от дома.
+     */
+    const legsById = new Map(legs.map((leg) => [leg.id, leg]));
+    const takenDirections = new Set<TransferDirection>();
+
+    for (const passenger of passengers) {
+      if (passenger.userId !== userId || passenger.status !== 'accepted') {
+        continue;
+      }
+
+      const own = legsById.get(passenger.legId);
+
+      if (own !== undefined && !own.isStage) {
+        takenDirections.add(own.direction);
+      }
+    }
+
     const legDtos = ordered.map((leg): TransferLegDto => {
       const inLeg = passengersByLeg.get(leg.id) ?? [];
       const accepted = inLeg.filter((person) => person.status === 'accepted');
       const mine = inLeg.find((person) => person.userId === userId) ?? null;
 
       const joinStatus: TransferPassengerStatus | null =
-        mine !== null || !going.has(userId)
+        mine !== null ||
+        !going.has(userId) ||
+        (!leg.isStage && takenDirections.has(leg.direction))
           ? null
           : leg.isOwnVehicle
             ? 'requested'
@@ -1344,6 +1487,20 @@ export class TripTransferService {
   ): Promise<void> {
     if (status !== 'accepted') return;
 
+    /**
+     * Один человек — один рейс этого направления. Проверка идёт до вставки
+     * и до проверки дат: «уже едешь» — более простое объяснение, чем
+     * «дата не сходится», и оно не зависит от порядка карточек.
+     */
+    await this.assertSingleRide(
+      manager,
+      leg.tripId,
+      leg.direction,
+      leg.isStage,
+      userId,
+      leg.id,
+    );
+
     const pair = await this.pairOf(manager, leg);
 
     if (pair !== null) {
@@ -1366,6 +1523,21 @@ export class TripTransferService {
             'На обратный маршрут нет свободных мест',
           );
         }
+
+        /**
+         * И второй конец пары — тоже рейс: человек, который уже едет
+         * обратно другим рейсом, в зеркало не попадает. Проверяем до
+         * вставки: посадка автоматическая, и 400 после неё оставила бы
+         * его на одном конце.
+         */
+        await this.assertSingleRide(
+          manager,
+          mirror.tripId,
+          mirror.direction,
+          mirror.isStage,
+          userId,
+          mirror.id,
+        );
       }
     }
 
@@ -1373,6 +1545,68 @@ export class TripTransferService {
     if (trip !== null) {
       await this.assertLegDate(manager, trip, leg, userId);
     }
+  }
+
+  /**
+   * Один человек — один рейс «туда» и один «обратно».
+   *
+   * Заказчик 28.10.2026 дословно: «у каждого пользователя может быть
+   * по одному рейсу туда-обратно. Даже если он на такси до поезда ехал…
+   * такси будет „туда“, а поезд пойдёт в заброски». Отсюда:
+   *
+   * - считается **направление**, а не количество: «туда» и «обратно» —
+   *   два разных места, и оба могут быть заняты;
+   * - проверяются только **принятые** посадки: `requested` место не
+   *   занимает, и человек вправе проситься в несколько машин сразу
+   *   (правило «проверка на посадку, не на заявку»);
+   * - **заброски не считаются**: `is_stage` — внутренний переезд,
+   *   а не дорога от дома, и этапов у человека сколько нужно.
+   *
+   * `legId` — карточка, в которую сажают: она исключается из подсчёта,
+   * потому что при принятии заявки строка в ней уже есть, а при посадке
+   * в пару зеркало проверяется отдельным вызовом со своим `legId`.
+   */
+  private async assertSingleRide(
+    manager: EntityManager,
+    tripId: string,
+    direction: TransferDirection,
+    isStage: boolean,
+    userId: string,
+    legId: string | null,
+  ): Promise<void> {
+    if (isStage) return;
+
+    const rows = await manager.find(TripTransferPassenger, {
+      where: { tripId, userId, status: 'accepted' },
+    });
+
+    const otherLegIds = rows
+      .map((row) => row.legId)
+      .filter((id) => id !== legId);
+
+    if (otherLegIds.length === 0) return;
+
+    const taken = await manager.count(TripTransferLeg, {
+      where: {
+        tripId,
+        id: In(otherLegIds),
+        direction,
+        isStage: false,
+      },
+    });
+
+    if (taken === 0) return;
+
+    throw new BadRequestException(
+      direction === 'there'
+        ? 'У участника уже есть рейс туда — второй не сажаем, ехать можно в заброске'
+        : 'У участника уже есть рейс обратно — второй не сажаем, вернуться можно в заброске',
+    );
+  }
+
+  /** Другая сторона: у пары зеркало живёт в ней. */
+  private otherDirection(direction: TransferDirection): TransferDirection {
+    return direction === 'there' ? 'back' : 'there';
   }
 
   /** Поставить человека в карточку, не падая на повторной вставке. */

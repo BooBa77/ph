@@ -185,7 +185,7 @@ export class TransferLegDto {
 
   @ApiProperty({
     description:
-      'Что будет, если смотрящий присоединится: accepted — сразу едет, requested — заявка владельцу, null — уже в рейсе или нельзя',
+      'Что будет, если смотрящий присоединится: accepted — сразу едет, requested — заявка владельцу, null — уже в рейсе или нельзя (в этом направлении у него уже есть рейс)',
     enum: TRANSFER_PASSENGER_STATUSES,
     nullable: true,
     example: 'requested',

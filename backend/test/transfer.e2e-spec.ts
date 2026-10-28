@@ -40,6 +40,11 @@ import type { TripTransferDto } from './../src/trips/dto/trip-transfer.dto';
  *    может быть несколько, а у рейсов пары не бывает вовсе.
  * 10. **Техника из каталога** освобождается закрытым походом: 409 —
  *     только пока поход не закрыт.
+ * 11. **Один человек — один рейс «туда» и один «обратно».** Второй рейс
+ *     того же направления не сажаем: ни посадкой, ни принятием заявки,
+ *     ни владельцем в своём ТС. Заявки (`requested`) и заброски (`is_stage`)
+ *     не считаются — заявка место не занимает, а этап это внутренний
+ *     переезд, а не дорога от дома.
  *
  * Поход, состав и чаты тест заводит напрямую в базе: видимость похода и
  * создание чатов проверены в `trips.e2e-spec.ts`.
@@ -54,12 +59,22 @@ describe('Трансфер похода (e2e)', () => {
   let driverToken: string;
   let memberId: string;
   let memberToken: string;
+  let annaId: string;
+  let annaToken: string;
+  let petrId: string;
+  let petrToken: string;
   let maybeId: string;
   let maybeToken: string;
   let strangerToken: string;
 
   let objectId: string;
   let tripId: string;
+  /**
+   * Отдельный поход для правила «один человек — один рейс»: в общей
+   * цепочке люди уже сидят в карточках, заведённых раньше, и проверка
+   * мешала бы соседним тестам.
+   */
+  let ruleTripId: string;
 
   /** Карточки, которые заводятся по ходу тестов. */
   let memberCarId: string;
@@ -74,6 +89,8 @@ describe('Трансфер похода (e2e)', () => {
   const organizerEmail = `transfer-e2e-org-${stamp}@example.com`;
   const driverEmail = `transfer-e2e-driver-${stamp}@example.com`;
   const memberEmail = `transfer-e2e-member-${stamp}@example.com`;
+  const annaEmail = `transfer-e2e-anna-${stamp}@example.com`;
+  const petrEmail = `transfer-e2e-petr-${stamp}@example.com`;
   const maybeEmail = `transfer-e2e-maybe-${stamp}@example.com`;
   const strangerEmail = `transfer-e2e-stranger-${stamp}@example.com`;
 
@@ -97,13 +114,17 @@ describe('Трансфер похода (e2e)', () => {
   }
 
   /** Вкладка глазами кого-то из участников. */
-  async function plan(token: string): Promise<TripTransferDto> {
+  async function planOf(trip: string, token: string): Promise<TripTransferDto> {
     const response = await request(app.getHttpServer())
-      .get(`/api/trips/${tripId}/transfer`)
+      .get(`/api/trips/${trip}/transfer`)
       .set('Authorization', `Bearer ${token}`)
       .expect(200);
 
     return response.body as TripTransferDto;
+  }
+
+  function plan(token: string): Promise<TripTransferDto> {
+    return planOf(tripId, token);
   }
 
   function legOf(body: TripTransferDto, id: string) {
@@ -115,17 +136,25 @@ describe('Трансфер похода (e2e)', () => {
   }
 
   /** Создать карточку и вернуть ответ целиком. */
-  async function createLeg(
+  async function createLegIn(
+    trip: string,
     token: string,
     body: Record<string, unknown>,
   ): Promise<TripTransferDto> {
     const response = await request(app.getHttpServer())
-      .post(`/api/trips/${tripId}/transfer/legs`)
+      .post(`/api/trips/${trip}/transfer/legs`)
       .set('Authorization', `Bearer ${token}`)
       .send(body)
       .expect(200);
 
     return response.body as TripTransferDto;
+  }
+
+  function createLeg(
+    token: string,
+    body: Record<string, unknown>,
+  ): Promise<TripTransferDto> {
+    return createLegIn(tripId, token, body);
   }
 
   beforeAll(async () => {
@@ -161,6 +190,14 @@ describe('Трансфер похода (e2e)', () => {
     memberToken = member.token;
     memberId = member.id;
 
+    const anna = await login(annaEmail);
+    annaToken = anna.token;
+    annaId = anna.id;
+
+    const petr = await login(petrEmail);
+    petrToken = petr.token;
+    petrId = petr.id;
+
     const maybe = await login(maybeEmail);
     maybeId = maybe.id;
     maybeToken = maybe.token;
@@ -184,8 +221,22 @@ describe('Трансфер похода (e2e)', () => {
     await dataSource.query(
       `INSERT INTO trip_participants (trip_id, user_id, status)
        VALUES ($1, $2, 'going'), ($1, $3, 'going'), ($1, $4, 'going'),
-              ($1, $5, 'maybe')`,
-      [tripId, organizerId, driverId, memberId, maybeId],
+              ($1, $5, 'going'), ($1, $6, 'going'), ($1, $7, 'maybe')`,
+      [tripId, organizerId, driverId, memberId, annaId, petrId, maybeId],
+    );
+
+    ruleTripId = (
+      await dataSource.query(
+        `INSERT INTO trips (organizer_user_id, goal_object_id) VALUES ($1, $2) RETURNING id`,
+        [organizerId, objectId],
+      )
+    )[0].id;
+
+    await dataSource.query(
+      `INSERT INTO trip_participants (trip_id, user_id, status)
+       VALUES ($1, $2, 'going'), ($1, $3, 'going'), ($1, $4, 'going'),
+              ($1, $5, 'going'), ($1, $6, 'going')`,
+      [ruleTripId, organizerId, driverId, memberId, annaId, petrId],
     );
 
     /**
@@ -221,7 +272,9 @@ describe('Трансфер похода (e2e)', () => {
 
   afterAll(async () => {
     if (dataSource?.isInitialized) {
-      await dataSource.query('DELETE FROM trips WHERE id = $1', [tripId]);
+      await dataSource.query('DELETE FROM trips WHERE id = ANY($1::bigint[])', [
+        [tripId, ruleTripId],
+      ]);
       await dataSource.query(
         'DELETE FROM vehicles WHERE owner_user_id = ANY($1::uuid[])',
         [[organizerId, driverId, memberId]],
@@ -621,26 +674,32 @@ describe('Трансфер похода (e2e)', () => {
   });
 
   it('присоединение: на рейс сразу, на чужое ТС — заявкой', async () => {
+    /**
+     * Сажаем «Анну»: у каждого в рейсе своё место, и правило «один рейс
+     * туда» ей не мешает. Организатора сажать нельзя — он уже едет своей
+     * машиной, а второго рейса того же направления не бывает (отдельно
+     * это проверяет тест про правило ниже).
+     */
     const onBus = await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs/${busId}/join`)
-      .set('Authorization', `Bearer ${organizerToken}`)
+      .set('Authorization', `Bearer ${annaToken}`)
       .expect(200);
 
-    expect(passengerOf(onBus.body, busId, organizerId)?.status).toBe('accepted');
+    expect(passengerOf(onBus.body, busId, annaId)?.status).toBe('accepted');
 
     const onCar = await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs/${memberCarId}/join`)
-      .set('Authorization', `Bearer ${organizerToken}`)
+      .set('Authorization', `Bearer ${petrToken}`)
       .expect(200);
 
-    expect(passengerOf(onCar.body, memberCarId, organizerId)?.status).toBe('requested');
+    expect(passengerOf(onCar.body, memberCarId, petrId)?.status).toBe('requested');
     // Заявка место не занимает.
     expect(legOf(onCar.body, memberCarId)?.occupied).toBe(1);
 
     // Повторно — 409.
     await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs/${memberCarId}/join`)
-      .set('Authorization', `Bearer ${organizerToken}`)
+      .set('Authorization', `Bearer ${petrToken}`)
       .expect(409);
 
     // Сам владелец к своей карточке не присоединяется: он уже там.
@@ -653,16 +712,16 @@ describe('Трансфер похода (e2e)', () => {
   it('заявку принимает владелец, и места считаются', async () => {
     // Принять заявку может только владелец или право вкладки.
     await request(app.getHttpServer())
-      .post(`/api/trips/${tripId}/transfer/legs/${memberCarId}/passengers/${organizerId}/accept`)
+      .post(`/api/trips/${tripId}/transfer/legs/${memberCarId}/passengers/${petrId}/accept`)
       .set('Authorization', `Bearer ${maybeToken}`)
       .expect(403);
 
     const accepted = await request(app.getHttpServer())
-      .post(`/api/trips/${tripId}/transfer/legs/${memberCarId}/passengers/${organizerId}/accept`)
+      .post(`/api/trips/${tripId}/transfer/legs/${memberCarId}/passengers/${petrId}/accept`)
       .set('Authorization', `Bearer ${memberToken}`)
       .expect(200);
 
-    expect(passengerOf(accepted.body, memberCarId, organizerId)?.status).toBe(
+    expect(passengerOf(accepted.body, memberCarId, petrId)?.status).toBe(
       'accepted',
     );
     expect(legOf(accepted.body, memberCarId)?.occupied).toBe(2);
@@ -674,10 +733,15 @@ describe('Трансфер похода (e2e)', () => {
       .send({ seats: 2 })
       .expect(200);
 
-    await request(app.getHttpServer())
+    // Проситься можно и в полную машину: заявка места не занимает.
+    const requested = await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs/${memberCarId}/join`)
       .set('Authorization', `Bearer ${driverToken}`)
       .expect(200);
+
+    expect(passengerOf(requested.body, memberCarId, driverId)?.status).toBe(
+      'requested',
+    );
 
     await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs/${memberCarId}/passengers/${driverId}/accept`)
@@ -686,12 +750,16 @@ describe('Трансфер похода (e2e)', () => {
   });
 
   it('уйти человек может сам, а владельца убирают с карточкой', async () => {
+    /**
+     * «Пётр» снимает себя с чужой машины сам: принятую заявку владелец
+     * подтверждать не должен — «пассажир может отказаться».
+     */
     const left = await request(app.getHttpServer())
-      .delete(`/api/trips/${tripId}/transfer/legs/${memberCarId}/passengers/${organizerId}`)
-      .set('Authorization', `Bearer ${organizerToken}`)
+      .delete(`/api/trips/${tripId}/transfer/legs/${memberCarId}/passengers/${petrId}`)
+      .set('Authorization', `Bearer ${petrToken}`)
       .expect(200);
 
-    expect(passengerOf(left.body, memberCarId, organizerId)).toBeUndefined();
+    expect(passengerOf(left.body, memberCarId, petrId)).toBeUndefined();
 
     // Владельца своего ТС из пассажиров не убирают — он уходит с карточкой.
     await request(app.getHttpServer())
@@ -699,10 +767,9 @@ describe('Трансфер похода (e2e)', () => {
       .set('Authorization', `Bearer ${memberToken}`)
       .expect(400);
 
-    // Чужого человека без права вкладки не убрать (у «водителя» роль есть,
-    // поэтому проверяем участником без роли).
+    // Чужого человека без права вкладки не убрать.
     await request(app.getHttpServer())
-      .delete(`/api/trips/${tripId}/transfer/legs/${busId}/passengers/${organizerId}`)
+      .delete(`/api/trips/${tripId}/transfer/legs/${busId}/passengers/${annaId}`)
       .set('Authorization', `Bearer ${maybeToken}`)
       .expect(403);
   });
@@ -717,10 +784,219 @@ describe('Трансфер похода (e2e)', () => {
     const seated = await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs/${busId}/passengers`)
       .set('Authorization', `Bearer ${organizerToken}`)
-      .send({ userId: driverId })
+      .send({ userId: petrId })
       .expect(200);
 
-    expect(passengerOf(seated.body, busId, driverId)?.status).toBe('accepted');
+    expect(passengerOf(seated.body, busId, petrId)?.status).toBe('accepted');
+  });
+
+  it('один человек — один рейс туда: второй не сажаем, а заявку и заброску можно', async () => {
+    const withBus = await createLegIn(ruleTripId, organizerToken, {
+      direction: 'there',
+      mode: 'bus',
+      departsAt: '2026-11-07T01:00:00.000Z',
+      fromPlace: 'Иркутск, автовокзал',
+      toPlace: 'Витязь',
+      compensation: 'ticket',
+      compensationAmountRub: 500,
+    });
+
+    const ruleBusId = withBus.legs.find((leg) => leg.mode === 'bus')!.id;
+
+    const withCar = await createLegIn(ruleTripId, organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: '2026-11-08T01:00:00.000Z',
+      fromPlace: 'Иркутск, гараж',
+      toPlace: 'Витязь',
+      compensation: 'free',
+      isOwnVehicle: true,
+      ownerUserId: organizerId,
+      seats: 4,
+    });
+
+    const ruleCarId = withCar.legs.find(
+      (leg) => leg.fromPlace === 'Иркутск, гараж',
+    )!.id;
+
+    // «Водитель» едет автобусом — это его рейс «туда».
+    const onBus = await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${ruleBusId}/join`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .expect(200);
+
+    expect(passengerOf(onBus.body, ruleBusId, driverId)?.status).toBe('accepted');
+
+    // Второй «туда» не сажаем — даже организатору с правом вкладки.
+    const byOrganizer = await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${ruleCarId}/passengers`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ userId: driverId })
+      .expect(400);
+
+    expect(byOrganizer.body.message).toContain('второй не сажаем');
+
+    // Заявка — не посадка: место она не занимает, проситься можно.
+    const requested = await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${ruleCarId}/join`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .expect(200);
+
+    expect(passengerOf(requested.body, ruleCarId, driverId)?.status).toBe(
+      'requested',
+    );
+
+    // А принять её нельзя: рейс «туда» у «водителя» уже есть.
+    const accepted = await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${ruleCarId}/passengers/${driverId}/accept`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .expect(400);
+
+    expect(accepted.body.message).toContain('второй не сажаем');
+
+    // Заброска — не дорога от дома: этап у человека не один.
+    const withStage = await createLegIn(ruleTripId, organizerToken, {
+      direction: 'there',
+      isStage: true,
+      mode: 'train',
+      departsAt: '2026-11-08T05:00:00.000Z',
+      fromPlace: 'Большое Голоустное',
+      toPlace: 'Сухой ручей',
+      compensation: 'ticket',
+      compensationAmountRub: 300,
+    });
+
+    const stageId = withStage.legs.find((leg) => leg.isStage)!.id;
+
+    const onStage = await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${stageId}/join`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .expect(200);
+
+    expect(passengerOf(onStage.body, stageId, driverId)?.status).toBe('accepted');
+
+    /**
+     * На экране у второго рейса кнопки «Присоединиться» нет: правило одно,
+     * и интерфейс не должен предлагать то, на что сервис ответит 400.
+     */
+    const third = await createLegIn(ruleTripId, organizerToken, {
+      direction: 'there',
+      mode: 'bus',
+      departsAt: '2026-11-09T01:00:00.000Z',
+      fromPlace: 'Иркутск, рынок',
+      toPlace: 'Витязь',
+      compensation: 'ticket',
+      compensationAmountRub: 500,
+    });
+
+    const thirdBusId = third.legs.find(
+      (leg) => leg.fromPlace === 'Иркутск, рынок',
+    )!.id;
+
+    const view = await planOf(ruleTripId, driverToken);
+
+    expect(legOf(view, ruleBusId)?.joinStatus).toBeNull(); // уже едет
+    expect(legOf(view, ruleCarId)?.joinStatus).toBeNull(); // там его заявка
+    expect(legOf(view, thirdBusId)?.joinStatus).toBeNull(); // второй «туда» нельзя
+    expect(legOf(view, stageId)?.joinStatus).toBeNull(); // уже в этапе
+  });
+
+  it('пара сажает на оба конца, и второго возвращения не бывает', async () => {
+    const withPair = await createLegIn(ruleTripId, organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: '2026-11-09T03:00:00.000Z',
+      fromPlace: 'Иркутск, пара',
+      toPlace: 'Витязь, пара',
+      compensation: 'free',
+      isRoundTrip: true,
+    });
+
+    const source = withPair.legs.find(
+      (leg) => leg.isRoundTrip && leg.fromPlace === 'Иркутск, пара',
+    )!;
+    const mirror = withPair.legs.find((leg) => leg.sourceLegId === source.id)!;
+
+    // Посадили в «туда» — в «обратно» «Анна» приходит автоматически.
+    await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${source.id}/passengers`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ userId: annaId })
+      .expect(200);
+
+    const seated = await planOf(ruleTripId, annaToken);
+    expect(passengerOf(seated, source.id, annaId)).toBeDefined();
+    expect(passengerOf(seated, mirror.id, annaId)).toBeDefined();
+
+    // Отдельный обратный рейс — второй «обратно», не сажаем.
+    const withTrain = await createLegIn(ruleTripId, organizerToken, {
+      direction: 'back',
+      mode: 'train',
+      departsAt: '2026-11-10T01:00:00.000Z',
+      fromPlace: 'Слюдянка',
+      toPlace: 'Иркутск',
+      compensation: 'ticket',
+      compensationAmountRub: 900,
+    });
+
+    const trainId = withTrain.legs.find(
+      (leg) => leg.fromPlace === 'Слюдянка',
+    )!.id;
+
+    const blocked = await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${trainId}/join`)
+      .set('Authorization', `Bearer ${annaToken}`)
+      .expect(400);
+
+    expect(blocked.body.message).toContain('второй не сажаем');
+
+    // И кнопки «Присоединиться» на нём у «Анны» нет.
+    expect(
+      legOf(await planOf(ruleTripId, annaToken), trainId)?.joinStatus,
+    ).toBeNull();
+
+    // Сняли её с обратного конца пары — поезд стал доступен.
+    await request(app.getHttpServer())
+      .delete(`/api/trips/${ruleTripId}/transfer/legs/${mirror.id}/passengers/${annaId}`)
+      .set('Authorization', `Bearer ${annaToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${trainId}/join`)
+      .set('Authorization', `Bearer ${annaToken}`)
+      .expect(200);
+
+    /**
+     * А «Пётр» уже едет обратно поездом. На прямой конец пары его тоже
+     * не посадят: в зеркало он пришёл бы автоматически, и «обратно»
+     * у него стало бы два. Проверка второго конца — до вставки.
+     */
+    await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${trainId}/join`)
+      .set('Authorization', `Bearer ${petrToken}`)
+      .expect(200);
+
+    const withSecondPair = await createLegIn(ruleTripId, organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: '2026-11-10T02:00:00.000Z',
+      fromPlace: 'Иркутск, вторая пара',
+      toPlace: 'Витязь, вторая пара',
+      compensation: 'free',
+      isRoundTrip: true,
+    });
+
+    const secondSource = withSecondPair.legs.find(
+      (leg) => leg.isRoundTrip && leg.fromPlace === 'Иркутск, вторая пара',
+    )!;
+
+    const onPair = await request(app.getHttpServer())
+      .post(`/api/trips/${ruleTripId}/transfer/legs/${secondSource.id}/passengers`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ userId: petrId })
+      .expect(400);
+
+    expect(onPair.body.message).toContain('второй не сажаем');
   });
 
   it('стороны не смешиваются: у «Обратно» свой порядок', async () => {
