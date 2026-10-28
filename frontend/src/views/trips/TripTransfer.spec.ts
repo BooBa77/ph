@@ -390,7 +390,7 @@ describe('TripTransfer', () => {
 
     expect(mirror.find('[data-test="transfer-round-trip-input"]').exists()).toBe(false)
     expect(mirror.find('[data-test="transfer-compensation-input"]').exists()).toBe(false)
-    expect(mirror.find('[data-test="transfer-mirror-hint"]').text()).toContain('исходной')
+    expect(mirror.find('[data-test="transfer-mirror-hint"]').text()).toContain('исходном')
   })
 
   it('без суммы компенсации карточку не сохранить', async () => {
@@ -432,28 +432,30 @@ describe('TripTransfer', () => {
     ]
 
     const wrapper = await mountTransfer(plan)
-    const there = wrapper.find('[data-test="transfer-area-there"]')
 
-    expect(there.findAll('[data-test="transfer-chain"]')).toHaveLength(1)
+    // Заброска живёт своей секцией, а не внутри «Туда».
+    const stages = wrapper.find('[data-test="transfer-area-stages"]')
+    expect(wrapper.find('[data-test="transfer-area-there"] [data-test="transfer-chain"]').exists()).toBe(false)
+    expect(stages.findAll('[data-test="transfer-chain"]')).toHaveLength(1)
 
-    const title = there.find('[data-test="transfer-chain-title"]').text()
+    const title = stages.find('[data-test="transfer-chain-title"]').text()
     expect(title).toContain('Заброска 1 · 2 этапа')
     expect(title).toContain('Иркутск → Витязь')
 
     // Номер этапа виден в шапке плашки.
-    const stages = wrapper
+    const numbers = stages
       .findAll('[data-test="transfer-leg-stage"]')
       .map((node) => node.text())
-    expect(stages[0]).toContain('этап 1')
-    expect(stages[1]).toContain('этап 2')
+    expect(numbers[0]).toContain('этап 1')
+    expect(numbers[1]).toContain('этап 2')
   })
 
-  it('заброска может быть парой: этапы расходятся по сторонам', async () => {
+  it('заброска может быть парой: этапы живут в одном блоке', async () => {
     const plan = makePlan()
     const chain = '0191f0a0-0000-4000-8000-000000000002'
 
-    // «Туда»: авто и кони. «Обратно»: те же этапы в обратном порядке,
-    // и это по-прежнему одна заброска с общим номером.
+    // Туда и обратно — одна заброска: этапы идут подряд по времени,
+    // сторона у каждого своя, а блок один.
     plan.legs = [
       { ...plan.legs[0]!, id: 't1', chainId: chain, stage: 1, direction: 'there' },
       { ...plan.legs[1]!, id: 't2', chainId: chain, stage: 2, direction: 'there' },
@@ -462,19 +464,20 @@ describe('TripTransfer', () => {
     ]
 
     const wrapper = await mountTransfer(plan)
+    const stages = wrapper.find('[data-test="transfer-area-stages"]')
 
-    const thereTitle = wrapper.find('[data-test="transfer-area-there"] [data-test="transfer-chain-title"]').text()
-    const backTitle = wrapper.find('[data-test="transfer-area-back"] [data-test="transfer-chain-title"]').text()
+    const title = stages.find('[data-test="transfer-chain-title"]').text()
+    expect(title).toContain('Заброска 1 · 4 этапа')
 
-    // Одна и та же заброска, но в каждой стороне — свои этапы.
-    expect(thereTitle).toContain('Заброска 1 · этапы 1–2 из 4')
-    expect(backTitle).toContain('Заброска 1 · этапы 3–4 из 4')
+    // Маршрут — до конечной «туда», а не «Иркутск → Иркутск».
+    expect(title).toContain('Иркутск, автовокзал → Олхинское плато, Витязь')
 
-    // Маршрут пары — до конечной «туда», а не «Иркутск → Иркутск».
-    expect(thereTitle).toContain('Иркутск, автовокзал → Олхинское плато, Витязь')
+    // Ни один этап не утёк в «Туда» или «Обратно».
+    expect(wrapper.find('[data-test="transfer-area-there"] [data-test="transfer-leg"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="transfer-area-back"] [data-test="transfer-leg"]').exists()).toBe(false)
   })
 
-  it('карточку можно положить в заброску — новую или существующую', async () => {
+  it('этап заброски заводят из её секции, цепочку выбирают там же', async () => {
     const plan = makePlan()
     plan.legs[0]!.chainId = '0191f0a0-0000-4000-8000-000000000001'
     plan.legs[0]!.stage = 1
@@ -482,7 +485,7 @@ describe('TripTransfer', () => {
     const wrapper = await mountTransfer(plan)
     mocks.createTransferLeg.mockResolvedValue(plan)
 
-    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+    await wrapper.find('[data-test="transfer-add-stages"]').trigger('click')
 
     const select = wrapper.find('[data-test="transfer-chain-input"]')
     expect(select.text()).toContain('Заброска 1 · 1 этап')
@@ -498,6 +501,35 @@ describe('TripTransfer', () => {
     expect(mocks.createTransferLeg).toHaveBeenCalledWith(
       '1',
       expect.objectContaining({ chainId: expect.stringMatching(/^[0-9a-f-]{36}$/) }),
+    )
+  })
+
+  it('у обычного трансфера поля «Заброска» нет, а у этапа — есть', async () => {
+    const wrapper = await mountTransfer()
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+    expect(wrapper.find('[data-test="transfer-chain-input"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="transfer-leg-cancel"]').trigger('click')
+    await wrapper.find('[data-test="transfer-add-stages"]').trigger('click')
+
+    expect(wrapper.find('[data-test="transfer-chain-input"]').exists()).toBe(true)
+  })
+
+  it('пустые секции объясняют, что это за место', async () => {
+    const wrapper = await mountTransfer(makePlan({ legs: [] }))
+
+    const there = wrapper.find('[data-test="transfer-area-there"]')
+    const stages = wrapper.find('[data-test="transfer-area-stages"]')
+    const back = wrapper.find('[data-test="transfer-area-back"]')
+
+    expect(there.find('[data-test="transfer-empty"]').text()).toContain('к началу маршрута')
+    expect(back.find('[data-test="transfer-empty"]').text()).toContain('до дома')
+    expect(stages.find('[data-test="transfer-empty"]').text()).toBe(
+      'Уазики, каюры и прочее бездорожье',
+    )
+    expect(stages.find('[data-test="transfer-add-stages"]').text()).toBe(
+      'Добавить этап заброски',
     )
   })
 

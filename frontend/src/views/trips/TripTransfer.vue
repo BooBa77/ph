@@ -110,9 +110,6 @@ const canEditTab = computed(() => plan.value?.canEdit ?? false)
 const travelers = computed(() => plan.value?.travelers ?? [])
 const legs = computed(() => plan.value?.legs ?? [])
 
-const legsThere = computed(() => legs.value.filter((leg) => leg.direction === 'there'))
-const legsBack = computed(() => legs.value.filter((leg) => leg.direction === 'back'))
-
 /** Блок карточек: заброска (цепочка этапов) или одиночная карточка. */
 interface LegGroup {
   key: string
@@ -186,11 +183,11 @@ const chains = computed(() => {
 })
 
 /**
- * Собрать карточки стороны в блоки.
+ * Блок внутри секции: трансфер или заброска (цепочка этапов).
  *
- * Карточки приходят уже упорядоченными бэкендом — заброска идёт одним
- * блоком по времени своего первого этапа. Здесь остаётся только сшить
- * соседние карточки одного `chainId`.
+ * Заброска живёт своей секцией между «Туда» и «Обратно»: «уазики, каюры
+ * и прочее бездорожье» — это не дорога от дома, и мешать их в одну ленту
+ * заказчик не захотел.
  */
 function groupLegs(list: TripTransferLeg[]): LegGroup[] {
   const groups: LegGroup[] = []
@@ -219,29 +216,70 @@ function groupLegs(list: TripTransferLeg[]): LegGroup[] {
     groups.push(group)
   }
 
+  // Внутри заброски этапы идут по номеру, а не по порядку прихода.
+  for (const group of groups) {
+    group.legs.sort((left, right) => (left.stage ?? 0) - (right.stage ?? 0))
+  }
+
   return groups
 }
 
-/** Две области одного экрана: свои цвета, своя кнопка, свой порядок. */
+/** Трансферы одной стороны: только одиночные, заброски живут отдельно. */
+function transferSection(direction: TransferDirection) {
+  const list = legs.value.filter(
+    (leg) => leg.direction === direction && leg.chainId === null,
+  )
+
+  return {
+    key: direction,
+    kind: 'transfers' as const,
+    direction,
+    legs: list,
+    groups: groupLegs(list),
+    unassigned: unassignedIn(list),
+    empty:
+      direction === 'there'
+        ? 'Секция отображения трансферов к началу маршрута. Каждый трансфер — отдельное перемещение части группы: кто-то едет машиной, кто-то автобусом или заброска вещей отдельно от участников'
+        : 'Секция отображения трансферов до дома',
+    label: TRANSFER_DIRECTION_LABELS[direction],
+    addLabel: 'Добавить трансфер',
+    plate: direction === 'there' ? 'border-sky-300 bg-sky-100' : 'border-emerald-300 bg-emerald-100',
+    title: direction === 'there' ? 'text-sky-900' : 'text-emerald-900',
+    button: direction === 'there' ? 'bg-sky-600' : 'bg-emerald-600',
+  }
+}
+
+/** Заброска: все цепочки этапов похода, между «Туда» и «Обратно». */
+function stageSection() {
+  const list = legs.value.filter((leg) => leg.chainId !== null)
+
+  /** Номер заброски — тот же, что в подписи блока. */
+  const numberOf = (groupId: string | null) =>
+    groupId === null ? 0 : (chains.value.get(groupId)?.number ?? 0)
+
+  return {
+    key: 'stages',
+    kind: 'stages' as const,
+    direction: null,
+    legs: list,
+    groups: groupLegs(list).sort(
+      (left, right) => numberOf(left.chainId) - numberOf(right.chainId),
+    ),
+    unassigned: [],
+    empty: 'Уазики, каюры и прочее бездорожье',
+    label: 'Заброска',
+    addLabel: 'Добавить этап заброски',
+    plate: 'border-violet-300 bg-violet-100',
+    title: 'text-violet-900',
+    button: 'bg-violet-600',
+  }
+}
+
+/** Три секции одного экрана: дорога туда, заброска, дорога домой. */
 const sections = computed(() => [
-  {
-    direction: 'there' as TransferDirection,
-    legs: legsThere.value,
-    groups: groupLegs(legsThere.value),
-    unassigned: unassignedIn(legsThere.value),
-    plate: 'border-sky-300 bg-sky-100',
-    title: 'text-sky-900',
-    button: 'bg-sky-600',
-  },
-  {
-    direction: 'back' as TransferDirection,
-    legs: legsBack.value,
-    groups: groupLegs(legsBack.value),
-    unassigned: unassignedIn(legsBack.value),
-    plate: 'border-emerald-300 bg-emerald-100',
-    title: 'text-emerald-900',
-    button: 'bg-emerald-600',
-  },
+  transferSection('there'),
+  stageSection(),
+  transferSection('back'),
 ])
 
 async function load() {
@@ -489,6 +527,8 @@ async function deleteLeg(leg: TripTransferLeg) {
 
 interface LegDraft {
   id: string | null
+  /** Этап заброски: тогда и только тогда спрашиваем цепочку. */
+  stageMode: boolean
   direction: TransferDirection
   /** Заброска: `''` — сама по себе, `'new'` — новая, иначе uuid цепочки. */
   chainChoice: string
@@ -591,45 +631,78 @@ function newChainId(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
 }
 
+/**
+ * Общий черновик формы: трансфер и этап заброски отличаются только тем,
+ * спрашиваем ли мы цепочку. Поля у них одни и те же — «этап заброски
+ * аналог трансфера», как и сказал заказчик.
+ */
+function buildDraft(
+  direction: TransferDirection,
+  leg: TripTransferLeg | null,
+  stageMode: boolean,
+): LegDraft {
+  if (leg === null) {
+    return {
+      id: null,
+      stageMode,
+      direction,
+      chainChoice: stageMode ? 'new' : '',
+      mode: 'car',
+      fromPlace: '',
+      toPlace: '',
+      departsAt: '',
+      vehicleId: '',
+      isOwnVehicle: false,
+      ownerUserId: meId.value,
+      seats: '',
+      compensation: 'free',
+      amount: '',
+      isRoundTrip: false,
+      sourceLegId: null,
+      note: '',
+    }
+  }
+
+  return {
+    id: leg.id,
+    stageMode,
+    direction: leg.direction,
+    chainChoice: leg.chainId ?? '',
+    mode: leg.mode,
+    fromPlace: leg.fromPlace,
+    toPlace: leg.toPlace,
+    departsAt: toLocalInput(leg.departsAt),
+    vehicleId: leg.vehicleId ?? '',
+    isOwnVehicle: leg.isOwnVehicle,
+    ownerUserId: leg.ownerUserId ?? meId.value,
+    seats: leg.seats ?? '',
+    compensation: leg.compensation,
+    amount: leg.compensationAmountRub ?? '',
+    isRoundTrip: leg.isRoundTrip,
+    sourceLegId: leg.sourceLegId,
+    note: leg.note ?? '',
+  }
+}
+
+/** Правка или создание обычного трансфера: заброски тут не бывает. */
 function openLegDialog(direction: TransferDirection, leg: TripTransferLeg | null = null) {
   legError.value = null
-  legDraft.value = leg
-    ? {
-        id: leg.id,
-        direction: leg.direction,
-        chainChoice: leg.chainId ?? '',
-        mode: leg.mode,
-        fromPlace: leg.fromPlace,
-        toPlace: leg.toPlace,
-        departsAt: toLocalInput(leg.departsAt),
-        vehicleId: leg.vehicleId ?? '',
-        isOwnVehicle: leg.isOwnVehicle,
-        ownerUserId: leg.ownerUserId ?? meId.value,
-        seats: leg.seats ?? '',
-        compensation: leg.compensation,
-        amount: leg.compensationAmountRub ?? '',
-        isRoundTrip: leg.isRoundTrip,
-        sourceLegId: leg.sourceLegId,
-        note: leg.note ?? '',
-      }
-    : {
-        id: null,
-        direction,
-        chainChoice: '',
-        mode: 'car',
-        fromPlace: '',
-        toPlace: '',
-        departsAt: '',
-        vehicleId: '',
-        isOwnVehicle: false,
-        ownerUserId: meId.value,
-        seats: '',
-        compensation: 'free',
-        amount: '',
-        isRoundTrip: false,
-        sourceLegId: null,
-        note: '',
-      }
+  legDraft.value = buildDraft(direction, leg, false)
+}
+
+/**
+ * Правка или создание этапа заброски.
+ *
+ * `chainId` — в какую цепочку класть новый этап: `null` — в новую
+ * (кнопка «Добавить этап заброски»), иначе в ту, у которой нажали
+ * «Добавить этап».
+ */
+function openStageDialog(chainId: string | null, leg: TripTransferLeg | null = null) {
+  legError.value = null
+  const draft = buildDraft(leg?.direction ?? 'there', leg, true)
+
+  if (leg === null) draft.chainChoice = chainId ?? 'new'
+  legDraft.value = draft
 }
 
 /**
@@ -768,8 +841,13 @@ async function saveLeg() {
     return
   }
 
-  const chainId =
-    draft.chainChoice === ''
+  /**
+   * Обычный трансфер цепочку не спрашивает вовсе: заброска живёт своей
+   * секцией. У этапа выбор остаётся — в новую цепочку или в существующую.
+   */
+  const chainId = !draft.stageMode
+    ? null
+    : draft.chainChoice === ''
       ? null
       : draft.chainChoice === 'new'
         ? newChainId()
@@ -800,6 +878,21 @@ async function saveLeg() {
   if (ok) legDraft.value = null
 }
 
+/**
+ * Правка карточки: этап заброски открывается формой этапа, всё прочее —
+ * формой трансфера. Отличаются они только вопросом про цепочку.
+ */
+function editLeg(leg: TripTransferLeg) {
+  if (leg.chainId === null) openLegDialog(leg.direction, leg)
+  else openStageDialog(leg.chainId, leg)
+}
+
+/** Кнопка внизу секции: новый трансфер или новая заброска. */
+function addFrom(section: { kind: 'transfers' | 'stages'; direction: TransferDirection | null }) {
+  if (section.kind === 'stages') openStageDialog(null)
+  else if (section.direction !== null) openLegDialog(section.direction)
+}
+
 const driverOptions = computed(() =>
   canEditTab.value
     ? travelers.value
@@ -818,22 +911,25 @@ const driverOptions = computed(() =>
         {{ actionError }}
       </p>
 
-      <!-- Две стороны: «Туда» и «Обратно», как разделы «Питания» — свои цвета -->
+      <!--
+        Три секции: дорога к началу маршрута, заброска (бездорожье),
+        дорога домой. Трансфер и заброска — разные вещи, и мешать их
+        в одну ленту заказчик не захотел.
+      -->
       <details
         v-for="section in sections"
-        :key="section.direction"
+        :key="section.key"
         open
         class="flex flex-col gap-3 rounded-2xl border p-3"
         :class="section.plate"
-        :data-test="`transfer-area-${section.direction}`"
+        :data-test="`transfer-area-${section.key}`"
       >
         <summary class="cursor-pointer select-none text-sm" :class="section.title">
-          {{ TRANSFER_DIRECTION_LABELS[section.direction] }}
+          {{ section.label }}
         </summary>
 
-        <p v-if="section.legs.length === 0" class="text-sm text-muted">
-          Пока пусто. «{{ TRANSFER_DIRECTION_LABELS[section.direction] }}» — это одна карточка
-          на одну часть группы: кто-то едет машиной, кто-то автобусом.
+        <p v-if="section.legs.length === 0" class="text-sm text-muted" data-test="transfer-empty">
+          {{ section.empty }}
         </p>
 
         <!--
@@ -928,8 +1024,12 @@ const driverOptions = computed(() =>
                   {{ person.displayName }}
                   <span v-if="isMine(person)" class="text-xs text-muted">(вы)</span>
 
+                  <!--
+                    Крестика у владельца ТС нет: он уходит вместе со своим
+                    трансфером, и «удалить» его отдельно всё равно нельзя.
+                  -->
                   <button
-                    v-if="isMine(person) || leg.canEdit"
+                    v-if="(isMine(person) || leg.canEdit) && person.userId !== leg.ownerUserId"
                     type="button"
                     class="cursor-pointer border-0 bg-transparent p-0 text-muted transition-colors hover:text-text disabled:opacity-60"
                     :disabled="isSaving"
@@ -1043,13 +1143,13 @@ const driverOptions = computed(() =>
                   class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
                   :disabled="isSaving"
                   :data-test="`transfer-edit-${leg.id}`"
-                  @click="openLegDialog(leg.direction, leg)"
+                  @click="editLeg(leg)"
                 >
                   Править
                 </button>
 
                 <template v-if="confirmingLegId === leg.id">
-                  <span class="text-sm text-muted">Удалить карточку?</span>
+                  <span class="text-sm text-muted">Удалить трансфер?</span>
                   <button
                     type="button"
                     class="cursor-pointer rounded-xl border border-red-600 px-3 py-1 text-sm text-red-600 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50"
@@ -1081,22 +1181,34 @@ const driverOptions = computed(() =>
               </div>
             </template>
           </article>
+
+          <!-- Новая остановка той же заброски: цепочка не плодится -->
+          <button
+            v-if="group.chainId !== null"
+            type="button"
+            class="cursor-pointer self-start text-xs text-muted underline transition-colors hover:text-text disabled:opacity-60"
+            :disabled="isSaving"
+            :data-test="`transfer-stage-add-${group.chainId}`"
+            @click="openStageDialog(group.chainId)"
+          >
+            Добавить этап
+          </button>
         </div>
 
-        <!-- Кто ещё не сел ни в одну карточку этой стороны -->
-        <div
-          v-if="section.unassigned.length > 0"
-          class="flex flex-wrap items-center gap-1"
-          data-test="transfer-unassigned"
-        >
-          <span class="text-xs text-muted">Не распределены:</span>
-          <span
-            v-for="person in section.unassigned"
-            :key="person.userId"
-            class="rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-muted"
-          >
-            {{ person.displayName }}
-          </span>
+        <!-- Кто ещё не сел ни в один трансфер этой стороны -->
+        <div v-if="section.unassigned.length > 0" class="flex flex-col gap-2">
+          <hr class="border-border" />
+
+          <div class="flex flex-wrap items-center gap-1" data-test="transfer-unassigned">
+            <span class="text-xs text-muted">Не распределены:</span>
+            <span
+              v-for="person in section.unassigned"
+              :key="person.userId"
+              class="rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-muted"
+            >
+              {{ person.displayName }}
+            </span>
+          </div>
         </div>
 
         <button
@@ -1104,10 +1216,10 @@ const driverOptions = computed(() =>
           class="cursor-pointer self-start rounded-xl px-3 py-2 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
           :class="section.button"
           :disabled="isSaving"
-          :data-test="`transfer-add-${section.direction}`"
-          @click="openLegDialog(section.direction)"
+          :data-test="`transfer-add-${section.key}`"
+          @click="addFrom(section)"
         >
-          Добавить трансфер
+          {{ section.addLabel }}
         </button>
       </details>
 
@@ -1119,8 +1231,13 @@ const driverOptions = computed(() =>
       >
         <div class="flex w-full max-w-md flex-col gap-2 rounded-xl border border-border bg-surface p-4">
           <h3 class="text-base font-medium text-text">
-            {{ legDraft.id === null ? 'Новый трансфер' : 'Трансфер' }} ·
-            {{ TRANSFER_DIRECTION_LABELS[legDraft.direction] }}
+            <template v-if="legDraft.stageMode">
+              {{ legDraft.id === null ? 'Новый этап заброски' : 'Этап заброски' }}
+            </template>
+            <template v-else>
+              {{ legDraft.id === null ? 'Новый трансфер' : 'Трансфер' }} ·
+              {{ TRANSFER_DIRECTION_LABELS[legDraft.direction] }}
+            </template>
           </h3>
 
           <!-- Тип и места — от каталога, если транспорт выбран из списка -->
@@ -1283,10 +1400,14 @@ const driverOptions = computed(() =>
           </label>
 
           <!--
-            Заброска: этапы — те же карточки, поэтому выбор цепочки живёт
-            в этой же форме. «Новая» — клиент придумывает id сам.
+            Заброска спрашивается только у этапа: обычный трансфер живёт
+            в своей секции и цепочку не выбирает. «Новая» — id придумывает
+            клиент.
           -->
-          <label class="flex flex-col gap-1 text-sm text-muted">
+          <label
+            v-if="legDraft.stageMode"
+            class="flex flex-col gap-1 text-sm text-muted"
+          >
             Заброска
             <select
               v-model="legDraft.chainChoice"
@@ -1367,7 +1488,7 @@ const driverOptions = computed(() =>
             иначе человек ищет, где тут поставить цену.
           -->
           <p v-if="isMirror" class="text-xs text-muted" data-test="transfer-mirror-hint">
-            Это обратная карточка пары: «туда-обратно» и оплата задаются на исходной.
+            Это обратный трансфер пары: «туда-обратно» и оплата задаются на исходном.
             Здесь правятся люди, точки и время
           </p>
 
@@ -1412,7 +1533,9 @@ const driverOptions = computed(() =>
                 data-test="transfer-round-trip-input"
               />
               Туда-обратно
-              <span class="text-xs text-muted">— карточка появится и в обратной стороне</span>
+              <span class="text-xs text-muted">
+                — вернуться тем же способом и составом (можно редактировать)
+              </span>
             </label>
 
             <p v-else class="text-xs text-muted" data-test="transfer-no-pair-hint">
