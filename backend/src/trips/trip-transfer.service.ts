@@ -523,7 +523,7 @@ export class TripTransferService {
     const row = await manager.findOne(TripTransferPassenger, {
       where: { legId: leg.id, userId: targetUserId },
     });
-    if (!row) throw new NotFoundException('Этот человек не в этом рейсе');
+    if (!row) throw new NotFoundException('Этот участник не в этом рейсе');
 
     if (row.status === 'accepted') {
       return this.buildPlan(manager, trip, userId);
@@ -566,7 +566,7 @@ export class TripTransferService {
     const row = await manager.findOne(TripTransferPassenger, {
       where: { legId: leg.id, userId: targetUserId },
     });
-    if (!row) throw new NotFoundException('Этот человек не в этом рейсе');
+    if (!row) throw new NotFoundException('Этот участник не в этом рейсе');
 
     if (leg.ownerUserId === targetUserId) {
       throw new BadRequestException(
@@ -749,12 +749,8 @@ export class TripTransferService {
     // Никто не едет в оба конца — паре нечего проверять.
     if (both.length === 0) return;
 
-    const names = both
-      .map((row) => row.member?.user?.displayName ?? 'участник')
-      .join(', ');
-
     throw new BadRequestException(
-      `Обратный выезд раньше прямого: ${names} едет и туда, и обратно — поправьте время`,
+      'Обратный выезд раньше прямого — поправьте время',
     );
   }
 

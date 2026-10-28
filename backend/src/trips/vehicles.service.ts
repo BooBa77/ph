@@ -50,7 +50,7 @@ export class VehiclesService {
         ownerUserId: userId,
         kind: dto.kind,
         brand: this.brand(dto.brand),
-        plate: this.optional(dto.plate, 20, 'Госномер'),
+        plate: this.optional(dto.plate, 10, 'Госномер'),
         seats: dto.seats ?? null,
       }),
     );
@@ -70,7 +70,7 @@ export class VehiclesService {
     if (dto.brand !== undefined) vehicle.brand = this.brand(dto.brand);
     if (dto.seats !== undefined) vehicle.seats = dto.seats;
     if (dto.plate !== undefined) {
-      vehicle.plate = this.optional(dto.plate, 20, 'Госномер');
+      vehicle.plate = this.optional(dto.plate, 10, 'Госномер');
     }
 
     return VehicleDto.from(await manager.save(vehicle));
@@ -116,7 +116,7 @@ export class VehiclesService {
 
       if (openTrips > 0) {
         throw new ConflictException(
-          'Этот транспорт едет в незакрытом походе — сначала уберите рейс из «Трансфера» или отметьте возвращение',
+          'Этот транспорт задействован в походе, освободите его сперва',
         );
       }
 

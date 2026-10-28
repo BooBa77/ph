@@ -85,7 +85,7 @@ export class CreateVehicleDto {
   @ApiProperty({ description: 'Госномер', required: false, nullable: true })
   @IsOptional()
   @IsString({ message: 'Госномер должен быть строкой' })
-  @Length(1, 20, { message: 'Госномер — до 20 символов' })
+  @Length(1, 10, { message: 'Госномер — до 10 символов' })
   plate?: string | null;
 
   @ApiProperty({
@@ -121,7 +121,7 @@ export class UpdateVehicleDto {
   @ApiProperty({ description: 'Госномер или null', required: false, nullable: true })
   @IsOptional()
   @IsString({ message: 'Госномер должен быть строкой' })
-  @Length(1, 20, { message: 'Госномер — до 20 символов' })
+  @Length(1, 10, { message: 'Госномер — до 10 символов' })
   plate?: string | null;
 
   @ApiProperty({
