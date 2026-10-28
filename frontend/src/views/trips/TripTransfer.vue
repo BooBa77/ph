@@ -59,8 +59,12 @@ import TripChat from '@/views/trips/TripChat.vue'
  * бэкенд, и лодка спокойно стоит и между конями, и после них.
  *
  * **Пара «туда-обратно» — это одна поездка на два конца.** Зеркало
- * наследует пассажиров и оплату; флаг и цена живут на исходной карточке,
- * а у зеркала вместо них подсказка.
+ * создаётся с теми же людьми и той же оплатой, но дальше составы живут
+ * врозь: на обратном рейсе людей и точки можно менять, и на прямой это
+ * не влияет. Общее остаётся одно — ушёл из исходной, ушёл и из зеркала.
+ * Флаг и цена живут на исходной карточке, а у зеркала вместо них подсказка.
+ * Пары не бывает у общественного транспорта: билеты покупают раздельно
+ * в каждую сторону.
  *
  * **Две области, «Туда» и «Обратно»** — как разделы «Питания»: свои цвета,
  * своя кнопка «Добавить трансфер», свой порядок карточек. Сторона — поле
@@ -629,8 +633,10 @@ function openLegDialog(direction: TransferDirection, leg: TripTransferLeg | null
 }
 
 /**
- * Смена типа может сделать компенсацию незаконной — приводим к «бесплатно».
- * Флаг «туда-обратно» больше не трогаем: он про трансфер, а не про деньги.
+ * Смена типа может сделать незаконным и вид оплаты, и пару.
+ *
+ * У рейса пара не бывает вовсе — билеты покупают раздельно в каждую сторону,
+ * поэтому при переключении на рейс флаг снимаем.
  */
 function changeMode() {
   const draft = legDraft.value
@@ -640,7 +646,10 @@ function changeMode() {
     draft.compensation = 'free'
   }
 
-  if (isPublicMode(draft.mode)) draft.isOwnVehicle = false
+  if (isPublicMode(draft.mode)) {
+    draft.isOwnVehicle = false
+    draft.isRoundTrip = false
+  }
 }
 
 /** Выбранный транспорт каталога: у него свои тип и места. */
@@ -1391,7 +1400,11 @@ const driverOptions = computed(() =>
               />
             </label>
 
-            <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+            <!-- У рейса пары нет: билеты покупают раздельно в каждую сторону -->
+            <label
+              v-if="!isPublicMode(legDraft.mode)"
+              class="flex cursor-pointer items-center gap-2 text-sm text-text"
+            >
               <input
                 v-model="legDraft.isRoundTrip"
                 type="checkbox"
@@ -1401,6 +1414,11 @@ const driverOptions = computed(() =>
               Туда-обратно
               <span class="text-xs text-muted">— карточка появится и в обратной стороне</span>
             </label>
+
+            <p v-else class="text-xs text-muted" data-test="transfer-no-pair-hint">
+              Билеты на автобус, ж/д, корабль и вертолёт — раздельно в каждую сторону,
+              пары у рейса нет
+            </p>
           </template>
 
           <label class="flex flex-col gap-1 text-sm text-muted">

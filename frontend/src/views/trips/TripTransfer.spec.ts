@@ -343,17 +343,22 @@ describe('TripTransfer', () => {
     })
   })
 
-  it('у рейса нет «нашего ТС» и общих расходов — только билет', async () => {
+  it('у рейса нет «нашего ТС», общих расходов и пары', async () => {
     const wrapper = await mountTransfer()
 
     await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
 
     // У своего авто флаг есть, у рейса пропадает.
     expect(wrapper.find('[data-test="transfer-own-input"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="transfer-round-trip-input"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="transfer-mode-input"]').setValue('helicopter')
 
     expect(wrapper.find('[data-test="transfer-own-input"]').exists()).toBe(false)
+
+    // Билеты на рейс покупают раздельно в каждую сторону — пары нет.
+    expect(wrapper.find('[data-test="transfer-round-trip-input"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="transfer-no-pair-hint"]').text()).toContain('раздельно')
 
     const options = wrapper
       .find('[data-test="transfer-compensation-input"]')
