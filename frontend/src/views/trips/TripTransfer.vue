@@ -168,7 +168,7 @@ async function load() {
     plan.value = await fetchTripTransfer(props.trip.id)
   } catch (problem) {
     error.value =
-      problem instanceof ApiError ? problem.message : 'Не удалось загрузить рейс'
+      problem instanceof ApiError ? problem.message : 'Не удалось загрузить трансфер'
     plan.value = null
   } finally {
     isLoading.value = false
