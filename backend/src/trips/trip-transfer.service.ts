@@ -487,15 +487,10 @@ export class TripTransferService {
     if (status === 'accepted') await this.assertFreeSeat(manager, leg);
 
     /**
-     * В зеркало человека не копируем: составы пары не обязаны совпадать.
-     * Но если он уже едет и на другом конце, порядок дат проверим — и
-     * до вставки, чтобы 400 не оставила его посаженным.
+     * Проверяем **до** вставки: человек придёт и в зеркало пары, а там
+     * может не быть места, да и порядок дат должен сойтись.
      */
-    await this.assertPairOrder(
-      manager,
-      leg,
-      status === 'accepted' ? { userId } : undefined,
-    );
+    await this.assertCanSeat(manager, leg, userId, status);
 
     await manager.insert(TripTransferPassenger, {
       tripId: trip.id,
@@ -503,6 +498,8 @@ export class TripTransferService {
       userId,
       status,
     });
+
+    await this.syncToMirror(manager, trip.id, leg, userId, status);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -537,11 +534,7 @@ export class TripTransferService {
     const status = dto.status ?? 'accepted';
     if (status === 'accepted') await this.assertFreeSeat(manager, leg);
 
-    await this.assertPairOrder(
-      manager,
-      leg,
-      status === 'accepted' ? { userId: dto.userId } : undefined,
-    );
+    await this.assertCanSeat(manager, leg, dto.userId, status);
 
     await manager.insert(TripTransferPassenger, {
       tripId: trip.id,
@@ -549,6 +542,8 @@ export class TripTransferService {
       userId: dto.userId,
       status,
     });
+
+    await this.syncToMirror(manager, trip.id, leg, dto.userId, status);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -585,8 +580,12 @@ export class TripTransferService {
 
     await this.assertPairOrder(manager, leg, { userId: targetUserId });
 
+    await this.assertCanSeat(manager, leg, targetUserId, 'accepted');
+
     row.status = 'accepted';
     await manager.save(row);
+
+    await this.syncToMirror(manager, trip.id, leg, targetUserId, 'accepted');
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -823,12 +822,56 @@ export class TripTransferService {
   }
 
   /**
+   * Пассажир появился в исходной — появляется и в обратной.
+   *
+   * Правило заказчика дословно: «посадили человека в „туда“ — в „обратно“
+   * он приходит автоматически, и его можно удалить с обратного рейса без
+   * влияния на прямой. Удаление из прямого рейса автоматически удаляет
+   * из обратного. Можно садить на обратный без влияния на прямой».
+   *
+   * Отсюда: синхронизация идёт **только от исходной к зеркалу** и только
+   * тогда, когда сажают в исходную. Посадка прямо в зеркало на исходную
+   * не влияет — у зеркала `isRoundTrip` всегда `false`, и функция для него
+   * сразу выходит.
+   */
+  private async syncToMirror(
+    manager: EntityManager,
+    tripId: string,
+    leg: TripTransferLeg,
+    userId: string,
+    status: TransferPassengerStatus,
+  ): Promise<void> {
+    if (!leg.isRoundTrip) return;
+
+    const mirror = await this.mirrorOf(manager, leg);
+    if (!mirror) return;
+
+    const row = await manager.findOne(TripTransferPassenger, {
+      where: { legId: mirror.id, userId },
+    });
+
+    if (row !== null) {
+      // Он уже там: приняли на прямом — принимаем и на обратном.
+      if (row.status !== status && status === 'accepted') {
+        row.status = status;
+        await manager.save(row);
+      }
+      return;
+    }
+
+    await manager.insert(TripTransferPassenger, {
+      tripId,
+      legId: mirror.id,
+      userId,
+      status,
+    });
+  }
+
+  /**
    * Ушёл из исходной — уходит и из обратной.
    *
-   * Единственная синхронизация пассажиров, которая осталась: заказчик
-   * 27.10.2026 сказал прямо — «их убирают из исходной карточки, и они
-   * исчезают из зеркала». В обратную сторону ничего не идёт: на обратном
-   * рейсе людей можно менять, и на прямой это не влияет.
+   * Обратное направление свободно: снять человека с обратного рейса можно,
+   * и на прямой это не повлияет.
    */
   private async removeFromMirror(
     manager: EntityManager,
@@ -1254,6 +1297,7 @@ export class TripTransferService {
   private async assertFreeSeat(
     manager: EntityManager,
     leg: TripTransferLeg,
+    message = 'В этом транспорте нет свободных мест',
   ): Promise<void> {
     if (leg.seats === null) return;
 
@@ -1262,8 +1306,52 @@ export class TripTransferService {
     });
 
     if (occupied >= leg.seats) {
-      throw new BadRequestException('В этом транспорте нет свободных мест');
+      throw new BadRequestException(message);
     }
+  }
+
+  /**
+   * Можно ли посадить человека, не сломав пару.
+   *
+   * Проверка идёт **до** вставки: он придёт и в зеркало, а там может
+   * не найтись места, и порядок дат должен сойтись. 400 после вставки
+   * оставила бы человека посаженным на одном конце и жалующегося
+   * на другом.
+   */
+  private async assertCanSeat(
+    manager: EntityManager,
+    leg: TripTransferLeg,
+    userId: string,
+    status: TransferPassengerStatus,
+  ): Promise<void> {
+    if (status !== 'accepted') return;
+
+    const pair = await this.pairOf(manager, leg);
+
+    if (pair !== null) {
+      const [source, mirror] = pair;
+
+      /**
+       * Сажают в исходную — человек появится и в обратной. Если он там
+       * ещё не сидит, место должно найтись: молча переполнить зеркало
+       * хуже, чем сказать об этом сразу.
+       */
+      if (leg.id === source.id) {
+        const already = await manager.findOne(TripTransferPassenger, {
+          where: { legId: mirror.id, userId },
+        });
+
+        if (already === null) {
+          await this.assertFreeSeat(
+            manager,
+            mirror,
+            'В обратной карточке пары нет свободных мест — освободите место там или посадите человека туда отдельно',
+          );
+        }
+      }
+    }
+
+    await this.assertPairOrder(manager, leg, { userId });
   }
 
   /** Поставить человека в карточку, не падая на повторной вставке. */

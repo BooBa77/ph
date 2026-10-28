@@ -774,7 +774,7 @@ describe('Трансфер похода (e2e)', () => {
     expect(after.travelers.map((person) => person.userId)).not.toContain(memberId);
   });
 
-  it('пара начинается с общих людей, а дальше составы живут врозь', async () => {
+  it('в зеркало сажают автоматически, а снимают свободно', async () => {
     const body = await createLeg(organizerToken, {
       direction: 'there',
       mode: 'car',
@@ -796,7 +796,7 @@ describe('Трансфер похода (e2e)', () => {
     expect(mirror.fromPlace).toBe('Витязь, тропа');
     expect(mirror.toPlace).toBe('Иркутск, парк');
 
-    // Посадили в исходную — в зеркало он сам не приходит: составы врозь.
+    // Посадили в исходную — в зеркало он приходит автоматически.
     await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs/${source.id}/passengers`)
       .set('Authorization', `Bearer ${organizerToken}`)
@@ -805,19 +805,29 @@ describe('Трансфер похода (e2e)', () => {
 
     const afterAdd = await plan(organizerToken);
     expect(passengerOf(afterAdd, source.id, driverId)).toBeDefined();
-    expect(passengerOf(afterAdd, mirror.id, driverId)).toBeUndefined();
+    expect(passengerOf(afterAdd, mirror.id, driverId)).toBeDefined();
 
-    // В обратную его сажают отдельно — и на прямой это не влияет.
+    // Сняли с обратного — на прямой это не влияет.
+    await request(app.getHttpServer())
+      .delete(`/api/trips/${tripId}/transfer/legs/${mirror.id}/passengers/${driverId}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .expect(200);
+
+    const afterBackLeave = await plan(organizerToken);
+    expect(passengerOf(afterBackLeave, source.id, driverId)).toBeDefined();
+    expect(passengerOf(afterBackLeave, mirror.id, driverId)).toBeUndefined();
+
+    // Посадили прямо в обратную — на прямой тоже не влияет.
     const onBack = await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs/${mirror.id}/passengers`)
       .set('Authorization', `Bearer ${organizerToken}`)
-      .send({ userId: driverId })
+      .send({ userId: organizerId })
       .expect(200);
 
-    expect(passengerOf(onBack.body, mirror.id, driverId)).toBeDefined();
-    expect(passengerOf(onBack.body, source.id, driverId)).toBeDefined();
+    expect(passengerOf(onBack.body, mirror.id, organizerId)).toBeDefined();
+    expect(passengerOf(onBack.body, source.id, organizerId)).toBeUndefined();
 
-    // А ушёл из исходной — исчез и из зеркала (правило 27.10.2026).
+    // А ушёл из исходной — исчез и из зеркала, остальные там остаются.
     await request(app.getHttpServer())
       .delete(`/api/trips/${tripId}/transfer/legs/${source.id}/passengers/${driverId}`)
       .set('Authorization', `Bearer ${organizerToken}`)
@@ -826,6 +836,7 @@ describe('Трансфер похода (e2e)', () => {
     const afterLeave = await plan(organizerToken);
     expect(passengerOf(afterLeave, source.id, driverId)).toBeUndefined();
     expect(passengerOf(afterLeave, mirror.id, driverId)).toBeUndefined();
+    expect(passengerOf(afterLeave, mirror.id, organizerId)).toBeDefined();
   });
 
   it('карточки в секции идут по времени отправления', async () => {
@@ -933,14 +944,16 @@ describe('Трансфер похода (e2e)', () => {
     )!;
     const mirror = body.legs.find((leg) => leg.sourceLegId === source.id)!;
 
-    // Один человек едет в оба конца — теперь паре есть что проверять.
-    for (const legId of [source.id, mirror.id]) {
-      await request(app.getHttpServer())
-        .post(`/api/trips/${tripId}/transfer/legs/${legId}/passengers`)
-        .set('Authorization', `Bearer ${organizerToken}`)
-        .send({ userId: driverId })
-        .expect(200);
-    }
+    // Посадили на прямой конец — он же появился на обратном.
+    await request(app.getHttpServer())
+      .post(`/api/trips/${tripId}/transfer/legs/${source.id}/passengers`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ userId: driverId })
+      .expect(200);
+
+    const seeded = await plan(organizerToken);
+    expect(passengerOf(seeded, source.id, driverId)).toBeDefined();
+    expect(passengerOf(seeded, mirror.id, driverId)).toBeDefined();
 
     // Вернуться раньше, чем уехал, нельзя.
     await request(app.getHttpServer())
