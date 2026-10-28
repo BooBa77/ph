@@ -396,23 +396,28 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
         <!-- Высота фиксированная: у «Спорта» четыре лого, у «Работы» два,
              и модалка не должна прыгать при переключении закладок. Если
-             типов станет больше двух рядов — появится прокрутка, а не скачок. -->
+             типов станет больше — появится прокрутка, а не скачок.
+
+             Колонок три, а не четыре (28.10.2026): в четырёх «Командировка»
+             не влезала — кнопка была 64 px при слове в 82 px, и подпись
+             вылезала за сетку, обрезаясь о прокручиваемый контейнер.
+             С 640 px колонок четыре: там модалка шире и запас есть. -->
         <div
           v-if="availableTypes.length > 0"
-          class="mt-2 flex h-28 flex-wrap content-start gap-2 overflow-y-auto"
+          class="mt-2 grid min-h-28 grid-cols-3 gap-2 overflow-y-auto sm:grid-cols-4"
         >
           <button
             v-for="type in availableTypes"
             :key="type.id"
             type="button"
             :disabled="isSaving"
-            class="flex w-16 cursor-pointer flex-col items-center gap-1 rounded-lg px-1 py-1 text-xs text-muted transition-colors hover:bg-bg hover:text-text disabled:opacity-50"
+            class="flex cursor-pointer flex-col items-center gap-1 rounded-lg px-1 py-1 text-[11px] leading-tight text-muted transition-colors hover:bg-bg hover:text-text disabled:opacity-50"
             @click="toggleType(type.id)"
           >
-            <span class="h-7 w-7" :style="{ color: type.color }">
+            <span class="h-6 w-6 sm:h-7 sm:w-7" :style="{ color: type.color }">
               <ActivityIcon :name="type.icon" />
             </span>
-            {{ type.label }}
+            <span class="w-full text-center break-words">{{ type.label }}</span>
           </button>
         </div>
         <p v-else class="mt-2 text-xs text-muted">
