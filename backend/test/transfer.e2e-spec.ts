@@ -1032,6 +1032,43 @@ describe('Трансфер похода (e2e)', () => {
     expect(mirrorAgain.compensationAmountRub).toBe(2500);
   });
 
+  it('смена типа на рейс распускает пару, оставляя оба трансфера', async () => {
+    const body = await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: '2026-11-16T06:00:00.000Z',
+      fromPlace: 'Иркутск, почта',
+      toPlace: 'Витязь, зимовьё',
+      compensation: 'free',
+      isRoundTrip: true,
+    });
+
+    const source = body.legs.find(
+      (leg) => leg.isRoundTrip && leg.fromPlace === 'Иркутск, почта',
+    )!;
+    const mirror = body.legs.find((leg) => leg.sourceLegId === source.id)!;
+
+    // Вернулись автобусом: форма снимает «наше ТС» и ставит «безвозмездно».
+    const changed = await request(app.getHttpServer())
+      .patch(`/api/trips/${tripId}/transfer/legs/${mirror.id}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ mode: 'bus', compensation: 'free' })
+      .expect(200);
+
+    const mirrorAfter = changed.body.legs.find(
+      (leg: { id: string }) => leg.id === mirror.id,
+    );
+    const sourceAfter = changed.body.legs.find(
+      (leg: { id: string }) => leg.id === source.id,
+    );
+
+    // Обе карточки целы, но пары больше нет.
+    expect(mirrorAfter.mode).toBe('bus');
+    expect(mirrorAfter.sourceLegId).toBeNull();
+    expect(sourceAfter.isRoundTrip).toBe(false);
+    expect(sourceAfter.sourceLegId).toBeNull();
+  });
+
   it('пар может быть несколько: у каждой машины своя обратная', async () => {
     const before = (await plan(organizerToken)).legs.length;
 

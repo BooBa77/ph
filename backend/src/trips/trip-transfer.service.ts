@@ -226,7 +226,7 @@ export class TripTransferService {
 
     if (leg.ownerUserId !== userId && !canEditTab) {
       throw new ForbiddenException(
-        'Карточку правит тот, кто ведёт трансфер, или владелец этого ТС',
+        'Трансфер правит тот, кто ведёт вкладку, или владелец этого ТС',
       );
     }
 
@@ -297,7 +297,7 @@ export class TripTransferService {
       );
     }
 
-    const isRoundTrip = dto.isRoundTrip ?? leg.isRoundTrip;
+    let isRoundTrip = dto.isRoundTrip ?? leg.isRoundTrip;
 
     /**
      * Зеркало второй парой не бывает: оно пришло из исходной карточки,
@@ -306,8 +306,23 @@ export class TripTransferService {
      */
     if (isRoundTrip && leg.roundTripSourceId !== null) {
       throw new BadRequestException(
-        'Это обратная карточка пары «туда-обратно» — флаг ставится на исходной, а не на зеркале',
+        'Это обратный трансфер пары — «туда-обратно» ставится на исходном',
       );
+    }
+
+    /**
+     * **Смена типа на рейс распускает пару.** «Вернуться тем же способом»
+     * больше не выполняется, а общая сумма у пары и билета несовместимы:
+     * у рейса в базе не бывает ни общего расхода, ни второго конца.
+     * Обе карточки остаются на месте — просто перестают быть парой,
+     * и обратная тут же получает свою оплату (на экране появляются её поля).
+     */
+    if (
+      this.isPublicMode(effectiveMode) &&
+      (leg.roundTripSourceId !== null || isRoundTrip)
+    ) {
+      await this.dissolvePair(manager, leg);
+      isRoundTrip = false;
     }
 
     // Пара — только у своего и наёмного транспорта, не у рейсов.
@@ -346,7 +361,7 @@ export class TripTransferService {
       !this.compensationFits(effectiveMode, compensation)
     ) {
       throw new BadRequestException(
-        'Оплата пары задана на исходной карточке и с этим типом транспорта не сочетается — смените тип здесь или оплату там',
+        'Оплата пары задана на исходном трансфере и с этим типом транспорта не сочетается — смените тип здесь или оплату там',
       );
     }
 
@@ -477,7 +492,7 @@ export class TripTransferService {
       where: { legId: leg.id, userId },
     });
     if (existing) {
-      throw new ConflictException('Вы уже в этой карточке');
+      throw new ConflictException('Вы уже в этом трансфере');
     }
 
     const status: TransferPassengerStatus = leg.isOwnVehicle
@@ -528,7 +543,7 @@ export class TripTransferService {
       where: { legId: leg.id, userId: dto.userId },
     });
     if (existing) {
-      throw new ConflictException('Этот человек уже в карточке');
+      throw new ConflictException('Этот человек уже в этом трансфере');
     }
 
     const status = dto.status ?? 'accepted';
@@ -570,7 +585,7 @@ export class TripTransferService {
     const row = await manager.findOne(TripTransferPassenger, {
       where: { legId: leg.id, userId: targetUserId },
     });
-    if (!row) throw new NotFoundException('Этот человек не в этой карточке');
+    if (!row) throw new NotFoundException('Этот человек не в этом трансфере');
 
     if (row.status === 'accepted') {
       return this.buildPlan(manager, trip, userId);
@@ -613,11 +628,11 @@ export class TripTransferService {
     const row = await manager.findOne(TripTransferPassenger, {
       where: { legId: leg.id, userId: targetUserId },
     });
-    if (!row) throw new NotFoundException('Этот человек не в этой карточке');
+    if (!row) throw new NotFoundException('Этот человек не в этом трансфере');
 
     if (leg.ownerUserId === targetUserId) {
       throw new BadRequestException(
-        'Владелец своего ТС уходит вместе с карточкой — уберите её целиком',
+        'Владельца ТС нельзя удалить — он уходит вместе со своим трансфером',
       );
     }
 
@@ -638,9 +653,10 @@ export class TripTransferService {
    * копируются. Время — тоже: обратный выезд человек поправит сам, если
    * он другой, а выдумывать дату за него не наше дело.
    *
-   * **В заброску зеркало не входит** (`chainId: null`): заказчик сказал
-   * «зеркалится ровно один этап», и цепочку в обратную сторону никто
-   * не заводил — она собирается там сама, своими карточками.
+   * **Зеркало живёт там же, где исходный этап.** Если пара заведена
+   * у этапа заброски, обратный тоже этап: он встаёт в ту же цепочку,
+   * и номер ему считает `recomputeStages` по времени. Иначе пара
+   * выпадала бы из заброски в общий список трансферов.
    */
   private async createMirror(
     manager: EntityManager,
@@ -660,8 +676,8 @@ export class TripTransferService {
         tripId,
         direction,
         position: (last?.position ?? 0) + 1,
-        chainId: null,
-        stage: null,
+        chainId: source.chainId,
+        stage: source.chainId === null ? null : 1,
         mode: source.mode,
         departsAt: source.departsAt,
         fromPlace: source.toPlace,
@@ -677,6 +693,10 @@ export class TripTransferService {
         note: null,
       }),
     );
+
+    if (source.chainId !== null) {
+      await this.recomputeStages(manager, tripId, source.chainId);
+    }
 
     const people = await manager.find(TripTransferPassenger, {
       where: { legId: source.id },
@@ -699,6 +719,41 @@ export class TripTransferService {
     return manager.findOne(TripTransferLeg, {
       where: { roundTripSourceId: leg.id },
     });
+  }
+
+  /**
+   * Распустить пару, оставив обе карточки на месте.
+   *
+   * Нужно, когда один из концов сменил тип на рейс: пара значит «вернуться
+   * тем же способом», а у рейса билеты покупают в каждую сторону отдельно,
+   * и общей суммы у такой пары быть не может (CHECK не даст). Обратный
+   * трансфер не удаляем — он становится обычным и получает свою оплату.
+   */
+  private async dissolvePair(
+    manager: EntityManager,
+    leg: TripTransferLeg,
+  ): Promise<void> {
+    if (leg.roundTripSourceId !== null) {
+      const source = await manager.findOne(TripTransferLeg, {
+        where: { id: leg.roundTripSourceId },
+      });
+
+      if (source !== null && source.isRoundTrip) {
+        source.isRoundTrip = false;
+        await manager.save(source);
+      }
+
+      leg.roundTripSourceId = null;
+    } else {
+      const mirror = await this.mirrorOf(manager, leg);
+
+      if (mirror !== null) {
+        mirror.roundTripSourceId = null;
+        await manager.save(mirror);
+      }
+    }
+
+    leg.isRoundTrip = false;
   }
 
   /**
@@ -1266,7 +1321,7 @@ export class TripTransferService {
 
     if (!(await this.trips.canEditTab(userId, trip, TRANSFER_TAB))) {
       throw new ForbiddenException(
-        'Карточку правит тот, кто ведёт трансфер, или владелец этого ТС',
+        'Трансфер правит тот, кто ведёт вкладку, или владелец этого ТС',
       );
     }
   }
@@ -1288,7 +1343,7 @@ export class TripTransferService {
 
     if (!participant || participant.status !== 'going') {
       throw new BadRequestException(
-        'В карточку сажают только тех, кто идёт: «пока не решил» место не занимает',
+        'В трансфер сажают только тех, кто идёт: «пока не решил» место не занимает',
       );
     }
   }
@@ -1297,7 +1352,7 @@ export class TripTransferService {
   private async assertFreeSeat(
     manager: EntityManager,
     leg: TripTransferLeg,
-    message = 'В этом транспорте нет свободных мест',
+    message = 'На этот трансфер нет свободных мест',
   ): Promise<void> {
     if (leg.seats === null) return;
 
@@ -1345,7 +1400,7 @@ export class TripTransferService {
           await this.assertFreeSeat(
             manager,
             mirror,
-            'В обратной карточке пары нет свободных мест — освободите место там или посадите человека туда отдельно',
+            'На обратный маршрут нет свободных мест',
           );
         }
       }
@@ -1389,7 +1444,7 @@ export class TripTransferService {
       where: { id: String(legId), tripId },
     });
 
-    if (!leg) throw new NotFoundException('Карточка трансфера не найдена');
+    if (!leg) throw new NotFoundException('Трансфер не найден');
 
     return leg;
   }
