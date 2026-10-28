@@ -168,7 +168,7 @@ async function load() {
     plan.value = await fetchTripTransfer(props.trip.id)
   } catch (problem) {
     error.value =
-      problem instanceof ApiError ? problem.message : 'Не удалось загрузить трансфер'
+      problem instanceof ApiError ? problem.message : 'Не удалось загрузить рейс'
     plan.value = null
   } finally {
     isLoading.value = false
@@ -569,7 +569,7 @@ async function saveVehicle() {
 
   const brand = draft.brand.trim()
   if (!brand) {
-    vehicleError.value = 'Марка нужна — по ней выбирают в списке'
+    vehicleError.value = 'Требуется Марка - по ней выбирают в списке'
     return
   }
 
@@ -617,7 +617,7 @@ async function saveLeg() {
   }
 
   if (!departsAt) {
-    legError.value = 'Без времени отправления рейс бесполезен — укажите его'
+    legError.value = 'Время отправления – обязательное поле'
     return
   }
 
@@ -1073,7 +1073,7 @@ const driverOptions = computed(() =>
               <input
                 v-model="vehicleDraft.plate"
                 type="text"
-                maxlength="20"
+                maxlength="10"
                 placeholder="Госномер"
                 class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
                 data-test="vehicle-plate-input"
@@ -1239,9 +1239,7 @@ const driverOptions = computed(() =>
                 data-test="transfer-round-trip-input"
               />
               Туда-обратно
-              <span class="text-xs text-muted">
-                — вернуться тем же способом и составом (можно редактировать)
-              </span>
+              <span class="text-xs text-muted">— вернуться тем же способом</span>
             </label>
           </template>
 

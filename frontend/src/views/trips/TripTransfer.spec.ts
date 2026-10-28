@@ -303,7 +303,9 @@ describe('TripTransfer', () => {
     await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
     await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
 
-    expect(wrapper.find('[data-test="transfer-leg-error"]').text()).toContain('времени')
+    expect(wrapper.find('[data-test="transfer-leg-error"]').text()).toContain(
+      'Время отправления – обязательное поле',
+    )
     expect(mocks.createTransferLeg).not.toHaveBeenCalled()
   })
 
