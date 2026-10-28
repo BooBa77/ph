@@ -110,124 +110,10 @@ const canEditTab = computed(() => plan.value?.canEdit ?? false)
 const travelers = computed(() => plan.value?.travelers ?? [])
 const legs = computed(() => plan.value?.legs ?? [])
 
-/** Блок карточек: заброска (цепочка этапов) или одиночная карточка. */
-interface LegGroup {
-  key: string
-  chainId: string | null
-  legs: TripTransferLeg[]
-}
-
-/** Заброска целиком: одна на обе стороны, если этапы есть и там, и там. */
-interface ChainMeta {
-  id: string
-  /** Номер заброски в походе — одинаковый в «Туда» и в «Обратно». */
-  number: number
-  /** Сколько всего этапов в цепочке. */
-  count: number
-  from: string
-  to: string
-  /** Этапы есть в обеих сторонах — маршрут парой, а не в один конец. */
-  both: boolean
-}
-
-/**
- * Заброски похода целиком.
- *
- * Номер считается по времени первого этапа и не зависит от стороны:
- * заброска «туда и обратно» — одна, и в обеих областях она подписана
- * одинаково. Этапы при этом стоят в своих сторонах и нумеруются сквозь
- * всю цепочку: 1–2 в «Туда», 3–4 в «Обратно».
- */
-const chains = computed(() => {
-  const byId = new Map<string, TripTransferLeg[]>()
-
-  for (const leg of legs.value) {
-    if (leg.chainId === null) continue
-
-    const list = byId.get(leg.chainId) ?? []
-    list.push(leg)
-    byId.set(leg.chainId, list)
-  }
-
-  const time = (list: TripTransferLeg[]) =>
-    Math.min(...list.map((leg) => new Date(leg.departsAt).getTime()))
-
-  const ordered = [...byId.entries()].sort((left, right) => time(left[1]) - time(right[1]))
-  const meta = new Map<string, ChainMeta>()
-
-  ordered.forEach(([id, list], index) => {
-    const stages = [...list].sort((left, right) => (left.stage ?? 0) - (right.stage ?? 0))
-    const first = stages[0]
-
-    /**
-     * Куда заброска везёт: конец той стороны, с которой она началась.
-     * У пары это конечная «туда», а не возвращение домой — «Иркутск →
-     * Витязь» говорит о поездке больше, чем «Иркутск → Иркутск».
-     */
-    const outward = stages.filter((leg) => leg.direction === first?.direction)
-    const arrive = outward[outward.length - 1]
-
-    meta.set(id, {
-      id,
-      number: index + 1,
-      count: stages.length,
-      from: first?.fromPlace ?? '',
-      to: arrive?.toPlace ?? '',
-      both:
-        stages.some((leg) => leg.direction === 'there') &&
-        stages.some((leg) => leg.direction === 'back'),
-    })
-  })
-
-  return meta
-})
-
-/**
- * Блок внутри секции: трансфер или заброска (цепочка этапов).
- *
- * Заброска живёт своей секцией между «Туда» и «Обратно»: «уазики, каюры
- * и прочее бездорожье» — это не дорога от дома, и мешать их в одну ленту
- * заказчик не захотел.
- */
-function groupLegs(list: TripTransferLeg[]): LegGroup[] {
-  const groups: LegGroup[] = []
-  const byChain = new Map<string, LegGroup>()
-
-  for (const leg of list) {
-    if (leg.chainId === null) {
-      groups.push({ key: leg.id, chainId: null, legs: [leg] })
-      continue
-    }
-
-    const existing = byChain.get(leg.chainId)
-
-    if (existing) {
-      existing.legs.push(leg)
-      continue
-    }
-
-    const group: LegGroup = {
-      key: `chain-${leg.chainId}`,
-      chainId: leg.chainId,
-      legs: [leg],
-    }
-
-    byChain.set(leg.chainId, group)
-    groups.push(group)
-  }
-
-  // Внутри заброски этапы идут по номеру, а не по порядку прихода.
-  for (const group of groups) {
-    group.legs.sort((left, right) => (left.stage ?? 0) - (right.stage ?? 0))
-  }
-
-  return groups
-}
-
-/** Трансферы одной стороны: только одиночные, заброски живут отдельно. */
+/** Рейсы одной стороны: только не этапы, заброска живёт отдельно. */
 function transferSection(direction: TransferDirection) {
   const list = legs.value.filter(
-    (leg) => leg.direction === direction && leg.chainId === null,
+    (leg) => leg.direction === direction && !leg.isStage,
   )
 
   return {
@@ -235,36 +121,28 @@ function transferSection(direction: TransferDirection) {
     kind: 'transfers' as const,
     direction,
     legs: list,
-    groups: groupLegs(list),
     unassigned: unassignedIn(list),
     empty:
       direction === 'there'
-        ? 'Секция отображения трансферов к началу маршрута. Каждый трансфер — отдельное перемещение части группы: кто-то едет машиной, кто-то автобусом или заброска вещей отдельно от участников'
-        : 'Секция отображения трансферов до дома',
+        ? 'Секция отображения рейсов к началу маршрута. Каждый рейс — отдельное перемещение части группы: кто-то едет машиной, кто-то автобусом или заброска вещей отдельно от участников'
+        : 'Секция отображения рейсов до дома',
     label: TRANSFER_DIRECTION_LABELS[direction],
-    addLabel: 'Добавить трансфер',
+    addLabel: 'Добавить рейс',
     plate: direction === 'there' ? 'border-sky-300 bg-sky-100' : 'border-emerald-300 bg-emerald-100',
     title: direction === 'there' ? 'text-sky-900' : 'text-emerald-900',
     button: direction === 'there' ? 'bg-sky-600' : 'bg-emerald-600',
   }
 }
 
-/** Заброска: все цепочки этапов похода, между «Туда» и «Обратно». */
+/** Заброска: её этапы — такие же рейсы, просто в своей секции. */
 function stageSection() {
-  const list = legs.value.filter((leg) => leg.chainId !== null)
-
-  /** Номер заброски — тот же, что в подписи блока. */
-  const numberOf = (groupId: string | null) =>
-    groupId === null ? 0 : (chains.value.get(groupId)?.number ?? 0)
+  const list = legs.value.filter((leg) => leg.isStage)
 
   return {
     key: 'stages',
     kind: 'stages' as const,
     direction: null,
     legs: list,
-    groups: groupLegs(list).sort(
-      (left, right) => numberOf(left.chainId) - numberOf(right.chainId),
-    ),
     unassigned: [],
     empty: 'Уазики, каюры и прочее бездорожье',
     label: 'Заброска',
@@ -350,50 +228,6 @@ function departureText(iso: string): string {
     hour: '2-digit',
     minute: '2-digit',
   })
-}
-
-/** «1 этап / 2 этапа / 5 этапов» — подпись под заброской. */
-function stagesWord(count: number): string {
-  const last = count % 10
-  const lastTwo = count % 100
-
-  if (last === 1 && lastTwo !== 11) return 'этап'
-  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) return 'этапа'
-
-  return 'этапов'
-}
-
-/**
- * Подпись заброски: номер в походе, какие этапы здесь и весь маршрут.
- *
- * Этапы одной заброски могут стоять в обеих сторонах, поэтому в блоке
- * показываем не «сколько этапов в этой области», а какие именно: «этапы
- * 1–2 из 4» в «Туда» и «этапы 3–4 из 4» в «Обратно» — одна и та же
- * заброска, и это видно по номерам.
- */
-function chainTitle(group: LegGroup): string {
-  const meta = group.chainId === null ? undefined : chains.value.get(group.chainId)
-  if (meta === undefined) return ''
-
-  const stages = group.legs
-    .map((leg) => leg.stage ?? 0)
-    .sort((left, right) => left - right)
-
-  const first = stages[0] ?? 0
-  const last = stages[stages.length - 1] ?? 0
-
-  /**
-   * Вся цепочка в этой стороне — просто «2 этапа». Только часть — тогда
-   * номера: «этапы 1–2 из 4», и рядом, в другой стороне, будет «3–4 из 4».
-   */
-  const part =
-    group.legs.length === meta.count
-      ? `${meta.count} ${stagesWord(meta.count)}`
-      : first === last
-        ? `этап ${first} из ${meta.count}`
-        : `этапы ${first}–${last} из ${meta.count}`
-
-  return `Заброска ${meta.number} · ${part} · ${meta.from} → ${meta.to}`
 }
 
 function accepted(leg: TripTransferLeg): TripTransferPassenger[] {
@@ -523,15 +357,13 @@ async function deleteLeg(leg: TripTransferLeg) {
   await run(() => removeTransferLeg(props.trip.id, leg.id))
 }
 
-// ───────────────────────────── карточка: диалог ─────────────────────────────
+// ───────────────────────────── рейс: диалог ─────────────────────────────
 
 interface LegDraft {
   id: string | null
-  /** Этап заброски: тогда и только тогда спрашиваем цепочку. */
-  stageMode: boolean
+  /** Этап заброски: строка попадёт в секцию «Заброска». */
+  isStage: boolean
   direction: TransferDirection
-  /** Заброска: `''` — сама по себе, `'new'` — новая, иначе uuid цепочки. */
-  chainChoice: string
   mode: TransferMode
   fromPlace: string
   toPlace: string
@@ -592,61 +424,33 @@ const isMirror = computed(
   () => legDraft.value !== null && legDraft.value.sourceLegId !== null,
 )
 
+/**
+ * Прятать ли оплату и флаг: у зеркала пары своего кошелька нет, кроме
+ * общественного транспорта — там билеты на обоих концах и цена своя.
+ */
+const hidesMoney = computed(
+  () => isMirror.value && !isPublicMode(legDraft.value?.mode ?? 'car'),
+)
+
 /** Флаг «наше ТС» — только тому, кому право вкладки дало флаг. */
 const canFlagOwnVehicle = computed(
   () => canEditTab.value && legDraft.value !== null && !isPublicMode(legDraft.value.mode),
 )
 
 /**
- * Заброски похода — из чего выбирать в диалоге.
- *
- * Сторона не важна: заброска бывает и в один конец, и парой, поэтому
- * добавлять этап в неё можно с любой стороны.
- */
-const chainChoices = computed(() =>
-  [...chains.value.values()].map((meta) => ({
-    id: meta.id,
-    label: `Заброска ${meta.number} · ${meta.count} ${stagesWord(meta.count)}${
-      meta.both ? ' · туда и обратно' : ''
-    }`,
-  })),
-)
-
-/** uuid новой заброски. Клиент придумывает сам — отдельной ручки нет. */
-function newChainId(): string {
-  const api = globalThis.crypto as { randomUUID?: () => string } | undefined
-
-  if (typeof api?.randomUUID === 'function') return api.randomUUID()
-
-  // Запасной путь для окружений без WebCrypto (старый браузер, тесты).
-  const bytes = new Uint8Array(16)
-  for (let index = 0; index < bytes.length; index += 1) {
-    bytes[index] = Math.floor(Math.random() * 256)
-  }
-  bytes[6] = ((bytes[6] ?? 0) & 0x0f) | 0x40
-  bytes[8] = ((bytes[8] ?? 0) & 0x3f) | 0x80
-
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
-
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`
-}
-
-/**
- * Общий черновик формы: трансфер и этап заброски отличаются только тем,
- * спрашиваем ли мы цепочку. Поля у них одни и те же — «этап заброски
- * аналог трансфера», как и сказал заказчик.
+ * Общий черновик формы. Этап и рейс — одна и та же строка, поэтому
+ * и форма одна: разница только в `isStage`, то есть в секции.
  */
 function buildDraft(
   direction: TransferDirection,
   leg: TripTransferLeg | null,
-  stageMode: boolean,
+  isStage: boolean,
 ): LegDraft {
   if (leg === null) {
     return {
       id: null,
-      stageMode,
+      isStage,
       direction,
-      chainChoice: stageMode ? 'new' : '',
       mode: 'car',
       fromPlace: '',
       toPlace: '',
@@ -665,9 +469,8 @@ function buildDraft(
 
   return {
     id: leg.id,
-    stageMode,
+    isStage,
     direction: leg.direction,
-    chainChoice: leg.chainId ?? '',
     mode: leg.mode,
     fromPlace: leg.fromPlace,
     toPlace: leg.toPlace,
@@ -684,44 +487,37 @@ function buildDraft(
   }
 }
 
-/** Правка или создание обычного трансфера: заброски тут не бывает. */
-function openLegDialog(direction: TransferDirection, leg: TripTransferLeg | null = null) {
+/** Правка или создание рейса; `isStage` решает, в какую секцию он попадёт. */
+function openLegDialog(
+  direction: TransferDirection,
+  leg: TripTransferLeg | null = null,
+  isStage?: boolean,
+) {
   legError.value = null
-  legDraft.value = buildDraft(direction, leg, false)
+  legDraft.value = buildDraft(direction, leg, isStage ?? leg?.isStage ?? false)
 }
 
 /**
- * Правка или создание этапа заброски.
+ * Смена типа меняет и набор допустимых оплат.
  *
- * `chainId` — в какую цепочку класть новый этап: `null` — в новую
- * (кнопка «Добавить этап заброски»), иначе в ту, у которой нажали
- * «Добавить этап».
- */
-function openStageDialog(chainId: string | null, leg: TripTransferLeg | null = null) {
-  legError.value = null
-  const draft = buildDraft(leg?.direction ?? 'there', leg, true)
-
-  if (leg === null) draft.chainChoice = chainId ?? 'new'
-  legDraft.value = draft
-}
-
-/**
- * Смена типа может сделать незаконным и вид оплаты, и пару.
- *
- * У рейса пара не бывает вовсе — билеты покупают раздельно в каждую сторону,
- * поэтому при переключении на рейс флаг снимаем.
+ * У общественного транспорта по умолчанию «цена билета»: там платят
+ * за билет, а не «делят бензин». Пара при этом остаётся возможной —
+ * «туда-обратно» это планирование, а не кошелёк.
  */
 function changeMode() {
   const draft = legDraft.value
   if (!draft) return
 
-  if (!allowedCompensations.value.includes(draft.compensation)) {
-    draft.compensation = 'free'
-  }
-
+  /**
+   * У рейса по умолчанию «цена билета»: там платят за билет, а не делят
+   * бензин. Обратно — с рейса на свой транспорт — «безвозмездно»:
+   * билет своему авто не выписывают.
+   */
   if (isPublicMode(draft.mode)) {
+    if (draft.compensation === 'free') draft.compensation = 'ticket'
     draft.isOwnVehicle = false
-    draft.isRoundTrip = false
+  } else if (draft.compensation === 'ticket') {
+    draft.compensation = 'free'
   }
 }
 
@@ -821,7 +617,7 @@ async function saveLeg() {
   }
 
   if (!departsAt) {
-    legError.value = 'Без времени отправления карточка бесполезна — укажите его'
+    legError.value = 'Без времени отправления рейс бесполезен — укажите его'
     return
   }
 
@@ -841,21 +637,9 @@ async function saveLeg() {
     return
   }
 
-  /**
-   * Обычный трансфер цепочку не спрашивает вовсе: заброска живёт своей
-   * секцией. У этапа выбор остаётся — в новую цепочку или в существующую.
-   */
-  const chainId = !draft.stageMode
-    ? null
-    : draft.chainChoice === ''
-      ? null
-      : draft.chainChoice === 'new'
-        ? newChainId()
-        : draft.chainChoice
-
   const input = {
     direction: draft.direction,
-    chainId,
+    isStage: draft.isStage,
     mode: draft.mode,
     departsAt,
     fromPlace,
@@ -878,18 +662,14 @@ async function saveLeg() {
   if (ok) legDraft.value = null
 }
 
-/**
- * Правка карточки: этап заброски открывается формой этапа, всё прочее —
- * формой трансфера. Отличаются они только вопросом про цепочку.
- */
+/** Правка строки: форма одна, `isStage` решает, в какой секции она живёт. */
 function editLeg(leg: TripTransferLeg) {
-  if (leg.chainId === null) openLegDialog(leg.direction, leg)
-  else openStageDialog(leg.chainId, leg)
+  openLegDialog(leg.direction, leg)
 }
 
-/** Кнопка внизу секции: новый трансфер или новая заброска. */
+/** Кнопка внизу секции: новый рейс или новый этап заброски. */
 function addFrom(section: { kind: 'transfers' | 'stages'; direction: TransferDirection | null }) {
-  if (section.kind === 'stages') openStageDialog(null)
+  if (section.kind === 'stages') openLegDialog('there', null, true)
   else if (section.direction !== null) openLegDialog(section.direction)
 }
 
@@ -912,9 +692,8 @@ const driverOptions = computed(() =>
       </p>
 
       <!--
-        Три секции: дорога к началу маршрута, заброска (бездорожье),
-        дорога домой. Трансфер и заброска — разные вещи, и мешать их
-        в одну ленту заказчик не захотел.
+        Три секции: рейсы к началу маршрута, заброска (бездорожье), рейсы
+        домой. Этап заброски — такой же рейс, просто в своей секции.
       -->
       <details
         v-for="section in sections"
@@ -932,45 +711,15 @@ const driverOptions = computed(() =>
           {{ section.empty }}
         </p>
 
-        <!--
-          Блок = заброска (несколько этапов) или одиночная карточка.
-          Разметка карточки одна и та же: у заброски просто появляется шапка.
-        -->
-        <div
-          v-for="group in section.groups"
-          :key="group.key"
-          class="flex flex-col gap-2"
-          :class="
-            group.chainId === null
-              ? ''
-              : 'rounded-xl border border-dashed border-border bg-white/40 p-2'
-          "
-          :data-test="group.chainId === null ? 'transfer-leg-solo' : 'transfer-chain'"
+        <article
+          v-for="leg in section.legs"
+          :key="leg.id"
+          class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
+          data-test="transfer-leg"
         >
-          <p
-            v-if="group.chainId !== null"
-            class="text-xs font-medium text-muted"
-            data-test="transfer-chain-title"
-          >
-            {{ chainTitle(group) }}
-          </p>
-
-          <article
-            v-for="leg in group.legs"
-            :key="leg.id"
-            class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
-            data-test="transfer-leg"
-          >
             <header class="flex items-start gap-2">
               <div class="flex min-w-0 flex-1 flex-col gap-0.5">
                 <span class="text-base font-medium text-text" data-test="transfer-leg-mode">
-                  <span
-                    v-if="leg.stage !== null"
-                    class="mr-1 text-xs font-normal text-muted"
-                    data-test="transfer-leg-stage"
-                  >
-                    этап {{ leg.stage }} ·
-                  </span>
                   {{ TRANSFER_MODE_LABELS[leg.mode] }} · {{ departureText(leg.departsAt) }}
                 </span>
 
@@ -1182,20 +931,7 @@ const driverOptions = computed(() =>
             </template>
           </article>
 
-          <!-- Новая остановка той же заброски: цепочка не плодится -->
-          <button
-            v-if="group.chainId !== null"
-            type="button"
-            class="cursor-pointer self-start text-xs text-muted underline transition-colors hover:text-text disabled:opacity-60"
-            :disabled="isSaving"
-            :data-test="`transfer-stage-add-${group.chainId}`"
-            @click="openStageDialog(group.chainId)"
-          >
-            Добавить этап
-          </button>
-        </div>
-
-        <!-- Кто ещё не сел ни в один трансфер этой стороны -->
+        <!-- Кто ещё не сел ни в один рейс этой стороны -->
         <div v-if="section.unassigned.length > 0" class="flex flex-col gap-2">
           <hr class="border-border" />
 
@@ -1231,11 +967,11 @@ const driverOptions = computed(() =>
       >
         <div class="flex w-full max-w-md flex-col gap-2 rounded-xl border border-border bg-surface p-4">
           <h3 class="text-base font-medium text-text">
-            <template v-if="legDraft.stageMode">
+            <template v-if="legDraft.isStage">
               {{ legDraft.id === null ? 'Новый этап заброски' : 'Этап заброски' }}
             </template>
             <template v-else>
-              {{ legDraft.id === null ? 'Новый трансфер' : 'Трансфер' }} ·
+              {{ legDraft.id === null ? 'Новый рейс' : 'Рейс' }} ·
               {{ TRANSFER_DIRECTION_LABELS[legDraft.direction] }}
             </template>
           </h3>
@@ -1399,33 +1135,6 @@ const driverOptions = computed(() =>
             />
           </label>
 
-          <!--
-            Заброска спрашивается только у этапа: обычный трансфер живёт
-            в своей секции и цепочку не выбирает. «Новая» — id придумывает
-            клиент.
-          -->
-          <label
-            v-if="legDraft.stageMode"
-            class="flex flex-col gap-1 text-sm text-muted"
-          >
-            Заброска
-            <select
-              v-model="legDraft.chainChoice"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
-              data-test="transfer-chain-input"
-            >
-              <option value="">— без заброски —</option>
-              <option v-for="chain in chainChoices" :key="chain.id" :value="chain.id">
-                {{ chain.label }}
-              </option>
-              <option value="new">Новая заброска</option>
-            </select>
-            <span class="text-xs text-muted">
-              Этапы идут по времени отправления: авто → кони → лодка. В заброску можно
-              добавить и обратные этапы — тогда она пара
-            </span>
-          </label>
-
           <!-- «Наше ТС» — только тому, кому право вкладки дало флаг -->
           <template v-if="!selectedVehicle">
             <label
@@ -1483,12 +1192,13 @@ const driverOptions = computed(() =>
           </template>
 
           <!--
-            У пары одна оплата и один флаг: и то и другое задаётся
-            на исходной карточке. У зеркала вместо двух полей — подсказка,
-            иначе человек ищет, где тут поставить цену.
+            Общая оплата бывает только у своего и наёмного транспорта:
+            бензин и аренда платятся «за два конца». У общественного
+            билеты стоят на обоих концах, и цена у них своя, поэтому
+            у рейса поля оплаты есть даже в зеркале.
           -->
-          <p v-if="isMirror" class="text-xs text-muted" data-test="transfer-mirror-hint">
-            Это обратный трансфер пары: «туда-обратно» и оплата задаются на исходном.
+          <p v-if="hidesMoney" class="text-xs text-muted" data-test="transfer-mirror-hint">
+            Это обратный рейс пары: «туда-обратно» и оплата задаются на исходном.
             Здесь правятся люди, точки и время
           </p>
 
@@ -1521,11 +1231,7 @@ const driverOptions = computed(() =>
               />
             </label>
 
-            <!-- У рейса пары нет: билеты покупают раздельно в каждую сторону -->
-            <label
-              v-if="!isPublicMode(legDraft.mode)"
-              class="flex cursor-pointer items-center gap-2 text-sm text-text"
-            >
+            <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
               <input
                 v-model="legDraft.isRoundTrip"
                 type="checkbox"
@@ -1537,11 +1243,6 @@ const driverOptions = computed(() =>
                 — вернуться тем же способом и составом (можно редактировать)
               </span>
             </label>
-
-            <p v-else class="text-xs text-muted" data-test="transfer-no-pair-hint">
-              Билеты на автобус, ж/д, корабль и вертолёт — раздельно в каждую сторону,
-              пары у рейса нет
-            </p>
           </template>
 
           <label class="flex flex-col gap-1 text-sm text-muted">

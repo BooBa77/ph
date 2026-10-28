@@ -113,8 +113,7 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         id: '1',
         direction: 'there',
         position: 1,
-        chainId: null,
-        stage: null,
+        isStage: false,
         mode: 'car',
         departsAt: THERE_AT,
         fromPlace: 'Иркутск, автовокзал',
@@ -143,8 +142,7 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         id: '2',
         direction: 'there',
         position: 2,
-        chainId: null,
-        stage: null,
+        isStage: false,
         mode: 'bus',
         departsAt: THERE_AT,
         fromPlace: 'Иркутск, автовокзал',
@@ -170,8 +168,7 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
         id: '3',
         direction: 'back',
         position: 1,
-        chainId: null,
-        stage: null,
+        isStage: false,
         mode: 'airboat',
         departsAt: BACK_AT,
         fromPlace: 'Олхинское плато, Витязь',
@@ -327,7 +324,7 @@ describe('TripTransfer', () => {
 
     expect(mocks.createTransferLeg).toHaveBeenCalledWith('1', {
       direction: 'there',
-      chainId: null,
+      isStage: false,
       mode: 'car',
       departsAt: new Date('2027-05-05T09:00').toISOString(),
       fromPlace: 'Иркутск',
@@ -356,9 +353,14 @@ describe('TripTransfer', () => {
 
     expect(wrapper.find('[data-test="transfer-own-input"]').exists()).toBe(false)
 
-    // Билеты на рейс покупают раздельно в каждую сторону — пары нет.
-    expect(wrapper.find('[data-test="transfer-round-trip-input"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="transfer-no-pair-hint"]').text()).toContain('раздельно')
+    // У рейса пара тоже бывает: «вернёмся тем же поездом» — это план.
+    expect(wrapper.find('[data-test="transfer-round-trip-input"]').exists()).toBe(true)
+
+    // А оплата по умолчанию — цена билета: бензин тут ни при чём.
+    expect(wrapper.find('[data-test="transfer-compensation-input"]').element).toHaveProperty(
+      'value',
+      'ticket',
+    )
 
     const options = wrapper
       .find('[data-test="transfer-compensation-input"]')
@@ -407,113 +409,69 @@ describe('TripTransfer', () => {
     expect(mocks.createTransferLeg).not.toHaveBeenCalled()
   })
 
-  it('этапы одной заброски собираются в блок с номерами', async () => {
+  it('этап — это рейс, и он живёт в секции «Заброска»', async () => {
     const plan = makePlan()
-    const chain = '0191f0a0-0000-4000-8000-000000000001'
 
     plan.legs = [
-      {
-        ...plan.legs[0]!,
-        id: 'a',
-        chainId: chain,
-        stage: 1,
-        fromPlace: 'Иркутск',
-        toPlace: 'Большое Голоустное',
-      },
-      {
-        ...plan.legs[1]!,
-        id: 'b',
-        chainId: chain,
-        stage: 2,
-        fromPlace: 'Большое Голоустное',
-        toPlace: 'Витязь',
-      },
-      { ...plan.legs[2]!, id: 'c', chainId: null, stage: null },
+      { ...plan.legs[0]!, id: 'a', isStage: true, mode: 'horses' },
+      { ...plan.legs[1]!, id: 'b', isStage: true, mode: 'boat' },
+      { ...plan.legs[2]!, id: 'c', isStage: false },
     ]
 
     const wrapper = await mountTransfer(plan)
 
-    // Заброска живёт своей секцией, а не внутри «Туда».
+    // В «Туда» не осталось ни одного: оба этапа ушли в свою секцию.
+    expect(
+      wrapper.findAll('[data-test="transfer-area-there"] [data-test="transfer-leg"]'),
+    ).toHaveLength(0)
+
     const stages = wrapper.find('[data-test="transfer-area-stages"]')
-    expect(wrapper.find('[data-test="transfer-area-there"] [data-test="transfer-chain"]').exists()).toBe(false)
-    expect(stages.findAll('[data-test="transfer-chain"]')).toHaveLength(1)
+    expect(stages.findAll('[data-test="transfer-leg"]')).toHaveLength(2)
 
-    const title = stages.find('[data-test="transfer-chain-title"]').text()
-    expect(title).toContain('Заброска 1 · 2 этапа')
-    expect(title).toContain('Иркутск → Витязь')
-
-    // Номер этапа виден в шапке плашки.
-    const numbers = stages
-      .findAll('[data-test="transfer-leg-stage"]')
-      .map((node) => node.text())
-    expect(numbers[0]).toContain('этап 1')
-    expect(numbers[1]).toContain('этап 2')
+    // Групп и номеров нет: каждый этап — отдельная плашка.
+    expect(stages.find('[data-test="transfer-chain-title"]').exists()).toBe(false)
   })
 
-  it('заброска может быть парой: этапы живут в одном блоке', async () => {
+  it('этап заводят из секции заброски и он уходит с флагом isStage', async () => {
     const plan = makePlan()
-    const chain = '0191f0a0-0000-4000-8000-000000000002'
-
-    // Туда и обратно — одна заброска: этапы идут подряд по времени,
-    // сторона у каждого своя, а блок один.
-    plan.legs = [
-      { ...plan.legs[0]!, id: 't1', chainId: chain, stage: 1, direction: 'there' },
-      { ...plan.legs[1]!, id: 't2', chainId: chain, stage: 2, direction: 'there' },
-      { ...plan.legs[2]!, id: 'b1', chainId: chain, stage: 3, direction: 'back' },
-      { ...plan.legs[2]!, id: 'b2', chainId: chain, stage: 4, direction: 'back' },
-    ]
-
-    const wrapper = await mountTransfer(plan)
-    const stages = wrapper.find('[data-test="transfer-area-stages"]')
-
-    const title = stages.find('[data-test="transfer-chain-title"]').text()
-    expect(title).toContain('Заброска 1 · 4 этапа')
-
-    // Маршрут — до конечной «туда», а не «Иркутск → Иркутск».
-    expect(title).toContain('Иркутск, автовокзал → Олхинское плато, Витязь')
-
-    // Ни один этап не утёк в «Туда» или «Обратно».
-    expect(wrapper.find('[data-test="transfer-area-there"] [data-test="transfer-leg"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="transfer-area-back"] [data-test="transfer-leg"]').exists()).toBe(false)
-  })
-
-  it('этап заброски заводят из её секции, цепочку выбирают там же', async () => {
-    const plan = makePlan()
-    plan.legs[0]!.chainId = '0191f0a0-0000-4000-8000-000000000001'
-    plan.legs[0]!.stage = 1
 
     const wrapper = await mountTransfer(plan)
     mocks.createTransferLeg.mockResolvedValue(plan)
 
     await wrapper.find('[data-test="transfer-add-stages"]').trigger('click')
 
-    const select = wrapper.find('[data-test="transfer-chain-input"]')
-    expect(select.text()).toContain('Заброска 1 · 1 этап')
+    expect(wrapper.find('[data-test="transfer-leg-dialog"]').text()).toContain(
+      'Новый этап заброски',
+    )
 
-    await select.setValue('new')
     await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
     await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
     await wrapper.find('[data-test="transfer-departure-input"]').setValue('2027-05-05T09:00')
     await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
     await flushPromises()
 
-    // Новой заброске id придумывает клиент — отдельной ручки «создать» нет.
     expect(mocks.createTransferLeg).toHaveBeenCalledWith(
       '1',
-      expect.objectContaining({ chainId: expect.stringMatching(/^[0-9a-f-]{36}$/) }),
+      expect.objectContaining({ isStage: true }),
     )
   })
 
-  it('у обычного трансфера поля «Заброска» нет, а у этапа — есть', async () => {
+  it('у обычного рейса этап не включается, у этапа — не выключается', async () => {
     const wrapper = await mountTransfer()
 
     await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
-    expect(wrapper.find('[data-test="transfer-chain-input"]').exists()).toBe(false)
+    await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
+    await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
+    await wrapper.find('[data-test="transfer-departure-input"]').setValue('2027-05-05T09:00')
 
-    await wrapper.find('[data-test="transfer-leg-cancel"]').trigger('click')
-    await wrapper.find('[data-test="transfer-add-stages"]').trigger('click')
+    mocks.createTransferLeg.mockResolvedValue(makePlan())
+    await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
+    await flushPromises()
 
-    expect(wrapper.find('[data-test="transfer-chain-input"]').exists()).toBe(true)
+    expect(mocks.createTransferLeg).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({ isStage: false }),
+    )
   })
 
   it('пустые секции объясняют, что это за место', async () => {

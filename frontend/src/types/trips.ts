@@ -797,21 +797,19 @@ export interface TripTransferPassenger extends TripTransferPerson {
 }
 
 /**
- * Карточка перемещения — одна часть группы едет одним способом.
+ * Рейс — одна часть группы едет одним способом.
  *
- * Машины отдельной сущностью больше нет: способ доставки, места, владелец
- * и компенсация — свойства карточки. Пять человек в одной машине и трое
- * в другой — это две карточки в одной области.
+ * Машины отдельной сущностью больше нет: тип транспорта, места, владелец
+ * и компенсация — свойства рейса. Пять человек в одной машине и трое
+ * в другой — это два рейса в одной области.
  */
 export interface TripTransferLeg {
   id: string
   direction: TransferDirection
   /** Порядок внутри своей стороны. */
   position: number
-  /** Заброска, к которой относится этап; `null` — карточка сама по себе. */
-  chainId: string | null
-  /** Номер этапа в заброске. Считает бэкенд по времени отправления. */
-  stage: number | null
+  /** Этап заброски: строка показывается в секции «Заброска». */
+  isStage: boolean
   mode: TransferMode
   /** Выезд: обязателен, поэтому здесь всегда дата. */
   departsAt: string
@@ -827,7 +825,7 @@ export interface TripTransferLeg {
   vehicleTitle: string | null
   /** Госномер техники из каталога — чтобы найти машину. */
   vehiclePlate: string | null
-  /** Исходная карточка пары «туда-обратно»: заполнено — это зеркало. */
+  /** Исходный рейс пары «туда-обратно»: заполнено — это зеркало. */
   sourceLegId: string | null
   /** Сколько мест занято принятыми пассажирами. Считает бэкенд. */
   occupied: number
@@ -835,11 +833,11 @@ export interface TripTransferLeg {
   compensationAmountRub: number | null
   isRoundTrip: boolean
   note: string | null
-  /** Правит ли смотрящий карточку: право вкладки или владелец этого ТС. */
+  /** Правит ли смотрящий рейс: право вкладки или владелец этого ТС. */
   canEdit: boolean
   /**
    * Что будет, если смотрящий присоединится: `accepted` — сразу едет,
-   * `requested` — заявка владельцу, `null` — уже в карточке или нельзя.
+   * `requested` — заявка владельцу, `null` — уже в рейсе или нельзя.
    */
   joinStatus: TransferPassengerStatus | null
   passengers: TripTransferPassenger[]
@@ -854,11 +852,11 @@ export interface TripTransfer {
   legs: TripTransferLeg[]
 }
 
-/** Что уходит на сервер при создании карточки. */
+/** Что уходит на сервер при создании рейса. */
 export interface TransferLegInput {
   direction: TransferDirection
-  /** uuid заброски: существующей, новой (её придумывает клиент) или null. */
-  chainId?: string | null
+  /** Этап заброски: строка попадёт в секцию «Заброска». */
+  isStage?: boolean
   mode: TransferMode
   departsAt: string
   fromPlace: string
