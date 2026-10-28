@@ -22,6 +22,7 @@
     "migration:show:prod": "npm run typeorm:prod -- migration:show",
     "build:state-calendar": "node scripts/build-state-calendar.mjs",
     "seed:calendar": "node scripts/seed-state-calendar.mjs",
+    "seed:activities": "node scripts/seed-activities.mjs",
     "seed:roles": "node scripts/seed-roles.mjs",
     "seed:role-tabs": "node scripts/seed-role-tabs.mjs",
     "seed:objects": "node scripts/seed-objects.mjs",
