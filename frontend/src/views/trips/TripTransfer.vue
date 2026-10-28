@@ -898,7 +898,7 @@ const driverOptions = computed(() =>
                 </button>
 
                 <template v-if="confirmingLegId === leg.id">
-                  <span class="text-sm text-muted">Удалить трансфер?</span>
+                  <span class="text-sm text-muted">Удалить рейс?</span>
                   <button
                     type="button"
                     class="cursor-pointer rounded-xl border border-red-600 px-3 py-1 text-sm text-red-600 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50"
