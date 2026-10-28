@@ -1335,51 +1335,63 @@ describe('Трансфер похода (e2e)', () => {
   });
 
   it('заброска не выходит за выезд и возвращение', async () => {
-    await createLeg(organizerToken, {
-      direction: 'there',
-      mode: 'bus',
-      departsAt: '2026-12-05T06:00:00.000Z',
-      fromPlace: 'Иркутск, застава',
-      toPlace: 'Витязь',
-      compensation: 'ticket',
-      compensationAmountRub: 400,
-    });
+    await dataSource.query(
+      `UPDATE trips SET starts_at = $2, ends_at = $3 WHERE id = $1`,
+      [tripId, '2026-12-05T06:00:00.000Z', '2026-12-07T18:00:00.000Z'],
+    );
 
-    await createLeg(organizerToken, {
-      direction: 'back',
-      mode: 'bus',
-      departsAt: '2026-12-07T18:00:00.000Z',
-      fromPlace: 'Витязь',
-      toPlace: 'Иркутск, застава',
-      compensation: 'ticket',
-      compensationAmountRub: 400,
-    });
+    try {
+      await createLeg(organizerToken, {
+        direction: 'there',
+        mode: 'bus',
+        departsAt: '2026-12-05T06:00:00.000Z',
+        fromPlace: 'Иркутск, застава',
+        toPlace: 'Витязь',
+        compensation: 'ticket',
+        compensationAmountRub: 400,
+      });
 
-    // Трактор после возвращения группы — нельзя.
-    await request(app.getHttpServer())
-      .post(`/api/trips/${tripId}/transfer/legs`)
-      .set('Authorization', `Bearer ${organizerToken}`)
-      .send({
+      await createLeg(organizerToken, {
+        direction: 'back',
+        mode: 'bus',
+        departsAt: '2026-12-07T18:00:00.000Z',
+        fromPlace: 'Витязь',
+        toPlace: 'Иркутск, застава',
+        compensation: 'ticket',
+        compensationAmountRub: 400,
+      });
+
+      // Трактор после возвращения группы — нельзя.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/transfer/legs`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({
+          direction: 'there',
+          isStage: true,
+          mode: 'tractor',
+          departsAt: '2026-12-08T03:00:00.000Z',
+          fromPlace: 'Витязь',
+          toPlace: 'Сухой ручей',
+          compensation: 'free',
+        })
+        .expect(400);
+
+      // Между выездом и возвращением — можно.
+      await createLeg(organizerToken, {
         direction: 'there',
         isStage: true,
         mode: 'tractor',
-        departsAt: '2026-12-08T03:00:00.000Z',
+        departsAt: '2026-12-06T03:00:00.000Z',
         fromPlace: 'Витязь',
         toPlace: 'Сухой ручей',
         compensation: 'free',
-      })
-      .expect(400);
-
-    // Между выездом и возвращением — можно.
-    await createLeg(organizerToken, {
-      direction: 'there',
-      isStage: true,
-      mode: 'tractor',
-      departsAt: '2026-12-06T03:00:00.000Z',
-      fromPlace: 'Витязь',
-      toPlace: 'Сухой ручей',
-      compensation: 'free',
-    });
+      });
+    } finally {
+      await dataSource.query(
+        `UPDATE trips SET starts_at = NULL, ends_at = NULL WHERE id = $1`,
+        [tripId],
+      );
+    }
   });
 
   it('чат трансфера видит только состав', async () => {
