@@ -9,7 +9,7 @@ import { useAppStore } from '@/stores/app'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import SidebarIcon from '@/components/ui/SidebarIcon.vue'
-import logoUrl from '@/assets/logo.svg'
+import logoUrl from '@/assets/logo-mark.png'
 
 /**
  * Шапка приложения.
@@ -53,17 +53,33 @@ const profilePath = computed(() => appStore.lastProfilePath)
       aria-label="На главную"
     >
       <!--
-        Знак подключаем импортом из `src/assets`, а не ссылкой на
-        `public/logo.svg`: Vite добавит к имени хэш содержимого, и после
-        обновления знака браузер скачает новый файл. Ссылка на public
-        ломалась дважды: файл в проде отдавался с кэшем на 30 дней,
-        и старый знак жил в браузере даже после деплоя.
+        Знак — присланный рисунок (двое у горы), а не нарисованный кодом
+        вектор: с 28.10.2026 в шапке стоит иллюстрация заказчика. Подключаем
+        импортом из `src/assets`, а не ссылкой на `public`: Vite добавит
+        к имени хэш содержимого, и после обновления знака браузер скачает
+        новый файл. Ссылка на public ломалась дважды: файл в проде
+        отдавался с кэшем на 30 дней, и старый знак жил в браузере даже
+        после деплоя.
 
         alt пустой, а не «PeakHunter»: рядом стоит текстовая подпись
         (на мобиле скрыта, но остаётся в дереве доступности из-за
         aria-label у ссылки). Дубль имени ссылки скринридер читал бы дважды.
       -->
-      <img :src="logoUrl" alt="" width="28" height="28" class="h-7 w-7 shrink-0" />
+      <!--
+        Знак крупнее шапки и свисает под её полосу. 96 px при строке 44 px:
+        отрицательные отступы -mt-2 и -mb-12 съедают 8 сверху и 48 снизу,
+        поэтому в высоте строки участвует 40 px, а не 96 — шапка остаётся
+        68 px, как была, а сам знак выходит на 34 px ниже полосы (сверху
+        остаётся 6 px). Свисающая часть рисуется поверх контента: для этого
+        `relative z-10`, иначе её закроет следующий блок.
+      -->
+      <img
+        :src="logoUrl"
+        alt=""
+        width="96"
+        height="96"
+        class="relative z-10 -mt-2 -mb-12 h-24 w-24 shrink-0"
+      />
       <span class="hidden sm:inline">PeakHunter</span>
     </RouterLink>
 
