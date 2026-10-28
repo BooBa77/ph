@@ -13,6 +13,7 @@ import {
   updateTransferLeg,
 } from '@/api/trips'
 import { createVehicle, fetchVehicles } from '@/api/vehicles'
+import DateTimePickerModal from '@/components/ui/DateTimePickerModal.vue'
 import { useAuthStore } from '@/stores/auth'
 import {
   TRANSFER_COMPENSATIONS,
@@ -397,6 +398,15 @@ function toLocalInput(iso: string): string {
 
 function fromLocalInput(value: string): string | null {
   return value ? new Date(value).toISOString() : null
+}
+
+/** Показывать ли модалку выбора даты и времени. */
+const isPickingTime = ref(false)
+
+/** Выбрали дату в модалке: пишем в черновик и закрываем её. */
+function applyDeparture(value: string) {
+  if (legDraft.value !== null) legDraft.value.departsAt = value
+  isPickingTime.value = false
 }
 
 /**
@@ -1141,14 +1151,14 @@ const driverOptions = computed(() =>
 
           <label class="flex flex-col gap-1 text-sm text-muted">
             Время отправления
-            <input
-              v-model="legDraft.departsAt"
-              type="datetime-local"
-              :min="tripDayFrom"
-              :max="tripDayTo"
-              class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-left text-base text-text transition-colors focus:border-primary focus:outline-none"
               data-test="transfer-departure-input"
-            />
+              @click="isPickingTime = true"
+            >
+              {{ legDraft.departsAt ? legDraft.departsAt.replace('T', ' ') : 'Выберите дату и время' }}
+            </button>
           </label>
 
           <!-- «Наше ТС» — только тому, кому право вкладки дало флаг -->
@@ -1294,6 +1304,16 @@ const driverOptions = computed(() =>
             </button>
           </div>
         </div>
+
+        <!-- Своя модалка даты и времени: у встроенной нет кнопки «ОК» -->
+        <DateTimePickerModal
+          v-if="isPickingTime"
+          :value="legDraft.departsAt"
+          :min="tripDayFrom"
+          :max="tripDayTo"
+          @select="applyDeparture"
+          @close="isPickingTime = false"
+        />
       </div>
 
       <!-- Чат трансфера — часть вкладки, как у «Питания» -->

@@ -206,6 +206,23 @@ async function mountTransfer(plan: TripTransfer = makePlan(), vehicles: Vehicle[
   return wrapper
 }
 
+/**
+ * Выбрать время в своей модалке: день 5 текущего месяца, 09:00, «ОК».
+ *
+ * Встроенного `input[type=datetime-local]` больше нет — заказчик просил
+ * календарь с кнопкой «ОК», поэтому значение приходит из модалки.
+ */
+async function pickDeparture(wrapper: Awaited<ReturnType<typeof mountTransfer>>) {
+  await wrapper.find('[data-test="transfer-departure-input"]').trigger('click')
+  await wrapper.find('[data-test="datetime-day-5"]').trigger('click')
+  await wrapper.find('[data-test="datetime-hours"]').setValue('9')
+  await wrapper.find('[data-test="datetime-minutes"]').setValue('0')
+  await wrapper.find('[data-test="datetime-ok"]').trigger('click')
+
+  const now = new Date()
+  return new Date(now.getFullYear(), now.getMonth(), 5, 9, 0).toISOString()
+}
+
 /** Плашка по id — в тестах так короче, чем искать по тексту. */
 function legCard(wrapper: Awaited<ReturnType<typeof mountTransfer>>, id: string) {
   return wrapper.findAll('[data-test="transfer-leg"]').find((card) =>
@@ -316,7 +333,7 @@ describe('TripTransfer', () => {
     await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
     await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
     await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
-    await wrapper.find('[data-test="transfer-departure-input"]').setValue('2027-05-05T09:00')
+    const departsAt = await pickDeparture(wrapper)
     await wrapper.find('[data-test="transfer-compensation-input"]').setValue('shared')
     await wrapper.find('[data-test="transfer-amount-input"]').setValue('1500')
     await wrapper.find('[data-test="transfer-round-trip-input"]').setValue(true)
@@ -328,7 +345,7 @@ describe('TripTransfer', () => {
       direction: 'there',
       isStage: false,
       mode: 'car',
-      departsAt: new Date('2027-05-05T09:00').toISOString(),
+      departsAt,
       fromPlace: 'Иркутск',
       toPlace: 'Витязь',
       isOwnVehicle: false,
@@ -403,7 +420,7 @@ describe('TripTransfer', () => {
     await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
     await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
     await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
-    await wrapper.find('[data-test="transfer-departure-input"]').setValue('2027-05-05T09:00')
+    await pickDeparture(wrapper)
     await wrapper.find('[data-test="transfer-compensation-input"]').setValue('shared')
     await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
 
@@ -448,7 +465,7 @@ describe('TripTransfer', () => {
 
     await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
     await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
-    await wrapper.find('[data-test="transfer-departure-input"]').setValue('2027-05-05T09:00')
+    await pickDeparture(wrapper)
     await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
     await flushPromises()
 
@@ -464,7 +481,7 @@ describe('TripTransfer', () => {
     await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
     await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
     await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
-    await wrapper.find('[data-test="transfer-departure-input"]').setValue('2027-05-05T09:00')
+    await pickDeparture(wrapper)
 
     mocks.createTransferLeg.mockResolvedValue(makePlan())
     await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
@@ -665,7 +682,7 @@ describe('TripTransfer', () => {
     mocks.createTransferLeg.mockResolvedValue(makePlan())
     await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
     await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
-    await wrapper.find('[data-test="transfer-departure-input"]').setValue('2027-05-05T09:00')
+    await pickDeparture(wrapper)
     await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
     await flushPromises()
 
