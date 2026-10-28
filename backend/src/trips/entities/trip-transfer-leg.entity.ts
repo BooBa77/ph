@@ -55,22 +55,22 @@ import { Trip } from './trip.entity';
  * общий расход на пассажиров. У рейсов бывает только «цена билета»,
  * у своего транспорта — только общие расходы.
  *
- * **Заброска — это `chain_id` и `stage`** (28.10.2026). Отдельной таблицы
- * у заброски нет: заказчик сказал «этапы — те же карточки, не новая
- * сущность», и права, пассажиры, места и деньги у этапа остались прежними.
- * Цепочка собирает «авто → кони → лодка»; порядок этапов задаёт
- * `departs_at`, а `stage` сервис перенумеровывает сам, поэтому номер
- * и порядок не расходятся.
+ * **Заброска — это `is_stage`** (28.10.2026). «Этап — это рейс, заброска,
+ * одна карточка, а не группа»: заказчику нужен не список цепочек, а три
+ * простых списка — рейсы туда, заброски, рейсы обратно. Поэтому у строки
+ * один флаг, и он отвечает только за то, в какой секции она показывается.
+ * Права, пассажиры, места и деньги у этапа те же, что у любого рейса.
  *
- * **`is_round_trip` больше не привязан к компенсации** (28.10.2026): флаг
- * про трансфер и про деньги одновременно, а не про вид оплаты.
+ * **`is_round_trip` ни к чему не привязан** (28.10.2026): это планирование —
+ * «вернёмся тем же способом», а не вид оплаты. У общественного транспорта
+ * билеты стоят на обеих карточках и могут отличаться по цене.
  */
 @Entity('trip_transfer_legs')
 @Index('UQ_trip_transfer_legs_trip', ['tripId', 'id'], { unique: true })
 @Index('IDX_trip_transfer_legs_order', ['tripId', 'direction', 'position', 'id'])
 @Index('IDX_trip_transfer_legs_vehicle', ['vehicleId'])
 @Index('IDX_trip_transfer_legs_round_trip', ['roundTripSourceId'])
-@Index('IDX_trip_transfer_legs_chain', ['tripId', 'chainId', 'stage'])
+@Index('IDX_trip_transfer_legs_stage', ['tripId', 'isStage'])
 @Check(
   'chk_trip_transfer_legs_direction',
   `"direction" IN (${sqlValues(TRANSFER_DIRECTIONS)})`,
@@ -96,15 +96,6 @@ import { Trip } from './trip.entity';
 @Check(
   'chk_trip_transfer_legs_shared',
   `"compensation" NOT IN ('shared', 'sharedPerPassenger') OR "mode" NOT IN (${sqlValues(TRANSFER_PUBLIC_MODES)})`,
-)
-@Check(
-  'chk_trip_transfer_legs_round_trip',
-  `"is_round_trip" = false OR "mode" NOT IN (${sqlValues(TRANSFER_PUBLIC_MODES)})`,
-)
-@Check('chk_trip_transfer_legs_stage', '"stage" IS NULL OR "stage" >= 1')
-@Check(
-  'chk_trip_transfer_legs_chain',
-  `("chain_id" IS NULL) = ("stage" IS NULL)`,
 )
 @Check('chk_trip_transfer_legs_seats', '"seats" IS NULL OR "seats" > 0')
 @Check(
@@ -134,29 +125,14 @@ export class TripTransferLeg {
   position: number;
 
   /**
-   * Заброска, к которой относится этап. `NULL` — карточка живёт сама.
+   * Этап заброски — та же строка, только в своей секции.
    *
-   * Отдельной таблицы нет: цепочка — это просто одинаковый `chain_id`
-   * у нескольких карточек. Сторона у каждого этапа своя, поэтому одна
-   * заброска свободно переплетает «туда» и «обратно»: маршрут бывает
-   * в один конец, а бывает парой.
-   *
-   * Id присылает клиент (uuid), когда человек говорит «новая заброска», —
-   * так одна ручка и заводит цепочку, и добавляет в неё этап, без второго
-   * запроса.
+   * «Этап — это рейс, заброска, одна карточка, а не группа» (заказчик
+   * 28.10.2026). Поэтому никаких цепочек и номеров: флаг отвечает ровно
+   * за одно — показывать строку в «Заброске» или среди обычных рейсов.
    */
-  @Column({ name: 'chain_id', type: 'uuid', nullable: true })
-  chainId: string | null;
-
-  /**
-   * Номер этапа внутри заброски, с единицы. `NULL` — карточка не в цепочке.
-   *
-   * **Производное, а не ввод**: сервис перенумеровывает цепочку при каждой
-   * записи по `departs_at`. Заказчик: порядок задаёт дата отправления,
-   * а не тип транспорта, — лодка может стоять и между конями, и после них.
-   */
-  @Column({ type: 'int', nullable: true })
-  stage: number | null;
+  @Column({ name: 'is_stage', type: 'boolean', default: false })
+  isStage: boolean;
 
   /** Время отправления — обязательное. */
   @Column({ name: 'departs_at', type: 'timestamptz' })

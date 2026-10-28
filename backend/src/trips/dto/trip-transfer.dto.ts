@@ -43,7 +43,7 @@ export class TransferTravelerDto {
 }
 
 /**
- * Пассажир карточки.
+ * Пассажир рейса.
  *
  * `requested` — попросился на чужое ТС и ждёт владельца; `accepted` — едет.
  * На рейсах заявок нет: купил билет — едешь.
@@ -63,9 +63,9 @@ export class TransferPassengerDto {
   status: TransferPassengerStatus;
 }
 
-/** Карточка перемещения: одна часть группы едет одним способом. */
+/** Рейс: одна часть группы едет одним способом. */
 export class TransferLegDto {
-  @ApiProperty({ description: 'Id карточки', example: '7' })
+  @ApiProperty({ description: 'Id рейса', example: '7' })
   id: string;
 
   @ApiProperty({
@@ -80,18 +80,10 @@ export class TransferLegDto {
 
   @ApiProperty({
     description:
-      'Заброска, к которой относится этап. null — карточка живёт сама',
-    nullable: true,
+      'Этап заброски: показывать строку в секции «Заброска», а не среди рейсов',
+    example: false,
   })
-  chainId: string | null;
-
-  @ApiProperty({
-    description:
-      'Номер этапа в заброске с 1. Считается по времени отправления, а не задаётся',
-    nullable: true,
-    example: 2,
-  })
-  stage: number | null;
+  isStage: boolean;
 
   @ApiProperty({
     description: 'Тип транспорта',
@@ -153,7 +145,7 @@ export class TransferLegDto {
 
   @ApiProperty({
     description:
-      'Исходная карточка пары «туда-обратно». null — карточка живёт сама; заполнено — это зеркало',
+      'Исходный рейс пары «туда-обратно». null — рейс живёт сам; заполнено — это зеркало',
     nullable: true,
   })
   sourceLegId: string | null;
@@ -177,7 +169,7 @@ export class TransferLegDto {
 
   @ApiProperty({
     description:
-      '«Туда-обратно»: карточка — начало пары, зеркало встанет в другую сторону. У зеркала не включается',
+      '«Туда-обратно»: рейс — начало пары, зеркало встанет в другую сторону. У зеркала не включается',
     example: false,
   })
   isRoundTrip: boolean;
@@ -186,14 +178,14 @@ export class TransferLegDto {
   note: string | null;
 
   @ApiProperty({
-    description: 'Правит ли смотрящий карточку: право вкладки или владелец ТС',
+    description: 'Правит ли смотрящий рейс: право вкладки или владелец ТС',
     example: false,
   })
   canEdit: boolean;
 
   @ApiProperty({
     description:
-      'Что будет, если смотрящий присоединится: accepted — сразу едет, requested — заявка владельцу, null — уже в карточке или нельзя',
+      'Что будет, если смотрящий присоединится: accepted — сразу едет, requested — заявка владельцу, null — уже в рейсе или нельзя',
     enum: TRANSFER_PASSENGER_STATUSES,
     nullable: true,
     example: 'requested',
@@ -207,7 +199,7 @@ export class TransferLegDto {
 /** Вкладка «Трансфер» целиком. */
 export class TripTransferDto {
   @ApiProperty({
-    description: 'Может ли смотрящий создавать любые карточки (право на вкладку)',
+    description: 'Может ли смотрящий создавать любые рейсы (право на вкладку)',
     example: false,
   })
   canEdit: boolean;
@@ -239,13 +231,12 @@ export class CreateTransferLegDto {
 
   @ApiProperty({
     description:
-      'Заброска: uuid существующей цепочки, uuid новой (клиент генерирует сам) или null — без заброски',
+      'Этап заброски: строка попадёт в секцию «Заброска», а не в список рейсов',
     required: false,
-    nullable: true,
   })
   @IsOptional()
-  @IsUUID('4', { message: 'У заброски должен быть корректный UUID' })
-  chainId?: string | null;
+  @IsBoolean({ message: 'Признак этапа — да или нет' })
+  isStage?: boolean;
 
   @ApiProperty({ description: 'Тип транспорта', enum: TRANSFER_MODES })
   @IsIn(TRANSFER_MODES, { message: 'Недопустимый тип транспорта' })
@@ -318,7 +309,7 @@ export class CreateTransferLegDto {
 
   @ApiProperty({
     description:
-      '«Туда-обратно»: зеркалит карточку в противоположную сторону. От вида компенсации не зависит',
+      '«Туда-обратно»: зеркалит рейс в противоположную сторону. Это планирование, а не вид оплаты',
     required: false,
   })
   @IsOptional()
@@ -336,7 +327,7 @@ export class CreateTransferLegDto {
  * Тело `PATCH /api/trips/:id/transfer/legs/:legId` — три состояния поля,
  * как у похода: поля нет — не трогаем, `null` — стереть, значение — записать.
  *
- * Смена способа проверяется **по итогу**, а не по патчу: карточка могла быть
+ * Смена способа проверяется **по итогу**, а не по патчу: рейс мог быть
  * «нашим авто» с общим расходом, а пришла только `mode: 'bus'` — тогда
  * и флаг, и компенсация перестают быть законными, и это 400 с текстом.
  */
@@ -397,13 +388,12 @@ export class UpdateTransferLegDto {
 
   @ApiProperty({
     description:
-      'Заброска: поля нет — не трогаем, null — выйти из цепочки, uuid — войти или завести',
+      'Этап заброски: поля нет — не трогаем, true/false — перенести между секциями',
     required: false,
-    nullable: true,
   })
   @IsOptional()
-  @IsUUID('4', { message: 'У заброски должен быть корректный UUID' })
-  chainId?: string | null;
+  @IsBoolean({ message: 'Признак этапа — да или нет' })
+  isStage?: boolean;
 
   @ApiProperty({ description: 'Компенсация', enum: TRANSFER_COMPENSATIONS, required: false })
   @IsOptional()

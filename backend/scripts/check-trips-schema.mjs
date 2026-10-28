@@ -486,8 +486,8 @@ await check(
 );
 
 await check(
-  'трансфер: «туда-обратно» у рейса запрещено — билеты раздельно',
-  'fail',
+  'трансфер: «туда-обратно» у рейса тоже можно — это планирование',
+  'ok',
   `INSERT INTO trip_transfer_legs
      (trip_id, direction, position, departs_at, from_place, to_place,
       mode, compensation, compensation_amount_rub, is_round_trip)
@@ -504,28 +504,14 @@ await check(
 );
 
 await check(
-  'трансфер: номер этапа без заброски запрещён',
-  'fail',
-  `UPDATE trip_transfer_legs SET stage = 2 WHERE id = $1`,
-  [legId],
-);
-
-await check(
-  'трансфер: заброска без номера этапа запрещена',
-  'fail',
-  `UPDATE trip_transfer_legs
-      SET chain_id = '6f1c9b3e-0000-4000-8000-00000000c00f'
-    WHERE id = $1`,
-  [legId],
-);
-
-await check(
-  'трансфер: номер этапа начинается с единицы',
-  'fail',
-  `UPDATE trip_transfer_legs
-      SET chain_id = '6f1c9b3e-0000-4000-8000-00000000c00f', stage = 0
-    WHERE id = $1`,
-  [legId],
+  'трансфер: этап заброски — это флаг у строки',
+  'ok',
+  `INSERT INTO trip_transfer_legs
+     (trip_id, direction, position, departs_at, from_place, to_place,
+      mode, compensation, is_stage)
+   VALUES ($1, 'there', 6, now(), 'Баяндай', 'Сухой ручей',
+           'horses', 'free', true)`,
+  [tripId],
 );
 
 const ownLegId = (
