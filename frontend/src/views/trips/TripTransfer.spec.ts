@@ -212,15 +212,46 @@ async function mountTransfer(plan: TripTransfer = makePlan(), vehicles: Vehicle[
  * Встроенного `input[type=datetime-local]` больше нет — заказчик просил
  * календарь с кнопкой «ОК», поэтому значение приходит из модалки.
  */
+/** Время, которое выбираем в модалке: внутри окон похода и рейсов. */
+const PICKED_AT = new Date(2026, 10, 7, 9, 0)
+
+const MONTH_NAMES = [
+  'Январь',
+  'Февраль',
+  'Март',
+  'Апрель',
+  'Май',
+  'Июнь',
+  'Июль',
+  'Август',
+  'Сентябрь',
+  'Октябрь',
+  'Ноябрь',
+  'Декабрь',
+]
+
+/**
+ * Выбрать время в своей модалке: нужный месяц, день, 09:00, «ОК».
+ *
+ * Встроенного `input[type=datetime-local]` больше нет — заказчик просил
+ * календарь с кнопкой «ОК», поэтому значение приходит из модалки.
+ */
 async function pickDeparture(wrapper: Awaited<ReturnType<typeof mountTransfer>>) {
   await wrapper.find('[data-test="transfer-departure-input"]').trigger('click')
-  await wrapper.find('[data-test="datetime-day-5"]').trigger('click')
-  await wrapper.find('[data-test="datetime-hours"]').setValue('9')
-  await wrapper.find('[data-test="datetime-minutes"]').setValue('0')
+
+  // Окно рейса задают даты похода и рейсов, поэтому листаем до нужного месяца.
+  const title = `${MONTH_NAMES[PICKED_AT.getMonth()]} ${PICKED_AT.getFullYear()}`
+  for (let step = 0; step < 36; step += 1) {
+    if (wrapper.find('#datetime-picker-title').text() === title) break
+    await wrapper.find('[data-test="datetime-next"]').trigger('click')
+  }
+
+  await wrapper.find(`[data-test="datetime-day-${PICKED_AT.getDate()}"]`).trigger('click')
+  await wrapper.find('[data-test="datetime-hours"]').setValue(String(PICKED_AT.getHours()))
+  await wrapper.find('[data-test="datetime-minutes"]').setValue(String(PICKED_AT.getMinutes()))
   await wrapper.find('[data-test="datetime-ok"]').trigger('click')
 
-  const now = new Date()
-  return new Date(now.getFullYear(), now.getMonth(), 5, 9, 0).toISOString()
+  return PICKED_AT.toISOString()
 }
 
 /** Плашка по id — в тестах так короче, чем искать по тексту. */

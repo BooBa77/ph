@@ -46,21 +46,30 @@ describe('DateTimePickerModal', () => {
     expect(wrapper.emitted('select')?.[0]).toEqual([expected])
   })
 
-  it('вне дат похода «ОК» не срабатывает, а причина видна', async () => {
+  it('дни вне окна не нажимаются, а время вне окна не подтверждается', async () => {
     const wrapper = mountPicker({
-      value: '2026-10-05T10:00',
-      min: '2026-10-04T00:00',
-      max: '2026-10-06T23:59',
+      value: '2026-10-05T15:00',
+      min: '2026-10-05T12:00',
+      max: '2026-10-05T18:00',
     })
 
-    await wrapper.find('[data-test="datetime-day-9"]').trigger('click')
+    // Соседний день за пределами окна — кнопка выключена.
+    const disabled = wrapper.find('[data-test="datetime-day-9"]')
+    expect(disabled.attributes('disabled')).toBeDefined()
+
+    // Время внутри дня, но до начала окна — «ОК» не срабатывает.
+    await wrapper.find('[data-test="datetime-hours"]').setValue('9')
 
     expect(wrapper.find('[data-test="datetime-range"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="datetime-ok"]').attributes('disabled')).toBeDefined()
 
-    const ok = wrapper.find('[data-test="datetime-ok"]')
-    expect(ok.attributes('disabled')).toBeDefined()
-
-    await ok.trigger('click')
+    await wrapper.find('[data-test="datetime-ok"]').trigger('click')
     expect(wrapper.emitted('select')).toBeUndefined()
+
+    // Вернули время в окно — можно подтверждать.
+    await wrapper.find('[data-test="datetime-hours"]').setValue('14')
+    await wrapper.find('[data-test="datetime-ok"]').trigger('click')
+
+    expect(wrapper.emitted('select')?.[0]).toEqual(['2026-10-05T14:00'])
   })
 })

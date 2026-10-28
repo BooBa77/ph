@@ -102,6 +102,7 @@ function stepMonth(delta: number) {
 
 /** День выбран, но окно не закрывается: ещё часы и «ОК». */
 function pickDay(day: number) {
+  if (isDayDisabled(day)) return
   picked.value = new Date(year.value, month.value, day, hours.value, minutes.value)
 }
 
@@ -118,6 +119,22 @@ function valueOf(date: Date, hour: number, minute: number): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(
     hour,
   )}:${pad(minute)}`
+}
+
+/**
+ * День вне окна: его нельзя даже нажать.
+ *
+ * Раньше вне окна была только кнопка «ОК», и человек спокойно выбирал
+ * недопустимый день, а потом упирался в отказ. Заказчик 28.10.2026:
+ * «не должен брать дату уже в модалке, так же как и за рамками похода».
+ */
+function isDayDisabled(day: number): boolean {
+  const iso = `${year.value}-${pad(month.value + 1)}-${pad(day)}`
+
+  if (props.min !== undefined && iso < props.min.slice(0, 10)) return true
+  if (props.max !== undefined && iso > props.max.slice(0, 10)) return true
+
+  return false
 }
 
 /** Выбранный момент — уже с часами и минутами. */
@@ -143,15 +160,19 @@ function clear() {
 
 function dayClass(day: number): string {
   const base =
-    'flex h-9 w-full cursor-pointer items-center justify-center rounded-lg text-sm transition-colors'
+    'flex h-9 w-full items-center justify-center rounded-lg text-sm transition-colors'
+
+  if (isDayDisabled(day)) {
+    return `${base} cursor-not-allowed text-muted opacity-40`
+  }
 
   if (day === selectedDay.value) {
-    return `${base} bg-primary/15 font-semibold text-primary`
+    return `${base} cursor-pointer bg-primary/15 font-semibold text-primary`
   }
   if (day === todayDay.value) {
-    return `${base} border border-border text-text hover:bg-bg`
+    return `${base} cursor-pointer border border-border text-text hover:bg-bg`
   }
-  return `${base} text-text hover:bg-bg`
+  return `${base} cursor-pointer text-text hover:bg-bg`
 }
 
 function dayLabel(day: number): string {
@@ -251,6 +272,7 @@ onBeforeUnmount(() => {
             type="button"
             :class="dayClass(day)"
             :aria-label="dayLabel(day)"
+            :disabled="isDayDisabled(day)"
             :data-test="`datetime-day-${day}`"
             @click="pickDay(day)"
           >

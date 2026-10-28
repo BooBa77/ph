@@ -412,15 +412,83 @@ function applyDeparture(value: string) {
 /**
  * Рамки выезда для поля времени.
  *
- * Рейс вне дат похода сервер не примет («Рейс раньше начала похода»),
- * поэтому и в календаре поля видно, между какими днями выбирать.
+ * Те же правила, что проверяет сервер (400 «Дата раньше/позже…»), поэтому
+ * календарь не даёт выбрать заведомо неверную дату:
+ *
+ * - у рейса без участников — даты похода и рейсы: не раньше первого «туда»
+ *   и не позже последнего «обратно»;
+ * - у рейса с участниками — по каждому из них: «туда» не позже забросок
+ *   и возвращения, «обратно» не раньше забросок и выезда, заброска —
+ *   между его заездом и выездом.
  */
+const draftWindow = computed<{ from?: string; to?: string }>(() => {
+  const draft = legDraft.value
+  if (draft === null) return { from: tripDayFrom.value, to: tripDayTo.value }
+
+  const own = draft.id === null ? null : legs.value.find((leg) => leg.id === draft.id)
+  const others = legs.value.filter((leg) => leg.id !== own?.id)
+  const riders = (own?.passengers ?? [])
+    .filter((person) => person.status === 'accepted')
+    .map((person) => person.userId)
+
+  /** Не раньше — максимум из нижних границ, не позже — минимум из верхних. */
+  const maxOf = (values: (string | undefined)[]) =>
+    values.filter((value): value is string => Boolean(value)).sort().at(-1)
+
+  const minOf = (values: (string | undefined)[]) =>
+    values.filter((value): value is string => Boolean(value)).sort()[0]
+
+  if (riders.length === 0) {
+    const outbound = draft.isStage
+      ? others.filter((leg) => !leg.isStage && leg.direction === 'there')
+      : []
+    const inbound = draft.isStage
+      ? others.filter((leg) => !leg.isStage && leg.direction === 'back')
+      : []
+
+    return {
+      from: maxOf([tripDayFrom.value, ...outbound.map((leg) => toLocalInput(leg.departsAt))]),
+      to: minOf([tripDayTo.value, ...inbound.map((leg) => toLocalInput(leg.departsAt))]),
+    }
+  }
+
+  const from: (string | undefined)[] = []
+  const to: (string | undefined)[] = []
+
+  for (const userId of riders) {
+    const ownLegs = others.filter((leg) =>
+      leg.passengers.some((person) => person.userId === userId && person.status === 'accepted'),
+    )
+
+    const time = (leg: TripTransferLeg) => toLocalInput(leg.departsAt)
+    const there = ownLegs.filter((leg) => !leg.isStage && leg.direction === 'there').map(time).sort()
+    const back = ownLegs.filter((leg) => !leg.isStage && leg.direction === 'back').map(time).sort()
+    const stages = ownLegs.filter((leg) => leg.isStage).map(time).sort()
+
+    const isStage = draft.isStage
+
+    // Выезд человека и первая заброска — нижняя граница для «обратно» и заброски.
+    if (isStage || draft.direction === 'back') {
+      from.push(there.at(-1))
+      from.push(stages.at(-1))
+    }
+
+    // Возвращение человека и первая заброска — верхняя граница для «туда» и заброски.
+    if (isStage || draft.direction === 'there') {
+      to.push(back[0])
+      to.push(stages[0])
+    }
+  }
+
+  return { from: maxOf(from), to: minOf(to) }
+})
+
 const tripDayFrom = computed(() =>
-  props.trip.startsAt ? `${toLocalInput(props.trip.startsAt).slice(0, 10)}T00:00` : undefined,
+  props.trip.startsAt ? toLocalInput(props.trip.startsAt) : undefined,
 )
 
 const tripDayTo = computed(() =>
-  props.trip.endsAt ? `${toLocalInput(props.trip.endsAt).slice(0, 10)}T23:59` : undefined,
+  props.trip.endsAt ? toLocalInput(props.trip.endsAt) : undefined,
 )
 
 const isPublicMode = (mode: TransferMode) =>
@@ -1309,8 +1377,8 @@ const driverOptions = computed(() =>
         <DateTimePickerModal
           v-if="isPickingTime"
           :value="legDraft.departsAt"
-          :min="tripDayFrom"
-          :max="tripDayTo"
+          :min="draftWindow.from"
+          :max="draftWindow.to"
           @select="applyDeparture"
           @close="isPickingTime = false"
         />
