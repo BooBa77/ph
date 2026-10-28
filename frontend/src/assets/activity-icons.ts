@@ -18,8 +18,15 @@
  */
 
 export type ActivityIconShape =
-  | { kind: 'path'; d: string }
-  | { kind: 'circle'; cx: number; cy: number; r: number }
+  /**
+   * Линия. `strokeWidth` — толщина именно этой фигуры, если в рисунке они
+   * разные: у идущего с рюкзаком корпус толще ног, и приведение к одной
+   * толщине превращает фигуру в манекен. Не задана — берётся толщина
+   * иконки из `ICON_STROKE_WIDTH`.
+   */
+  | { kind: 'path'; d: string; strokeWidth?: number }
+  /** Круг. `filled` — заливка вместо штриха: так нарисованы головы фигур. */
+  | { kind: 'circle'; cx: number; cy: number; r: number; filled?: boolean }
   | { kind: 'line'; x1: number; y1: number; x2: number; y2: number }
   /**
    * Заливка: контур и внутренние подпути, которые вырезаются через
@@ -32,13 +39,15 @@ export type ActivityIconShape =
    */
   | { kind: 'area'; d: string; stroked?: boolean }
 
-const path = (d: string): ActivityIconShape => ({ kind: 'path', d })
-const circle = (cx: number, cy: number, r: number): ActivityIconShape => ({
-  kind: 'circle',
-  cx,
-  cy,
-  r,
-})
+/**
+ * Толщина на фигуру передаётся только когда она отличается от общей:
+ * иначе в данных появился бы `strokeWidth: undefined` у каждой линии
+ * набора, и файл перестал бы читаться глазами.
+ */
+const path = (d: string, strokeWidth?: number): ActivityIconShape =>
+  strokeWidth === undefined ? { kind: 'path', d } : { kind: 'path', d, strokeWidth }
+const circle = (cx: number, cy: number, r: number, filled?: boolean): ActivityIconShape =>
+  filled ? { kind: 'circle', cx, cy, r, filled } : { kind: 'circle', cx, cy, r }
 const line = (x1: number, y1: number, x2: number, y2: number): ActivityIconShape => ({
   kind: 'line',
   x1,
@@ -82,17 +91,24 @@ export const ACTIVITY_ICONS: Record<string, ActivityIconShape[]> = {
   ],
 
   /**
-   * Пеший поход: идущий человек (Tabler: `walk`).
+   * Пеший поход: идущий с рюкзаком — рисунок заказчика, сетка 400×500.
    *
    * Ключ `hike` заведён миграцией `ActivityGroupsScope` под группу «Туризм»
-   * и до появления чипсов выбора типа рисовался заглушкой. Теперь это
-   * настоящая иконка — она же стоит на чипсе «Пеший поход».
+   * и до этого рисовался временной иконкой Tabler `walk` (в миграции так и
+   * записано). Теперь здесь исходник заказчика, как есть.
+   *
+   * Толщина у каждой фигуры своя: 45 у ног, 40 у руки, 62 у корпуса,
+   * 50 у лямки рюкзака. Приведение к одной толщине проверяли — фигура
+   * становится манекеном (сравнение: `.tmp-logos/hiking-preview.png`).
+   * Голова нарисована заливкой, а не штрихом: круг r=38.
    */
   hike: [
-    path('M13 4m-1 0a1 1 0 1 0 2 0a1 1 0 1 0 -2 0'),
-    path('M7 21l3 -4'),
-    path('M16 21l-2 -4l-3 -3l1 -6'),
-    path('M6 12l2 -3l4 -1l3 3l3 1'),
+    path('M149 283L194.5 350L216.5 439.5', 45),
+    path('M148.5 283L123.5 364L85.5 434', 45),
+    path('M230 267L186 228.5L172 167.5', 40),
+    circle(177, 106, 38, true),
+    path('M150.5 295L162.5 171', 62),
+    path('M105.5 244L119 180', 50),
   ],
 
   /**
@@ -269,6 +285,7 @@ export const ICON_VIEWBOX: Record<string, string> = {
   bike: '0 0 100 100',
   skates: '0 0 100 100',
   trip: '0 0 512 512',
+  hike: '0 0 400 500',
   shift: '0 0 64 64',
   boom: '0 0 64 64',
   balloon: '0 0 64 64',
@@ -279,8 +296,10 @@ export const ICON_VIEWBOX: Record<string, string> = {
  * Толщина линии в единицах сетки: у Tabler 2 при 24, у собственных 2.5 при 64.
  * Значения разные намеренно — в сетке 64 та же линия тоньше.
  *
- * Здесь только те иконки, что рисуются штрихом. У заливочных (`area`) записи
- * нет: толщину им задаёт контур, а не атрибут.
+ * Здесь только те иконки, что рисуются штрихом одной толщины. У заливочных
+ * (`area`) записи нет: толщину им задаёт контур, а не атрибут. У идущего
+ * с рюкзаком (`hike`) записи тоже нет: там толщина своя у каждой фигуры
+ * и лежит в данных.
  */
 export const ICON_STROKE_WIDTH: Record<string, number> = {
   shift: 2.5,

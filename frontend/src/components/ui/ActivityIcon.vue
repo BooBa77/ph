@@ -53,8 +53,24 @@ const strokeWidth = computed(() => ICON_STROKE_WIDTH[props.name] ?? 2)
     <!-- Фигуры рисуем прямо здесь: их до пяти на иконку, и отдельный слой
          со спрайтом и <use> тут ничего не сэкономит, а отладку усложнит. -->
     <template v-for="(shape, index) in shapes" :key="index">
-      <path v-if="shape.kind === 'path'" :d="shape.d" />
-      <circle v-else-if="shape.kind === 'circle'" :cx="shape.cx" :cy="shape.cy" :r="shape.r" />
+      <!--
+        Толщина фигуры сильнее толщины иконки: у идущего с рюкзаком корпус
+        нарисован толще ног, и общий `stroke-width` на <svg> его бы выровнял.
+        Не задана — атрибут не выводится, и работает унаследованная.
+      -->
+      <path v-if="shape.kind === 'path'" :d="shape.d" :stroke-width="shape.strokeWidth" />
+      <!--
+        Круг — штрих или заливка. Заливка обязана снять и обводку: иначе
+        контур «на всякий случай» раздувает голову на половину толщины.
+      -->
+      <circle
+        v-else-if="shape.kind === 'circle'"
+        :cx="shape.cx"
+        :cy="shape.cy"
+        :r="shape.r"
+        :fill="shape.filled ? 'currentColor' : undefined"
+        :stroke="shape.filled ? 'none' : undefined"
+      />
       <!--
         Заливка: `evenodd` вырезает внутренние подпути, поэтому дырки
         (тулья шапки, обода колёс) просвечивают цветом клетки. Обводка —
