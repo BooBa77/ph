@@ -125,7 +125,7 @@ function transferSection(direction: TransferDirection) {
     empty:
       direction === 'there'
         ? 'Секция отображения рейсов к началу маршрута. Каждый рейс — отдельное перемещение части группы: кто-то едет машиной, кто-то автобусом или заброска вещей отдельно от участников'
-        : 'Секция отображения рейсов до дома',
+        : 'Секция отображения рейсов обратно до дома',
     label: TRANSFER_DIRECTION_LABELS[direction],
     addLabel: 'Добавить рейс',
     plate: direction === 'there' ? 'border-sky-300 bg-sky-100' : 'border-emerald-300 bg-emerald-100',
@@ -398,6 +398,20 @@ function toLocalInput(iso: string): string {
 function fromLocalInput(value: string): string | null {
   return value ? new Date(value).toISOString() : null
 }
+
+/**
+ * Рамки выезда для поля времени.
+ *
+ * Рейс вне дат похода сервер не примет («Рейс раньше начала похода»),
+ * поэтому и в календаре поля видно, между какими днями выбирать.
+ */
+const tripDayFrom = computed(() =>
+  props.trip.startsAt ? `${toLocalInput(props.trip.startsAt).slice(0, 10)}T00:00` : undefined,
+)
+
+const tripDayTo = computed(() =>
+  props.trip.endsAt ? `${toLocalInput(props.trip.endsAt).slice(0, 10)}T23:59` : undefined,
+)
 
 const isPublicMode = (mode: TransferMode) =>
   (TRANSFER_PUBLIC_MODES as readonly string[]).includes(mode)
@@ -1130,6 +1144,8 @@ const driverOptions = computed(() =>
             <input
               v-model="legDraft.departsAt"
               type="datetime-local"
+              :min="tripDayFrom"
+              :max="tripDayTo"
               class="rounded-xl border border-border bg-field px-3 py-2 text-base text-text focus:border-primary focus:outline-none"
               data-test="transfer-departure-input"
             />
