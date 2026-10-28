@@ -372,23 +372,35 @@ function dayLabel(day: CalendarDay): string {
       Сегодня — {{ todayLabel }}.<template v-if="notice">{{ ' ' + notice }}</template>
     </p>
 
-    <button
-      v-if="showProductionButton"
-      type="button"
-      class="mb-4 cursor-pointer rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text transition-colors hover:border-primary"
-      @click="isEditingProduction = true"
+    <!--
+      Два действия над сеткой — в одну строку с переносом: производственный
+      календарь и админская модерация иконок. Раньше это были отдельные
+      элементы с `mb-4`, и на 390 px строка рвалась по словам: «Модерация»
+      оставалась справа от кнопки, а «иконок» уезжало отдельной строкой
+      прямо над карточкой. Флекс переносит действие целиком, а не слово.
+    -->
+    <div
+      v-if="showProductionButton || store.dictionary?.isAdmin"
+      class="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2"
     >
-      Производственный календарь
-    </button>
+      <button
+        v-if="showProductionButton"
+        type="button"
+        class="cursor-pointer rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-text transition-colors hover:border-primary"
+        @click="isEditingProduction = true"
+      >
+        Производственный календарь
+      </button>
 
-    <!-- Ссылку видит только админ: флаг приходит вместе со справочником. -->
-    <RouterLink
-      v-if="store.dictionary?.isAdmin"
-      to="/admin/activities"
-      class="mb-4 ml-2 text-sm text-primary"
-    >
-      Модерация иконок
-    </RouterLink>
+      <!-- Ссылку видит только админ: флаг приходит вместе со справочником. -->
+      <RouterLink
+        v-if="store.dictionary?.isAdmin"
+        to="/admin/activities"
+        class="inline-flex items-center py-1.5 text-sm text-primary"
+      >
+        Модерация иконок
+      </RouterLink>
+    </div>
 
     <!--
       max-w-md: колонка контента в кабинете шире, и растянутая на неё сетка
