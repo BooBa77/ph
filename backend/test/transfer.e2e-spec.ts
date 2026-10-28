@@ -26,7 +26,7 @@ import type { TripTransferDto } from './../src/trips/dto/trip-transfer.dto';
  * 4. **Компенсация**: цена билета только у рейсов, общие расходы только
  *    у своего транспорта, сумма нужна всему, кроме «безвозмездно».
  *    «Туда-обратно» ставится при любой компенсации (28.10.2026), но сумма
- *    у пары одна.
+ *    у пары одна и только не у общественного транспорта.
  * 5. **Присоединение**: на рейс — сразу, на чужое ТС — заявкой; принимает
  *    владелец ТС, уйти человек может сам.
  * 6. **Места**: заполненные не пускают сверх счёта — ни заявкой, ни
@@ -35,8 +35,9 @@ import type { TripTransferDto } from './../src/trips/dto/trip-transfer.dto';
  * 8. **Заброска** — цепочка этапов из тех же карточек: нумеруется по времени
  *    отправления и свободно переплетает стороны — маршрут бывает и парой.
  * 9. **Пара «туда-обратно»** — одна поездка на два конца: оплата задаётся
- *    на исходной и живёт в зеркале, обратный выезд не раньше прямого,
- *    а пар у группы может быть несколько (по машине на каждую).
+ *    на исходной и живёт в зеркале, составы пассажиров дальше живут врозь,
+ *    а порядок дат проверяется по тем, кто едет в оба конца. Пар у группы
+ *    может быть несколько, а у рейсов пары не бывает вовсе.
  * 10. **Техника из каталога** освобождается закрытым походом: 409 —
  *     только пока поход не закрыт.
  *
@@ -522,19 +523,18 @@ describe('Трансфер похода (e2e)', () => {
     )!;
     expect(freeRound.legs.some((leg) => leg.sourceLegId === freeSource.id)).toBe(true);
 
-    // И у рейса тоже: билет в одну сторону — не повод запрещать пару.
-    const ticketRound = await createLeg(organizerToken, {
-      ...base,
-      mode: 'helicopter',
-      compensation: 'ticket',
-      compensationAmountRub: 50000,
-      isRoundTrip: true,
-    });
-
-    const heli = ticketRound.legs.find(
-      (leg) => leg.mode === 'helicopter' && leg.isRoundTrip,
-    )!;
-    expect(ticketRound.legs.some((leg) => leg.sourceLegId === heli.id)).toBe(true);
+    // А у рейса пары нет вовсе: билеты покупают раздельно в каждую сторону.
+    await request(app.getHttpServer())
+      .post(`/api/trips/${tripId}/transfer/legs`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({
+        ...base,
+        mode: 'helicopter',
+        compensation: 'ticket',
+        compensationAmountRub: 50000,
+        isRoundTrip: true,
+      })
+      .expect(400);
   });
 
   it('организатор ставит флаг сам и называет владельца', async () => {
@@ -774,7 +774,7 @@ describe('Трансфер похода (e2e)', () => {
     expect(after.travelers.map((person) => person.userId)).not.toContain(memberId);
   });
 
-  it('«туда-обратно» зеркалит карточку с людьми, и только в одну сторону', async () => {
+  it('пара начинается с общих людей, а дальше составы живут врозь', async () => {
     const body = await createLeg(organizerToken, {
       direction: 'there',
       mode: 'car',
@@ -795,10 +795,8 @@ describe('Трансфер похода (e2e)', () => {
     expect(mirror.direction).toBe('back');
     expect(mirror.fromPlace).toBe('Витязь, тропа');
     expect(mirror.toPlace).toBe('Иркутск, парк');
-    // Владелец скопирован в обе карточки.
-    expect(mirror.passengers.length).toBe(source.passengers.length);
 
-    // Пришёл пассажир в исходную — он же в обратной.
+    // Посадили в исходную — в зеркало он сам не приходит: составы врозь.
     await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs/${source.id}/passengers`)
       .set('Authorization', `Bearer ${organizerToken}`)
@@ -807,17 +805,27 @@ describe('Трансфер похода (e2e)', () => {
 
     const afterAdd = await plan(organizerToken);
     expect(passengerOf(afterAdd, source.id, driverId)).toBeDefined();
-    expect(passengerOf(afterAdd, mirror.id, driverId)).toBeDefined();
+    expect(passengerOf(afterAdd, mirror.id, driverId)).toBeUndefined();
 
-    // Ушёл из исходной — уходит из обратной.
+    // В обратную его сажают отдельно — и на прямой это не влияет.
+    const onBack = await request(app.getHttpServer())
+      .post(`/api/trips/${tripId}/transfer/legs/${mirror.id}/passengers`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ userId: driverId })
+      .expect(200);
+
+    expect(passengerOf(onBack.body, mirror.id, driverId)).toBeDefined();
+    expect(passengerOf(onBack.body, source.id, driverId)).toBeDefined();
+
+    // А ушёл из исходной — исчез и из зеркала (правило 27.10.2026).
     await request(app.getHttpServer())
       .delete(`/api/trips/${tripId}/transfer/legs/${source.id}/passengers/${driverId}`)
       .set('Authorization', `Bearer ${organizerToken}`)
       .expect(200);
 
     const afterLeave = await plan(organizerToken);
+    expect(passengerOf(afterLeave, source.id, driverId)).toBeUndefined();
     expect(passengerOf(afterLeave, mirror.id, driverId)).toBeUndefined();
-
   });
 
   it('карточки в секции идут по времени отправления', async () => {
@@ -909,7 +917,7 @@ describe('Трансфер похода (e2e)', () => {
     ]);
   });
 
-  it('обратный выезд пары не раньше прямого', async () => {
+  it('обратный выезд не раньше прямого — у кого оба конца', async () => {
     const body = await createLeg(organizerToken, {
       direction: 'there',
       mode: 'car',
@@ -924,6 +932,15 @@ describe('Трансфер похода (e2e)', () => {
       (leg) => leg.isRoundTrip && leg.fromPlace === 'Иркутск, аэропорт',
     )!;
     const mirror = body.legs.find((leg) => leg.sourceLegId === source.id)!;
+
+    // Один человек едет в оба конца — теперь паре есть что проверять.
+    for (const legId of [source.id, mirror.id]) {
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/transfer/legs/${legId}/passengers`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({ userId: driverId })
+        .expect(200);
+    }
 
     // Вернуться раньше, чем уехал, нельзя.
     await request(app.getHttpServer())
@@ -942,6 +959,21 @@ describe('Трансфер похода (e2e)', () => {
     expect(
       later.body.legs.find((leg: { id: string }) => leg.id === mirror.id).departsAt,
     ).toBe('2026-11-13T06:00:00.000Z');
+
+    /**
+     * Убрали общего человека — проверять стало нечего: у пары нет людей,
+     * которые едут «туда и обратно». Обратный выезд может быть раньше.
+     */
+    await request(app.getHttpServer())
+      .delete(`/api/trips/${tripId}/transfer/legs/${source.id}/passengers/${driverId}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/trips/${tripId}/transfer/legs/${mirror.id}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ departsAt: '2026-11-10T06:00:00.000Z' })
+      .expect(200);
   });
 
   it('у пары одна оплата: задали на исходной — она же в зеркале', async () => {

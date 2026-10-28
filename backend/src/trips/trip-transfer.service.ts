@@ -143,6 +143,9 @@ export class TripTransferService {
 
     this.assertCompensation(mode, dto.compensation, amount);
 
+    const isRoundTrip = dto.isRoundTrip ?? false;
+    this.assertRoundTripAllowed(mode, isRoundTrip);
+
     const chainId = dto.chainId ?? null;
 
     const last = await manager.findOne(TripTransferLeg, {
@@ -172,7 +175,7 @@ export class TripTransferService {
         vehicleId: vehicle?.id ?? null,
         compensation: dto.compensation,
         compensationAmountRub: amount,
-        isRoundTrip: dto.isRoundTrip ?? false,
+        isRoundTrip,
         note: this.note(dto.note),
       }),
     );
@@ -192,8 +195,9 @@ export class TripTransferService {
     }
 
     /**
-     * «Туда-обратно» — это не подпись про расход, а **пара карточек**:
-     * зеркальная встаёт в обратную область с теми же людьми.
+     * «Туда-обратно» — это **пара карточек**: зеркальная встаёт в обратную
+     * сторону с теми же людьми. Дальше составы живут врозь: на обратном
+     * рейсе людей можно менять, и на прямой это не влияет.
      */
     if (leg.isRoundTrip) await this.createMirror(manager, trip.id, leg);
 
@@ -306,6 +310,9 @@ export class TripTransferService {
       );
     }
 
+    // Пара — только у своего и наёмного транспорта, не у рейсов.
+    this.assertRoundTripAllowed(effectiveMode, isRoundTrip);
+
     /**
      * **У пары одна оплата** (уточнение заказчика 28.10.2026): «туда-обратно»
      * связан с деньгами напрямую — стоимость задаётся на исходной карточке
@@ -391,6 +398,10 @@ export class TripTransferService {
     leg.isRoundTrip = isRoundTrip;
     if (dto.note !== undefined) leg.note = this.note(dto.note);
 
+    // Порядок дат у пары проверяем до записи: 400 не должна оставлять
+    // карточку с уже сохранённым неверным временем.
+    await this.assertPairOrder(manager, leg);
+
     await manager.save(leg);
 
     /**
@@ -414,9 +425,6 @@ export class TripTransferService {
 
     // Оплата у пары одна: задали её на исходной — она же и в зеркале.
     await this.syncMoneyToMirror(manager, leg);
-
-    // Обратно раньше, чем туда, не бывает — проверяем итог, а не патч.
-    await this.assertPairOrder(manager, leg);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -478,14 +486,23 @@ export class TripTransferService {
 
     if (status === 'accepted') await this.assertFreeSeat(manager, leg);
 
+    /**
+     * В зеркало человека не копируем: составы пары не обязаны совпадать.
+     * Но если он уже едет и на другом конце, порядок дат проверим — и
+     * до вставки, чтобы 400 не оставила его посаженным.
+     */
+    await this.assertPairOrder(
+      manager,
+      leg,
+      status === 'accepted' ? { userId } : undefined,
+    );
+
     await manager.insert(TripTransferPassenger, {
       tripId: trip.id,
       legId: leg.id,
       userId,
       status,
     });
-
-    await this.syncToMirror(manager, trip.id, leg, userId, status);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -520,14 +537,18 @@ export class TripTransferService {
     const status = dto.status ?? 'accepted';
     if (status === 'accepted') await this.assertFreeSeat(manager, leg);
 
+    await this.assertPairOrder(
+      manager,
+      leg,
+      status === 'accepted' ? { userId: dto.userId } : undefined,
+    );
+
     await manager.insert(TripTransferPassenger, {
       tripId: trip.id,
       legId: leg.id,
       userId: dto.userId,
       status,
     });
-
-    await this.syncToMirror(manager, trip.id, leg, dto.userId, status);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -562,10 +583,10 @@ export class TripTransferService {
 
     await this.assertFreeSeat(manager, leg);
 
+    await this.assertPairOrder(manager, leg, { userId: targetUserId });
+
     row.status = 'accepted';
     await manager.save(row);
-
-    await this.syncToMirror(manager, trip.id, leg, targetUserId, 'accepted');
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -710,76 +731,105 @@ export class TripTransferService {
   }
 
   /**
-   * Обратный выезд не раньше прямого.
+   * Обратный выезд не раньше прямого — **по общим пассажирам пары**.
    *
-   * Проверка «на уровне участника» получается сама: пассажиры у пары одни
-   * и те же (зеркало копирует исходную), поэтому «мой обратный рейс позже
-   * моего прямого» и «пара едет обратно позже» — одно и то же условие.
+   * Составы у пары не обязаны совпадать: на обратном рейсе людей меняют,
+   * и тогда проверять «пару» бессмысленно — обратный выезд вообще может
+   * быть раньше прямого, если эти люди едут не туда и обратно, а,
+   * например, только назад. Поэтому смотрим на пересечение: у кого в паре
+   * оба конца, у того они и должны идти по времени (заказчик: «проверка
+   * дат всё-таки на уровне участников»).
    *
    * Равенство разрешено намеренно: зеркало создаётся с временем исходной,
-   * и пока человек не уточнил обратный выезд, даты совпадают. Запрещаем
-   * ровно то, что уже ошибка, — возвращение раньше выезда.
+   * и пока обратный выезд не уточнили, даты совпадают. Запрещаем ровно то,
+   * что уже ошибка, — возвращение раньше выезда.
+   *
+   * `coming` — человек, которого только собираются посадить: проверку
+   * делаем **до** вставки, иначе 400 осталась бы после уже посаженного
+   * пассажира.
    */
   private async assertPairOrder(
     manager: EntityManager,
     leg: TripTransferLeg,
+    coming?: { userId: string },
   ): Promise<void> {
-    const [source, mirror] =
-      leg.roundTripSourceId === null
-        ? [
-            leg,
-            await this.mirrorOf(manager, leg),
-          ]
-        : [
-            await manager.findOne(TripTransferLeg, {
-              where: { id: leg.roundTripSourceId },
-            }),
-            leg,
-          ];
+    const pair = await this.pairOf(manager, leg);
+    if (pair === null) return;
 
-    if (source === null || mirror === null) return;
+    const [source, mirror] = pair;
+    if (mirror.departsAt.getTime() >= source.departsAt.getTime()) return;
 
-    if (mirror.departsAt.getTime() < source.departsAt.getTime()) {
-      throw new BadRequestException(
-        'Обратный выезд пары не может быть раньше прямого — поправьте время',
-      );
+    const [going, riding] = await Promise.all([
+      manager.find(TripTransferPassenger, {
+        where: { legId: source.id, status: 'accepted' },
+        relations: { member: { user: true } },
+      }),
+      manager.find(TripTransferPassenger, {
+        where: { legId: mirror.id, status: 'accepted' },
+      }),
+    ]);
+
+    const ridingIds = new Set(riding.map((row) => row.userId));
+    const both = going.filter((row) => ridingIds.has(row.userId));
+
+    /**
+     * Сажаемого человека в пересечении ещё нет — он только собирается
+     * сесть. Если он уже едет на другом конце, он тоже попадёт в проверку.
+     */
+    if (
+      coming !== undefined &&
+      !both.some((row) => row.userId === coming.userId)
+    ) {
+      const otherLegId = leg.id === source.id ? mirror.id : source.id;
+
+      const other = await manager.findOne(TripTransferPassenger, {
+        where: { legId: otherLegId, userId: coming.userId, status: 'accepted' },
+        relations: { member: { user: true } },
+      });
+
+      if (other !== null) both.push(other);
     }
+
+    // Никто не едет в оба конца — паре нечего проверять.
+    if (both.length === 0) return;
+
+    const names = both
+      .map((row) => row.member?.user?.displayName ?? 'участник')
+      .join(', ');
+
+    throw new BadRequestException(
+      `Обратный выезд раньше прямого: ${names} едет и туда, и обратно — поправьте время`,
+    );
   }
 
-  /** Пассажир появился в исходной — появляется и в обратной. */
-  private async syncToMirror(
+  /** Исходная карточка пары и её зеркало; `null` — пары нет. */
+  private async pairOf(
     manager: EntityManager,
-    tripId: string,
     leg: TripTransferLeg,
-    userId: string,
-    status: TransferPassengerStatus,
-  ): Promise<void> {
-    if (!leg.isRoundTrip) return;
+  ): Promise<[TripTransferLeg, TripTransferLeg] | null> {
+    const source =
+      leg.roundTripSourceId === null
+        ? leg
+        : await manager.findOne(TripTransferLeg, {
+            where: { id: leg.roundTripSourceId },
+          });
 
-    const mirror = await this.mirrorOf(manager, leg);
-    if (!mirror) return;
+    if (source === null) return null;
 
-    const row = await manager.findOne(TripTransferPassenger, {
-      where: { legId: mirror.id, userId },
-    });
+    const mirror =
+      source.id === leg.id ? await this.mirrorOf(manager, leg) : leg;
 
-    if (row) {
-      if (row.status !== status && status === 'accepted') {
-        row.status = status;
-        await manager.save(row);
-      }
-      return;
-    }
-
-    await manager.insert(TripTransferPassenger, {
-      tripId,
-      legId: mirror.id,
-      userId,
-      status,
-    });
+    return mirror === null ? null : [source, mirror];
   }
 
-  /** Ушёл из исходной — уходит и из обратной. */
+  /**
+   * Ушёл из исходной — уходит и из обратной.
+   *
+   * Единственная синхронизация пассажиров, которая осталась: заказчик
+   * 27.10.2026 сказал прямо — «их убирают из исходной карточки, и они
+   * исчезают из зеркала». В обратную сторону ничего не идёт: на обратном
+   * рейсе людей можно менять, и на прямой это не влияет.
+   */
   private async removeFromMirror(
     manager: EntityManager,
     leg: TripTransferLeg,
@@ -1095,6 +1145,27 @@ export class TripTransferService {
 
   private isPersonalMode(mode: TransferMode): boolean {
     return (TRANSFER_PERSONAL_MODES as readonly string[]).includes(mode);
+  }
+
+  /**
+   * «Туда-обратно» бывает всем, кроме общественного транспорта.
+   *
+   * Заказчик 28.10.2026: «билеты на общественный транспорт — раздельно
+   * в каждую сторону; бензин для своего ТС — за два конца; наёмный
+   * транспорт — за два конца. Получается, всё, кроме общественного».
+   * Поэтому пара разрешена и у своего, и у наёмного транспорта (наёмный —
+   * это та же карточка без владельца), а у автобуса, ж/д, корабля
+   * и вертолёта её нет.
+   */
+  private assertRoundTripAllowed(
+    mode: TransferMode,
+    isRoundTrip: boolean,
+  ): void {
+    if (!isRoundTrip || !this.isPublicMode(mode)) return;
+
+    throw new BadRequestException(
+      'Билеты на автобус, ж/д, корабль и вертолёт покупают раздельно в каждую сторону — пары у рейса нет',
+    );
   }
 
   private isPublicMode(mode: TransferMode): boolean {
