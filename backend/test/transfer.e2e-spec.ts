@@ -1225,6 +1225,61 @@ describe('Трансфер похода (e2e)', () => {
     ).toBe(false);
   });
 
+  it('рейс вне дат похода не заводится', async () => {
+    await dataSource.query(
+      `UPDATE trips SET starts_at = $2, ends_at = $3 WHERE id = $1`,
+      [tripId, '2026-11-25T00:00:00.000Z', '2026-11-27T21:00:00.000Z'],
+    );
+
+    try {
+      // В день выезда — можно, даже рано утром.
+      await createLeg(organizerToken, {
+        direction: 'there',
+        mode: 'bus',
+        departsAt: '2026-11-25T03:00:00.000Z',
+        fromPlace: 'Иркутск, автовокзал',
+        toPlace: 'Витязь',
+        compensation: 'ticket',
+        compensationAmountRub: 700,
+      });
+
+      // За два дня до выезда — уже нет: «старт рейса вышел за рамки выезда».
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/transfer/legs`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({
+          direction: 'there',
+          isStage: true,
+          mode: 'tractor',
+          departsAt: '2026-11-23T09:00:00.000Z',
+          fromPlace: 'Баяндай',
+          toPlace: 'Сухой ручей',
+          compensation: 'free',
+        })
+        .expect(400);
+
+      // И после возвращения — тоже.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/transfer/legs`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({
+          direction: 'back',
+          mode: 'bus',
+          departsAt: '2026-11-29T09:00:00.000Z',
+          fromPlace: 'Витязь',
+          toPlace: 'Иркутск',
+          compensation: 'ticket',
+          compensationAmountRub: 700,
+        })
+        .expect(400);
+    } finally {
+      await dataSource.query(
+        `UPDATE trips SET starts_at = NULL, ends_at = NULL WHERE id = $1`,
+        [tripId],
+      );
+    }
+  });
+
   it('чат трансфера видит только состав', async () => {
     const chats = await request(app.getHttpServer())
       .get(`/api/trips/${tripId}/chats`)

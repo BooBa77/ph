@@ -145,6 +145,8 @@ export class TripTransferService {
 
     const isRoundTrip = dto.isRoundTrip ?? false;
 
+    this.assertWithinTrip(trip, new Date(dto.departsAt));
+
     const last = await manager.findOne(TripTransferLeg, {
       where: { tripId: trip.id, direction: dto.direction },
       order: { position: 'DESC', id: 'DESC' },
@@ -349,6 +351,7 @@ export class TripTransferService {
 
     leg.mode = effectiveMode;
     if (dto.departsAt !== undefined) leg.departsAt = new Date(dto.departsAt);
+    this.assertWithinTrip(trip, leg.departsAt);
     if (dto.fromPlace !== undefined) leg.fromPlace = this.place(dto.fromPlace, 'Откуда');
     if (dto.toPlace !== undefined) leg.toPlace = this.place(dto.toPlace, 'Докуда');
     leg.isOwnVehicle = isOwnVehicle;
@@ -1090,6 +1093,34 @@ export class TripTransferService {
 
   private isPublicMode(mode: TransferMode): boolean {
     return (TRANSFER_PUBLIC_MODES as readonly string[]).includes(mode);
+  }
+
+  /**
+   * Рейс живёт внутри дат похода.
+   *
+   * Заказчик 28.10.2026: «создал „Туда“ и „Обратно“ на 30 октября, вставил
+   * заброску на тракторе 28-го — косяк: старт внутреннего рейса вышел
+   * за рамки выезда». Сравниваем календарные дни, а не часы: автобус
+   * в шесть утра в день выезда — это тот же день, а не «раньше похода».
+   * Пока даты не решены (`startsAt`/`endsAt` пусты), проверять не по чему.
+   */
+  private assertWithinTrip(trip: Trip, departsAt: Date): void {
+    if (!trip.startsAt || !trip.endsAt) return;
+
+    const day = (date: Date) => date.toISOString().slice(0, 10);
+    const own = day(departsAt);
+
+    if (own < day(trip.startsAt)) {
+      throw new BadRequestException(
+        'Рейс раньше начала похода — поправьте время',
+      );
+    }
+
+    if (own > day(trip.endsAt)) {
+      throw new BadRequestException(
+        'Рейс позже возвращения — поправьте время',
+      );
+    }
   }
 
   /**
