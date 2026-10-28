@@ -1080,9 +1080,7 @@ export class TripTransferService {
     if (compensation === 'free') return;
 
     if (amount === null || amount <= 0) {
-      throw new BadRequestException(
-        'Укажите сумму компенсации — без неё непонятно, сколько с кого',
-      );
+      throw new BadRequestException('Укажите сумму компенсации');
     }
   }
 

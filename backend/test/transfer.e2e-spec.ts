@@ -1183,6 +1183,48 @@ describe('Трансфер похода (e2e)', () => {
     await dataSource.query('DELETE FROM trips WHERE id = $1', [closedTripId]);
   });
 
+  it('перестал идти — снят с рейсов, и машина освободилась', async () => {
+    // Своё ТС водителя: флаг ставит организатор, владелец — водитель.
+    const withCar = await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: '2026-11-21T06:00:00.000Z',
+      fromPlace: 'Иркутск, кольцо',
+      toPlace: 'Витязь, кордон',
+      compensation: 'free',
+      isOwnVehicle: true,
+      ownerUserId: driverId,
+      seats: 4,
+      isRoundTrip: true,
+    });
+
+    const car = withCar.legs.find((leg) => leg.fromPlace === 'Иркутск, кольцо')!;
+    const mirror = withCar.legs.find((leg) => leg.sourceLegId === car.id)!;
+
+    // Водитель сам у себя в карточке — и в обратной тоже.
+    expect(passengerOf(withCar, car.id, driverId)).toBeDefined();
+    expect(passengerOf(withCar, mirror.id, driverId)).toBeDefined();
+
+    // Перестал идти: его рейсы уходят вместе с машиной.
+    await request(app.getHttpServer())
+      .patch(`/api/trips/${tripId}/participants/me`)
+      .set('Authorization', `Bearer ${driverToken}`)
+      .send({ status: 'maybe' })
+      .expect(200);
+
+    const after = await plan(organizerToken);
+
+    expect(legOf(after, car.id)).toBeUndefined();
+    expect(legOf(after, mirror.id)).toBeUndefined();
+
+    // Ни одной карточки, где он ещё «едет», не осталось.
+    expect(
+      after.legs.some((leg) =>
+        leg.passengers.some((person) => person.userId === driverId),
+      ),
+    ).toBe(false);
+  });
+
   it('чат трансфера видит только состав', async () => {
     const chats = await request(app.getHttpServer())
       .get(`/api/trips/${tripId}/chats`)

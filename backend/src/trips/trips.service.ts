@@ -52,6 +52,8 @@ import { TripMembershipRequest } from './entities/trip-membership-request.entity
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
+import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
+import { TripTransferPassenger } from './entities/trip-transfer-passenger.entity';
 import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
@@ -1575,6 +1577,11 @@ export class TripsService {
           'trip_members',
           `${displayNameOf(participant.user)}: ${statusText(status)}`,
         );
+
+        // Больше не идёт — снимаем с рейсов, и машина освобождается.
+        if (status !== 'going') {
+          await this.releaseTransfers(manager, trip.id, userId);
+        }
       }
 
       return TripParticipantDto.from(
@@ -1627,6 +1634,9 @@ export class TripsService {
         userId: targetUserId,
       });
 
+      // Из состава убрали — из рейсов тоже: за карточкой он больше не едет.
+      await this.releaseTransfers(manager, trip.id, targetUserId);
+
       await this.postSystemMessage(
         manager,
         trip.id,
@@ -1634,6 +1644,32 @@ export class TripsService {
         `${displayNameOf(participant.user)} больше не в составе`,
       );
     });
+  }
+
+  /**
+   * Снять человека с рейсов похода.
+   *
+   * Заказчик 28.10.2026: «сменили готовность со 100% — выпиливаются
+   * с трансфера, вместе с личным авто. Снимаем с рейсов, машина
+   * освобождается». Поэтому:
+   *
+   * - его строки-пассажиры уходят из всех рейсов — «принятый пассажир»,
+   *   который в поход не идёт, это ложь в списке мест;
+   * - его собственные рейсы («наше ТС») удаляются целиком: машина не едет,
+   *   а ссылка на неё в походе держала бы каталог занятым. Пассажиры его
+   *   машины после этого снова видны в «Не распределены» — их надо
+   *   рассаживать заново, и это видно.
+   *
+   * Вернулся в состав — ничего восстанавливать не нужно: он просто
+   * появляется среди нераспределённых.
+   */
+  private async releaseTransfers(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+  ): Promise<void> {
+    await manager.delete(TripTransferPassenger, { tripId, userId });
+    await manager.delete(TripTransferLeg, { tripId, ownerUserId: userId });
   }
 
   /**
