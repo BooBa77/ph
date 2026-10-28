@@ -66,9 +66,18 @@ import { TripsService } from './trips.service';
  * ## Заброски
  *
  * Заброска — цепочка этапов из тех же карточек (`chain_id` + `stage`),
- * отдельной сущности у неё нет (28.10.2026). Цепочка живёт **в одной
- * стороне**; номер этапа сервис считает сам по времени отправления, потому
- * что порядок задаёт дата, а не тип транспорта.
+ * отдельной сущности у неё нет (28.10.2026). Цепочка **переплетает стороны**:
+ * маршрут бывает в один конец, а бывает парой — тогда в нём есть этапы
+ * и «туда», и «обратно», и это по-прежнему одна заброска. Единая у них
+ * только шкала времени: номер этапа сервис считает сам по отправлению,
+ * потому что порядок задаёт дата, а не тип транспорта.
+ *
+ * ## Пары «туда-обратно»
+ *
+ * Пар может быть несколько — группа едет на нескольких машинах, и у каждой
+ * своя обратная. Пара — это исходная карточка и одно зеркало: оплата у них
+ * общая (задаётся на исходной), пассажиры синхронизируются в одну сторону,
+ * а обратный выезд не может быть раньше прямого.
  */
 @Injectable()
 export class TripTransferService {
@@ -134,12 +143,7 @@ export class TripTransferService {
 
     this.assertCompensation(mode, dto.compensation, amount);
 
-    const chainId = await this.resolveChain(
-      manager,
-      trip.id,
-      dto.chainId,
-      dto.direction,
-    );
+    const chainId = dto.chainId ?? null;
 
     const last = await manager.findOne(TripTransferLeg, {
       where: { tripId: trip.id, direction: dto.direction },
@@ -289,20 +293,53 @@ export class TripTransferService {
       );
     }
 
-    const compensation = dto.compensation ?? leg.compensation;
-    const amount =
-      dto.compensationAmountRub !== undefined
-        ? dto.compensationAmountRub
-        : leg.compensationAmountRub;
     const isRoundTrip = dto.isRoundTrip ?? leg.isRoundTrip;
 
     /**
      * Зеркало второй парой не бывает: оно пришло из исходной карточки,
-     * и флаг на нём означал бы «зеркало зеркала». Правят исходную.
+     * и флаг на нём означал бы «зеркало зеркала». Правят исходную —
+     * на экране у зеркала этого флага и нет.
      */
     if (isRoundTrip && leg.roundTripSourceId !== null) {
       throw new BadRequestException(
         'Это обратная карточка пары «туда-обратно» — флаг ставится на исходной, а не на зеркале',
+      );
+    }
+
+    /**
+     * **У пары одна оплата** (уточнение заказчика 28.10.2026): «туда-обратно»
+     * связан с деньгами напрямую — стоимость задаётся на исходной карточке
+     * и живёт в обоих концах, сколько бы человек ни осталось. Поэтому
+     * у зеркала компенсацию не читаем вовсе: что бы в него ни прислали,
+     * остаётся то, что стоит на исходной.
+     */
+    const moneySource =
+      leg.roundTripSourceId === null
+        ? null
+        : await manager.findOne(TripTransferLeg, {
+            where: { id: leg.roundTripSourceId },
+          });
+
+    const compensation =
+      moneySource?.compensation ?? dto.compensation ?? leg.compensation;
+    const amount =
+      moneySource !== null
+        ? moneySource.compensationAmountRub
+        : dto.compensationAmountRub !== undefined
+          ? dto.compensationAmountRub
+          : leg.compensationAmountRub;
+
+    /**
+     * У зеркала оплата приходит с исходной карточки, поэтому обычное
+     * «смените компенсацию» тут не подсказка: поля этого нет. Если тип
+     * транспорта с оплатой не сошёлся, говорим, где её менять.
+     */
+    if (
+      moneySource !== null &&
+      !this.compensationFits(effectiveMode, compensation)
+    ) {
+      throw new BadRequestException(
+        'Оплата пары задана на исходной карточке и с этим типом транспорта не сочетается — смените тип здесь или оплату там',
       );
     }
 
@@ -315,21 +352,14 @@ export class TripTransferService {
     const direction = dto.direction ?? leg.direction;
 
     /**
-     * Этап заброски сторону не меняет: цепочка живёт в одной стороне,
-     * и перенос молча отвязал бы этап. Сказать прямо честнее, чем
-     * переставлять заброску за спиной человека.
+     * **Заброска может переплетать стороны.** «Маршруты бывают как в один
+     * конец, так и парами», и внутри пары этапы идут туда и обратно —
+     * дата у них одна шкала, а сторона у каждого своя. Поэтому переводить
+     * карточку в другую сторону можно и внутри цепочки: номер этапа
+     * пересчитается по времени, и порядок останется верным.
      */
-    if (direction !== leg.direction && leg.chainId !== null) {
-      throw new BadRequestException(
-        'Карточка в заброске — сначала уберите её из цепочки, потом меняйте сторону',
-      );
-    }
-
     const previousChainId = leg.chainId;
-    const chainId =
-      dto.chainId === undefined
-        ? leg.chainId
-        : await this.resolveChain(manager, trip.id, dto.chainId, direction);
+    const chainId = dto.chainId === undefined ? leg.chainId : dto.chainId;
 
     /**
      * Сторона меняется — карточка встаёт в конец новой области: порядок
@@ -381,6 +411,12 @@ export class TripTransferService {
 
     // Флаг «туда-обратно» включили или сняли — зеркало появляется или уходит.
     await this.syncMirrorExistence(manager, trip.id, leg);
+
+    // Оплата у пары одна: задали её на исходной — она же и в зеркале.
+    await this.syncMoneyToMirror(manager, leg);
+
+    // Обратно раньше, чем туда, не бывает — проверяем итог, а не патч.
+    await this.assertPairOrder(manager, leg);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -645,6 +681,71 @@ export class TripTransferService {
     });
   }
 
+  /**
+   * Оплата пары живёт на исходной карточке и повторяется в зеркале.
+   *
+   * «Туда-обратно» связан с деньгами напрямую: стоимость задаётся один раз
+   * и распространяется на оба конца, даже если состав пассажиров изменился.
+   * Как делить её по факту — дело «Бухгалтерии», а не этой вкладки.
+   */
+  private async syncMoneyToMirror(
+    manager: EntityManager,
+    leg: TripTransferLeg,
+  ): Promise<void> {
+    if (!leg.isRoundTrip) return;
+
+    const mirror = await this.mirrorOf(manager, leg);
+    if (!mirror) return;
+
+    if (
+      mirror.compensation === leg.compensation &&
+      mirror.compensationAmountRub === leg.compensationAmountRub
+    ) {
+      return;
+    }
+
+    mirror.compensation = leg.compensation;
+    mirror.compensationAmountRub = leg.compensationAmountRub;
+    await manager.save(mirror);
+  }
+
+  /**
+   * Обратный выезд не раньше прямого.
+   *
+   * Проверка «на уровне участника» получается сама: пассажиры у пары одни
+   * и те же (зеркало копирует исходную), поэтому «мой обратный рейс позже
+   * моего прямого» и «пара едет обратно позже» — одно и то же условие.
+   *
+   * Равенство разрешено намеренно: зеркало создаётся с временем исходной,
+   * и пока человек не уточнил обратный выезд, даты совпадают. Запрещаем
+   * ровно то, что уже ошибка, — возвращение раньше выезда.
+   */
+  private async assertPairOrder(
+    manager: EntityManager,
+    leg: TripTransferLeg,
+  ): Promise<void> {
+    const [source, mirror] =
+      leg.roundTripSourceId === null
+        ? [
+            leg,
+            await this.mirrorOf(manager, leg),
+          ]
+        : [
+            await manager.findOne(TripTransferLeg, {
+              where: { id: leg.roundTripSourceId },
+            }),
+            leg,
+          ];
+
+    if (source === null || mirror === null) return;
+
+    if (mirror.departsAt.getTime() < source.departsAt.getTime()) {
+      throw new BadRequestException(
+        'Обратный выезд пары не может быть раньше прямого — поправьте время',
+      );
+    }
+  }
+
   /** Пассажир появился в исходной — появляется и в обратной. */
   private async syncToMirror(
     manager: EntityManager,
@@ -741,40 +842,15 @@ export class TripTransferService {
   }
 
   /**
-   * Проверка заброски: `null` — карточка сама по себе, uuid — цепочка.
-   *
-   * Id новой цепочки придумывает клиент, поэтому отдельной ручки «создать
-   * заброску» нет. Присоединиться к чужой цепочке — только в той же стороне:
-   * этапы одной заброски все «туда» или все «обратно».
-   */
-  private async resolveChain(
-    manager: EntityManager,
-    tripId: string,
-    chainId: string | null | undefined,
-    direction: TransferDirection,
-  ): Promise<string | null> {
-    if (chainId === null || chainId === undefined) return null;
-
-    const sibling = await manager.findOne(TripTransferLeg, {
-      where: { tripId, chainId },
-      order: { id: 'ASC' },
-    });
-
-    if (sibling !== null && sibling.direction !== direction) {
-      throw new BadRequestException(
-        'Заброска живёт в одной стороне: её этапы — все «туда» или все «обратно»',
-      );
-    }
-
-    return chainId;
-  }
-
-  /**
    * Перенумеровать цепочку по времени отправления.
    *
    * `stage` — производное, а не ввод: заказчик сказал, что порядок задаёт
    * дата, и лодка может стоять и между конями, и после них. Поэтому номер
    * считается здесь при каждой записи и разойтись с порядком не может.
+   *
+   * Сторона в нумерации не участвует — цепочка свободно переплетает «туда»
+   * и «обратно»: «маршруты бывают как в один конец, так и парами». Одна
+   * шкала времени, номера сквозные, а сторона — свойство каждого этапа.
    */
   private async recomputeStages(
     manager: EntityManager,
@@ -1023,6 +1099,25 @@ export class TripTransferService {
 
   private isPublicMode(mode: TransferMode): boolean {
     return (TRANSFER_PUBLIC_MODES as readonly string[]).includes(mode);
+  }
+
+  /**
+   * Сходится ли оплата с типом транспорта — без броска.
+   *
+   * Нужно ровно для зеркала пары: там оплату не выбирают, и обычная
+   * проверка сообщила бы «смените компенсацию», которой в форме нет.
+   */
+  private compensationFits(
+    mode: TransferMode,
+    compensation: TransferCompensation,
+  ): boolean {
+    if (compensation === 'ticket') return this.isPublicMode(mode);
+
+    if (compensation === 'shared' || compensation === 'sharedPerPassenger') {
+      return !this.isPublicMode(mode);
+    }
+
+    return true;
   }
 
   /**

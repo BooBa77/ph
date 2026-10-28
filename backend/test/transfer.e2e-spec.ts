@@ -25,16 +25,20 @@ import type { TripTransferDto } from './../src/trips/dto/trip-transfer.dto';
  *    флага — и вручную флаг поставить не может.
  * 4. **Компенсация**: цена билета только у рейсов, общие расходы только
  *    у своего транспорта, сумма нужна всему, кроме «безвозмездно».
- *    «Туда-обратно» от вида компенсации не зависит (28.10.2026).
+ *    «Туда-обратно» ставится при любой компенсации (28.10.2026), но сумма
+ *    у пары одна.
  * 5. **Присоединение**: на рейс — сразу, на чужое ТС — заявкой; принимает
  *    владелец ТС, уйти человек может сам.
  * 6. **Места**: заполненные не пускают сверх счёта — ни заявкой, ни
  *    принятием.
  * 7. **Уход участника**: его ТС уходит с ним, чужие карточки остаются.
  * 8. **Заброска** — цепочка этапов из тех же карточек: нумеруется по времени
- *    отправления и живёт в одной стороне.
- * 9. **Техника из каталога** освобождается закрытым походом: 409 —
- *    только пока поход не закрыт.
+ *    отправления и свободно переплетает стороны — маршрут бывает и парой.
+ * 9. **Пара «туда-обратно»** — одна поездка на два конца: оплата задаётся
+ *    на исходной и живёт в зеркале, обратный выезд не раньше прямого,
+ *    а пар у группы может быть несколько (по машине на каждую).
+ * 10. **Техника из каталога** освобождается закрытым походом: 409 —
+ *     только пока поход не закрыт.
  *
  * Поход, состав и чаты тест заводит напрямую в базе: видимость похода и
  * создание чатов проверены в `trips.e2e-spec.ts`.
@@ -867,34 +871,155 @@ describe('Трансфер похода (e2e)', () => {
     expect(there[at + 1]?.chainId).toBe(chainId);
   });
 
-  it('заброска живёт в одной стороне', async () => {
+  it('заброска переплетает стороны: этапы идут по одной шкале времени', async () => {
     const chainId = '6f1c9b3e-0000-4000-8000-00000000c002';
 
     await createLeg(organizerToken, {
       direction: 'there',
       chainId,
       mode: 'car',
-      departsAt: DEPARTS,
+      departsAt: '2026-11-08T02:00:00.000Z',
       fromPlace: 'Иркутск, вокзал',
-      toPlace: 'Витязь',
+      toPlace: 'Витязь, начало тропы',
       compensation: 'free',
     });
 
-    // Этап «туда» и этап «обратно» одной цепочкой быть не могут.
+    /**
+     * Обратный этап той же заброски — в другой стороне, и это не ошибка:
+     * «маршруты бывают как в один конец, так и парами». Сторона у каждого
+     * этапа своя, общая у них только шкала времени.
+     */
+    const body = await createLeg(organizerToken, {
+      direction: 'back',
+      chainId,
+      mode: 'car',
+      departsAt: '2026-11-10T02:00:00.000Z',
+      fromPlace: 'Витязь, начало тропы',
+      toPlace: 'Иркутск, вокзал',
+      compensation: 'free',
+    });
+
+    const stages = body.legs
+      .filter((leg) => leg.chainId === chainId)
+      .map((leg) => ({ direction: leg.direction, stage: leg.stage }));
+
+    expect(stages).toEqual([
+      { direction: 'there', stage: 1 },
+      { direction: 'back', stage: 2 },
+    ]);
+  });
+
+  it('обратный выезд пары не раньше прямого', async () => {
+    const body = await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: '2026-11-12T06:00:00.000Z',
+      fromPlace: 'Иркутск, аэропорт',
+      toPlace: 'Витязь, водопад',
+      compensation: 'free',
+      isRoundTrip: true,
+    });
+
+    const source = body.legs.find(
+      (leg) => leg.isRoundTrip && leg.fromPlace === 'Иркутск, аэропорт',
+    )!;
+    const mirror = body.legs.find((leg) => leg.sourceLegId === source.id)!;
+
+    // Вернуться раньше, чем уехал, нельзя.
     await request(app.getHttpServer())
-      .post(`/api/trips/${tripId}/transfer/legs`)
+      .patch(`/api/trips/${tripId}/transfer/legs/${mirror.id}`)
       .set('Authorization', `Bearer ${organizerToken}`)
-      .send({
-        direction: 'back',
-        chainId,
-        mode: 'bus',
-        departsAt: DEPARTS,
-        fromPlace: 'Витязь',
-        toPlace: 'Иркутск, вокзал',
-        compensation: 'ticket',
-        compensationAmountRub: 500,
-      })
+      .send({ departsAt: '2026-11-11T06:00:00.000Z' })
       .expect(400);
+
+    // Позже — можно.
+    const later = await request(app.getHttpServer())
+      .patch(`/api/trips/${tripId}/transfer/legs/${mirror.id}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ departsAt: '2026-11-13T06:00:00.000Z' })
+      .expect(200);
+
+    expect(
+      later.body.legs.find((leg: { id: string }) => leg.id === mirror.id).departsAt,
+    ).toBe('2026-11-13T06:00:00.000Z');
+  });
+
+  it('у пары одна оплата: задали на исходной — она же в зеркале', async () => {
+    const body = await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: '2026-11-14T06:00:00.000Z',
+      fromPlace: 'Иркутск, рынок',
+      toPlace: 'Витязь, ручей',
+      compensation: 'free',
+      isRoundTrip: true,
+    });
+
+    const source = body.legs.find(
+      (leg) => leg.isRoundTrip && leg.fromPlace === 'Иркутск, рынок',
+    )!;
+    const mirror = body.legs.find((leg) => leg.sourceLegId === source.id)!;
+
+    // Поставили общий расход на исходной — в зеркале он же.
+    const priced = await request(app.getHttpServer())
+      .patch(`/api/trips/${tripId}/transfer/legs/${source.id}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ compensation: 'shared', compensationAmountRub: 2500 })
+      .expect(200);
+
+    const mirrorAfter = priced.body.legs.find(
+      (leg: { id: string }) => leg.id === mirror.id,
+    );
+    expect(mirrorAfter.compensation).toBe('shared');
+    expect(mirrorAfter.compensationAmountRub).toBe(2500);
+
+    // А правка оплаты в зеркале не проходит: пара живёт ценой исходной.
+    const attempt = await request(app.getHttpServer())
+      .patch(`/api/trips/${tripId}/transfer/legs/${mirror.id}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ compensation: 'free' })
+      .expect(200);
+
+    const mirrorAgain = attempt.body.legs.find(
+      (leg: { id: string }) => leg.id === mirror.id,
+    );
+    expect(mirrorAgain.compensation).toBe('shared');
+    expect(mirrorAgain.compensationAmountRub).toBe(2500);
+  });
+
+  it('пар может быть несколько: у каждой машины своя обратная', async () => {
+    const before = (await plan(organizerToken)).legs.length;
+
+    await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: '2026-11-15T06:00:00.000Z',
+      fromPlace: 'Иркутск, первая машина',
+      toPlace: 'Витязь, перевал',
+      compensation: 'free',
+      isRoundTrip: true,
+    });
+
+    // Вторая машина той же группы — своя пара, а не та же самая.
+    const body = await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'suv',
+      departsAt: '2026-11-15T06:30:00.000Z',
+      fromPlace: 'Иркутск, вторая машина',
+      toPlace: 'Витязь, перевал',
+      compensation: 'free',
+      isRoundTrip: true,
+    });
+
+    // Две пары — четыре новые строки.
+    expect(body.legs.length).toBe(before + 4);
+
+    for (const place of ['Иркутск, первая машина', 'Иркутск, вторая машина']) {
+      const pair = body.legs.filter(
+        (leg) => leg.fromPlace === place || leg.toPlace === place,
+      );
+      expect(pair).toHaveLength(2);
+    }
   });
 
   it('карточка выходит из заброски, и оставшиеся перенумеровываются', async () => {
