@@ -987,14 +987,20 @@ const driverOptions = computed(() => {
               </p>
 
               <div class="flex flex-wrap items-center gap-2" data-test="transfer-passengers">
+                <!--
+                  Пассажиры — жёлтыми пилюлями: `bg-field` у них тот же, что
+                  у полей управления (выборы, инпуты), и в строке «кто едет»
+                  они читались как ещё один контрол. Жёлтый — фиксированный,
+                  как цвета секций, поэтому одинаково виден во всех сезонах.
+                -->
                 <span
                   v-for="person in accepted(leg)"
                   :key="person.userId"
-                  class="flex items-center gap-1 rounded-full border border-border bg-field px-2 py-1 text-sm text-text"
+                  class="flex items-center gap-1 rounded-full border border-amber-300 bg-amber-100 px-2 py-1 text-sm text-amber-900"
                   data-test="transfer-passenger"
                 >
                   {{ person.displayName }}
-                  <span v-if="isMine(person)" class="text-xs text-muted">(вы)</span>
+                  <span v-if="isMine(person)" class="text-xs text-amber-700">(вы)</span>
 
                   <!--
                     Крестика у владельца ТС нет: он уходит вместе со своим
@@ -1003,7 +1009,7 @@ const driverOptions = computed(() => {
                   <button
                     v-if="(isMine(person) || leg.canEdit) && person.userId !== leg.ownerUserId"
                     type="button"
-                    class="cursor-pointer border-0 bg-transparent p-0 text-muted transition-colors hover:text-text disabled:opacity-60"
+                    class="cursor-pointer border-0 bg-transparent p-0 text-amber-700 transition-colors hover:text-amber-900 disabled:opacity-60"
                     :disabled="isSaving"
                     :data-test="`transfer-leave-${leg.id}-${person.userId}`"
                     @click="leave(leg, person)"
