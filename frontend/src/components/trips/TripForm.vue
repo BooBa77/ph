@@ -492,7 +492,7 @@ defineExpose({ validationProblem })
           data-test="official"
         />
         <span class="text-sm text-text">Официальный поход</span>
-        <span class="text-xs text-muted">зачётный выход по правилам, открывает вкладку «Спорт»</span>
+        <span class="text-xs text-muted">зачётный выход «в клеточку» по правилам Федерации</span>
       </label>
     </div>
 
@@ -604,7 +604,7 @@ defineExpose({ validationProblem })
       <span class="text-sm text-muted">Сбор</span>
 
       <p class="text-xs text-muted">
-        Где встречаемся в день выхода, — поле «Трансфера» (вкладка появится в Ф7).
+        Где встречаемся в день выхода, — поле «Трансфера».
         Здесь его нет: «где встречаемся» не часть анонса, а часть логистики.
       </p>
     </div>

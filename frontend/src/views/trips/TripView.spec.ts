@@ -118,6 +118,7 @@ async function mountTrip() {
         TripParticipants: { template: '<div data-test="members-stub" />' },
         TripMeals: { template: '<div data-test="meals-stub" />' },
         TripTransfer: { template: '<div data-test="transfer-stub" />' },
+        TripRoute: { template: '<div data-test="route-stub" />' },
       },
     },
   })
@@ -174,7 +175,21 @@ describe('TripView и мобильное меню', () => {
     const items = useMobileMenuStore().context?.items ?? []
     expect(items.find((item) => item.key === 'meals')?.available).toBe(true)
     expect(items.find((item) => item.key === 'transfer')?.available).toBe(true)
+    expect(items.find((item) => item.key === 'route')?.available).toBe(true)
     expect(items.find((item) => item.key === 'sport')?.available).toBe(false)
+  })
+
+  it('вкладка «Ночёвки» называется так и показывает чат табора', async () => {
+    const { wrapper } = await mountTrip()
+
+    const items = useMobileMenuStore().context?.items ?? []
+    expect(items.find((item) => item.key === 'route')?.label).toBe('Ночёвки')
+    expect(items.find((item) => item.key === 'sport')?.label).toBe('Выпуск')
+
+    items.find((item) => item.key === 'route')?.onSelect?.()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="route-stub"]').exists()).toBe(true)
   })
 
   it('переключение из меню меняет вкладку на странице', async () => {

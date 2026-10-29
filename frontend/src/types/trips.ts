@@ -366,12 +366,22 @@ export const TRIP_TABS = [
 
 export type TripTabCode = (typeof TRIP_TABS)[number]
 
+/**
+ * Подписи вкладок.
+ *
+ * Два кода подписям не соответствуют, и это осознанно: заказчик переименовал
+ * вкладки 29.10.2026, а коды остались прежними — они записаны в
+ * `role_tab_permissions` и в CHECK-е этой таблицы. `route` на экране —
+ * «Ночёвки» (табор: где спим), `sport` — «Выпуск» (выпуск группы
+ * на маршрут, зачётный выход по правилам Федерации). «Выпуск» приходит
+ * с бэкенда только у официального похода — фронт его не дофильтровывает.
+ */
 export const TRIP_TAB_LABELS: Record<TripTabCode, string> = {
   guest: 'Гостевая',
   members: 'Участники',
-  sport: 'Спорт',
+  sport: 'Выпуск',
   transfer: 'Трансфер',
-  route: 'Маршрут',
+  route: 'Ночёвки',
   meals: 'Питание',
   gear: 'Снаряжение',
   firstAid: 'Аптечка',
@@ -425,13 +435,14 @@ export interface RoleOption {
  *
  * Чат — тема вкладки (решение 21.10.2026): гостевой живёт на «Гостевой»,
  * членский — на «Участниках», питания — в «Питании», трансфера —
- * в «Трансфере».
+ * в «Трансфере», табора — в «Ночёвках» (29.10.2026).
  */
 export const CHAT_KINDS = [
   'trip_guest',
   'trip_members',
   'trip_meals',
   'trip_transfer',
+  'trip_route',
 ] as const
 export type ChatKind = (typeof CHAT_KINDS)[number]
 
@@ -440,6 +451,7 @@ export const CHAT_KIND_LABELS: Record<ChatKind, string> = {
   trip_members: 'Чат участников',
   trip_meals: 'Чат питания',
   trip_transfer: 'Чат трансфера',
+  trip_route: 'Чат табора',
 }
 
 /** Сообщение чата похода. `senderId === null` — системное. */

@@ -201,6 +201,7 @@ describe('Готовность похода (e2e)', () => {
       'trip_guest',
       'trip_meals',
       'trip_members',
+      'trip_route',
       'trip_transfer',
     ]);
   });
@@ -211,15 +212,16 @@ describe('Готовность похода (e2e)', () => {
     await expect(tabsOf(strangerToken)).resolves.toEqual(['guest']);
   });
 
-  it('конкретное число открывает все вкладки', async () => {
+  it('конкретное число открывает все вкладки, кроме «Выпуска»', async () => {
     await call('patch', `/api/trips/${tripId}`, ownerToken, {
       dateVariants: [{ year: 2027, month: 5, day: 5, durationDays: 5 }],
     }).expect(200);
 
+    // «Выпуск» (код `sport`) — только у официального похода: у обычного
+    // выпуска нет, и пустой вкладки в меню ему не нужно.
     await expect(tabsOf(ownerToken)).resolves.toEqual([
       'guest',
       'members',
-      'sport',
       'transfer',
       'route',
       'meals',
@@ -228,6 +230,20 @@ describe('Готовность похода (e2e)', () => {
       'finance',
       'diary',
     ]);
+  });
+
+  it('«Выпуск» появляется у официального похода и уходит вместе с флагом', async () => {
+    await call('patch', `/api/trips/${tripId}`, ownerToken, {
+      isOfficial: true,
+    }).expect(200);
+
+    await expect(tabsOf(ownerToken)).resolves.toContain('sport');
+
+    await call('patch', `/api/trips/${tripId}`, ownerToken, {
+      isOfficial: false,
+    }).expect(200);
+
+    await expect(tabsOf(ownerToken)).resolves.not.toContain('sport');
   });
 
   it('вернуться к «без числа» нельзя', async () => {
@@ -253,7 +269,7 @@ describe('Готовность похода (e2e)', () => {
       status: 'planning',
     }).expect(200);
 
-    await expect(tabsOf(ownerToken)).resolves.toHaveLength(10);
+    await expect(tabsOf(ownerToken)).resolves.toHaveLength(9);
   });
 
   it('без токена — 401', async () => {

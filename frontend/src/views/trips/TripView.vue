@@ -10,6 +10,7 @@ import { useMobileMenuStore } from '@/stores/mobileMenu'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
 import TripMeals from '@/views/trips/TripMeals.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
+import TripRoute from '@/views/trips/TripRoute.vue'
 import TripTransfer from '@/views/trips/TripTransfer.vue'
 import TripTabIcon from '@/components/trips/TripTabIcon.vue'
 import {
@@ -70,17 +71,24 @@ const organizer = ref<PublicUser | null>(null)
  * отвечает на вопрос «кто ведёт» — роль завхоза даёт правку «Питания»,
  * организатор правит всё. Гостю приходит одна «Гостевая».
  *
- * Пока реализованы не все одиннадцать: неготовые показываются как
- * «в разработке», чтобы карта была видна целиком и не приходилось
- * переставлять меню на каждой новой вкладке (Ф7).
+ * «Выпуск» (код `sport`) приходит только у официального похода — это решает
+ * бэкенд (`OFFICIAL_ONLY_TAB`), фронт видимость не досчитывает.
+ *
+ * Пока реализованы не все: неготовые показываются как «в разработке», чтобы
+ * карта была видна целиком и не приходилось переставлять меню на каждой
+ * новой вкладке (Ф7).
  */
 /**
  * «Трансфер»: строки заброски, машины и пассажиры. Права на правку
  * (в том числе «свою машину водитель правит сам») считает бэкенд и отдаёт
  * в самой вкладке (`plan.canEdit` и `car.canEdit`) — матрицу ролей фронт
  * не повторяет.
+ *
+ * «Ночёвки» (код `route`) показывают чат табора: 29.10.2026 заказчик
+ * переименовал вкладку и попросил её активировать, таблица ночёвок —
+ * следующий шаг.
  */
-const IMPLEMENTED: TripTabCode[] = ['guest', 'members', 'meals', 'transfer']
+const IMPLEMENTED: TripTabCode[] = ['guest', 'members', 'meals', 'transfer', 'route']
 
 const permissions = ref<TripTabPermission[]>([])
 const activeTab = ref<TripTabCode>('guest')
@@ -331,7 +339,7 @@ async function toggleRecruitment() {
               : 'border-transparent text-muted hover:text-text'
           "
           :disabled="!item.available"
-          :title="item.available ? undefined : 'Вкладка появится вместе с Ф7'"
+          :title="item.available ? undefined : 'Вкладка ещё не готова'"
           :data-test="`tab-${item.code}`"
           @click="activeTab = item.code"
         >
@@ -357,9 +365,11 @@ async function toggleRecruitment() {
 
       <TripTransfer v-else-if="activeTab === 'transfer'" :trip="trip" />
 
+      <TripRoute v-else-if="activeTab === 'route'" :trip="trip" />
+
       <p v-else class="text-sm text-muted" data-test="tab-soon">
-        Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» появится вместе
-        с Ф7: сейчас готовы «Гостевая», «Участники», «Питание» и «Трансфер».
+        Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» ещё не готова:
+        сейчас работают «Гостевая», «Участники», «Ночёвки», «Питание» и «Трансфер».
       </p>
 
       <!--

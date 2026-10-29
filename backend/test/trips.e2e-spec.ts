@@ -253,6 +253,7 @@ describe('Походы (e2e)', () => {
         'trip_guest',
         'trip_meals',
         'trip_members',
+        'trip_route',
         'trip_transfer',
       ]);
     });
@@ -1653,6 +1654,7 @@ describe('Походы (e2e)', () => {
         'trip_members',
         'trip_meals',
         'trip_transfer',
+        'trip_route',
       ]);
       expect(mine.body.chats[0].lastMessage).toBeNull();
 
@@ -1694,6 +1696,28 @@ describe('Походы (e2e)', () => {
       expect(sent.body.isSystem).toBe(false);
     });
 
+    it('чат табора: участник пишет, посторонний — 403', async () => {
+      const created = await createTrip({ announcement: 'Табор' });
+      const tripId = created.body.id as string;
+
+      // Вкладка «Ночёвки» (код `route`) с 29.10.2026 разговаривает в своём
+      // чате: он заводится вместе с походом и закрыт для посторонних, как
+      // чаты питания и трансфера.
+      await send(
+        tripId,
+        accessToken,
+        'trip_route',
+        'Ставим лагерь у реки',
+      ).expect(201);
+
+      await send(tripId, strangerToken, 'trip_route', 'А можно я?').expect(403);
+
+      const page = await read(tripId, accessToken, 'kind=trip_route');
+      expect(page.messages.map((message) => message.body)).toContain(
+        'Ставим лагерь у реки',
+      );
+    });
+
     it('чат участников закрыт для постороннего, гостевой открыт', async () => {
       const created = await createTrip({ announcement: 'Доступ к чатам' });
       const tripId = created.body.id as string;
@@ -1713,7 +1737,7 @@ describe('Походы (e2e)', () => {
       );
     });
 
-    it('приглашённый получает чаты участников, питания и трансфера, ещё не ответив', async () => {
+    it('приглашённый получает чаты участников, питания, трансфера и табора, ещё не ответив', async () => {
       const created = await createTrip({ announcement: 'Чат приглашённого' });
       const tripId = created.body.id as string;
 
@@ -1727,7 +1751,7 @@ describe('Походы (e2e)', () => {
         .get(`/api/trips/${tripId}/chats`)
         .set('Authorization', `Bearer ${applicantToken}`)
         .expect(200);
-      expect(chats.body.chats).toHaveLength(4);
+      expect(chats.body.chats).toHaveLength(5);
 
       await send(tripId, applicantToken, 'trip_members', 'Я в деле').expect(
         201,

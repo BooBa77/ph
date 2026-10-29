@@ -28,6 +28,7 @@ const CHAT_TITLES: Record<ChatKind, string> = {
   trip_members: 'Чат участников',
   trip_meals: 'Чат питания',
   trip_transfer: 'Чат трансфера',
+  trip_route: 'Чат табора',
 };
 
 /** Сообщение чата похода. */

@@ -57,7 +57,12 @@ import { TripTransferPassenger } from './entities/trip-transfer-passenger.entity
 import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
-import { MEMBERS_TAB, TRIP_TABS, type TripTab } from './trip-tabs';
+import {
+  MEMBERS_TAB,
+  OFFICIAL_ONLY_TAB,
+  TRIP_TABS,
+  type TripTab,
+} from './trip-tabs';
 import { PARTICIPANT_ONLY_CHAT_KINDS } from './trip-transfer.types';
 import {
   CHAT_KINDS,
@@ -227,8 +232,9 @@ export class TripsService {
 
       /**
        * Гостевой чат есть у любого похода, даже у мечты: это единственное
-       * место, где гости могут спросить о вишлисте. Членский — только
-       * у настоящего похода: у мечты нет состава.
+       * место, где гости могут спросить о вишлисте. Остальные — только
+       * у настоящего похода: у мечты нет ни состава, ни подготовки, а чат
+       * вкладки без вкладки — это переписка в пустоту.
        */
       await manager.insert(
         Conversation,
@@ -239,6 +245,7 @@ export class TripsService {
               { kind: 'trip_members', tripId: trip.id },
               { kind: 'trip_meals', tripId: trip.id },
               { kind: 'trip_transfer', tripId: trip.id },
+              { kind: 'trip_route', tripId: trip.id },
             ],
       );
 
@@ -404,8 +411,17 @@ export class TripsService {
       };
     }
 
+    /**
+     * «Выпуск» есть только у официального похода (`OFFICIAL_ONLY_TAB`):
+     * вкладка про выпуск группы по правилам Федерации, и у обычного похода
+     * выпуска нет. Фильтр стоит здесь — в единственном месте, где список
+     * вкладок собирается, — поэтому фронт ничего не досчитывает и меню
+     * не может разойтись с ответом сервера.
+     */
     return {
-      tabs: TRIP_TABS.map((code) => ({ code, canEdit: editable.has(code) })),
+      tabs: TRIP_TABS.filter(
+        (code) => code !== OFFICIAL_ONLY_TAB || trip.isOfficial,
+      ).map((code) => ({ code, canEdit: editable.has(code) })),
     };
   }
 
@@ -472,13 +488,14 @@ export class TripsService {
       });
     }
 
-    // Гостевой чат у мечты уже есть; членский появляется здесь. Проверка
+    // Гостевой чат у мечты уже есть; остальные появляются здесь. Проверка
     // на существование нужна и для старых мечт, созданных до правила.
     for (const kind of [
       'trip_guest',
       'trip_members',
       'trip_meals',
       'trip_transfer',
+      'trip_route',
     ] as const) {
       const hasChat = await manager.exists(Conversation, {
         where: { tripId: trip.id, kind },

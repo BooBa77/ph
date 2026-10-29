@@ -117,12 +117,16 @@ describe('Вкладки и роли (e2e)', () => {
      * зависит от готовности и конкретного числа (`tabs.md` §7), а этот
      * тест про права, а не про готовность. Даты — в будущем, чтобы поход
      * не выглядел прошедшим.
+     *
+     * Поход **официальный** намеренно: с 29.10.2026 «Выпуск» (код `sport`)
+     * есть только у официального похода, и без флага проверка «организатор
+     * правит все десять» молча превратилась бы в «девять».
      */
     tripId = (
       await dataSource.query(
         `INSERT INTO trips (organizer_user_id, goal_object_id, route_text, announcement,
-                            is_commercial, price_rub, status, starts_at, ends_at)
-         VALUES ($1, $2, 'Подход от станции', 'Гостевой обзор', true, 5000, 'decided',
+                            is_commercial, price_rub, is_official, status, starts_at, ends_at)
+         VALUES ($1, $2, 'Подход от станции', 'Гостевой обзор', true, 5000, true, 'decided',
                  now() + interval '10 days', now() + interval '12 days') RETURNING id`,
         [organizerId, objectId],
       )
