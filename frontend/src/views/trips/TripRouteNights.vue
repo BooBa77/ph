@@ -13,13 +13,20 @@ import { shortDate } from '@/utils/calendar'
  * и никуда не сохраняются. Таблицы и API — следующий шаг, после того как
  * раскладка понравится.
  *
- * Что на плашке (дословно заказчик):
- * - «Ночь 1. 29 октября» — номер и дата;
+ * Что на плашке (слова заказчика):
+ * - «Ночь 1 · 29 октября» — заголовок как «День 1 · 23 октября» в «Питании»
+ *   (мелкий, дата серым после точки-разделителя): единообразие важнее
+ *   собственной типографики;
  * - выпадающий список варианта ночёвки: палатка / гостиница / изба / машина /
- *   идём всю ночь;
- * - «идём всю ночь» — больше ничего не делается;
- * - из оставшихся «гостиница» — тоже ничего, а палатка, изба и машина
- *   спрашивают способ готовки: костёр или горелка.
+ *   идём всю ночь / в пути;
+ * - «идём всю ночь» и «в пути» — больше ничего не делается, и «гостиница»
+ *   тоже: палатка, изба и машина спрашивают способ готовки (костёр/горелка).
+ *
+ * **Пустое считается как «идём всю ночь»** (29.10.2026: «Пустое пусть
+ * выглядит пустым, а считаться будет как „идём всю ночь“»). Пустое — это
+ * «ещё не выбрали», а не отдельный вариант: ночуют в ночном переходе, пока
+ * не сказали иначе. Ведёт себя пустое так же, как ночной переход: готовку
+ * не спрашивает и дополнительные секции не открывает (см. `effectiveKind`).
  *
  * Района ночёвки и распределения людей здесь намеренно нет: это следующий
  * слой, и он появится, когда станет ясно, как читается сама плашка.
@@ -32,14 +39,14 @@ import { shortDate } from '@/utils/calendar'
 const props = defineProps<{ trip: Trip }>()
 
 /** Вид ночёвки — словарь будущего CHECK-а: гостиница и изба разные. */
-type NightKind = 'tent' | 'hotel' | 'hut' | 'car' | 'allnight'
+type NightKind = 'tent' | 'hotel' | 'hut' | 'car' | 'allnight' | 'transit'
 
 type CookingKind = 'fire' | 'stove'
 
 /**
- * Порядок ровно тот, в котором заказчик перечислил варианты. Подписи — его
- * слова: «изба», а не «зимовьё» из карты вкладок (это был открытый вопрос
- * `NEXT.md` §3, и заказчик ответил именно так).
+ * Порядок ровно тот, в котором заказчик перечислил варианты, «в пути» —
+ * в конце (дописано 29.10.2026). Подписи — его слова: «изба», а не
+ * «зимовьё» из карты вкладок (это был открытый вопрос `NEXT.md` §3).
  */
 const NIGHT_KIND_LABELS: Record<NightKind, string> = {
   tent: 'Палатка',
@@ -47,6 +54,7 @@ const NIGHT_KIND_LABELS: Record<NightKind, string> = {
   hut: 'Изба',
   car: 'Машина',
   allnight: 'Идём всю ночь',
+  transit: 'В пути',
 }
 
 const COOKING_LABELS: Record<CookingKind, string> = {
@@ -55,15 +63,23 @@ const COOKING_LABELS: Record<CookingKind, string> = {
 }
 
 /**
- * Готовку спрашиваем у всех, кроме гостиницы и ночного перехода: в гостинице
- * готовит кухня, а в ночь идут без стоянки. Правило записано списком
- * «кому нужно», а не «кому нет»: если завтра появится баня или кафе, их
- * придётся добавить сюда осознанно.
+ * Готовку спрашиваем у всех, кроме гостиницы, ночного перехода и дороги:
+ * в гостинице готовит кухня, в ночь идут без стоянки, в пути — тем более.
+ * Правило записано списком «кому нужно», а не «кому нет»: если завтра
+ * появится баня или кафе, их придётся добавить сюда осознанно.
  */
 const COOKING_KINDS: readonly NightKind[] = ['tent', 'hut', 'car']
 
+/**
+ * Что вариант значит на самом деле. Пустой — «идём всю ночь»: человек ещё
+ * не выбрал, а молчание в этом поле означает, что стоянки нет.
+ */
+function effectiveKind(kind: NightKind | ''): NightKind {
+  return kind === '' ? 'allnight' : kind
+}
+
 function needsCooking(kind: NightKind | ''): boolean {
-  return kind !== '' && COOKING_KINDS.includes(kind)
+  return COOKING_KINDS.includes(effectiveKind(kind))
 }
 
 /** Сколько ночей показывать, когда дат похода нет вовсе. */
@@ -151,8 +167,18 @@ watch(
 )
 
 /**
- * Выбрали гостиницу или ночной переход — способ готовки больше не нужен.
- * Без сброса значение осталось бы в памяти и вернулось при возврате
+ * Две следующие секции живут по тому, что выбрано в ночёвках: «Палатки» —
+ * если хоть в одной ночи выбрана палатка, «Костровое» — если хоть где-то
+ * выбран способ готовки. Пока ничего не выбрано, обеих секций нет: пустые
+ * заготовки на экране только мешают.
+ */
+const hasTent = computed(() => rows.value.some((row) => row.kind === 'tent'))
+
+const hasCooking = computed(() => rows.value.some((row) => row.cooking !== ''))
+
+/**
+ * Выбрали гостиницу, ночной переход или дорогу — способ готовки больше не
+ * нужен. Без сброса значение осталось бы в памяти и вернулось при возврате
  * к «палатке», хотя человек его не подтверждал.
  */
 function onKindChange(row: NightRow) {
@@ -161,60 +187,108 @@ function onKindChange(row: NightRow) {
 </script>
 
 <template>
-  <section class="flex flex-col gap-3" data-test="route-nights">
+  <section class="flex flex-col gap-4" data-test="route-nights">
     <p v-if="plan.note" class="text-sm text-muted" data-test="route-nights-note">
       {{ plan.note }}
     </p>
 
-    <article
-      v-for="row in rows"
-      :key="row.number"
-      class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3"
-      data-test="route-night"
+    <!--
+      Секция ночёвок — чёрная: это главная плашка вкладки, и цвет отделяет
+      её от будущих секций. Сворачивается, как «Раскладка» в «Питании»
+      и все секции «Трансфера»: длинный список ночей не должен закрывать
+      чат табора под ним.
+    -->
+    <details
+      open
+      class="flex flex-col gap-3 rounded-2xl border border-neutral-700 bg-neutral-900 p-3"
+      data-test="route-nights-section"
     >
-      <h3 class="text-base font-medium text-text" data-test="route-night-title">
-        Ночь {{ row.number }}. {{ row.label }}
-      </h3>
+      <summary class="cursor-pointer select-none text-sm text-neutral-100">Ночёвки</summary>
 
-      <div class="flex flex-col gap-3 md:flex-row">
-        <label class="flex flex-col gap-1 text-sm text-muted md:w-56">
-          Где ночуем
-          <select
-            v-model="row.kind"
-            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
-            data-test="route-night-kind"
-            @change="onKindChange(row)"
-          >
-            <option value="">Не выбрано</option>
-            <option
-              v-for="(label, kind) in NIGHT_KIND_LABELS"
-              :key="kind"
-              :value="kind"
+      <article
+        v-for="row in rows"
+        :key="row.number"
+        class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3"
+        data-test="route-night"
+      >
+        <h3 class="text-sm font-medium text-text" data-test="route-night-title">
+          Ночь {{ row.number }}
+          <span class="text-muted"> · {{ row.label }}</span>
+        </h3>
+
+        <div class="flex flex-col gap-3 md:flex-row">
+          <label class="flex flex-col gap-1 text-sm text-muted md:w-56">
+            Где ночуем
+            <select
+              v-model="row.kind"
+              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
+              data-test="route-night-kind"
+              @change="onKindChange(row)"
             >
-              {{ label }}
-            </option>
-          </select>
-        </label>
+              <option value="">Не выбрано</option>
+              <option
+                v-for="(label, kind) in NIGHT_KIND_LABELS"
+                :key="kind"
+                :value="kind"
+              >
+                {{ label }}
+              </option>
+            </select>
+          </label>
 
-        <!-- «Идём всю ночь» и «Гостиница» дальше ничего не спрашивают. -->
-        <label
-          v-if="needsCooking(row.kind)"
-          class="flex flex-col gap-1 text-sm text-muted md:w-44"
-          data-test="route-night-cooking-field"
-        >
-          Готовка
-          <select
-            v-model="row.cooking"
-            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
-            data-test="route-night-cooking"
+          <!-- «Идём всю ночь», «в пути» и «Гостиница» дальше ничего не спрашивают. -->
+          <label
+            v-if="needsCooking(row.kind)"
+            class="flex flex-col gap-1 text-sm text-muted md:w-44"
+            data-test="route-night-cooking-field"
           >
-            <option value="">Не выбрано</option>
-            <option v-for="(label, kind) in COOKING_LABELS" :key="kind" :value="kind">
-              {{ label }}
-            </option>
-          </select>
-        </label>
-      </div>
-    </article>
+            Готовка
+            <select
+              v-model="row.cooking"
+              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
+              data-test="route-night-cooking"
+            >
+              <option value="">Не выбрано</option>
+              <option v-for="(label, kind) in COOKING_LABELS" :key="kind" :value="kind">
+                {{ label }}
+              </option>
+            </select>
+          </label>
+        </div>
+      </article>
+    </details>
+
+    <!--
+      «Палатки» и «Костровое» — заготовки следующих шагов: палатки приедут
+      из «Снаряжения», дежурства — из «Питания». Пока это только место
+      на экране, и открываются они по выбору в ночёвках.
+    -->
+    <details
+      v-if="hasTent"
+      open
+      class="flex flex-col gap-3 rounded-2xl border border-emerald-300 bg-emerald-100 p-3"
+      data-test="route-tents-section"
+    >
+      <summary class="cursor-pointer select-none text-sm text-emerald-900">Палатки</summary>
+
+      <p class="text-sm text-muted" data-test="route-tents-empty">
+        Кто в какой палатке спит и кто её несёт — палатки приедут сюда
+        из «Снаряжения», когда в ночёвке выбрана «Палатка».
+      </p>
+    </details>
+
+    <details
+      v-if="hasCooking"
+      open
+      class="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-100 p-3"
+      data-test="route-cooking-section"
+    >
+      <summary class="cursor-pointer select-none text-sm text-amber-900">Костровое</summary>
+
+      <p class="text-sm text-muted" data-test="route-cooking-empty">
+        Кто дежурит у костра, что и на чём готовит — появится здесь, когда
+        в ночёвке выбран способ готовки.
+      </p>
+    </details>
   </section>
 </template>
