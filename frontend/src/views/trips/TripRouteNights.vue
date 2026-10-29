@@ -3,20 +3,23 @@ import { computed, ref, watch } from 'vue'
 
 import type { Trip } from '@/types/trips'
 import { shortDate } from '@/utils/calendar'
+import TripRouteTents from '@/views/trips/TripRouteTents.vue'
 
 /**
  * Плашки ночёвок — **макет без данных** (29.10.2026).
  *
  * Заказчик попросил идти от фронта: «идёт от фронта, расставляем элементы,
- * оцениваем, приходит понимание и затем уже формируем данные». Поэтому здесь
- * нет ни одной ручки и ни одного запроса: варианты живут в памяти компонента
- * и никуда не сохраняются. Таблицы и API — следующий шаг, после того как
- * раскладка понравится.
+ * оцениваем, приходит понимание и затем уже формируем данные». Поэтому у самой
+ * ночёвки — вариант, способ готовки и место — **ни одной ручки**: выбор живёт
+ * в памяти компонента и никуда не уходит. Запросы делает только секция
+ * «Палатки», и то существующими ручками (состав похода, снаряжение похода):
+ * таблицы ночёвок ещё нет, это следующий шаг.
  *
  * Что на плашке (слова заказчика):
  * - «Ночь 1 · 29 октября» — заголовок как «День 1 · 23 октября» в «Питании»
  *   (мелкий, дата серым после точки-разделителя): единообразие важнее
- *   собственной типографики;
+ *   собственной типографики; справа в той же строке — поле «Место» (район
+ *   ночёвки, текст);
  * - выпадающий список варианта ночёвки: палатка / гостиница / изба / машина /
  *   идём всю ночь / в пути; пустой пункт — **пустой строкой**, без подписи
  *   «Не выбрано»: так незаполненная ночь бросается в глаза (29.10.2026);
@@ -30,8 +33,8 @@ import { shortDate } from '@/utils/calendar'
  * не сказали иначе. Ведёт себя пустое так же, как ночной переход: готовку
  * не спрашивает и дополнительные секции не открывает (см. `effectiveKind`).
  *
- * Района ночёвки и распределения людей здесь намеренно нет: это следующий
- * слой, и он появится, когда станет ясно, как читается сама плашка.
+ * Район ночёвки — поле «Место» в строке заголовка (29.10.2026). Людей
+ * на плашке по-прежнему нет: распределение живёт в секции «Палатки».
  *
  * Откуда ночи берутся без бэка: из дат похода. Ночь — это отрезок день→день,
  * поэтому у похода 29–31 октября ночей две (29-го и 30-го). Если дат нет или
@@ -111,6 +114,8 @@ interface NightPlan {
 interface NightRow extends NightPlan {
   kind: NightKind | ''
   cooking: CookingKind | ''
+  /** Район ночёвки словами: «Слюдянка», «у Голоустного». */
+  place: string
 }
 
 /**
@@ -176,7 +181,7 @@ const rows = ref<NightRow[]>([])
 watch(
   plan,
   (value) => {
-    rows.value = value.nights.map((night) => ({ ...night, kind: '', cooking: '' }))
+    rows.value = value.nights.map((night) => ({ ...night, kind: '', cooking: '', place: '' }))
   },
   { immediate: true },
 )
@@ -195,18 +200,26 @@ const hasCooking = computed(() => rows.value.some((row) => row.cooking !== ''))
  * Подсказки «Кострового» (29.10.2026, слова заказчика):
  * - есть костёр хоть в одной ночи — «Запланирован костёр. Топор, пила, розжиг»;
  * - есть горелка — «Запланированы N готовок на горелках», где N — число
- *   ночёвок × 2: ужин и завтрак на каждую ночь.
+ *   ночей **с готовкой на горелке** × 2: ужин и завтрак на каждую такую ночь.
  */
 const hasFire = computed(() => rows.value.some((row) => isFireCooking(row.cooking)))
 
 const hasStove = computed(() => rows.value.some((row) => isStoveCooking(row.cooking)))
 
-const stoveCookingCount = computed(() => rows.value.length * 2)
+/**
+ * Готовки на горелках считаются только по «горелочным» ночам (29.10.2026,
+ * уточнение заказчика). Раньше брались все ночи похода — и поход, где газ
+ * нужен один раз из шести, показывал двенадцать готовок. «Костёр+Горелка»
+ * считается горелочной ночью: газ в ней тоже достают.
+ */
+const stoveCookingCount = computed(
+  () => rows.value.filter((row) => isStoveCooking(row.cooking)).length * 2,
+)
 
 /**
  * «2 готовки», «4 готовки», «6 готовок» — склонение по числу. Число всегда
- * чётное (ужин и завтрак), но правило общее: однажды ночей станет одна и
- * в подсказке появится «1 готовка».
+ * чётное (ужин и завтрак), но правило общее: если однажды готовкой станет
+ * один приём, подсказка должна читаться «1 готовка».
  */
 function cookingWord(count: number): string {
   const lastTwo = count % 100
@@ -260,10 +273,30 @@ function onKindChange(row: NightRow) {
         class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-3"
         data-test="route-night"
       >
-        <h3 class="text-sm font-medium text-text" data-test="route-night-title">
-          Ночь {{ row.number }}
-          <span class="text-muted"> · {{ row.label }}</span>
-        </h3>
+        <!--
+          Заголовок и место — одной строкой: «где спим» относится ко всей
+          ночи и спрашивается раньше варианта. Поле узкое и тянется на
+          телефоне, поэтому подпись стоит перед ним, а не над ним: вторая
+          строка оторвала бы место от «Ночь 1 · 24 октября».
+        -->
+        <div class="flex items-center gap-2" data-test="route-night-head">
+          <h3 class="shrink-0 text-sm font-medium text-text" data-test="route-night-title">
+            Ночь {{ row.number }}
+            <span class="text-muted"> · {{ row.label }}</span>
+          </h3>
+
+          <label class="flex min-w-0 flex-1 items-center justify-end gap-2 text-sm text-muted">
+            Место
+            <input
+              v-model="row.place"
+              type="text"
+              maxlength="120"
+              class="min-w-0 flex-1 rounded-xl border border-border bg-field px-2 py-1 text-base text-text transition-colors focus:border-primary focus:outline-none md:max-w-56 md:text-sm"
+              data-test="route-night-place"
+              aria-label="Место ночёвки"
+            />
+          </label>
+        </div>
 
         <div class="flex flex-col gap-3 md:flex-row">
           <label class="flex flex-col gap-1 text-sm text-muted md:w-56">
@@ -313,9 +346,9 @@ function onKindChange(row: NightRow) {
     </details>
 
     <!--
-      «Палатки» и «Костровое» — заготовки следующих шагов: палатки приедут
-      из «Снаряжения», дежурства — из «Питания». Пока это только место
-      на экране, и открываются они по выбору в ночёвках.
+      «Палатки» — распределение участников: плашки палаток из «Снаряжения»
+      похода и своя палатка из личного каталога. Открывается выбором
+      «Палатка» хоть в одной ночи; распределение действует на все ночёвки.
     -->
     <details
       v-if="hasTent"
@@ -325,9 +358,7 @@ function onKindChange(row: NightRow) {
     >
       <summary class="cursor-pointer select-none text-sm text-emerald-900">Палатки</summary>
 
-      <p class="text-sm text-text" data-test="route-tents-title">
-        Распределение участников по палаткам
-      </p>
+      <TripRouteTents :trip="trip" />
     </details>
 
     <details

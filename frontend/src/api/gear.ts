@@ -1,5 +1,11 @@
 import { apiFetch } from '@/api/client'
-import type { GearItem, GearKind, GearList } from '@/types/gear'
+import type {
+  GearItem,
+  GearKind,
+  GearList,
+  TripGearItem,
+  TripGearList,
+} from '@/types/gear'
 
 /**
  * Личное снаряжение: каталог предметов с весом.
@@ -45,4 +51,34 @@ export async function updateGearItem(
 /** DELETE /api/gear/:id */
 export async function deleteGearItem(id: string): Promise<void> {
   await apiFetch<void>(`/gear/${id}`, { method: 'DELETE' })
+}
+
+// ───────────────────── снаряжение похода (вкладка «Снаряжение» и ночёвки) ─────────────────────
+
+/**
+ * GET /api/trips/:id/gear — вещи похода.
+ *
+ * Видят участники. Секция «Палатки» берёт отсюда палатки: плашка палатки —
+ * это вещь из снаряжения похода, а не текст, набранный в ночёвках.
+ */
+export async function listTripGear(tripId: string): Promise<TripGearList> {
+  return apiFetch<TripGearList>(`/trips/${tripId}/gear`)
+}
+
+/**
+ * POST /api/trips/:id/gear — предложить свою вещь в поход.
+ *
+ * Владельца в теле нет: он тот, кто прислал запрос. Предложить можно только
+ * предмет из своего каталога, поэтому `gearItemId` берётся из `listGear`.
+ * Ручка существовала и до ночёвок — это то же действие, что «взять палатку
+ * в поход» на вкладке «Снаряжение».
+ */
+export async function proposeTripGear(
+  tripId: string,
+  gearItemId: string,
+): Promise<TripGearItem> {
+  return apiFetch<TripGearItem>(`/trips/${tripId}/gear`, {
+    method: 'POST',
+    body: JSON.stringify({ gearItemId: Number(gearItemId) }),
+  })
 }

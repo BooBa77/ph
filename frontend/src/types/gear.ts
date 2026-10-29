@@ -54,3 +54,42 @@ export interface GearList {
   /** Сколько предметов без веса — они в сумму не входят. */
   itemsWithoutWeight: number
 }
+
+/**
+ * Статус вещи в снаряжении похода (`backend/src/gear/trip-gear.types.ts`).
+ *
+ * `declined` — «не берём»: строка остаётся, потому что «эту палатку
+ * обсуждали и не взяли» — тоже ответ. На экране ночёвок такая палатка
+ * не показывается: ночевать в ней никто не собирается.
+ */
+export const TRIP_GEAR_STATUSES = ['proposed', 'approved', 'declined'] as const
+export type TripGearStatus = (typeof TRIP_GEAR_STATUSES)[number]
+
+/**
+ * Вещь в снаряжении похода — ссылка на предмет личного каталога.
+ *
+ * Название, вид и вес приходят из `gear_items`: палатку взвешивают один раз,
+ * и в походе она весит столько же. Имени владельца в строке нет: состав
+ * похода загружен отдельно, и два источника правды об одном человеке не
+ * нужны — фронт склеивает их по `ownerUserId`.
+ */
+export interface TripGearItem {
+  id: string
+  gearItemId: string
+  kind: GearKind
+  title: string
+  weightGrams: number | null
+  note: string | null
+  status: TripGearStatus
+  ownerUserId: string
+  /** Кто несёт. `null` — ещё не распределена. */
+  assignedUserId: string | null
+  createdAt: string
+}
+
+/** Ответ `GET /api/trips/:id/gear` (вес считает бэкенд по утверждённым). */
+export interface TripGearList {
+  items: TripGearItem[]
+  totalWeightGrams: number
+  itemsWithoutWeight: number
+}
