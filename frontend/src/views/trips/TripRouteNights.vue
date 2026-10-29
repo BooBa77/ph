@@ -18,9 +18,11 @@ import { shortDate } from '@/utils/calendar'
  *   (мелкий, дата серым после точки-разделителя): единообразие важнее
  *   собственной типографики;
  * - выпадающий список варианта ночёвки: палатка / гостиница / изба / машина /
- *   идём всю ночь / в пути;
+ *   идём всю ночь / в пути; пустой пункт — **пустой строкой**, без подписи
+ *   «Не выбрано»: так незаполненная ночь бросается в глаза (29.10.2026);
  * - «идём всю ночь» и «в пути» — больше ничего не делается, и «гостиница»
- *   тоже: палатка, изба и машина спрашивают способ готовки (костёр/горелка).
+ *   тоже: палатка, изба и машина спрашивают способ готовки — костёр,
+ *   горелка или костёр+горелка.
  *
  * **Пустое считается как «идём всю ночь»** (29.10.2026: «Пустое пусть
  * выглядит пустым, а считаться будет как „идём всю ночь“»). Пустое — это
@@ -41,7 +43,7 @@ const props = defineProps<{ trip: Trip }>()
 /** Вид ночёвки — словарь будущего CHECK-а: гостиница и изба разные. */
 type NightKind = 'tent' | 'hotel' | 'hut' | 'car' | 'allnight' | 'transit'
 
-type CookingKind = 'fire' | 'stove'
+type CookingKind = 'fire' | 'stove' | 'both'
 
 /**
  * Порядок ровно тот, в котором заказчик перечислил варианты, «в пути» —
@@ -60,6 +62,19 @@ const NIGHT_KIND_LABELS: Record<NightKind, string> = {
 const COOKING_LABELS: Record<CookingKind, string> = {
   fire: 'Костёр',
   stove: 'Горелка',
+  both: 'Костёр+Горелка',
+}
+
+/**
+ * Что считается костром и что горелкой. «Костёр+Горелка» — это и то и другое
+ * сразу: в такую ночь нужны и топор с пилой, и газ (подсказки «Кострового»).
+ */
+function isFireCooking(cooking: CookingKind | ''): boolean {
+  return cooking === 'fire' || cooking === 'both'
+}
+
+function isStoveCooking(cooking: CookingKind | ''): boolean {
+  return cooking === 'stove' || cooking === 'both'
 }
 
 /**
@@ -177,6 +192,40 @@ const hasTent = computed(() => rows.value.some((row) => row.kind === 'tent'))
 const hasCooking = computed(() => rows.value.some((row) => row.cooking !== ''))
 
 /**
+ * Подсказки «Кострового» (29.10.2026, слова заказчика):
+ * - есть костёр хоть в одной ночи — «Запланирован костёр. Топор, пила, розжиг»;
+ * - есть горелка — «Запланированы N готовок на горелках», где N — число
+ *   ночёвок × 2: ужин и завтрак на каждую ночь.
+ */
+const hasFire = computed(() => rows.value.some((row) => isFireCooking(row.cooking)))
+
+const hasStove = computed(() => rows.value.some((row) => isStoveCooking(row.cooking)))
+
+const stoveCookingCount = computed(() => rows.value.length * 2)
+
+/**
+ * «2 готовки», «4 готовки», «6 готовок» — склонение по числу. Число всегда
+ * чётное (ужин и завтрак), но правило общее: однажды ночей станет одна и
+ * в подсказке появится «1 готовка».
+ */
+function cookingWord(count: number): string {
+  const lastTwo = count % 100
+  const last = count % 10
+
+  if (last === 1 && lastTwo !== 11) return 'готовка'
+  if (last >= 2 && last <= 4 && (lastTwo < 12 || lastTwo > 14)) return 'готовки'
+
+  return 'готовок'
+}
+
+const stoveHint = computed(() => {
+  const count = stoveCookingCount.value
+  const verb = count === 1 ? 'Запланирована' : 'Запланированы'
+
+  return `${verb} ${count} ${cookingWord(count)} на горелках`
+})
+
+/**
  * Выбрали гостиницу, ночной переход или дорогу — способ готовки больше не
  * нужен. Без сброса значение осталось бы в памяти и вернулось при возврате
  * к «палатке», хотя человек его не подтверждал.
@@ -225,7 +274,7 @@ function onKindChange(row: NightRow) {
               data-test="route-night-kind"
               @change="onKindChange(row)"
             >
-              <option value="">Не выбрано</option>
+              <option value=""></option>
               <option
                 v-for="(label, kind) in NIGHT_KIND_LABELS"
                 :key="kind"
@@ -248,7 +297,12 @@ function onKindChange(row: NightRow) {
               class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
               data-test="route-night-cooking"
             >
-              <option value="">Не выбрано</option>
+              <!--
+                Пустой пункт — пустой строкой: заказчик 29.10.2026: «давай
+                сделаем пустое поле не выбранной ночёвки — так лучше в глаза
+                бросается». Подпись «Не выбрано» убрана совсем.
+              -->
+              <option value=""></option>
               <option v-for="(label, kind) in COOKING_LABELS" :key="kind" :value="kind">
                 {{ label }}
               </option>
@@ -271,9 +325,8 @@ function onKindChange(row: NightRow) {
     >
       <summary class="cursor-pointer select-none text-sm text-emerald-900">Палатки</summary>
 
-      <p class="text-sm text-muted" data-test="route-tents-empty">
-        Кто в какой палатке спит и кто её несёт — палатки приедут сюда
-        из «Снаряжения», когда в ночёвке выбрана «Палатка».
+      <p class="text-sm text-text" data-test="route-tents-title">
+        Распределение участников по палаткам
       </p>
     </details>
 
@@ -285,9 +338,21 @@ function onKindChange(row: NightRow) {
     >
       <summary class="cursor-pointer select-none text-sm text-amber-900">Костровое</summary>
 
-      <p class="text-sm text-muted" data-test="route-cooking-empty">
-        Кто дежурит у костра, что и на чём готовит — появится здесь, когда
-        в ночёвке выбран способ готовки.
+      <p class="text-sm text-text" data-test="route-cooking-title">
+        Костровое снаряжение
+      </p>
+
+      <!--
+        Подсказки по тому, что уже выбрано в ночёвках: топор и пила — под
+        костёр, газ — под горелки. Заказчик 29.10.2026 продиктовал их
+        словами; число готовок на горелках — ночи × 2 (ужин и завтрак).
+      -->
+      <p v-if="hasFire" class="text-sm text-text" data-test="route-fire-hint">
+        Запланирован костёр. Топор, пила, розжиг
+      </p>
+
+      <p v-if="hasStove" class="text-sm text-text" data-test="route-stove-hint">
+        {{ stoveHint }}
       </p>
     </details>
   </section>

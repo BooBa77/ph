@@ -70,8 +70,10 @@ describe('плашки ночёвок', () => {
       .findAll('option')
       .map((option) => option.text())
 
+    // Первый пункт пустой строкой, а не «Не выбрано»: незаполненная ночь
+    // должна бросаться в глаза (заказчик, 29.10.2026).
     expect(options).toEqual([
-      'Не выбрано',
+      '',
       'Палатка',
       'Гостиница',
       'Изба',
@@ -91,7 +93,7 @@ describe('плашки ночёвок', () => {
     }
   })
 
-  it('палатка, изба и машина спрашивают готовку: костёр или горелка', async () => {
+  it('палатка, изба и машина спрашивают готовку: костёр, горелка, два сразу', async () => {
     const wrapper = mount(TripRouteNights, { props: { trip: trip() } })
     const kind = wrapper.get('[data-test="route-night-kind"]')
 
@@ -100,9 +102,10 @@ describe('плашки ночёвок', () => {
 
       const cooking = wrapper.findAll('[data-test="route-night-cooking"] option')
       expect(cooking.map((option) => option.text())).toEqual([
-        'Не выбрано',
+        '',
         'Костёр',
         'Горелка',
+        'Костёр+Горелка',
       ])
     }
   })
@@ -169,5 +172,107 @@ describe('плашки ночёвок', () => {
 
     expect(wrapper.find('[data-test="route-tents-section"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="route-cooking-section"]').exists()).toBe(true)
+  })
+
+  it('секции подписаны словами заказчика', async () => {
+    const wrapper = mount(TripRouteNights, {
+      props: {
+        trip: trip({
+          startsAt: '2026-10-29T00:00:00.000Z',
+          endsAt: '2026-10-31T00:00:00.000Z',
+        }),
+      },
+    })
+
+    await wrapper.get('[data-test="route-night-kind"]').setValue('tent')
+    await wrapper.get('[data-test="route-night-cooking"]').setValue('fire')
+
+    expect(wrapper.get('[data-test="route-tents-title"]').text()).toBe(
+      'Распределение участников по палаткам',
+    )
+    expect(wrapper.get('[data-test="route-cooking-title"]').text()).toBe(
+      'Костровое снаряжение',
+    )
+  })
+
+  it('костёр просит топор, пилу и розжиг', async () => {
+    const wrapper = mount(TripRouteNights, { props: { trip: trip() } })
+    await wrapper.get('[data-test="route-night-kind"]').setValue('tent')
+    await wrapper.get('[data-test="route-night-cooking"]').setValue('fire')
+
+    expect(wrapper.get('[data-test="route-fire-hint"]').text()).toBe(
+      'Запланирован костёр. Топор, пила, розжиг',
+    )
+    expect(wrapper.find('[data-test="route-stove-hint"]').exists()).toBe(false)
+  })
+
+  it('горелка считает готовки по ночам: две ночи — четыре готовки', async () => {
+    const wrapper = mount(TripRouteNights, {
+      props: {
+        trip: trip({
+          startsAt: '2026-10-29T00:00:00.000Z',
+          endsAt: '2026-10-31T00:00:00.000Z',
+        }),
+      },
+    })
+
+    await wrapper.get('[data-test="route-night-kind"]').setValue('car')
+    await wrapper.get('[data-test="route-night-cooking"]').setValue('stove')
+
+    expect(wrapper.get('[data-test="route-stove-hint"]').text()).toBe(
+      'Запланированы 4 готовки на горелках',
+    )
+    expect(wrapper.find('[data-test="route-fire-hint"]').exists()).toBe(false)
+  })
+
+  it('«Костёр+Горелка» показывает обе подсказки', async () => {
+    const wrapper = mount(TripRouteNights, {
+      props: {
+        trip: trip({
+          startsAt: '2026-10-29T00:00:00.000Z',
+          endsAt: '2026-10-31T00:00:00.000Z',
+        }),
+      },
+    })
+
+    await wrapper.get('[data-test="route-night-kind"]').setValue('tent')
+    await wrapper.get('[data-test="route-night-cooking"]').setValue('both')
+
+    expect(wrapper.find('[data-test="route-fire-hint"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="route-stove-hint"]').text()).toBe(
+      'Запланированы 4 готовки на горелках',
+    )
+  })
+
+  it('одна ночь — «2 готовки», шесть ночей — «12 готовок»', async () => {
+    const oneNight = mount(TripRouteNights, {
+      props: {
+        trip: trip({
+          startsAt: '2026-10-29T00:00:00.000Z',
+          endsAt: '2026-10-30T00:00:00.000Z',
+        }),
+      },
+    })
+
+    await oneNight.get('[data-test="route-night-kind"]').setValue('tent')
+    await oneNight.get('[data-test="route-night-cooking"]').setValue('stove')
+    expect(oneNight.get('[data-test="route-stove-hint"]').text()).toBe(
+      'Запланированы 2 готовки на горелках',
+    )
+
+    const sixNights = mount(TripRouteNights, {
+      props: {
+        trip: trip({
+          startsAt: '2026-10-29T00:00:00.000Z',
+          endsAt: '2026-11-04T00:00:00.000Z',
+        }),
+      },
+    })
+
+    await sixNights.get('[data-test="route-night-kind"]').setValue('tent')
+    await sixNights.get('[data-test="route-night-cooking"]').setValue('stove')
+    expect(sixNights.get('[data-test="route-stove-hint"]').text()).toBe(
+      'Запланированы 12 готовок на горелках',
+    )
   })
 })
