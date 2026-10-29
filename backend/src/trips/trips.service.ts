@@ -59,6 +59,7 @@ import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
 import {
   MEMBERS_TAB,
+  NIGHTS_TAB,
   OFFICIAL_ONLY_TAB,
   TRIP_TABS,
   type TripTab,
@@ -81,6 +82,21 @@ const DEFAULT_PAGE_SIZE = 20;
 
 /** Сколько сообщений чата отдавать за раз, если клиент не попросил иначе. */
 const DEFAULT_MESSAGE_PAGE_SIZE = 50;
+
+/**
+ * Сколько **календарных дней** между двумя моментами.
+ *
+ * Часы не в счёт: поход «5 мая 09:00 — 5 мая 18:00» однодневный, и ночи
+ * у него нет, хотя между моментами десять часов. Считаем по датам в UTC —
+ * сервер живёт в UTC, и результат не должен зависеть от перехода на летнее
+ * время ни в одном из поясов.
+ */
+function dayDistance(from: Date, to: Date): number {
+  const start = Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate());
+  const end = Date.UTC(to.getUTCFullYear(), to.getUTCMonth(), to.getUTCDate());
+
+  return Math.round((end - start) / 86_400_000);
+}
 
 /** Как статус участия читается в системном сообщении чата. */
 function statusText(status: ParticipantStatus): string {
@@ -414,15 +430,44 @@ export class TripsService {
     /**
      * «Выпуск» есть только у официального похода (`OFFICIAL_ONLY_TAB`):
      * вкладка про выпуск группы по правилам Федерации, и у обычного похода
-     * выпуска нет. Фильтр стоит здесь — в единственном месте, где список
-     * вкладок собирается, — поэтому фронт ничего не досчитывает и меню
-     * не может разойтись с ответом сервера.
+     * выпуска нет. «Ночёвки» — только когда есть хотя бы одна ночь
+     * (`NIGHTS_TAB`): пустой табор не о чем вести. Оба фильтра стоят здесь —
+     * в единственном месте, где список вкладок собирается, — поэтому фронт
+     * ничего не досчитывает и меню не может разойтись с ответом сервера.
      */
+    const hasNights = await this.hasNights(manager, trip);
+
     return {
       tabs: TRIP_TABS.filter(
-        (code) => code !== OFFICIAL_ONLY_TAB || trip.isOfficial,
+        (code) =>
+          (code !== OFFICIAL_ONLY_TAB || trip.isOfficial) &&
+          (code !== NIGHTS_TAB || hasNights),
       ).map((code) => ({ code, canEdit: editable.has(code) })),
     };
+  }
+
+  /**
+   * Есть ли у похода хотя бы одна ночь — то, что открывает вкладку «Ночёвки».
+   *
+   * Пока таблицы ночёвок нет, ночи выводятся из дат (`NIGHTS_TAB`):
+   * решённые даты считаются по календарным дням, прогноз — по минимальной
+   * продолжительности варианта с конкретным числом. Часы в решённых датах
+   * не в счёт: поход «5 мая 09:00 — 5 мая 18:00» однодневный, ночи нет,
+   * хотя между моментами десять часов.
+   */
+  private async hasNights(
+    manager: EntityManager,
+    trip: Trip,
+  ): Promise<boolean> {
+    if (trip.startsAt !== null && trip.endsAt !== null) {
+      return dayDistance(trip.startsAt, trip.endsAt) >= 1;
+    }
+
+    const variants = await manager.find(TripDateVariant, {
+      where: { tripId: trip.id, day: Not(IsNull()) },
+    });
+
+    return variants.some((variant) => (variant.durationDays ?? 0) >= 2);
   }
 
   /**

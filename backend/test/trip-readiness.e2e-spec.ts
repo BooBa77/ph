@@ -272,6 +272,33 @@ describe('Готовность похода (e2e)', () => {
     await expect(tabsOf(ownerToken)).resolves.toHaveLength(9);
   });
 
+  it('однодневный поход ночей не даёт — вкладки «Ночёвки» нет', async () => {
+    /*
+     * Заказчик 29.10.2026: «Закладка Ночёвки должна отображаться только при
+     * наличии ночёвок». Часы не в счёт: 5 мая 09:00 → 5 мая 18:00 — это
+     * десять часов и ноль ночей, хотя поход уже с конкретной датой и все
+     * остальные вкладки у него на месте.
+     */
+    await call('patch', `/api/trips/${tripId}`, ownerToken, {
+      startsAt: '2027-05-05T09:00:00.000Z',
+      endsAt: '2027-05-05T18:00:00.000Z',
+    }).expect(200);
+
+    const tabs = await tabsOf(ownerToken);
+
+    expect(tabs).not.toContain('route');
+    expect(tabs).toContain('meals');
+  });
+
+  it('ночь на месте — вкладка «Ночёвки» возвращается', async () => {
+    await call('patch', `/api/trips/${tripId}`, ownerToken, {
+      startsAt: '2027-05-05T09:00:00.000Z',
+      endsAt: '2027-05-06T18:00:00.000Z',
+    }).expect(200);
+
+    await expect(tabsOf(ownerToken)).resolves.toContain('route');
+  });
+
   it('без токена — 401', async () => {
     await request(app.getHttpServer())
       .get(`/api/trips/${tripId}/tabs`)
