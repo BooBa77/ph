@@ -197,26 +197,37 @@ export class TripTransferService {
       order: { position: 'DESC', id: 'DESC' },
     });
 
-    const leg = await manager.save(
-      manager.create(TripTransferLeg, {
-        tripId: trip.id,
-        direction: dto.direction,
-        position: (last?.position ?? 0) + 1,
-        isStage,
-        mode,
-        departsAt: new Date(dto.departsAt),
-        fromPlace: this.place(dto.fromPlace, 'Откуда'),
-        toPlace: this.place(dto.toPlace, 'Докуда'),
-        isOwnVehicle,
-        ownerUserId,
-        seats: this.seatsFor(mode, vehicle ? vehicle.seats : (dto.seats ?? null)),
-        vehicleId: vehicle?.id ?? null,
-        compensation: dto.compensation,
-        compensationAmountRub: amount,
-        isRoundTrip,
-        note: this.note(dto.note),
-      }),
-    );
+    const leg = manager.create(TripTransferLeg, {
+      tripId: trip.id,
+      direction: dto.direction,
+      position: (last?.position ?? 0) + 1,
+      isStage,
+      mode,
+      departsAt: new Date(dto.departsAt),
+      fromPlace: this.place(dto.fromPlace, 'Откуда'),
+      toPlace: this.place(dto.toPlace, 'Докуда'),
+      isOwnVehicle,
+      ownerUserId,
+      seats: this.seatsFor(mode, vehicle ? vehicle.seats : (dto.seats ?? null)),
+      vehicleId: vehicle?.id ?? null,
+      compensation: dto.compensation,
+      compensationAmountRub: amount,
+      isRoundTrip,
+      note: this.note(dto.note),
+    });
+
+    /**
+     * Владелец — участник своего рейса, и его окно дат проверяется так же,
+     * как у любого посаженного. Заказчик 28.10.2026: «было бы правильно,
+     * если был выбран Пётр как водитель» — то есть если человека выбрали,
+     * его выезд 09:14 и есть граница. `leg` ещё не сохранена, `coming`
+     * добавляет владельца в проверку вручную.
+     */
+    if (isOwnVehicle && ownerUserId !== null) {
+      await this.assertLegDate(manager, trip, leg, ownerUserId);
+    }
+
+    await manager.save(leg);
 
     // Владелец едет в своём ТС: место он занимает, и «присоединяться»
     // к собственной машине ему нечего.
@@ -426,7 +437,18 @@ export class TripTransferService {
     if (dto.departsAt !== undefined) leg.departsAt = new Date(dto.departsAt);
     this.assertWithinTrip(trip, leg.departsAt);
     if (dto.isStage !== undefined) leg.isStage = dto.isStage;
-    await this.assertLegDate(manager, trip, leg);
+
+    /** Новый владелец садится в рейс, значит его окно дат тоже проверяем. */
+    const nextOwnerId = isOwnVehicle ? ownerUserId : null;
+
+    await this.assertLegDate(
+      manager,
+      trip,
+      leg,
+      nextOwnerId !== null && nextOwnerId !== previousOwnerId
+        ? nextOwnerId
+        : undefined,
+    );
     if (dto.fromPlace !== undefined) leg.fromPlace = this.place(dto.fromPlace, 'Откуда');
     if (dto.toPlace !== undefined) leg.toPlace = this.place(dto.toPlace, 'Докуда');
     leg.isOwnVehicle = isOwnVehicle;

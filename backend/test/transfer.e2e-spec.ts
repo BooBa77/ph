@@ -1760,6 +1760,24 @@ describe('Трансфер похода (e2e)', () => {
         .set('Authorization', `Bearer ${organizerToken}`)
         .send({ userId: petrId })
         .expect(400);
+
+      // И водителем его на этот этап не выбрать: «если был выбран Пётр
+      // как водитель» — тогда его выезд в 18:00 и есть граница.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/transfer/legs`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({
+          direction: 'there',
+          isStage: true,
+          mode: 'truck',
+          departsAt: '2026-12-07T20:30:00.000Z',
+          fromPlace: 'Витязь, кордон',
+          toPlace: 'Сухой ручей',
+          compensation: 'free',
+          isOwnVehicle: true,
+          ownerUserId: petrId,
+        })
+        .expect(400);
     } finally {
       await dataSource.query(
         `UPDATE trips SET starts_at = NULL, ends_at = NULL WHERE id = $1`,
