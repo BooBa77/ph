@@ -240,16 +240,113 @@ describe('секция «Палатки»', () => {
     expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живёт 1 (Анна)')
   })
 
-  it('«Добавить тент» — пока только кнопка: она ничего не открывает и не добавляет', async () => {
+  it('«Добавить тент» берёт тент из личного каталога, но в поход его не пишет', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([
+        { ...personalTent('60', 'Тент 3×4'), kind: 'other', weightGrams: 3000 },
+        { ...personalTent('61', 'Аптечка'), kind: 'other' },
+      ]),
+    )
+
     const wrapper = await mounted()
 
-    const button = wrapper.get('[data-test="route-tent-awning"]')
-    expect(button.text()).toBe('Добавить тент')
+    await wrapper.get('[data-test="route-tent-awning"]').trigger('click')
+    await flushPromises()
 
-    await button.trigger('click')
+    expect(wrapper.find('[data-test="route-awning-dialog"]').exists()).toBe(true)
+    // В списке только тенты: аптечка тентом не считается.
+    expect(
+      wrapper.get('[data-test="route-awning-gear"]').findAll('option').map((node) => node.text()),
+    ).toEqual(['выберите…', 'Тент 3×4 · 3000 гр.'])
 
-    expect(wrapper.find('[data-test="route-tent-dialog"]').exists()).toBe(false)
+    await wrapper.get('[data-test="route-awning-gear"]').setValue('60')
+    await wrapper.get('[data-test="route-awning-save"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="route-awning-dialog"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="route-awning"] span').text()).toBe('Тент - 3000 гр. (Олег)')
+    // Строка живёт только на экране: ручка предложения не вызывалась.
+    expect(mocks.proposeTripGear).not.toHaveBeenCalled()
     expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(1)
+  })
+
+  it('кнопки цветут по состоянию: палатка — пока не распределён, тент — пока его нет', async () => {
+    mocks.listGear.mockResolvedValue(gearList([{ ...personalTent('60', 'Тент'), kind: 'other' }]))
+
+    const wrapper = await mounted()
+
+    // Олег нигде не живёт, тента в секции нет — обе кнопки цветные.
+    expect(wrapper.get('[data-test="route-tent-add"]').classes()).toContain('bg-emerald-600')
+    expect(wrapper.get('[data-test="route-tent-awning"]').classes()).toContain('bg-emerald-600')
+
+    // Взял тент — его кнопка стала белой.
+    await wrapper.get('[data-test="route-tent-awning"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-awning-gear"]').setValue('60')
+    await wrapper.get('[data-test="route-awning-save"]').trigger('click')
+
+    expect(wrapper.get('[data-test="route-tent-awning"]').classes()).toContain('bg-field')
+
+    // Организатор (Олег) взял себя в палатку Анны — место есть, кнопка белая.
+    await wrapper.get('[data-test="route-tent-add-member"]').setValue(ME)
+
+    expect(wrapper.get('[data-test="route-tent-add"]').classes()).toContain('bg-field')
+  })
+
+  it('«Попроситься» — белая, а не акцентная', async () => {
+    const wrapper = await mounted(makeTrip({ organizerUserId: ANNA }))
+
+    const join = wrapper.get('[data-test="route-tent-join"]')
+    expect(join.text()).toBe('Попроситься')
+    expect(join.classes()).toContain('bg-field')
+    expect(join.classes()).not.toContain('bg-primary')
+  })
+
+  it('владелец убирает свою палатку крестиком сразу', async () => {
+    mocks.listTripGear.mockResolvedValue({
+      items: [
+        tripGearItem({
+          id: 'g9',
+          gearItemId: '19',
+          kind: 'tent',
+          title: 'Палатка Олега',
+          ownerUserId: ME,
+        }),
+      ],
+      totalWeightGrams: 0,
+      itemsWithoutWeight: 0,
+    })
+
+    const wrapper = await mounted(makeTrip({ organizerUserId: ANNA }))
+
+    await wrapper.get('[data-test="route-tent-remove-g9"]').trigger('click')
+
+    expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(0)
+    expect(wrapper.find('[data-test="route-tents-empty"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
+  })
+
+  it('организатор чужую палатку только предлагает убрать', async () => {
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-tent-remove-g1"]').trigger('click')
+
+    // Палатка на месте, заголовок зачёркнут, рядом — словами, кто предлагает.
+    expect(wrapper.get('[data-test="route-tent-title"]').classes()).toContain('line-through')
+    expect(wrapper.get('[data-test="route-tent-removal"]').text()).toBe(
+      'организатор предлагает убрать',
+    )
+
+    await wrapper.get('[data-test="route-tent-remove-g1"]').trigger('click')
+
+    expect(wrapper.get('[data-test="route-tent-title"]').classes()).not.toContain('line-through')
+    expect(wrapper.find('[data-test="route-tent-removal"]').exists()).toBe(false)
+  })
+
+  it('постороннему участнику крестика палатки нет', async () => {
+    const wrapper = await mounted(makeTrip({ organizerUserId: ANNA }))
+
+    expect(wrapper.find('[data-test="route-tent-remove-g1"]').exists()).toBe(false)
   })
 
   it('«не распределены» — только идущие: «пока не решил» и остальные не в счёте', async () => {

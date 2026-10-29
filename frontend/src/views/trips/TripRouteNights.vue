@@ -365,10 +365,10 @@ function onKindChange(row: NightRow) {
     <details
       v-if="hasCooking"
       open
-      class="flex flex-col gap-3 rounded-2xl border border-amber-300 bg-amber-100 p-3"
+      class="flex flex-col gap-3 rounded-2xl border border-red-300 bg-red-100 p-3"
       data-test="route-cooking-section"
     >
-      <summary class="cursor-pointer select-none text-sm text-amber-900">Костровое</summary>
+      <summary class="cursor-pointer select-none text-sm text-red-900">Костровое</summary>
 
       <!--
         Слова «Костровое снаряжение» здесь больше нет (29.10.2026): секция
@@ -376,23 +376,33 @@ function onKindChange(row: NightRow) {
       -->
 
       <!--
-        Подсказки по тому, что уже выбрано в ночёвках: топор и пила — под
-        костёр, газ — под горелки. Заказчик 29.10.2026 продиктовал их
+        Подсказки по тому, что уже выбрано в ночёвках: костёр — повод взять
+        топор и пилу, горелка — газ. Заказчик 29.10.2026 продиктовал их
         словами; число готовок на горелках — по горелочным ночам × 2.
       -->
-      <p v-if="hasFire" class="text-sm text-text" data-test="route-fire-hint">
-        Запланирован костёр. Топор, пила, розжиг
-      </p>
+      <div class="flex flex-col gap-1" data-test="route-cooking-hints">
+        <p v-if="hasFire" class="text-sm text-text" data-test="route-fire-hint">
+          Запланирован костёр.
+        </p>
 
-      <p v-if="hasStove" class="text-sm text-text" data-test="route-stove-hint">
-        {{ stoveHint }}
-      </p>
+        <p v-if="hasStove" class="text-sm text-text" data-test="route-stove-hint">
+          {{ stoveHint }}
+        </p>
+      </div>
+
+      <!--
+        Черта отделяет подсказки от вещей (29.10.2026): «Запланирован костёр»
+        и пилюля «Горелка - 130 гр. (Анна)» — разные слои, и без разделителя
+        они слипались в один текст.
+      -->
+      <hr class="border-red-300" data-test="route-cooking-divider" />
 
       <!--
         Кнопки «Добавить топор/пилу/розжиг/таган/горелку/баллон» и пилюли
         предложенного: участники предлагают своё снаряжение нужного типа.
+        Кнопки видны по плану ночёвок, поэтому секция получает fire и stove.
       -->
-      <TripRouteCooking :trip="trip" />
+      <TripRouteCooking :trip="trip" :fire="hasFire" :stove="hasStove" />
     </details>
   </section>
 </template>

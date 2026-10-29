@@ -230,7 +230,7 @@ describe('плашки ночёвок', () => {
     expect(wrapper.find('[data-test="route-cooking-section"]').exists()).toBe(false)
   })
 
-  it('«Палатка» открывает зелёные «Палатки», готовка — жёлтое «Костровое»', async () => {
+  it('«Палатка» открывает зелёные «Палатки», готовка — красное «Костровое»', async () => {
     const wrapper = mount(TripRouteNights, { props: { trip: trip() } })
     const kind = wrapper.get('[data-test="route-night-kind"]')
 
@@ -282,15 +282,49 @@ describe('плашки ночёвок', () => {
     expect(wrapper.get('[data-test="route-cooking-add-axe"]').text()).toBe('Добавить топор')
   })
 
-  it('костёр просит топор, пилу и розжиг', async () => {
+  it('костёр просит топор, пилу, розжиг и таган, а подсказка — только «Запланирован костёр.»', async () => {
+    const wrapper = mount(TripRouteNights, { props: { trip: trip() } })
+    await wrapper.get('[data-test="route-night-kind"]').setValue('tent')
+    await wrapper.get('[data-test="route-night-cooking"]').setValue('fire')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="route-fire-hint"]').text()).toBe('Запланирован костёр.')
+    expect(wrapper.find('[data-test="route-stove-hint"]').exists()).toBe(false)
+
+    const buttons = wrapper.findAll('[data-test^="route-cooking-add-"]').map((node) => node.text())
+    expect(buttons).toEqual([
+      'Добавить топор',
+      'Добавить пилу',
+      'Добавить розжиг',
+      'Добавить таган',
+    ])
+  })
+
+  it('запланирована горелка — газовые кнопки, а не костровые', async () => {
+    const wrapper = mount(TripRouteNights, { props: { trip: trip() } })
+    await wrapper.get('[data-test="route-night-kind"]').setValue('tent')
+    await wrapper.get('[data-test="route-night-cooking"]').setValue('stove')
+    await flushPromises()
+
+    expect(
+      wrapper.findAll('[data-test^="route-cooking-add-"]').map((node) => node.text()),
+    ).toEqual(['Добавить горелку', 'Добавить газовый баллон'])
+  })
+
+  it('«Костровое» — красная секция, подсказки отделены от вещей чертой', async () => {
     const wrapper = mount(TripRouteNights, { props: { trip: trip() } })
     await wrapper.get('[data-test="route-night-kind"]').setValue('tent')
     await wrapper.get('[data-test="route-night-cooking"]').setValue('fire')
 
-    expect(wrapper.get('[data-test="route-fire-hint"]').text()).toBe(
-      'Запланирован костёр. Топор, пила, розжиг',
-    )
-    expect(wrapper.find('[data-test="route-stove-hint"]').exists()).toBe(false)
+    const section = wrapper.get('[data-test="route-cooking-section"]')
+    expect(section.classes()).toContain('bg-red-100')
+    expect(section.classes()).not.toContain('bg-amber-100')
+    expect(section.get('summary').classes()).toContain('text-red-900')
+
+    // Разделитель — между подсказками и пилюлями: иначе «Запланирован костёр»
+    // и «Горелка - 130 гр. (Анна)» слипаются в один текст.
+    expect(wrapper.find('[data-test="route-cooking-hints"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="route-cooking-divider"]').exists()).toBe(true)
   })
 
   it('горелка считает только горелочные ночи: одна из двух — две готовки', async () => {

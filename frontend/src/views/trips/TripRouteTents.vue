@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
 import { listGear, listTripGear, proposeTripGear } from '@/api/gear'
@@ -44,9 +44,22 @@ import { weightInGrams } from '@/utils/gearWeight'
  * у палатки это число мест, и пока его играет вместимость из диалога.
  * Веса нет — нет и «гр.» в заголовке.
  *
- * **Тент — не палатка.** Кнопка «Добавить тент» стоит рядом с «Добавить свою
- * палатку», но пока ничего не делает: под тентом никто не ночует, места
- * в распределении у него нет (заказчик 29.10.2026: «пока просто кнопка»).
+ * **Тент — не палатка.** Кнопка «Добавить тент» открывает выбор из личного
+ * каталога, но строка в снаряжение похода не пишется: вида «тент» в модели
+ * нет, и пилюля живёт только на экране. Под тентом никто не ночует, места
+ * в распределении у него нет (заказчик 29.10.2026: «пока просто кнопка» —
+ * теперь кнопка хотя бы показывает формат пилюли и крестик).
+ *
+ * **Крестики — по правам на вещь** (29.10.2026): у владельца палатки или
+ * тента крестик убирает его из секции, у организатора — только **предлагает**
+ * убрать: подпись зачёркивается, пунктирная рамка, а решает владелец.
+ * Повторное нажатие организатора отменяет предложение. Удаление пока
+ * в памяти: ручки удаления вещи из похода нет.
+ *
+ * **Цвет кнопок — ответ на «мне это ещё нужно?»** (29.10.2026): «Добавить
+ * свою палатку» цветная, пока смотрящий не распределён, «Добавить тент» —
+ * пока тента в секции нет. «Попроситься» наоборот белая: это просьба,
+ * а не главное действие.
  *
  * Права: владелец правит свою палатку, организатор — любую. Матрицу ролей
  * фронт не повторяет — здесь она и не нужна, потому что серверного ответа
@@ -85,7 +98,29 @@ interface TentCard {
   /** Вес вещи из каталога: его показываем в заголовке, если он известен. */
   weightGrams: number | null
   members: TentMember[]
+  /** Организатор предложил убрать палатку: заголовок зачёркнут, решает владелец. */
+  removalProposed: boolean
 }
+
+/**
+ * Тент в секции «Палатки» (29.10.2026).
+ *
+ * В снаряжении похода вида «тент» нет: `gear_items.kind` знает только
+ * палатку, а тент — не спальное место, и под ним никто не ночует. Поэтому
+ * тент пока **локальная пилюля**: его нельзя предложить серверу, зато видно
+ * формат «Тент - 3000 гр. (Олег)» и крестик с теми же правами, что у вещей.
+ * Серверная модель появится вместе с описанием снаряжения (`gear.md` §8).
+ */
+interface AwningPill {
+  /** Ключ строки: предмет личного каталога, из которого взяли тент. */
+  gearItemId: string
+  title: string
+  weightGrams: number | null
+  ownerUserId: string
+  ownerName: string
+  removalProposed: boolean
+}
+
 
 const meId = computed(() => auth.user?.id ?? '')
 
@@ -218,6 +253,23 @@ const unassigned = computed(() => {
   return goingPeople.value.filter((person) => !busy.has(person.userId))
 })
 
+/**
+ * Есть ли у смотрящего где жить (29.10.2026). «Добавить свою палатку» —
+ * цветная, пока человек ни в одной палатке, и белая, когда место уже есть:
+ * цвет кнопки и есть ответ на вопрос «мне это ещё нужно?».
+ */
+const amUnassigned = computed(() =>
+  unassigned.value.some((person) => person.userId === meId.value),
+)
+
+/** Тенты: локальные пилюли секции, серверной модели ещё нет. */
+const awnings = ref<AwningPill[]>([])
+
+/** Как узнаём тент в личном каталоге: вида «тент» в `gear_items` нет. */
+const AWNING_TITLE = /тент|tarp|навес|маркиз/i
+
+const hasAwning = computed(() => awnings.value.length > 0)
+
 // ───────────────────────────── загрузка ─────────────────────────────
 
 /**
@@ -249,6 +301,7 @@ function syncTents(items: TripGearItem[]): void {
       members: goingPeople.value.some((person) => person.userId === item.ownerUserId)
         ? [{ userId: item.ownerUserId, displayName: ownerName, status: 'accepted' }]
         : [],
+      removalProposed: false,
     }
   })
 }
@@ -324,6 +377,120 @@ function acceptRequest(tent: TentCard, person: TentMember): void {
   )
 }
 
+// ───────────────────────────── крестик палатки ─────────────────────────────
+
+/**
+ * Крестик на плашке (29.10.2026): владелец убирает свою палатку из секции,
+ * организатор чужую только **предлагает** убрать — заголовок зачёркивается,
+ * а убирает владелец. Действие в памяти: ручки удаления вещи из похода нет,
+ * она появится вместе с моделью ночёвок.
+ */
+function removeTent(tent: TentCard): void {
+  if (isMyTent(tent)) {
+    tents.value = tents.value.filter((card) => card.tripGearId !== tent.tripGearId)
+
+    return
+  }
+
+  tent.removalProposed = !tent.removalProposed
+}
+
+function removeTentHint(tent: TentCard): string {
+  if (isMyTent(tent)) return 'Убрать палатку из секции'
+
+  return tent.removalProposed
+    ? 'Вернуть палатку: предложение убрать отменено'
+    : 'Предложить убрать палатку: решает владелец'
+}
+
+// ───────────────────────────── тент ─────────────────────────────
+
+const isAwningDialogOpen = ref(false)
+const isAwningLoading = ref(false)
+const awningError = ref<string | null>(null)
+
+/** Тенты, которые можно взять: свои и ещё не взятые. */
+const myAwnings = ref<GearItem[]>([])
+const draftAwningId = ref('')
+
+async function openAwningDialog(): Promise<void> {
+  isAwningDialogOpen.value = true
+  awningError.value = null
+  draftAwningId.value = ''
+  isAwningLoading.value = true
+
+  try {
+    const list = await listGear()
+    const taken = new Set(awnings.value.map((awning) => awning.gearItemId))
+
+    myAwnings.value = list.items.filter(
+      (item) => AWNING_TITLE.test(item.title) && !taken.has(item.id),
+    )
+  } catch (problem) {
+    awningError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось загрузить снаряжение'
+  } finally {
+    isAwningLoading.value = false
+  }
+}
+
+/**
+ * Тент добавляется только на экране: вида «тент» в снаряжении похода нет,
+ * и предложить вещь серверу значило бы показать её потом палаткой.
+ */
+function saveAwning(): void {
+  const item = myAwnings.value.find((row) => row.id === draftAwningId.value)
+
+  if (item === undefined) return
+
+  awnings.value = [
+    ...awnings.value,
+    {
+      gearItemId: item.id,
+      title: item.title,
+      weightGrams: item.weightGrams,
+      ownerUserId: meId.value,
+      ownerName: auth.user?.displayName ?? 'Участник',
+      removalProposed: false,
+    },
+  ]
+
+  isAwningDialogOpen.value = false
+}
+
+/** Строка выбора: «Тент 3×4 · 3000 гр.». */
+function awningOptionText(item: GearItem): string {
+  const weight = weightInGrams(item.weightGrams)
+
+  return weight === null ? item.title : `${item.title} · ${weight}`
+}
+
+/** Пилюля тента в формате заказчика: «Тент - 3000 гр. (Олег)». */
+function awningText(awning: AwningPill): string {
+  const weight = weightInGrams(awning.weightGrams)
+  const head = weight === null ? 'Тент' : `Тент - ${weight}`
+
+  return `${head} (${awning.ownerName})`
+}
+
+function canManageAwning(awning: AwningPill): boolean {
+  return (
+    awning.ownerUserId === meId.value ||
+    (meId.value !== '' && props.trip.organizerUserId === meId.value)
+  )
+}
+
+function removeAwning(awning: AwningPill): void {
+  if (awning.ownerUserId === meId.value) {
+    awnings.value = awnings.value.filter((row) => row.gearItemId !== awning.gearItemId)
+
+    return
+  }
+
+  awning.removalProposed = !awning.removalProposed
+}
+
+
 // ───────────────────────────── своя палатка ─────────────────────────────
 
 const isDialogOpen = ref(false)
@@ -391,6 +558,7 @@ async function saveTent(): Promise<void> {
           me === undefined
             ? []
             : [{ userId: me.userId, displayName: me.displayName, status: 'accepted' }],
+        removalProposed: false,
       },
     ]
 
@@ -428,16 +596,51 @@ async function saveTent(): Promise<void> {
       <article
         v-for="tent in tents"
         :key="tent.tripGearId"
-        class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
+        class="flex flex-col gap-2 rounded-xl border bg-surface p-3"
+        :class="tent.removalProposed ? 'border-dashed border-emerald-400' : 'border-border'"
         data-test="route-tent"
       >
         <header class="flex flex-col gap-0.5">
-          <h4 class="text-base font-medium text-text" data-test="route-tent-title">
-            {{ tentTitle(tent) }}
-          </h4>
+          <!--
+            Заголовок и крестик — одной строкой: крестик убирает палатку
+            из секции. У владельца — сразу, у организатора — предложением
+            (заголовок зачёркивается), как у костровых вещей.
+          -->
+          <div class="flex items-start justify-between gap-2">
+            <h4
+              class="text-base font-medium"
+              :class="tent.removalProposed ? 'text-muted line-through' : 'text-text'"
+              data-test="route-tent-title"
+            >
+              {{ tentTitle(tent) }}
+            </h4>
+
+            <button
+              v-if="canManage(tent)"
+              type="button"
+              class="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-base text-muted transition-colors hover:text-text"
+              :title="removeTentHint(tent)"
+              :data-test="`route-tent-remove-${tent.tripGearId}`"
+              @click="removeTent(tent)"
+            >
+              ×
+            </button>
+          </div>
 
           <span class="text-sm text-muted" data-test="route-tent-summary">
             {{ membersText(tent) }}
+          </span>
+
+          <!--
+            Предложение организатора видно словами: зачёркнутый заголовок
+            сам по себе можно принять за «палатка ушла», а решает владелец.
+          -->
+          <span
+            v-if="tent.removalProposed"
+            class="text-xs text-muted"
+            data-test="route-tent-removal"
+          >
+            организатор предлагает убрать
           </span>
 
           <!--
@@ -529,10 +732,16 @@ async function saveTent(): Promise<void> {
         </div>
 
         <div class="flex flex-wrap items-center gap-2">
+          <!--
+            «Попроситься» — белая (29.10.2026): это не главное действие
+            секции, а просьба, и цветная кнопка рядом с «взять в палатку»
+            перетягивала внимание на себя. Цветная — только там, где
+            человеку действительно есть что предложить.
+          -->
           <button
             v-if="joinStatus(tent) !== null"
             type="button"
-            class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90"
+            class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-emerald-600"
             data-test="route-tent-join"
             @click="join(tent)"
           >
@@ -569,6 +778,49 @@ async function saveTent(): Promise<void> {
         </div>
       </article>
 
+      <!--
+        Тенты — локальные пилюли в формате «Тент - 3000 гр. (Олег)»: под
+        тентом никто не ночует, поэтому в распределении его нет, но у вещи
+        есть хозяин, вес и крестик с теми же правами, что у палаток.
+      -->
+      <div
+        v-if="awnings.length > 0"
+        class="flex flex-wrap items-center gap-2"
+        data-test="route-awnings"
+      >
+        <span
+          v-for="awning in awnings"
+          :key="awning.gearItemId"
+          class="flex items-center gap-1 rounded-full border px-2 py-1 text-sm"
+          :class="
+            awning.removalProposed
+              ? 'border-dashed border-emerald-400 bg-transparent text-emerald-800'
+              : 'border-emerald-300 bg-emerald-50 text-emerald-900'
+          "
+          :title="awning.title"
+          data-test="route-awning"
+        >
+          <span :class="awning.removalProposed ? 'line-through' : ''">
+            {{ awningText(awning) }}
+          </span>
+
+          <button
+            v-if="canManageAwning(awning)"
+            type="button"
+            class="cursor-pointer border-0 bg-transparent p-0 text-emerald-700 transition-colors hover:text-emerald-900"
+            :title="
+              awning.ownerUserId === meId
+                ? 'Убрать тент из секции'
+                : 'Предложить убрать тент: решает владелец'
+            "
+            :data-test="`route-awning-remove-${awning.gearItemId}`"
+            @click="removeAwning(awning)"
+          >
+            ×
+          </button>
+        </span>
+      </div>
+
       <!-- Кто ещё нигде не живёт -->
       <div v-if="unassigned.length > 0" class="flex flex-col gap-2">
         <hr class="border-border" />
@@ -585,10 +837,21 @@ async function saveTent(): Promise<void> {
         </div>
       </div>
 
+      <!--
+        Цвет обеих кнопок — ответ на вопрос «мне это ещё нужно?» (29.10.2026):
+        «Добавить свою палатку» цветная, пока смотрящий нигде не живёт,
+        «Добавить тент» — пока тента в секции нет. Нажимать можно всегда:
+        второй топор или второй тент тоже бывают.
+      -->
       <div class="flex flex-wrap items-center gap-2">
         <button
           type="button"
-          class="cursor-pointer rounded-xl bg-emerald-600 px-3 py-2 text-sm text-white transition-opacity hover:opacity-90"
+          class="cursor-pointer rounded-xl px-3 py-2 text-sm transition-colors"
+          :class="
+            amUnassigned
+              ? 'border border-emerald-600 bg-emerald-600 text-white hover:opacity-90'
+              : 'border border-border bg-field text-text hover:border-emerald-600'
+          "
           data-test="route-tent-add"
           @click="openDialog"
         >
@@ -596,14 +859,20 @@ async function saveTent(): Promise<void> {
         </button>
 
         <!--
-          Тент — не палатка и не спальное место: под ним никто не ночует,
-          поэтому в распределении его нет. Заказчик 29.10.2026: «пока просто
-          кнопка», наполнение — вместе с описанием снаряжения в БД.
+          Тент — не палатка и не спальное место: под ним никто не ночует.
+          Вида «тент» в снаряжении похода нет, поэтому пилюля живёт только
+          на экране; серверная модель — вместе с описанием снаряжения.
         -->
         <button
           type="button"
-          class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors hover:border-emerald-600"
+          class="cursor-pointer rounded-xl px-3 py-2 text-sm transition-colors"
+          :class="
+            hasAwning
+              ? 'border border-border bg-field text-text hover:border-emerald-600'
+              : 'border border-emerald-600 bg-emerald-600 text-white hover:opacity-90'
+          "
           data-test="route-tent-awning"
+          @click="openAwningDialog"
         >
           Добавить тент
         </button>
@@ -684,6 +953,72 @@ async function saveTent(): Promise<void> {
               :disabled="isSaving"
               data-test="route-tent-cancel"
               @click="isDialogOpen = false"
+            >
+              Отмена
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!--
+        Тент: выбор из личного каталога, но строка в поход не пишется.
+        Вида «тент» в снаряжении похода нет — вещь с тем же видом «палатка»
+        показалась бы потом палаткой, а не тентом.
+      -->
+      <div
+        v-if="isAwningDialogOpen"
+        class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/30 p-4"
+        data-test="route-awning-dialog"
+      >
+        <div
+          class="flex w-full max-w-md flex-col gap-2 rounded-xl border border-border bg-surface p-4"
+        >
+          <h3 class="text-base font-medium text-text">Тент</h3>
+
+          <label class="flex flex-col gap-1 text-sm text-muted">
+            Тент из снаряжения
+            <select
+              v-model="draftAwningId"
+              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
+              :disabled="isAwningLoading"
+              data-test="route-awning-gear"
+            >
+              <option value="">выберите…</option>
+              <option v-for="item in myAwnings" :key="item.id" :value="item.id">
+                {{ awningOptionText(item) }}
+              </option>
+            </select>
+          </label>
+
+          <p
+            v-if="!isAwningLoading && myAwnings.length === 0"
+            class="text-xs text-muted"
+            data-test="route-awning-no-gear"
+          >
+            Тента в личном снаряжении нет — заведите вещь со словом «тент»
+            в названии, в профиле на вкладке «Снаряжение».
+          </p>
+
+          <p v-if="awningError" class="text-sm text-red-600" data-test="route-awning-error">
+            {{ awningError }}
+          </p>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+              :disabled="draftAwningId === ''"
+              data-test="route-awning-save"
+              @click="saveAwning"
+            >
+              Добавить
+            </button>
+
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary"
+              data-test="route-awning-cancel"
+              @click="isAwningDialogOpen = false"
             >
               Отмена
             </button>
