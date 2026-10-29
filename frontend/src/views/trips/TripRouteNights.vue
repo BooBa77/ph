@@ -3,6 +3,7 @@ import { computed, ref, watch } from 'vue'
 
 import type { Trip } from '@/types/trips'
 import { shortDate } from '@/utils/calendar'
+import TripRouteCooking from '@/views/trips/TripRouteCooking.vue'
 import TripRouteTents from '@/views/trips/TripRouteTents.vue'
 
 /**
@@ -369,14 +370,15 @@ function onKindChange(row: NightRow) {
     >
       <summary class="cursor-pointer select-none text-sm text-amber-900">Костровое</summary>
 
-      <p class="text-sm text-text" data-test="route-cooking-title">
-        Костровое снаряжение
-      </p>
+      <!--
+        Слова «Костровое снаряжение» здесь больше нет (29.10.2026): секция
+        не видна пустой, а что она про костровое — видно из названия.
+      -->
 
       <!--
         Подсказки по тому, что уже выбрано в ночёвках: топор и пила — под
         костёр, газ — под горелки. Заказчик 29.10.2026 продиктовал их
-        словами; число готовок на горелках — ночи × 2 (ужин и завтрак).
+        словами; число готовок на горелках — по горелочным ночам × 2.
       -->
       <p v-if="hasFire" class="text-sm text-text" data-test="route-fire-hint">
         Запланирован костёр. Топор, пила, розжиг
@@ -385,6 +387,12 @@ function onKindChange(row: NightRow) {
       <p v-if="hasStove" class="text-sm text-text" data-test="route-stove-hint">
         {{ stoveHint }}
       </p>
+
+      <!--
+        Кнопки «Добавить топор/пилу/розжиг/таган/горелку/баллон» и пилюли
+        предложенного: участники предлагают своё снаряжение нужного типа.
+      -->
+      <TripRouteCooking :trip="trip" />
     </details>
   </section>
 </template>

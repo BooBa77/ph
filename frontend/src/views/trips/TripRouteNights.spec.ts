@@ -1,5 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
-import { enableAutoUnmount, mount } from '@vue/test-utils'
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Trip } from '@/types/trips'
@@ -7,10 +7,10 @@ import TripRouteNights from '@/views/trips/TripRouteNights.vue'
 
 /**
  * Секции «Палатки» и «Костровое» подгружают свои данные, как только
- * открылись: палатки — участников и снаряжение похода, костровое — ничего.
- * Здесь важна раскладка ночёвок, поэтому запросы заглушены: пустой состав
- * и пустое снаряжение — тоже законное состояние («пока никто не взял
- * палатку»).
+ * открылись: палатки — участников и снаряжение похода, костровое — то же
+ * самое. Здесь важна раскладка ночёвок, поэтому запросы заглушены: пустой
+ * состав и пустое снаряжение — тоже законные состояния («пока никто не взял
+ * палатку», «пока никто не взял костровое снаряжение»).
  */
 const mocks = vi.hoisted(() => ({
   listParticipants: vi.fn(),
@@ -257,7 +257,7 @@ describe('плашки ночёвок', () => {
     expect(wrapper.find('[data-test="route-cooking-section"]').exists()).toBe(true)
   })
 
-  it('секции подписаны словами заказчика', async () => {
+  it('«Палатки» подписаны словами заказчика, а в «Костровом» лишнего текста нет', async () => {
     const wrapper = mount(TripRouteNights, {
       props: {
         trip: trip({
@@ -269,13 +269,17 @@ describe('плашки ночёвок', () => {
 
     await wrapper.get('[data-test="route-night-kind"]').setValue('tent')
     await wrapper.get('[data-test="route-night-cooking"]').setValue('fire')
+    await flushPromises()
 
     expect(wrapper.get('[data-test="route-tents-title"]').text()).toBe(
       'Распределение участников по палаткам',
     )
-    expect(wrapper.get('[data-test="route-cooking-title"]').text()).toBe(
-      'Костровое снаряжение',
-    )
+
+    // «Костровое снаряжение» убрано 29.10.2026: секция и так не видна пустой,
+    // а что она про костровое — видно из названия. Вместо текста — кнопки.
+    expect(wrapper.find('[data-test="route-cooking-title"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Костровое снаряжение')
+    expect(wrapper.get('[data-test="route-cooking-add-axe"]').text()).toBe('Добавить топор')
   })
 
   it('костёр просит топор, пилу и розжиг', async () => {
