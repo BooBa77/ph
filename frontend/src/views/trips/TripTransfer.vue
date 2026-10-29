@@ -188,8 +188,17 @@ async function load() {
 
 watch(() => props.trip.id, load, { immediate: true })
 
-/** Одна обёртка на все действия: сервер отвечает вкладкой целиком. */
-async function run(action: () => Promise<TripTransfer>): Promise<boolean> {
+/**
+ * Одна обёртка на все действия: сервер отвечает вкладкой целиком.
+ *
+ * `onError` — куда положить текст отказа. Форма карточки передаёт свой
+ * `legError`: ошибка должна быть видна **в модалке**, а не строкой под
+ * затемнением, где её не прочитать (заказчик 28.10.2026).
+ */
+async function run(
+  action: () => Promise<TripTransfer>,
+  onError?: (message: string) => void,
+): Promise<boolean> {
   if (isSaving.value) return false
 
   isSaving.value = true
@@ -199,8 +208,12 @@ async function run(action: () => Promise<TripTransfer>): Promise<boolean> {
     plan.value = await action()
     return true
   } catch (problem) {
-    actionError.value =
+    const message =
       problem instanceof ApiError ? problem.message : 'Не получилось — попробуйте ещё раз'
+
+    if (onError) onError(message)
+    else actionError.value = message
+
     return false
   } finally {
     isSaving.value = false
@@ -305,11 +318,85 @@ const vehiclesForTransfer = computed(() =>
   vehicles.value.filter((vehicle) => transferModeOfVehicle(vehicle.kind) !== null),
 )
 
-/** Кого ещё нет в карточке — их и предлагаем посадить. */
+/**
+ * Карточки одной поездки: сама, её исходная и её зеркало. Их не считаем
+ * «другим рейсом»: пара — это два конца одной поездки, а не две поездки.
+ */
+function familyOf(leg: {
+  id: string | null
+  sourceLegId: string | null
+  isRoundTrip: boolean
+}): Set<string> {
+  const ids = new Set<string>()
+
+  if (leg.id !== null) ids.add(leg.id)
+  if (leg.sourceLegId !== null) ids.add(leg.sourceLegId)
+
+  if (leg.id !== null && leg.isRoundTrip) {
+    const mirror = legs.value.find((item) => item.sourceLegId === leg.id)
+    if (mirror !== undefined) ids.add(mirror.id)
+  }
+
+  return ids
+}
+
+/**
+ * Какие направления займёт посадка в эту карточку.
+ *
+ * - заброска — никаких: этап у человека не один;
+ * - зеркало пары — только своё: посадка в него на исходную не влияет;
+ * - исходная пары — оба: человек придёт и в зеркало;
+ * - обычный рейс — своё.
+ */
+function landingDirections(leg: {
+  direction: TransferDirection
+  isStage: boolean
+  sourceLegId: string | null
+  isRoundTrip: boolean
+}): TransferDirection[] {
+  if (leg.isStage) return []
+  if (leg.sourceLegId !== null) return [leg.direction]
+
+  return leg.isRoundTrip
+    ? [leg.direction, leg.direction === 'there' ? 'back' : 'there']
+    : [leg.direction]
+}
+
+/** В каких направлениях человек уже едет — без забросок и без этой поездки. */
+function takenDirections(userId: string, family: Set<string>): Set<TransferDirection> {
+  const taken = new Set<TransferDirection>()
+
+  for (const leg of legs.value) {
+    if (leg.isStage || family.has(leg.id)) continue
+
+    if (
+      leg.passengers.some(
+        (person) => person.userId === userId && person.status === 'accepted',
+      )
+    ) {
+      taken.add(leg.direction)
+    }
+  }
+
+  return taken
+}
+
+/**
+ * Кого ещё можно взять на борт: нет в этой карточке и не едет в те
+ * направления, которые она займёт. Заявка (`requested`) место не занимает,
+ * поэтому списки её не учитывают; ушёл с рейса или потерял своё ТС —
+ * сразу вернулся в списки (они считаются из ответа сервера).
+ */
 function outsiders(leg: TripTransferLeg) {
-  return travelers.value.filter(
-    (traveler) => !leg.passengers.some((person) => person.userId === traveler.userId),
-  )
+  const family = familyOf(leg)
+  const directions = landingDirections(leg)
+
+  return travelers.value.filter((person) => {
+    if (leg.passengers.some((row) => row.userId === person.userId)) return false
+
+    const taken = takenDirections(person.userId, family)
+    return !directions.some((direction) => taken.has(direction))
+  })
 }
 
 /** Участники, которых нет ни в одной карточке стороны — они внизу секции. */
@@ -415,8 +502,9 @@ function applyDeparture(value: string) {
  * Те же правила, что проверяет сервер (400 «Дата раньше/позже…»), поэтому
  * календарь не даёт выбрать заведомо неверную дату:
  *
- * - у рейса без участников — даты похода и рейсы: не раньше первого «туда»
- *   и не позже последнего «обратно»;
+ * - у рейса без участников — **только даты похода**: заброску без людей
+ *   (вещи вывозят) не зажимают чужие рейсы, «рамки похода соблюдены» —
+ *   этого достаточно (заказчик 28.10.2026);
  * - у рейса с участниками — по каждому из них: «туда» не позже забросок
  *   и возвращения, «обратно» не раньше забросок и выезда, заброска —
  *   между его заездом и выездом.
@@ -439,17 +527,7 @@ const draftWindow = computed<{ from?: string; to?: string }>(() => {
     values.filter((value): value is string => Boolean(value)).sort()[0]
 
   if (riders.length === 0) {
-    const outbound = draft.isStage
-      ? others.filter((leg) => !leg.isStage && leg.direction === 'there')
-      : []
-    const inbound = draft.isStage
-      ? others.filter((leg) => !leg.isStage && leg.direction === 'back')
-      : []
-
-    return {
-      from: maxOf([tripDayFrom.value, ...outbound.map((leg) => toLocalInput(leg.departsAt))]),
-      to: minOf([tripDayTo.value, ...inbound.map((leg) => toLocalInput(leg.departsAt))]),
-    }
+    return { from: tripDayFrom.value, to: tripDayTo.value }
   }
 
   const from: (string | undefined)[] = []
@@ -524,6 +602,17 @@ const hidesMoney = computed(
   () => isMirror.value && !isPublicMode(legDraft.value?.mode ?? 'car'),
 )
 
+/**
+ * Флаг «туда-обратно» — только у рейса «Туда» и не у зеркала.
+ *
+ * Заказчик 28.10.2026: «у обратных рейсов не должно быть флага
+ * „Туда-обратно“». Пара рождается на рейсе «Туда»: флаг и создаёт
+ * обратный, поэтому у «Обратно» его просто нет в форме.
+ */
+const showRoundTrip = computed(
+  () => legDraft.value !== null && legDraft.value.direction === 'there' && !isMirror.value,
+)
+
 /** Флаг «наше ТС» — только тому, кому право вкладки дало флаг. */
 const canFlagOwnVehicle = computed(
   () => canEditTab.value && legDraft.value !== null && !isPublicMode(legDraft.value.mode),
@@ -573,7 +662,12 @@ function buildDraft(
     seats: leg.seats ?? '',
     compensation: leg.compensation,
     amount: leg.compensationAmountRub ?? '',
-    isRoundTrip: leg.isRoundTrip,
+    /**
+     * Флаг «туда-обратно» живёт только на рейсе «Туда»: обратный — его
+     * зеркало. У старой обратной карточки с флагом он снимется при
+     * сохранении, а не заблокирует правку (заказчик 28.10.2026).
+     */
+    isRoundTrip: leg.direction === 'there' && leg.isRoundTrip,
     sourceLegId: leg.sourceLegId,
     note: leg.note ?? '',
   }
@@ -742,14 +836,19 @@ async function saveLeg() {
     vehicleId: draft.vehicleId === '' ? null : Number(draft.vehicleId),
     compensation: draft.compensation,
     compensationAmountRub: draft.compensation === 'free' ? null : amount,
-    isRoundTrip: draft.isRoundTrip,
+    /** Пару делает рейс «Туда»; у «Обратно» флага не бывает. */
+    isRoundTrip: draft.direction === 'there' && draft.isRoundTrip,
     note: draft.note.trim() || null,
+  }
+
+  const fail = (message: string) => {
+    legError.value = message
   }
 
   const ok =
     draft.id === null
-      ? await run(() => createTransferLeg(props.trip.id, input))
-      : await run(() => updateTransferLeg(props.trip.id, draft.id as string, input))
+      ? await run(() => createTransferLeg(props.trip.id, input), fail)
+      : await run(() => updateTransferLeg(props.trip.id, draft.id as string, input), fail)
 
   if (ok) legDraft.value = null
 }
@@ -765,11 +864,31 @@ function addFrom(section: { kind: 'transfers' | 'stages'; direction: TransferDir
   else if (section.direction !== null) openLegDialog(section.direction)
 }
 
-const driverOptions = computed(() =>
-  canEditTab.value
+/**
+ * Кто может быть владельцем ТС: те, кто ещё не едет в это направление.
+ *
+ * Заказчик 28.10.2026: «не показывать в списке владельцев уже посаженных
+ * пассажиров» — иначе выбор упирается в 400 «уже определён на рейс».
+ * У пары владелец занимает оба конца, поэтому занятость смотрим по тем
+ * направлениям, которые займёт посадка.
+ */
+const driverOptions = computed(() => {
+  const draft = legDraft.value
+
+  const base = canEditTab.value
     ? travelers.value
-    : travelers.value.filter((person) => person.userId === meId.value),
-)
+    : travelers.value.filter((person) => person.userId === meId.value)
+
+  if (draft === null) return base
+
+  const family = familyOf(draft)
+  const directions = landingDirections(draft)
+
+  return base.filter((person) => {
+    const taken = takenDirections(person.userId, family)
+    return !directions.some((direction) => taken.has(direction))
+  })
+})
 </script>
 
 <template>
@@ -959,7 +1078,7 @@ const driverOptions = computed(() =>
                   :data-test="`transfer-add-passenger-${leg.id}`"
                   @change="addTraveler(leg, $event)"
                 >
-                  <option value="">посадить…</option>
+                  <option value="">взять на борт…</option>
                   <option
                     v-for="person in outsiders(leg)"
                     :key="person.userId"
@@ -1325,7 +1444,10 @@ const driverOptions = computed(() =>
               />
             </label>
 
-            <label class="flex cursor-pointer items-center gap-2 text-sm text-text">
+            <label
+              v-if="showRoundTrip"
+              class="flex cursor-pointer items-center gap-2 text-sm text-text"
+            >
               <input
                 v-model="legDraft.isRoundTrip"
                 type="checkbox"

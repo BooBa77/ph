@@ -195,12 +195,16 @@ function makePlan(overrides: Partial<TripTransfer> = {}): TripTransfer {
   }
 }
 
-async function mountTransfer(plan: TripTransfer = makePlan(), vehicles: Vehicle[] = []) {
+async function mountTransfer(
+  plan: TripTransfer = makePlan(),
+  vehicles: Vehicle[] = [],
+  trip: Trip = TRIP,
+) {
   mocks.fetchTripTransfer.mockResolvedValue(plan)
   mocks.fetchVehicles.mockResolvedValue(vehicles)
   mocks.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
 
-  const wrapper = mount(TripTransferView, { props: { trip: TRIP } })
+  const wrapper = mount(TripTransferView, { props: { trip } })
   await flushPromises()
 
   return wrapper
@@ -231,27 +235,38 @@ const MONTH_NAMES = [
 ]
 
 /**
- * Выбрать время в своей модалке: нужный месяц, день, 09:00, «ОК».
+ * Открыть модалку времени на нужном месяце.
  *
  * Встроенного `input[type=datetime-local]` больше нет — заказчик просил
  * календарь с кнопкой «ОК», поэтому значение приходит из модалки.
  */
-async function pickDeparture(wrapper: Awaited<ReturnType<typeof mountTransfer>>) {
+async function openMonth(
+  wrapper: Awaited<ReturnType<typeof mountTransfer>>,
+  at: Date,
+) {
   await wrapper.find('[data-test="transfer-departure-input"]').trigger('click')
 
-  // Окно рейса задают даты похода и рейсов, поэтому листаем до нужного месяца.
-  const title = `${MONTH_NAMES[PICKED_AT.getMonth()]} ${PICKED_AT.getFullYear()}`
+  // Календарь открывается на текущем месяце, листаем вперёд до нужного.
+  const title = `${MONTH_NAMES[at.getMonth()]} ${at.getFullYear()}`
   for (let step = 0; step < 36; step += 1) {
     if (wrapper.find('#datetime-picker-title').text() === title) break
     await wrapper.find('[data-test="datetime-next"]').trigger('click')
   }
+}
 
-  await wrapper.find(`[data-test="datetime-day-${PICKED_AT.getDate()}"]`).trigger('click')
-  await wrapper.find('[data-test="datetime-hours"]').setValue(String(PICKED_AT.getHours()))
-  await wrapper.find('[data-test="datetime-minutes"]').setValue(String(PICKED_AT.getMinutes()))
+/** Выбрать время в своей модалке: нужный месяц, день, 09:00, «ОК». */
+async function pickDeparture(
+  wrapper: Awaited<ReturnType<typeof mountTransfer>>,
+  at: Date = PICKED_AT,
+) {
+  await openMonth(wrapper, at)
+
+  await wrapper.find(`[data-test="datetime-day-${at.getDate()}"]`).trigger('click')
+  await wrapper.find('[data-test="datetime-hours"]').setValue(String(at.getHours()))
+  await wrapper.find('[data-test="datetime-minutes"]').setValue(String(at.getMinutes()))
   await wrapper.find('[data-test="datetime-ok"]').trigger('click')
 
-  return PICKED_AT.toISOString()
+  return at.toISOString()
 }
 
 /** Плашка по id — в тестах так короче, чем искать по тексту. */
@@ -443,6 +458,19 @@ describe('TripTransfer', () => {
     expect(mirror.find('[data-test="transfer-round-trip-input"]').exists()).toBe(false)
     expect(mirror.find('[data-test="transfer-compensation-input"]').exists()).toBe(false)
     expect(mirror.find('[data-test="transfer-mirror-hint"]').text()).toContain('исходном')
+
+    // У зеркала рейса (у общественного билеты на обоих концах) оплата есть,
+    // а флага «туда-обратно» всё равно нет.
+    const trainPlan = makePlan()
+    trainPlan.legs[2]!.mode = 'train'
+    trainPlan.legs[2]!.compensation = 'ticket'
+    trainPlan.legs[2]!.sourceLegId = '1'
+
+    const train = await mountTransfer(trainPlan)
+    await train.find('[data-test="transfer-edit-3"]').trigger('click')
+
+    expect(train.find('[data-test="transfer-compensation-input"]').exists()).toBe(true)
+    expect(train.find('[data-test="transfer-round-trip-input"]').exists()).toBe(false)
   })
 
   it('без суммы компенсации карточку не сохранить', async () => {
@@ -653,14 +681,14 @@ describe('TripTransfer', () => {
     )
   })
 
-  it('карточку можно посадить человека, а удаление спрашивает подтверждение', async () => {
+  it('на борт берут свободного, а удаление спрашивает подтверждение', async () => {
     const wrapper = await mountTransfer()
 
     mocks.addTransferPassenger.mockResolvedValue(makePlan())
-    await wrapper.find('[data-test="transfer-add-passenger-1"]').setValue(PETR)
+    await wrapper.find('[data-test="transfer-add-passenger-2"]').setValue(ANNA)
     await flushPromises()
 
-    expect(mocks.addTransferPassenger).toHaveBeenCalledWith('1', '1', PETR)
+    expect(mocks.addTransferPassenger).toHaveBeenCalledWith('1', '2', ANNA)
 
     mocks.removeTransferLeg.mockResolvedValue(makePlan())
 
@@ -678,6 +706,152 @@ describe('TripTransfer', () => {
     await flushPromises()
 
     expect(mocks.removeTransferLeg).toHaveBeenCalledWith('1', '2')
+  })
+
+  it('«взять на борт» предлагает только свободных в эту сторону', async () => {
+    const wrapper = await mountTransfer()
+
+    const options = (id: string) => {
+      const select = wrapper.find(`[data-test="transfer-add-passenger-${id}"]`)
+
+      return {
+        exists: select.exists(),
+        text: select.exists() ? select.text() : '',
+        values: select.exists()
+          ? select.findAll('option').map((option) => (option.element as HTMLOptionElement).value)
+          : [],
+      }
+    }
+
+    // В «Туда» свободных нет: Олег едет своей машиной, Пётр — автобусом,
+    // а Анна просится. Поля «взять на борт» на исходной паре и на автобусе
+    // тоже нет — Пётр уже в автобусе, а Олег в своей машине.
+    expect(options('1').exists).toBe(false)
+    expect(options('2').values).toEqual(['', ANNA])
+    expect(options('2').text).toContain('взять на борт')
+
+    // В «Обратно» пока никто не едет — свободны все.
+    expect(options('3').values).toEqual(['', ME, ANNA, PETR])
+  })
+
+  it('сел — ушёл из списков, потерял ТС — вернулся', async () => {
+    const plan = makePlan()
+    // Вторая обратная карточка нужна, чтобы видеть перестройку соседнего списка.
+    plan.legs.push({ ...plan.legs[2]!, id: '4', position: 2 })
+
+    const wrapper = await mountTransfer(plan)
+
+    const options = (id: string) =>
+      wrapper
+        .find(`[data-test="transfer-add-passenger-${id}"]`)
+        .findAll('option')
+        .map((option) => (option.element as HTMLOptionElement).value)
+
+    expect(options('4')).toContain(ME)
+
+    const after = makePlan()
+    after.legs.push({ ...after.legs[2]!, id: '4', position: 2 })
+    after.legs[2]!.passengers = [{ userId: ME, displayName: 'Олег', status: 'accepted' }]
+    after.legs[2]!.occupied = 1
+
+    mocks.addTransferPassenger.mockResolvedValue(after)
+    await wrapper.find('[data-test="transfer-add-passenger-3"]').setValue(ME)
+    await flushPromises()
+
+    // Олег уже едет обратно — второй раз его не предлагают.
+    expect(options('4')).not.toContain(ME)
+
+    // Сошёл с рейса — снова свободен и вернулся в список.
+    mocks.removeTransferPassenger.mockResolvedValue(plan)
+    await wrapper.find(`[data-test="transfer-leave-3-${ME}"]`).trigger('click')
+    await flushPromises()
+
+    expect(options('4')).toContain(ME)
+  })
+
+  it('в списке владельцев ТС нет уже посаженных в эту сторону', async () => {
+    const wrapper = await mountTransfer()
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+    await wrapper.find('[data-test="transfer-own-input"]').setValue(true)
+
+    const owner = wrapper.find('[data-test="transfer-owner-input"]')
+    const values = owner
+      .findAll('option')
+      .map((option) => (option.element as HTMLOptionElement).value)
+
+    // Олег едет «туда» своей машиной, Пётр — автобусом; владельцем нового
+    // рейса может быть только Анна, которая ещё не едет.
+    expect(values).toEqual([ANNA])
+  })
+
+  it('флаг «туда-обратно» есть только у рейса «Туда»', async () => {
+    const wrapper = await mountTransfer()
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+    expect(wrapper.find('[data-test="transfer-round-trip-input"]').exists()).toBe(true)
+    await wrapper.find('[data-test="transfer-leg-cancel"]').trigger('click')
+
+    await wrapper.find('[data-test="transfer-add-back"]').trigger('click')
+    expect(wrapper.find('[data-test="transfer-round-trip-input"]').exists()).toBe(false)
+
+    // Старая обратная карточка с флагом: в форме его нет, а при сохранении
+    // уходит false — правка не блокируется, флаг снимается.
+    const legacy = makePlan()
+    legacy.legs[2]!.isRoundTrip = true
+
+    const stale = await mountTransfer(legacy)
+    await stale.find('[data-test="transfer-edit-3"]').trigger('click')
+    expect(stale.find('[data-test="transfer-round-trip-input"]').exists()).toBe(false)
+
+    mocks.updateTransferLeg.mockResolvedValue(legacy)
+    await stale.find('[data-test="transfer-leg-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateTransferLeg).toHaveBeenCalledWith(
+      '1',
+      '3',
+      expect.objectContaining({ direction: 'back', isRoundTrip: false }),
+    )
+  })
+
+  it('заброску без участников ограничивают только даты похода', async () => {
+    const trip: Trip = {
+      ...TRIP,
+      startsAt: new Date(2026, 10, 5, 0, 0).toISOString(),
+      endsAt: new Date(2026, 10, 12, 0, 0).toISOString(),
+    }
+
+    const wrapper = await mountTransfer(makePlan(), [], trip)
+
+    await wrapper.find('[data-test="transfer-add-stages"]').trigger('click')
+    await openMonth(wrapper, new Date(2026, 10, 11))
+
+    // 11 ноября — уже после последнего обратного рейса (9-го), но внутри
+    // похода: раньше сервер и календарь её не пускали, а вещи вывозить можно.
+    expect(
+      wrapper.find('[data-test="datetime-day-11"]').attributes('disabled'),
+    ).toBeUndefined()
+
+    // За рамками похода календарь по-прежнему не пускает.
+    expect(wrapper.find('[data-test="datetime-day-13"]').attributes('disabled')).toBeDefined()
+  })
+
+  it('отказ сервера на сохранении виден в модалке, а не под ней', async () => {
+    const wrapper = await mountTransfer()
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+    await wrapper.find('[data-test="transfer-from-input"]').setValue('Иркутск')
+    await wrapper.find('[data-test="transfer-to-input"]').setValue('Витязь')
+    await pickDeparture(wrapper)
+
+    mocks.createTransferLeg.mockRejectedValue(new Error('сеть'))
+    await wrapper.find('[data-test="transfer-leg-save"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="transfer-leg-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="transfer-leg-error"]').text()).toContain('попробуйте')
+    expect(wrapper.find('[data-test="transfer-action-error"]').exists()).toBe(false)
   })
 
   it('технику выбирают из каталога, а не заполняют поля заново', async () => {
