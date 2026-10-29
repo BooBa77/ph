@@ -147,6 +147,13 @@ export class TripTransferService {
     const isStage = dto.isStage ?? false;
     const isRoundTrip = dto.isRoundTrip ?? false;
 
+    /**
+     * «Туда-обратно» — только у рейса «Туда»: пара рождается там, а
+     * обратный получается зеркалом. У «Обратно» флага нет (заказчик
+     * 28.10.2026), иначе появилось бы «туда» из обратной карточки.
+     */
+    this.assertRoundTripDirection(dto.direction, isRoundTrip);
+
     if (isOwnVehicle) {
       const owner = ownerUserId as string;
       await this.assertTraveler(manager, trip.id, owner);
@@ -163,7 +170,7 @@ export class TripTransferService {
         dto.direction,
         isStage,
         owner,
-        null,
+        [],
       );
 
       if (isRoundTrip) {
@@ -173,7 +180,7 @@ export class TripTransferService {
           this.otherDirection(dto.direction),
           isStage,
           owner,
-          null,
+          [],
         );
       }
     }
@@ -380,6 +387,28 @@ export class TripTransferService {
     const direction = dto.direction ?? leg.direction;
 
     /**
+     * Сторону пары не меняют: у неё два конца, и перенос одного из них
+     * сделал бы два «туда» или два «обратно».
+     *
+     * Флаг «туда-обратно» живёт только на рейсе «Туда» (заказчик
+     * 28.10.2026): обратный появляется зеркалом, отдельно его не ставят.
+     * Уже существующий флаг на обратном (старые данные) правкой не
+     * блокируется — форма присылает `false`, и он снимается.
+     */
+    if (
+      direction !== leg.direction &&
+      (leg.isRoundTrip || leg.roundTripSourceId !== null)
+    ) {
+      throw new BadRequestException(
+        'У рейса есть пара «туда-обратно» — сторону не меняют',
+      );
+    }
+
+    if (isRoundTrip && (dto.isRoundTrip === true || direction !== leg.direction)) {
+      this.assertRoundTripDirection(direction, isRoundTrip);
+    }
+
+    /**
      * Сторона меняется — карточка встаёт в конец новой области: порядок
      * в «Обратно» свой, и сохранять номер из «Туда» значило бы поставить
      * её в середину чужого списка.
@@ -427,17 +456,20 @@ export class TripTransferService {
         leg.direction,
         leg.isStage,
         leg.ownerUserId,
-        leg.id,
+        [leg.id],
       );
 
       if (isRoundTrip) {
+        /** Зеркало этой же пары — не «второй обратный», его не считаем. */
+        const mirror = await this.mirrorOf(manager, leg);
+
         await this.assertSingleRide(
           manager,
           trip.id,
           this.otherDirection(leg.direction),
           leg.isStage,
           leg.ownerUserId,
-          leg.id,
+          mirror === null ? [] : [mirror.id],
         );
       }
     }
@@ -454,7 +486,7 @@ export class TripTransferService {
           this.otherDirection(leg.direction),
           leg.isStage,
           person.userId,
-          null,
+          [leg.id],
         );
       }
     }
@@ -481,7 +513,7 @@ export class TripTransferService {
           leg.direction,
           leg.isStage,
           person.userId,
-          leg.id,
+          [leg.id],
         );
       }
     }
@@ -861,10 +893,15 @@ export class TripTransferService {
    * - дата «туда» не позже забросок участника и тем более его возвращения;
    * - дата «обратно» не раньше его забросок и его выезда;
    * - дата заброски — между его заездом и выездом;
-   * - у рейса без участников всё то же, но по датам похода.
+   * - **у рейса без участников — только даты похода.**
    *
-   * Из этого же следует, что в паре «туда-обратно» с одинаковым временем
-   * заброску вставить некуда: окно получается нулевой ширины.
+   * Последнее — поправка заказчика: «заброска может быть и без участников —
+   * вещи будут вывозить, временные рамки похода соблюдены». Раньше этап без
+   * людей дополнительно зажимался между первым «туда» и последним
+   * «обратно», и заброску после чужого отъезда завести было нельзя.
+   * Правило теперь ровно то, что сказано: **есть люди — считаем по ним**,
+   * нет людей — рамки похода. Дни сравниваем, как `assertWithinTrip`:
+   * в день выезда время роли не играет.
    */
   private async assertLegDate(
     manager: EntityManager,
@@ -888,37 +925,16 @@ export class TripTransferService {
     let from: number | null = null;
     let to: number | null = null;
 
-    /** Даты похода — рамка для рейса без участников. */
+    /** Даты похода — единственная рамка для рейса без участников. */
     if (seats.size === 0) {
-      if (trip.startsAt) from = trip.startsAt.getTime();
-      if (trip.endsAt) to = trip.endsAt.getTime();
+      const day = (date: Date) => date.toISOString().slice(0, 10);
 
-      /**
-       * И рамка самих рейсов — для заброски: «если создать рейс
-       * „туда-обратно“, посадить в него пассажира и не изменить дату
-       * обратного, то вставить заброску не получится» — окно между первым
-       * «туда» и последним «обратно» получается нулевым. Обычный рейс так
-       * не ограничиваем: возвращение группы может быть и позже прежних.
-       */
-      const outbound = leg.isStage
-        ? legs.filter(
-            (row) => !row.isStage && row.direction === 'there' && row.id !== leg.id,
-          )
-        : [];
-      const inbound = leg.isStage
-        ? legs.filter(
-            (row) => !row.isStage && row.direction === 'back' && row.id !== leg.id,
-          )
-        : [];
-
-      if (outbound.length > 0) {
-        const first = Math.min(...outbound.map((row) => row.departsAt.getTime()));
-        from = Math.max(from ?? first, first);
+      if (trip.startsAt) {
+        from = Date.parse(`${day(trip.startsAt)}T00:00:00.000Z`);
       }
 
-      if (inbound.length > 0) {
-        const last = Math.max(...inbound.map((row) => row.departsAt.getTime()));
-        to = Math.min(to ?? last, last);
+      if (trip.endsAt) {
+        to = Date.parse(`${day(trip.endsAt)}T23:59:59.999Z`);
       }
     }
 
@@ -1196,35 +1212,48 @@ export class TripTransferService {
     });
 
     /**
-     * Направления, в которых у смотрящего уже есть рейс: второй не сажаем
-     * (`assertSingleRide`), поэтому и кнопки «Присоединиться» там быть
-     * не должно — правило одно, и UI не должен предлагать невозможное.
-     * Заброски не в счёт: этап — внутренний переезд, а не дорога от дома.
+     * Направления, в которых у смотрящего уже есть рейс, — без этой
+     * карточки и без её пары: второй конец той же поездки не «другой рейс».
      */
     const legsById = new Map(legs.map((leg) => [leg.id, leg]));
-    const takenDirections = new Set<TransferDirection>();
 
-    for (const passenger of passengers) {
-      if (passenger.userId !== userId || passenger.status !== 'accepted') {
-        continue;
+    const takenDirections = (leg: TripTransferLeg): Set<TransferDirection> => {
+      const family = new Set<string>([leg.id]);
+
+      if (leg.roundTripSourceId !== null) family.add(leg.roundTripSourceId);
+
+      for (const row of legs) {
+        if (row.roundTripSourceId === leg.id) family.add(row.id);
       }
 
-      const own = legsById.get(passenger.legId);
+      const taken = new Set<TransferDirection>();
 
-      if (own !== undefined && !own.isStage) {
-        takenDirections.add(own.direction);
+      for (const passenger of passengers) {
+        if (passenger.userId !== userId || passenger.status !== 'accepted') {
+          continue;
+        }
+
+        if (family.has(passenger.legId)) continue;
+
+        const own = legsById.get(passenger.legId);
+
+        if (own !== undefined && !own.isStage) taken.add(own.direction);
       }
-    }
+
+      return taken;
+    };
 
     const legDtos = ordered.map((leg): TransferLegDto => {
       const inLeg = passengersByLeg.get(leg.id) ?? [];
       const accepted = inLeg.filter((person) => person.status === 'accepted');
       const mine = inLeg.find((person) => person.userId === userId) ?? null;
+      const taken = takenDirections(leg);
+      const landing = this.landingDirections(leg);
 
       const joinStatus: TransferPassengerStatus | null =
         mine !== null ||
         !going.has(userId) ||
-        (!leg.isStage && takenDirections.has(leg.direction))
+        landing.some((direction) => taken.has(direction))
           ? null
           : leg.isOwnVehicle
             ? 'requested'
@@ -1363,6 +1392,24 @@ export class TripTransferService {
     return (TRANSFER_PERSONAL_MODES as readonly string[]).includes(mode);
   }
 
+  /**
+   * «Туда-обратно» — только у рейса «Туда».
+   *
+   * Заказчик 28.10.2026: «у обратных рейсов не должно быть флага
+   * „Туда-обратно“». Пара рождается на рейсе «Туда»: флаг и создаёт
+   * обратный. На «Обратно» он означал бы «туда» из обратной карточки.
+   */
+  private assertRoundTripDirection(
+    direction: TransferDirection,
+    isRoundTrip: boolean,
+  ): void {
+    if (!isRoundTrip || direction === 'there') return;
+
+    throw new BadRequestException(
+      'У обратного рейса не бывает флага «Туда-обратно» — он ставится на рейсе «Туда»',
+    );
+  }
+
   private isPublicMode(mode: TransferMode): boolean {
     return (TRANSFER_PUBLIC_MODES as readonly string[]).includes(mode);
   }
@@ -1498,7 +1545,7 @@ export class TripTransferService {
       leg.direction,
       leg.isStage,
       userId,
-      leg.id,
+      [leg.id],
     );
 
     const pair = await this.pairOf(manager, leg);
@@ -1536,7 +1583,7 @@ export class TripTransferService {
           mirror.direction,
           mirror.isStage,
           userId,
-          mirror.id,
+          [mirror.id],
         );
       }
     }
@@ -1562,9 +1609,13 @@ export class TripTransferService {
    * - **заброски не считаются**: `is_stage` — внутренний переезд,
    *   а не дорога от дома, и этапов у человека сколько нужно.
    *
-   * `legId` — карточка, в которую сажают: она исключается из подсчёта,
-   * потому что при принятии заявки строка в ней уже есть, а при посадке
-   * в пару зеркало проверяется отдельным вызовом со своим `legId`.
+   * `exceptLegIds` — карточки, которые из подсчёта выкидываются: та, в
+   * которую сажают (при принятии заявки строка в ней уже есть), и, когда
+   * проверяется второй конец пары, — зеркало этой же пары. Чужая пара
+   * не исключение: второй «обратно» у человека быть не должно.
+   *
+   * Имя в тексте 400 — чтобы человек видел, о ком речь: «Пётр уже определён
+   * на обратный рейс».
    */
   private async assertSingleRide(
     manager: EntityManager,
@@ -1572,7 +1623,7 @@ export class TripTransferService {
     direction: TransferDirection,
     isStage: boolean,
     userId: string,
-    legId: string | null,
+    exceptLegIds: string[],
   ): Promise<void> {
     if (isStage) return;
 
@@ -1582,7 +1633,7 @@ export class TripTransferService {
 
     const otherLegIds = rows
       .map((row) => row.legId)
-      .filter((id) => id !== legId);
+      .filter((id) => !exceptLegIds.includes(id));
 
     if (otherLegIds.length === 0) return;
 
@@ -1597,16 +1648,39 @@ export class TripTransferService {
 
     if (taken === 0) return;
 
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId, userId },
+      relations: { user: true },
+    });
+
+    const name = participant?.user?.displayName ?? 'Участник';
+
     throw new BadRequestException(
       direction === 'there'
-        ? 'У участника уже есть рейс туда — второй не сажаем, ехать можно в заброске'
-        : 'У участника уже есть рейс обратно — второй не сажаем, вернуться можно в заброске',
+        ? `${name} уже определён на рейс туда`
+        : `${name} уже определён на обратный рейс`,
     );
   }
 
   /** Другая сторона: у пары зеркало живёт в ней. */
   private otherDirection(direction: TransferDirection): TransferDirection {
     return direction === 'there' ? 'back' : 'there';
+  }
+
+  /**
+   * Какие направления займёт посадка в эту карточку.
+   *
+   * Заброска — никаких (этап у человека не один), зеркало пары — только
+   * своё (на исходную посадка в него не влияет), исходная пары — оба
+   * (человек приходит и в зеркало), обычный рейс — своё.
+   */
+  private landingDirections(leg: TripTransferLeg): TransferDirection[] {
+    if (leg.isStage) return [];
+    if (leg.roundTripSourceId !== null) return [leg.direction];
+
+    return leg.isRoundTrip
+      ? [leg.direction, this.otherDirection(leg.direction)]
+      : [leg.direction];
   }
 
   /** Поставить человека в карточку, не падая на повторной вставке. */

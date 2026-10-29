@@ -544,6 +544,14 @@ describe('Трансфер похода (e2e)', () => {
       toPlace: 'Иркутск',
     };
 
+    /** Пара рождается только на рейсе «Туда», поэтому флаг — с этой стороны. */
+    const round = {
+      direction: 'there',
+      departsAt: DEPARTS,
+      fromPlace: 'Иркутск',
+      toPlace: 'Витязь',
+    };
+
     // Цена билета — только у рейса.
     await request(app.getHttpServer())
       .post(`/api/trips/${tripId}/transfer/legs`)
@@ -578,7 +586,7 @@ describe('Трансфер похода (e2e)', () => {
 
     // «Туда-обратно» без денег — можно: флаг про план, а не про оплату.
     const freeRound = await createLeg(organizerToken, {
-      ...base,
+      ...round,
       mode: 'airboat',
       departsAt: '2026-11-10T01:00:00.000Z',
       compensation: 'free',
@@ -593,7 +601,7 @@ describe('Трансфер похода (e2e)', () => {
     // И у рейса тоже: «вернёмся тем же поездом» — это планирование,
     // а билеты на обоих концах будут свои.
     const ticketRound = await createLeg(organizerToken, {
-      ...base,
+      ...round,
       mode: 'helicopter',
       compensation: 'ticket',
       compensationAmountRub: 50000,
@@ -834,7 +842,7 @@ describe('Трансфер похода (e2e)', () => {
       .send({ userId: driverId })
       .expect(400);
 
-    expect(byOrganizer.body.message).toContain('второй не сажаем');
+    expect(byOrganizer.body.message).toContain('уже определён на рейс туда');
 
     // Заявка — не посадка: место она не занимает, проситься можно.
     const requested = await request(app.getHttpServer())
@@ -852,7 +860,7 @@ describe('Трансфер похода (e2e)', () => {
       .set('Authorization', `Bearer ${organizerToken}`)
       .expect(400);
 
-    expect(accepted.body.message).toContain('второй не сажаем');
+    expect(accepted.body.message).toContain('уже определён на рейс туда');
 
     // Заброска — не дорога от дома: этап у человека не один.
     const withStage = await createLegIn(ruleTripId, organizerToken, {
@@ -948,7 +956,7 @@ describe('Трансфер похода (e2e)', () => {
       .set('Authorization', `Bearer ${annaToken}`)
       .expect(400);
 
-    expect(blocked.body.message).toContain('второй не сажаем');
+    expect(blocked.body.message).toContain('уже определён на обратный рейс');
 
     // И кнопки «Присоединиться» на нём у «Анны» нет.
     expect(
@@ -996,7 +1004,7 @@ describe('Трансфер похода (e2e)', () => {
       .send({ userId: petrId })
       .expect(400);
 
-    expect(onPair.body.message).toContain('второй не сажаем');
+    expect(onPair.body.message).toContain('уже определён на обратный рейс');
   });
 
   it('стороны не смешиваются: у «Обратно» свой порядок', async () => {
@@ -1247,6 +1255,56 @@ describe('Трансфер похода (e2e)', () => {
 
     expect(legOf(removed.body, source.id)).toBeUndefined();
     expect(legOf(removed.body, mirror.id)).toBeUndefined();
+  });
+
+  it('флаг «туда-обратно» живёт только на рейсе «Туда»', async () => {
+    /**
+     * Заказчик 28.10.2026: «у обратных рейсов не должно быть флага
+     * „Туда-обратно“». Пара рождается на рейсе «Туда», а обратный —
+     * её зеркало; флаг на «Обратно» сделал бы «туда» из обратной карточки.
+     */
+    await request(app.getHttpServer())
+      .post(`/api/trips/${tripId}/transfer/legs`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({
+        direction: 'back',
+        mode: 'car',
+        departsAt: '2026-11-19T06:00:00.000Z',
+        fromPlace: 'Витязь, стоянка',
+        toPlace: 'Иркутск, гараж',
+        compensation: 'free',
+        isRoundTrip: true,
+      })
+      .expect(400);
+
+    const body = await createLeg(organizerToken, {
+      direction: 'there',
+      mode: 'car',
+      departsAt: '2026-11-19T06:00:00.000Z',
+      fromPlace: 'Иркутск, гараж',
+      toPlace: 'Витязь, стоянка',
+      compensation: 'free',
+      isRoundTrip: true,
+    });
+
+    const source = body.legs.find(
+      (leg) => leg.isRoundTrip && leg.fromPlace === 'Иркутск, гараж',
+    )!;
+    const mirror = body.legs.find((leg) => leg.sourceLegId === source.id)!;
+
+    // У зеркала флага нет вовсе — включить его нельзя.
+    await request(app.getHttpServer())
+      .patch(`/api/trips/${tripId}/transfer/legs/${mirror.id}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ isRoundTrip: true })
+      .expect(400);
+
+    // А сторону исходного рейса пары не меняют: у неё два конца.
+    await request(app.getHttpServer())
+      .patch(`/api/trips/${tripId}/transfer/legs/${source.id}`)
+      .set('Authorization', `Bearer ${organizerToken}`)
+      .send({ direction: 'back' })
+      .expect(400);
   });
 
   it('обратный выезд не раньше прямого — у кого оба конца', async () => {
@@ -1627,7 +1685,7 @@ describe('Трансфер похода (e2e)', () => {
         compensationAmountRub: 400,
       });
 
-      await createLeg(organizerToken, {
+      const backTrip = await createLeg(organizerToken, {
         direction: 'back',
         mode: 'bus',
         departsAt: '2026-12-07T18:00:00.000Z',
@@ -1637,7 +1695,11 @@ describe('Трансфер похода (e2e)', () => {
         compensationAmountRub: 400,
       });
 
-      // Трактор после возвращения группы — нельзя.
+      const backBusId = backTrip.legs.find(
+        (leg) => leg.direction === 'back' && leg.departsAt === '2026-12-07T18:00:00.000Z',
+      )!.id;
+
+      // Трактор после возвращения группы — нельзя: вышел за день похода.
       await request(app.getHttpServer())
         .post(`/api/trips/${tripId}/transfer/legs`)
         .set('Authorization', `Bearer ${organizerToken}`)
@@ -1662,6 +1724,42 @@ describe('Трансфер похода (e2e)', () => {
         toPlace: 'Сухой ручей',
         compensation: 'free',
       });
+
+      /**
+       * **Заброска без участников** — только рамки похода (заказчик
+       * 28.10.2026: «вещи будут вывозить, временные рамки соблюдены»).
+       * 20:00 того же дня — уже после последнего обратного рейса (18:00),
+       * но внутри похода: заводить можно.
+       */
+      const late = await createLeg(organizerToken, {
+        direction: 'there',
+        isStage: true,
+        mode: 'tractor',
+        departsAt: '2026-12-07T20:00:00.000Z',
+        fromPlace: 'Витязь',
+        toPlace: 'Сухой ручей',
+        compensation: 'free',
+      });
+
+      const lateStage = late.legs.find(
+        (leg) => leg.isStage && leg.departsAt === '2026-12-07T20:00:00.000Z',
+      )!;
+
+      /**
+       * А с человеком — по человеку: «водитель» уезжает в 18:00, в 20:00
+       * его уже нет, и в этот этап его не посадят.
+       */
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/transfer/legs/${backBusId}/passengers`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({ userId: petrId })
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/transfer/legs/${lateStage.id}/passengers`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({ userId: petrId })
+        .expect(400);
     } finally {
       await dataSource.query(
         `UPDATE trips SET starts_at = NULL, ends_at = NULL WHERE id = $1`,
