@@ -30,3 +30,32 @@ export const GEAR_KINDS = [
 ] as const;
 
 export type GearKind = (typeof GEAR_KINDS)[number];
+
+/**
+ * Вид значения характеристики типа.
+ *
+ * Характеристика типов (`gear_type_attributes`) — не текст в jsonb, а строка
+ * с типом: в Stage B значение ляжет в свою колонку (`number_value`,
+ * `text_value`, `bool_value`), и по этому полю решается, в какую именно.
+ *
+ * Список живёт в коде и дублируется CHECK-ом в базе: entity, DTO (`@IsIn`)
+ * и Swagger берут его отсюда, а база страхует от записи мимо API.
+ */
+export const GEAR_VALUE_KINDS = ['number', 'text', 'bool'] as const;
+
+export type GearValueKind = (typeof GEAR_VALUE_KINDS)[number];
+
+/**
+ * Код типа и характеристики — стабильный контракт.
+ *
+ * Латиница, начиная с буквы: код уходит в API, на него опираются фильтры
+ * Stage B и фронт, поэтому кириллица и заглавные запрещены в самой базе
+ * (CHECK), а не только в форме админки. До 40 символов.
+ *
+ * Отдельной константой, потому что нужна и entity (SQL-регулярка),
+ * и DTO (`@Matches`), и тестам.
+ */
+export const GEAR_CODE_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+/** Максимальная длина кода — та же, что в CHECK-ах базы. */
+export const GEAR_CODE_MAX_LENGTH = 40;

@@ -622,6 +622,184 @@ await check(
   [objectId],
 );
 
+// ─── Типы снаряжения и их характеристики (Stage A) ───
+/**
+ * Инварианты справочника `gear_types` / `gear_type_attributes`.
+ *
+ * Проверяется то, из-за чего справочник придётся чинить руками: код
+ * нелатинской записью, пустое имя из формы, `sort_order` меньше нуля,
+ * вид значения вне трёх разрешённых. Отдельно — **уникальность кода
+ * с архивными строками**: в Stage B на код будут ссылаться значения, и
+ * активный с архивным атрибут с одним кодом сделали бы `attributes {code:
+ * value}` неоднозначным.
+ */
+const gearTentId = (
+  await client.query(
+    `INSERT INTO gear_types (code, name) VALUES ('e2e_check_tent', 'Проверочная палатка')
+     RETURNING id`,
+  )
+).rows[0].id;
+
+const gearAxeId = (
+  await client.query(
+    `INSERT INTO gear_types (code, name) VALUES ('e2e_check_axe', 'Проверочный топор')
+     RETURNING id`,
+  )
+).rows[0].id;
+
+await check(
+  'тип: латинский код обязателен (заглавные запрещены)',
+  'fail',
+  `INSERT INTO gear_types (code, name) VALUES ('Tent', 'Палатка')`,
+);
+
+await check(
+  'тип: код длиннее 40 символов запрещён',
+  'fail',
+  `INSERT INTO gear_types (code, name)
+   VALUES ('a' || repeat('b', 40), 'Длинный код')`,
+);
+
+await check(
+  'тип: код повторно запрещён (unique)',
+  'fail',
+  `INSERT INTO gear_types (code, name) VALUES ('e2e_check_tent', 'Дубль')`,
+);
+
+await check(
+  'тип: имя из пробелов запрещено (btrim)',
+  'fail',
+  `INSERT INTO gear_types (code, name) VALUES ('e2e_check_blank', '   ')`,
+);
+
+await check(
+  'тип: отрицательный sort_order запрещён',
+  'fail',
+  `INSERT INTO gear_types (code, name, sort_order)
+   VALUES ('e2e_check_sort', 'Порядок', -1)`,
+);
+
+await check(
+  'тип: имя длиннее 100 символов запрещено',
+  'fail',
+  `INSERT INTO gear_types (code, name)
+   VALUES ('e2e_check_long', repeat('я', 101))`,
+);
+
+const gearAttribute = (
+  await client.query(
+    `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind, unit)
+     VALUES ($1, 'seats', 'Вместимость', 'number', 'мест')
+     RETURNING id, is_active, is_required, sort_order`,
+    [gearTentId],
+  )
+).rows[0];
+
+const attributeDefaultsOk =
+  gearAttribute.is_active === true &&
+  gearAttribute.is_required === false &&
+  gearAttribute.sort_order === 0;
+if (!attributeDefaultsOk) failed += 1;
+rows.push([
+  attributeDefaultsOk ? 'ok' : 'НЕВЕРНЫЕ УМОЛЧАНИЯ',
+  'характеристика: is_active = true, is_required = false, sort_order = 0 по умолчанию',
+  '',
+]);
+
+await check(
+  'характеристика: вид значения вне number/text/bool запрещён',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)
+   VALUES ($1, 'volume', 'Объём', 'число')`,
+  [gearTentId],
+);
+
+await check(
+  'характеристика: пустой unit запрещён (btrim)',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind, unit)
+   VALUES ($1, 'empty_unit', 'Пустая единица', 'text', '')`,
+  [gearTentId],
+);
+
+await check(
+  'характеристика: unit длиннее 20 символов запрещён',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind, unit)
+   VALUES ($1, 'long_unit', 'Длинная единица', 'text', repeat('я', 21))`,
+  [gearTentId],
+);
+
+await check(
+  'характеристика: код повторно у того же типа запрещён',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)
+   VALUES ($1, 'seats', 'Вместимость снова', 'number')`,
+  [gearTentId],
+);
+
+await check(
+  'характеристика: тот же код у другого типа разрешён',
+  'ok',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)
+   VALUES ($1, 'seats', 'Вместимость', 'number')`,
+  [gearAxeId],
+);
+
+await check(
+  'характеристика: отрицательный sort_order запрещён',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind, sort_order)
+   VALUES ($1, 'negative_sort', 'Порядок', 'text', -1)`,
+  [gearTentId],
+);
+
+/** Архив — это `UPDATE`, а не удаление: строка остаётся и держит код. */
+await client.query(
+  `UPDATE gear_type_attributes SET is_active = false WHERE id = $1`,
+  [gearAttribute.id],
+);
+const archivedAttribute = await client.query(
+  `SELECT is_active FROM gear_type_attributes WHERE id = $1`,
+  [gearAttribute.id],
+);
+const archivedKept = archivedAttribute.rows[0]?.is_active === false;
+if (!archivedKept) failed += 1;
+rows.push([
+  archivedKept ? 'ok' : 'АРХИВ НЕ СОХРАНИЛСЯ',
+  'характеристика: архив — это is_active = false, строка остаётся',
+  '',
+]);
+
+await check(
+  'характеристика: архивная строка держит код (unique без WHERE is_active)',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)
+   VALUES ($1, 'seats', 'Тот же код после архива', 'number')`,
+  [gearTentId],
+);
+
+const attributeCountBefore = await client.query(
+  `SELECT count(*)::int AS count FROM gear_type_attributes WHERE gear_type_id = $1`,
+  [gearTentId],
+);
+await client.query(`DELETE FROM gear_types WHERE id = $1`, [gearTentId]);
+const attributeCountAfter = await client.query(
+  `SELECT count(*)::int AS count FROM gear_type_attributes WHERE gear_type_id = $1`,
+  [gearTentId],
+);
+const attributesCascadeClean =
+  attributeCountBefore.rows[0].count > 0 &&
+  attributeCountAfter.rows[0].count === 0;
+if (!attributesCascadeClean) failed += 1;
+rows.push([
+  attributesCascadeClean ? 'ok' : 'ОСТАЛИСЬ ХАРАКТЕРИСТИКИ',
+  `тип: удаление уносит характеристики (CASCADE, было ${attributeCountBefore.rows[0].count})`,
+  '',
+]);
+
+await client.query(`DELETE FROM gear_types WHERE id = $1`, [gearAxeId]);
+
 await client.query('ROLLBACK');
 await client.end();
 

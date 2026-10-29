@@ -3,9 +3,14 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { TripsModule } from '../trips/trips.module';
 import { GearItem } from './entities/gear-item.entity';
+import { GearType } from './entities/gear-type.entity';
+import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
 import { TripGear } from './entities/trip-gear.entity';
+import { GearAdminTypesController } from './gear-admin.controller';
 import { GearController } from './gear.controller';
 import { GearService } from './gear.service';
+import { GearTypesController } from './gear-types.controller';
+import { GearTypesService } from './gear-types.service';
 import { TripGearController } from './trip-gear.controller';
 import { TripGearService } from './trip-gear.service';
 
@@ -24,11 +29,29 @@ import { TripGearService } from './trip-gear.service';
  * `TripGear` в `GearService` нужен для одного запрета: предмет, который
  * уже едет в походе, нельзя удалить из каталога (409 вместо ошибки
  * внешнего ключа).
+ *
+ * `GearTypesService` — справочник типов и характеристик (Stage A): типы
+ * правит админ, и каталог вещей переедет на них в Stage B. Лежит здесь же,
+ * потому что это тот же домен снаряжения и та же таблица-сосед; отдельный
+ * модуль ради двух таблиц добавил бы импорт без пользы.
  */
 @Module({
-  imports: [TypeOrmModule.forFeature([GearItem, TripGear]), TripsModule],
-  controllers: [GearController, TripGearController],
-  providers: [GearService, TripGearService],
-  exports: [GearService, TripGearService],
+  imports: [
+    TypeOrmModule.forFeature([
+      GearItem,
+      TripGear,
+      GearType,
+      GearTypeAttribute,
+    ]),
+    TripsModule,
+  ],
+  controllers: [
+    GearController,
+    TripGearController,
+    GearTypesController,
+    GearAdminTypesController,
+  ],
+  providers: [GearService, TripGearService, GearTypesService],
+  exports: [GearService, TripGearService, GearTypesService],
 })
 export class GearModule {}
