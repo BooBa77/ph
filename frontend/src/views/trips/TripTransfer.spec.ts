@@ -313,9 +313,10 @@ describe('TripTransfer', () => {
       'Наше ТС · Олег, занято 1 из 4 (Олег) выезд в восемь',
     )
 
-    // Мест не указали — «ноль из нуля» не пишем, а говорим «едем все вместе».
+    // Мест не указали — «0 из 0» не пишем, но и «все вместе» не говорим:
+    // в автобусе едет один Пётр из трёх участников.
     expect(legCard(wrapper, '2')!.find('[data-test="transfer-leg-summary"]').text()).toBe(
-      'едем все вместе',
+      'едет 1 (Пётр)',
     )
     // Пустая карточка — «без участников», а не «пока никого — вещи поедут без людей».
     expect(legCard(wrapper, '3')!.find('[data-test="transfer-leg-summary"]').text()).toBe(
@@ -327,6 +328,27 @@ describe('TripTransfer', () => {
     expect(compensation).toContain('Общий расход')
     expect(compensation).toContain('₽')
     expect(compensation).toContain('туда-обратно')
+  })
+
+  it('«едем все вместе» — только когда едут все участники', async () => {
+    // В автобусе один Пётр из трёх: «все вместе» было бы неправдой.
+    const partial = await mountTransfer(makePlan())
+    expect(
+      legCard(partial, '2')!.find('[data-test="transfer-leg-summary"]').text(),
+    ).toBe('едет 1 (Пётр)')
+
+    // Посадили всех — теперь это действительно весь состав.
+    const all = makePlan()
+    all.legs[1]!.passengers = [
+      { userId: ME, displayName: 'Олег', status: 'accepted' },
+      { userId: ANNA, displayName: 'Анна', status: 'accepted' },
+      { userId: PETR, displayName: 'Пётр', status: 'accepted' },
+    ]
+
+    const together = await mountTransfer(all)
+    expect(
+      legCard(together, '2')!.find('[data-test="transfer-leg-summary"]').text(),
+    ).toBe('едем все вместе')
   })
 
   it('плашка сворачивается до шапки', async () => {

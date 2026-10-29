@@ -259,14 +259,26 @@ function requested(leg: TripTransferLeg): TripTransferPassenger[] {
  * «едем все вместе» и «без участников». Ноль из нуля не показываем вовсе:
  * мест не указали — значит потолка нет, а не «ноль», и «0 из 0» читалось
  * бы как полная машина без людей.
+ *
+ * **«Едем все вместе» — только когда это правда весь состав.**
+ * Заказчик 28.10.2026: «он всегда стоит, а должен быть только когда
+ * реально все участники, а не когда последних устроили». Раньше фраза
+ * появлялась у любой карточки без числа мест, даже если в ней ехал один
+ * человек из десяти. Теперь она требует, чтобы в карточке были все, кто
+ * идёт в поход; иначе — «едет 2 (имена)».
  */
 function peopleText(leg: TripTransferLeg): string {
   const riding = accepted(leg)
 
   if (riding.length === 0) return 'без участников'
-  if (leg.seats === null) return 'едем все вместе'
 
   const names = riding.map((person) => person.displayName).join(', ')
+
+  if (leg.seats === null) {
+    return riding.length === travelers.value.length
+      ? 'едем все вместе'
+      : `едет ${riding.length} (${names})`
+  }
 
   return `занято ${riding.length} из ${leg.seats} (${names})`
 }
