@@ -7,6 +7,7 @@ import { listParticipants } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
 import type { GearItem, TripGearItem } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
+import { weightInGrams } from '@/utils/gearWeight'
 
 /**
  * «Палатки» — распределение участников по палаткам (29.10.2026).
@@ -34,12 +35,18 @@ import type { Trip, TripParticipant } from '@/types/trips'
  * информирования, нельзя блокировать добавление участников в заполненную
  * палатку. Производитель рекомендуют количество, но в реальности обычно
  * живут +1 человек». Поэтому здесь нет «мест нет», как у рейса: есть строка
- * «спят 2 (Пётр, Анна)» и тихая пометка «сверх вместимости», когда народу
+ * «живут 2 (Пётр, Анна)» и тихая пометка «сверх вместимости», когда народу
  * больше паспортного.
  *
- * **Вместимости в базе пока нет** — в `gear_items` только вид, название
- * и вес. Пока модели нет, число спрашивается при добавлении палатки и живёт
- * на плашке; колонка появится миграцией вместе с таблицей распределения.
+ * **Заголовок плашки** — «{хозяин} {основная характеристика} {вес}гр.»,
+ * например «Анна 3-х местная 2400 гр.» (29.10.2026). «Основная
+ * характеристика» — будущее поле всей таблицы снаряжения (`gear.md` §8):
+ * у палатки это число мест, и пока его играет вместимость из диалога.
+ * Веса нет — нет и «гр.» в заголовке.
+ *
+ * **Тент — не палатка.** Кнопка «Добавить тент» стоит рядом с «Добавить свою
+ * палатку», но пока ничего не делает: под тентом никто не ночует, места
+ * в распределении у него нет (заказчик 29.10.2026: «пока просто кнопка»).
  *
  * Права: владелец правит свою палатку, организатор — любую. Матрицу ролей
  * фронт не повторяет — здесь она и не нужна, потому что серверного ответа
@@ -73,7 +80,10 @@ interface TentCard {
   tripGearId: string
   ownerUserId: string
   ownerName: string
+  /** Основная характеристика палатки: сколько мест. */
   capacity: number
+  /** Вес вещи из каталога: его показываем в заголовке, если он известен. */
+  weightGrams: number | null
   members: TentMember[]
 }
 
@@ -123,10 +133,12 @@ function nameOf(userId: string): string {
 }
 
 /**
- * Заголовок плашки — слова заказчика: «{Участник} 3-х местная».
+ * Заголовок плашки — формат заказчика 29.10.2026:
+ * **«{хозяин} {основная характеристика} {вес}гр.»** — «Анна 3-х местная
+ * 2400 гр.». Веса нет в каталоге — его нет и в заголовке: «Анна 3-х местная».
  *
- * «3-х местная» — как пишут на палатке; у одноместной слово, а не «1-х»:
- * «1-х местная» не читается.
+ * «Основная характеристика» — будущее поле всей таблицы снаряжения
+ * (`gear.md` §8). Пока его нет, у палатки эту роль играет вместимость.
  */
 function capacityText(capacity: number): string {
   if (capacity === 1) return 'одноместная'
@@ -136,17 +148,20 @@ function capacityText(capacity: number): string {
 }
 
 function tentTitle(tent: TentCard): string {
-  return `${tent.ownerName} ${capacityText(tent.capacity)}`
+  const base = `${tent.ownerName} ${capacityText(tent.capacity)}`
+  const weight = weightInGrams(tent.weightGrams)
+
+  return weight === null ? base : `${base} ${weight}`
 }
 
-/** Сколько в палатке спит и кто — словами, как «занято 4 из 4» у рейса. */
+/** Сколько в палатке живёт и кто — словами, как «занято 4 из 4» у рейса. */
 function membersText(tent: TentCard): string {
   const sleeping = acceptedOf(tent)
 
   if (sleeping.length === 0) return 'никого'
 
   const names = sleeping.map((person) => person.displayName).join(', ')
-  const verb = sleeping.length === 1 ? 'спит' : 'спят'
+  const verb = sleeping.length === 1 ? 'живёт' : 'живут'
 
   return `${verb} ${sleeping.length} (${names})`
 }
@@ -225,6 +240,7 @@ function syncTents(items: TripGearItem[]): void {
       ownerUserId: item.ownerUserId,
       ownerName,
       capacity: capacityOf(item.id),
+      weightGrams: item.weightGrams,
       /**
        * Владелец спит в своей палатке, пока не сказал иначе: он её и несёт.
        * Если владельца нет среди идущих (уже не идёт), палатка остаётся
@@ -370,6 +386,7 @@ async function saveTent(): Promise<void> {
         // Имя — из профиля смотрящего: его палатка, и он подписан на плашке.
         ownerName: auth.user?.displayName ?? nameOf(item.ownerUserId),
         capacity,
+        weightGrams: item.weightGrams,
         members:
           me === undefined
             ? []
@@ -568,14 +585,29 @@ async function saveTent(): Promise<void> {
         </div>
       </div>
 
-      <button
-        type="button"
-        class="cursor-pointer self-start rounded-xl bg-emerald-600 px-3 py-2 text-sm text-white transition-opacity hover:opacity-90"
-        data-test="route-tent-add"
-        @click="openDialog"
-      >
-        Добавить свою палатку
-      </button>
+      <div class="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          class="cursor-pointer rounded-xl bg-emerald-600 px-3 py-2 text-sm text-white transition-opacity hover:opacity-90"
+          data-test="route-tent-add"
+          @click="openDialog"
+        >
+          Добавить свою палатку
+        </button>
+
+        <!--
+          Тент — не палатка и не спальное место: под ним никто не ночует,
+          поэтому в распределении его нет. Заказчик 29.10.2026: «пока просто
+          кнопка», наполнение — вместе с описанием снаряжения в БД.
+        -->
+        <button
+          type="button"
+          class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors hover:border-emerald-600"
+          data-test="route-tent-awning"
+        >
+          Добавить тент
+        </button>
+      </div>
 
       <!-- Одна форма на добавление: палатка из личного каталога + вместимость -->
       <div

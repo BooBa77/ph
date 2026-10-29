@@ -18,13 +18,15 @@ import TripRouteTents from '@/views/trips/TripRouteTents.vue'
  *
  * - **вместимость не блокирует**: палатка на троих спокойно принимает
  *   четвёртого — «производитель рекомендует, а живут +1»;
- * - **заголовок плашки** — «{Участник} 3-х местная», как продиктовал заказчик;
+ * - **заголовок плашки** — «{хозяин} {основная характеристика} {вес}гр.»,
+ *   как продиктовал заказчик: «Анна 3-х местная 2400 гр.»;
+ * - **«Добавить тент»** — пока только кнопка: под тентом никто не ночует;
  * - **распределяем только «идёт»**: «пока не решил», «приглашён» и «не идёт»
  *   места в палатке не занимают;
  * - **палатки — из снаряжения похода**, «не берём» на экране нет.
  *
  * Данные запросов заглушены: людей и палатки экран читает из существующих
- * ручек (`participants`, `trips/:id/gear`), а кто где спит — пока в памяти.
+ * ручек (`participants`, `trips/:id/gear`), а кто где живёт — пока в памяти.
  */
 const mocks = vi.hoisted(() => ({
   listParticipants: vi.fn(),
@@ -143,6 +145,7 @@ function annaTent(): TripGearItem {
     kind: 'tent',
     title: 'Палатка на четверых',
     ownerUserId: ANNA,
+    weightGrams: 2400,
   })
 }
 
@@ -213,14 +216,40 @@ describe('секция «Палатки»', () => {
 
     expect(
       wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text()),
-    ).toEqual(['Анна 3-х местная'])
+    ).toEqual(['Анна 3-х местная 2400 гр.'])
   })
 
-  it('заголовок плашки — «{Участник} 3-х местная», владелец уже спит в ней', async () => {
+  it('без веса в заголовке нет «гр.»: «Анна 3-х местная»', async () => {
+    mocks.listTripGear.mockResolvedValue({
+      items: [{ ...annaTent(), weightGrams: null }],
+      totalWeightGrams: 0,
+      itemsWithoutWeight: 1,
+    })
+
     const wrapper = await mounted()
 
     expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe('Анна 3-х местная')
-    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('спит 1 (Анна)')
+  })
+
+  it('заголовок плашки — «{хозяин} {характеристика} {вес}гр.», владелец уже живёт в ней', async () => {
+    const wrapper = await mounted()
+
+    expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe(
+      'Анна 3-х местная 2400 гр.',
+    )
+    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живёт 1 (Анна)')
+  })
+
+  it('«Добавить тент» — пока только кнопка: она ничего не открывает и не добавляет', async () => {
+    const wrapper = await mounted()
+
+    const button = wrapper.get('[data-test="route-tent-awning"]')
+    expect(button.text()).toBe('Добавить тент')
+
+    await button.trigger('click')
+
+    expect(wrapper.find('[data-test="route-tent-dialog"]').exists()).toBe(false)
+    expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(1)
   })
 
   it('«не распределены» — только идущие: «пока не решил» и остальные не в счёте', async () => {
@@ -253,7 +282,7 @@ describe('секция «Палатки»', () => {
 
     await wrapper.get('[data-test="route-tent-add-member"]').setValue(ME)
 
-    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('спят 2 (Анна, Олег)')
+    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живут 2 (Анна, Олег)')
     expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Вася')
 
     const select = wrapper.get('[data-test="route-tent-add-member"]')
@@ -275,7 +304,7 @@ describe('секция «Палатки»', () => {
 
     await wrapper.get(`[data-test="route-tent-leave-${ME}"]`).trigger('click')
 
-    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('спит 1 (Анна)')
+    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живёт 1 (Анна)')
     expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
   })
 
@@ -290,7 +319,7 @@ describe('секция «Палатки»', () => {
     const requests = wrapper.get('[data-test="route-tent-requests"]')
     expect(requests.text()).toContain('Олег')
     // Место в палатке заявка не занимает: в пилюлях спящих Олега нет.
-    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('спит 1 (Анна)')
+    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живёт 1 (Анна)')
     expect(wrapper.findAll('[data-test^="route-tent-accept-"]')).toHaveLength(0)
     expect(wrapper.find('[data-test="route-tent-add-member"]').exists()).toBe(false)
 
@@ -306,7 +335,7 @@ describe('секция «Палатки»', () => {
     await wrapper.get('[data-test="route-tent-join"]').trigger('click')
     await wrapper.get(`[data-test="route-tent-accept-${ME}"]`).trigger('click')
 
-    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('спят 2 (Анна, Олег)')
+    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живут 2 (Анна, Олег)')
     expect(wrapper.find('[data-test="route-tent-requests"]').exists()).toBe(false)
     expect(wrapper.find(`[data-test="route-tent-leave-${ME}"]`).exists()).toBe(true)
   })
@@ -337,7 +366,7 @@ describe('секция «Палатки»', () => {
     await wrapper.get('[data-test="route-tent-add-member"]').setValue('demo-lena')
 
     expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe(
-      'спят 4 (Анна, Вася, Катя, Лена)',
+      'живут 4 (Анна, Вася, Катя, Лена)',
     )
     expect(wrapper.get('[data-test="route-tent-over"]').text()).toBe('сверх вместимости')
     expect(wrapper.text()).not.toContain('мест нет')
@@ -359,7 +388,7 @@ describe('секция «Палатки»', () => {
     expect(wrapper.find('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
   })
 
-  it('своя палатка: спрашиваем вместимость и получаем заголовок «Олег 5-местная»', async () => {
+  it('своя палатка: спрашиваем вместимость и получаем заголовок «Олег 5-местная 1000 гр.»', async () => {
     mocks.listGear.mockResolvedValue(
       gearList([personalTent('20', 'Палатка на пятерых'), personalTent('21', 'Односкатка')]),
     )
@@ -371,6 +400,7 @@ describe('секция «Палатки»', () => {
           kind: 'tent',
           title: 'Палатка на пятерых',
           ownerUserId: ME,
+          weightGrams: 1000,
         }),
       )
       .mockResolvedValueOnce(
@@ -397,9 +427,10 @@ describe('секция «Палатки»', () => {
     expect(wrapper.find('[data-test="route-tent-dialog"]').exists()).toBe(false)
     expect(
       wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text()),
-    ).toContain('Олег 5-местная')
+    ).toContain('Олег 5-местная 1000 гр.')
 
-    // Вторая палатка — на одного: «одноместная», а не «1-х местная».
+    // Вторая палатка — на одного и без веса: «одноместная», а не «1-х
+    // местная», и без «гр.», которого не из чего взять.
     await wrapper.get('[data-test="route-tent-add"]').trigger('click')
     await flushPromises()
 
