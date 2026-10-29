@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
 import { listGear, listTripGear, proposeTripGear } from '@/api/gear'
@@ -28,7 +28,7 @@ import { weightInGrams } from '@/utils/gearWeight'
  * - **добавить свою** — та же ручка, что «взять палатку в поход» на вкладке
  *   «Снаряжение» (`POST /api/trips/:id/gear`), поэтому палатка не исчезает
  *   при перезагрузке и её видит вся группа;
- * - **кто в какой палатке спит — в памяти компонента** и никуда не уходит:
+ * - **кто в какой палатке живёт — в памяти компонента** и никуда не уходит:
  *   таблицы распределения ещё нет, это следующий шаг (NEXT.md §2–§3).
  *
  * **Вместимость никого не останавливает.** Заказчик: «она идёт только для
@@ -65,7 +65,7 @@ const MAX_CAPACITY = 8
 
 type TentPersonStatus = 'accepted' | 'requested'
 
-/** Человек в палатке: спит или ещё просится. */
+/** Человек в палатке: живёт или ещё просится. */
 interface TentMember {
   userId: string
   displayName: string
@@ -205,7 +205,7 @@ function joinStatus(tent: TentCard): 'requested' | null {
 }
 
 /**
- * Кто ещё нигде не спит. «Просится» тоже занят: человек уже в этой палатке
+ * Кто ещё нигде не живёт. «Просится» тоже занят: человек уже в этой палатке
  * на экране, и предлагать его второй раз не нужно.
  */
 const unassigned = computed(() => {
@@ -242,7 +242,7 @@ function syncTents(items: TripGearItem[]): void {
       capacity: capacityOf(item.id),
       weightGrams: item.weightGrams,
       /**
-       * Владелец спит в своей палатке, пока не сказал иначе: он её и несёт.
+       * Владелец живёт в своей палатке, пока не сказал иначе: он её и несёт.
        * Если владельца нет среди идущих (уже не идёт), палатка остаётся
        * пустой — расставлять в неё людей будет организатор.
        */
@@ -317,7 +317,7 @@ function join(tent: TentCard): void {
   ]
 }
 
-/** Владелец принимает заявку: человек переезжает из «просятся» в «спят». */
+/** Владелец принимает заявку: человек переходит из «просятся» в жильцы. */
 function acceptRequest(tent: TentCard, person: TentMember): void {
   tent.members = tent.members.map((member) =>
     member.userId === person.userId ? { ...member, status: 'accepted' } : member,
@@ -569,7 +569,7 @@ async function saveTent(): Promise<void> {
         </div>
       </article>
 
-      <!-- Кто ещё нигде не спит -->
+      <!-- Кто ещё нигде не живёт -->
       <div v-if="unassigned.length > 0" class="flex flex-col gap-2">
         <hr class="border-border" />
 
