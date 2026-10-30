@@ -4,10 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   archiveGearType,
   archiveGearTypeAttribute,
+  archiveGearAttributeOption,
+  createGearAttributeOption,
   createGearType,
   createGearTypeAttribute,
   fetchAdminGearTypes,
   fetchGearTypes,
+  updateGearAttributeOption,
   updateGearType,
   updateGearTypeAttribute,
 } from '@/api/gearTypes'
@@ -35,9 +38,11 @@ const tent: AdminGearType = {
       name: 'Вместимость',
       valueKind: 'number',
       unit: 'мест',
+      allowCustomValue: false,
       isRequired: true,
       sortOrder: 0,
       isActive: true,
+      options: [],
     },
   ],
 }
@@ -167,6 +172,75 @@ describe('api/gearTypes — справочник типов', () => {
 
     expect(calls[0]!.url).toBe('/api/gear/admin/types/2/attributes/5')
     expect(calls[0]!.init.method).toBe('DELETE')
+  })
+
+  it('вариант списка создаётся по тройке «тип — характеристика — варианты»', async () => {
+    const { calls, bodyOf } = mockFetch(
+      { id: 7, code: 'thread', name: 'резьбовой', sortOrder: 10, isActive: true },
+      201,
+    )
+
+    await createGearAttributeOption(2, 5, {
+      code: 'thread',
+      name: 'резьбовой',
+      sortOrder: 10,
+    })
+
+    expect(calls[0]!.url).toBe('/api/gear/admin/types/2/attributes/5/options')
+    expect(calls[0]!.init.method).toBe('POST')
+    expect(bodyOf(0)).toEqual({
+      code: 'thread',
+      name: 'резьбовой',
+      sortOrder: 10,
+    })
+  })
+
+  it('правка варианта — PATCH по его id внутри характеристики', async () => {
+    const { calls, bodyOf } = mockFetch({
+      id: 7,
+      code: 'thread',
+      name: 'резьбовое',
+      sortOrder: 10,
+      isActive: true,
+    })
+
+    await updateGearAttributeOption(2, 5, 7, { name: 'резьбовое', isActive: true })
+
+    expect(calls[0]!.url).toBe('/api/gear/admin/types/2/attributes/5/options/7')
+    expect(calls[0]!.init.method).toBe('PATCH')
+    expect(bodyOf(0)).toEqual({ name: 'резьбовое', isActive: true })
+  })
+
+  it('архив варианта — DELETE по той же тройке', async () => {
+    const { calls } = mockFetch(null, 204)
+
+    await expect(archiveGearAttributeOption(2, 5, 7)).resolves.toBeUndefined()
+
+    expect(calls[0]!.url).toBe('/api/gear/admin/types/2/attributes/5/options/7')
+    expect(calls[0]!.init.method).toBe('DELETE')
+  })
+
+  it('характеристика-список создаётся вместе с вариантами', async () => {
+    const { calls, bodyOf } = mockFetch(
+      { ...tent.attributes[0], valueKind: 'select', options: [] },
+      201,
+    )
+
+    await createGearTypeAttribute(2, {
+      code: 'connection',
+      name: 'Соединение',
+      valueKind: 'select',
+      allowCustomValue: true,
+      options: [{ code: 'thread', name: 'резьбовой' }],
+    })
+
+    expect(bodyOf(0)).toEqual({
+      code: 'connection',
+      name: 'Соединение',
+      valueKind: 'select',
+      allowCustomValue: true,
+      options: [{ code: 'thread', name: 'резьбовой' }],
+    })
   })
 
   it('403 от сервера приходит ApiError с сообщением бэкенда', async () => {

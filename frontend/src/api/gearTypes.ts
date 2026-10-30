@@ -1,12 +1,15 @@
 import { apiFetch } from '@/api/client'
 import type {
+  AdminGearAttributeOption,
   AdminGearType,
   AdminGearTypeAttribute,
   CreateGearAttributeInput,
+  CreateGearAttributeOptionInput,
   CreateGearTypeInput,
   GearType,
   GearTypeList,
   UpdateGearAttributeInput,
+  UpdateGearAttributeOptionInput,
   UpdateGearTypeInput,
 } from '@/types/gearTypes'
 
@@ -18,6 +21,11 @@ import type {
  * `/api/gear/admin/types/...` (один контроллер, одна проверка прав).
  * Публичного URL с админской семантикой нет: если понадобится другая
  * авторизация, меняется проверка на сервере, а не адрес.
+ *
+ * **Варианты характеристики-списка — третий уровень пути**
+ * (`/types/:id/attributes/:attributeId/options/:optionId`): каждый уровень
+ * проверяет принадлежность верхнему, поэтому чужой id отвечает 404, а не
+ * правит строку соседа.
  *
  * Права проверяет бэкенд: не-админу любой админский запрос отвечает 403
  * «Раздел только для администратора», без токена — 401.
@@ -108,4 +116,63 @@ export async function archiveGearTypeAttribute(
   await apiFetch<void>(`${ADMIN_TYPES}/${typeId}/attributes/${attributeId}`, {
     method: 'DELETE',
   })
+}
+
+/** Префикс характеристик и их вариантов: третий уровень вложенности путей. */
+function attributePath(typeId: number, attributeId: number): string {
+  return `${ADMIN_TYPES}/${typeId}/attributes/${attributeId}`
+}
+
+/**
+ * POST …/attributes/:attributeId/options — новый вариант списка.
+ *
+ * Варианты можно завести и сразу с характеристикой (`options` в теле
+ * `createGearTypeAttribute`); эта ручка — для добавления к существующему
+ * списку. Дубликат кода — 409, у не-списка — 400.
+ */
+export async function createGearAttributeOption(
+  typeId: number,
+  attributeId: number,
+  body: CreateGearAttributeOptionInput,
+): Promise<AdminGearAttributeOption> {
+  return apiFetch<AdminGearAttributeOption>(
+    `${attributePath(typeId, attributeId)}/options`,
+    {
+      method: 'POST',
+      body: JSON.stringify(body),
+    },
+  )
+}
+
+/** PATCH …/options/:optionId — переименование и порядок. `code` — 400. */
+export async function updateGearAttributeOption(
+  typeId: number,
+  attributeId: number,
+  optionId: number,
+  patch: UpdateGearAttributeOptionInput,
+): Promise<AdminGearAttributeOption> {
+  return apiFetch<AdminGearAttributeOption>(
+    `${attributePath(typeId, attributeId)}/options/${optionId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    },
+  )
+}
+
+/**
+ * DELETE …/options/:optionId — архив, ответ 204.
+ *
+ * Последний вариант списка без разрешённого своего значения убрать нельзя
+ * (409): выбирать станет не из чего. Повторный вызов идемпотентен.
+ */
+export async function archiveGearAttributeOption(
+  typeId: number,
+  attributeId: number,
+  optionId: number,
+): Promise<void> {
+  await apiFetch<void>(
+    `${attributePath(typeId, attributeId)}/options/${optionId}`,
+    { method: 'DELETE' },
+  )
 }

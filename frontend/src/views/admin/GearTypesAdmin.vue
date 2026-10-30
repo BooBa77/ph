@@ -5,26 +5,31 @@ import { ApiError } from '@/api/errors'
 import {
   archiveGearType,
   archiveGearTypeAttribute,
+  createGearAttributeOption,
   createGearType,
   createGearTypeAttribute,
   fetchAdminGearTypes,
+  updateGearAttributeOption,
   updateGearType,
   updateGearTypeAttribute,
 } from '@/api/gearTypes'
 import {
   GEAR_CODE_ERROR,
   GEAR_CODE_HINT,
+  GEAR_CODE_MAX_LENGTH,
   GEAR_FILL_MISSING_HINTS,
   GEAR_NAME_MAX_LENGTH,
+  GEAR_OPTIONS_MAX,
   GEAR_UNIT_MAX_LENGTH,
   GEAR_VALUE_KINDS,
   GEAR_VALUE_KIND_LABELS,
   isGearCode,
 } from '@/types/gearTypes'
 import type {
+  AdminGearAttributeOption,
   AdminGearType,
   AdminGearTypeAttribute,
-  GearTypeAttribute,
+  CreateGearAttributeOptionInput,
   GearValueKind,
 } from '@/types/gearTypes'
 
@@ -32,9 +37,18 @@ import type {
  * Справочник типов снаряжения — админка Stage A.
  *
  * Что здесь: плоский список типов и их характеристик, формы типа
- * и характеристики, архив и возврат из него. Чего нет и не будет до Stage B:
- * групп у типов, экземпляров вещей, значений характеристик и прав кроме
- * администратора.
+ * и характеристики, варианты характеристики-списка, архив и возврат из него.
+ * Чего нет и не будет до Stage B: групп у типов, экземпляров вещей и значений
+ * характеристик.
+ *
+ * **Список вариантов (30.10.2026).** Четвёртый вид значения — `select`:
+ * у характеристики появляются варианты («резьбовой», «цанговый») и флаг
+ * «разрешить своё значение». Варианты заводятся **в форме создания
+ * характеристики** — сразу вместе с ней, одной транзакцией на сервере,
+ * чтобы не оставалось списка, в котором нечего выбирать. Дальше каждый
+ * вариант правится отдельно: в строке характеристики — чипы, клик по чипу
+ * открывает форму варианта (имя, порядок, архив). Так переименование
+ * и архивация не превращаются в «пересобрать весь список».
  *
  * **Права проверяет бэкенд** (`isAdminUser`, захардкоженный UUID): чужому
  * список отвечает 403 «Раздел только для администратора», и это сообщение
@@ -78,7 +92,23 @@ interface TypeForm {
  * при **включении** обязательности (создание или `false → true`), как и
  * требует API. Если характеристика уже обязательна, поле не показывается:
  * в Stage A значение всё равно нигде не хранится.
+ *
+ * `options` — только создание: варианты списка уходят вместе с характеристикой
+ * одним запросом. В правке набор вариантов не трогается (иначе пришлось бы
+ * сравнивать «до и после» и гадать, что админ хотел архивировать), а каждый
+ * вариант правится своей формой из строки характеристики.
+ *
+ * `optionNames` — названия активных вариантов уже существующего списка:
+ * по ним проверяется замещающее значение, когда своё значение запрещено.
  */
+interface OptionDraft {
+  /** Ключ строки в форме: у нового варианта id ещё нет. */
+  key: number
+  code: string
+  name: string
+  sortOrder: string | number
+}
+
 interface AttributeForm {
   id: number | null
   typeId: number
@@ -87,18 +117,45 @@ interface AttributeForm {
   valueKind: GearValueKind
   unit: string
   isRequired: boolean
+  allowCustomValue: boolean
   sortOrder: string | number
   isActive: boolean
   fillNumber: string
   fillText: string
   fillBool: boolean
   wasRequired: boolean
+  options: OptionDraft[]
+  optionNames: string[]
+  /** Имя типа — для подсказок в форме («добавить в «Горелка»»). */
+  typeName: string
+}
+
+/**
+ * Черновик формы варианта списка.
+ *
+ * `id: null` — создание: код вводится и больше не меняется. У существующего
+ * варианта `code` только для чтения, а `isActive` — это и есть архив:
+ * снятая галочка убирает вариант из выбора, не удаляя строку.
+ */
+interface OptionForm {
+  id: number | null
+  typeId: number
+  attributeId: number
+  code: string
+  name: string
+  sortOrder: string | number
+  isActive: boolean
 }
 
 const typeForm = ref<TypeForm | null>(null)
 const typeFormError = ref<string | null>(null)
 const attributeForm = ref<AttributeForm | null>(null)
 const attributeFormError = ref<string | null>(null)
+const optionForm = ref<OptionForm | null>(null)
+const optionFormError = ref<string | null>(null)
+
+/** Счётчик ключей строк вариантов: индекс в массиве для `v-for` не годится. */
+let draftKey = 0
 
 const SORT_ORDER_ERROR = 'Порядок — целое число от 0'
 const NAME_EMPTY_ERROR = 'Название не может быть пустым'
@@ -108,6 +165,37 @@ const needsFillMissing = computed(() => {
   const form = attributeForm.value
 
   return form !== null && form.isRequired && !form.wasRequired
+})
+
+/** В форме открыт вид «список вариантов»: от него зависят поля и проверки. */
+const isSelectForm = computed(
+  () => attributeForm.value !== null && attributeForm.value.valueKind === 'select',
+)
+
+/** Названия вариантов для подсказки о замещающем значении. */
+const fillOptionNames = computed<string[]>(() => {
+  const form = attributeForm.value
+  if (form === null) return []
+
+  // В правке варианты уже в базе, в создании — ещё в черновике.
+  if (form.id !== null) return form.optionNames
+
+  return form.options.map((option) => option.name.trim()).filter((name) => name !== '')
+})
+
+/** Подсказка под полем замещающего значения: одна и та же для всех видов. */
+const fillMissingHint = computed<string>(() => {
+  const form = attributeForm.value
+  if (form === null) return ''
+
+  const hint = GEAR_FILL_MISSING_HINTS[form.valueKind]
+  if (form.valueKind !== 'select') return hint
+
+  const names = fillOptionNames.value
+  const list = names.length > 0 ? `: ${names.map((name) => `«${name}»`).join(', ')}` : ''
+  if (form.allowCustomValue) return `название варианта${list} или своё значение`
+
+  return `${hint}${list}`
 })
 
 /** Человеческое сообщение: текст бэкенда, если это ответ сервера. */
@@ -138,11 +226,21 @@ function typeMeta(type: AdminGearType): string {
   return parts.join(' · ')
 }
 
-/** Строка характеристики: код, вид, единица, обязательность. */
-function attributeMeta(attribute: GearTypeAttribute): string {
+/**
+ * Строка характеристики: код, вид, единица, варианты, обязательность.
+ *
+ * У списка вместо единицы — сколько вариантов активно и разрешено ли своё
+ * значение: «мест» и «см» рядом с «резьбовой» ничего не значат.
+ */
+function attributeMeta(attribute: AdminGearTypeAttribute): string {
   const parts = [attribute.code, GEAR_VALUE_KIND_LABELS[attribute.valueKind]]
 
   if (attribute.unit) parts.push(attribute.unit)
+  if (attribute.valueKind === 'select') {
+    const active = attribute.options.filter((option) => option.isActive).length
+    parts.push(active === 1 ? '1 вариант' : `вариантов: ${active}`)
+    parts.push(attribute.allowCustomValue ? 'можно своё' : 'только из списка')
+  }
   parts.push(attribute.isRequired ? 'обязательная' : 'необязательная')
 
   return parts.join(' · ')
@@ -262,17 +360,21 @@ function openAttributeCreate(type: AdminGearType) {
   attributeForm.value = {
     id: null,
     typeId: type.id,
+    typeName: type.name,
     code: '',
     name: '',
     valueKind: 'number',
     unit: '',
     isRequired: false,
+    allowCustomValue: false,
     sortOrder: '0',
     isActive: true,
     fillNumber: '',
     fillText: '',
     fillBool: false,
     wasRequired: false,
+    options: [],
+    optionNames: [],
   }
 }
 
@@ -281,23 +383,122 @@ function openAttributeEdit(type: AdminGearType, attribute: AdminGearTypeAttribut
   attributeForm.value = {
     id: attribute.id,
     typeId: type.id,
+    typeName: type.name,
     code: attribute.code,
     name: attribute.name,
     valueKind: attribute.valueKind,
     unit: attribute.unit ?? '',
     isRequired: attribute.isRequired,
+    allowCustomValue: attribute.allowCustomValue,
     sortOrder: String(attribute.sortOrder),
     isActive: attribute.isActive,
     fillNumber: '',
     fillText: '',
     fillBool: false,
     wasRequired: attribute.isRequired,
+    // В правке набор не пересобирается: у каждого варианта своя форма.
+    options: [],
+    optionNames: attribute.options
+      .filter((option) => option.isActive)
+      .map((option) => option.name),
   }
 }
 
 function closeAttributeForm() {
   attributeForm.value = null
   attributeFormError.value = null
+}
+
+/**
+ * Смена вида значения в форме.
+ *
+ * Список переключается на строку вариантов сразу: пустая форма без единого
+ * варианта — это та самая «мёртвая» характеристика, которой заказчик просил
+ * не допускать. При уходе с `select` черновики выбрасываются, чтобы вариант
+ * не уехал в числовую характеристику (сервер ответил бы 400).
+ */
+function onAttributeKindChange() {
+  const form = attributeForm.value
+  if (form === null) return
+
+  if (form.valueKind === 'select') {
+    if (form.options.length === 0) addOptionDraft()
+  } else {
+    form.options = []
+    form.allowCustomValue = false
+  }
+}
+
+function addOptionDraft() {
+  const form = attributeForm.value
+  if (form === null || form.options.length >= GEAR_OPTIONS_MAX) return
+
+  draftKey += 1
+  form.options.push({ key: draftKey, code: '', name: '', sortOrder: '0' })
+}
+
+function removeOptionDraft(key: number) {
+  const form = attributeForm.value
+  if (form === null) return
+
+  form.options = form.options.filter((option) => option.key !== key)
+}
+
+/**
+ * Варианты из черновика — до запроса.
+ *
+ * Пустая строка (нет ни кода, ни имени) просто не заполнена и выбрасывается;
+ * наполовину заполненная — ошибка, а не «забыли код». Повторы кода и имени
+ * ловятся здесь же: сервер ответил бы 409, но админу полезнее увидеть это
+ * до отправки и рядом с полем.
+ */
+function readOptionDrafts(form: AttributeForm): CreateGearAttributeOptionInput[] | null {
+  const result: CreateGearAttributeOptionInput[] = []
+  const codes = new Set<string>()
+  const names = new Set<string>()
+
+  for (const [index, draft] of form.options.entries()) {
+    const code = draft.code.trim()
+    const name = draft.name.trim()
+    const sortOrder = parseSortOrder(draft.sortOrder)
+
+    if (code === '' && name === '') continue
+    if (code === '' || name === '') {
+      attributeFormError.value = `У варианта ${index + 1} нужны и код, и название`
+      return null
+    }
+    if (!isGearCode(code)) {
+      attributeFormError.value = GEAR_CODE_ERROR
+      return null
+    }
+    if (name.length > GEAR_NAME_MAX_LENGTH) {
+      attributeFormError.value = `Название варианта не должно превышать ${GEAR_NAME_MAX_LENGTH} символов`
+      return null
+    }
+    if (sortOrder === null) {
+      attributeFormError.value = SORT_ORDER_ERROR
+      return null
+    }
+    if (codes.has(code)) {
+      attributeFormError.value = `Вариант с кодом «${code}» повторяется`
+      return null
+    }
+    if (names.has(name.toLowerCase())) {
+      attributeFormError.value = `Вариант с названием «${name}» повторяется: значения хранятся текстом, два одинаковых имени неразличимы`
+      return null
+    }
+
+    codes.add(code)
+    names.add(name.toLowerCase())
+    result.push({ code, name, sortOrder })
+  }
+
+  if (result.length > GEAR_OPTIONS_MAX) {
+    attributeFormError.value = `Вариантов не может быть больше ${GEAR_OPTIONS_MAX}`
+    return null
+  }
+
+  return result
 }
 
 /**
@@ -317,10 +518,19 @@ function readFillMissing(form: AttributeForm): number | string | boolean | null 
     return value
   }
 
-  if (form.valueKind === 'text') {
+  if (form.valueKind === 'text' || form.valueKind === 'select') {
     const value = form.fillText.trim()
     if (value === '') {
-      attributeFormError.value = 'Для текстовой характеристики замещающее значение — непустая строка'
+      attributeFormError.value =
+        form.valueKind === 'select'
+          ? 'Для списка замещающее значение — название варианта или своё значение'
+          : 'Для текстовой характеристики замещающее значение — непустая строка'
+      return null
+    }
+    if (form.valueKind === 'select' && !form.allowCustomValue && !fillOptionNames.value.includes(value)) {
+      attributeFormError.value = `Для списка замещающее значение — один из вариантов: ${fillOptionNames.value
+        .map((optionName) => `«${optionName}»`)
+        .join(', ')}. Своё значение не разрешено`
       return null
     }
 
@@ -358,12 +568,23 @@ async function submitAttributeForm() {
     return
   }
 
+  // Список: варианты собираются до проверки замещающего значения —
+  // его подсказка строится по тем же черновикам.
+  const options = form.id === null && form.valueKind === 'select' ? readOptionDrafts(form) : null
+  if (options === null && form.id === null && form.valueKind === 'select') return
+
+  if (form.valueKind === 'select' && !form.allowCustomValue && (options?.length ?? 0) === 0 && form.id === null) {
+    attributeFormError.value = 'Добавьте хотя бы один вариант или разрешите своё значение'
+    return
+  }
+
+  // У списка единицы измерения нет: «резьбовой мест» ничего не значит.
+  const unitValue = form.valueKind === 'select' || unit === '' ? null : unit
+
   // В Stage A значение никуда не пишется, но проверяется: правило ставим
   // сейчас, чтобы контракт не менялся в Stage B.
   const fillMissing = needsFillMissing.value ? readFillMissing(form) : undefined
   if (needsFillMissing.value && attributeFormError.value !== null) return
-
-  const unitValue = unit === '' ? null : unit
 
   try {
     if (form.id === null) {
@@ -374,6 +595,9 @@ async function submitAttributeForm() {
         unit: unitValue,
         isRequired: form.isRequired,
         sortOrder,
+        ...(form.valueKind === 'select'
+          ? { allowCustomValue: form.allowCustomValue, options: options ?? [] }
+          : {}),
         ...(fillMissing === undefined ? {} : { fillMissing }),
       })
     } else {
@@ -383,6 +607,7 @@ async function submitAttributeForm() {
         isRequired: form.isRequired,
         sortOrder,
         isActive: form.isActive,
+        ...(form.valueKind === 'select' ? { allowCustomValue: form.allowCustomValue } : {}),
         ...(fillMissing === undefined ? {} : { fillMissing }),
       })
     }
@@ -393,13 +618,98 @@ async function submitAttributeForm() {
   }
 }
 
+// ───────────────────────────── варианты списка ─────────────────────────────
+
+function openOptionCreate(type: AdminGearType, attribute: AdminGearTypeAttribute) {
+  optionFormError.value = null
+  optionForm.value = {
+    id: null,
+    typeId: type.id,
+    attributeId: attribute.id,
+    code: '',
+    name: '',
+    sortOrder: '0',
+    isActive: true,
+  }
+}
+
+function openOptionEdit(
+  type: AdminGearType,
+  attribute: AdminGearTypeAttribute,
+  option: AdminGearAttributeOption,
+) {
+  optionFormError.value = null
+  optionForm.value = {
+    id: option.id,
+    typeId: type.id,
+    attributeId: attribute.id,
+    code: option.code,
+    name: option.name,
+    sortOrder: String(option.sortOrder),
+    isActive: option.isActive,
+  }
+}
+
+function closeOptionForm() {
+  optionForm.value = null
+  optionFormError.value = null
+}
+
+/**
+ * Сохранение варианта.
+ *
+ * Создание и правка — разные ручки, поэтому и разное тело: `code` уходит
+ * только при создании (после — 400), `isActive` только при правке (снятая
+ * галочка = архив, но последний вариант списка так убрать нельзя — 409).
+ */
+async function submitOptionForm() {
+  const form = optionForm.value
+  if (form === null) return
+
+  optionFormError.value = null
+
+  const code = form.code.trim()
+  const name = form.name.trim()
+  const sortOrder = parseSortOrder(form.sortOrder)
+
+  if (name === '') {
+    optionFormError.value = NAME_EMPTY_ERROR
+    return
+  }
+  if (sortOrder === null) {
+    optionFormError.value = SORT_ORDER_ERROR
+    return
+  }
+  if (form.id === null && !isGearCode(code)) {
+    optionFormError.value = GEAR_CODE_ERROR
+    return
+  }
+
+  try {
+    if (form.id === null) {
+      await createGearAttributeOption(form.typeId, form.attributeId, { code, name, sortOrder })
+    } else {
+      await updateGearAttributeOption(form.typeId, form.attributeId, form.id, {
+        name,
+        sortOrder,
+        isActive: form.isActive,
+      })
+    }
+    closeOptionForm()
+    await load()
+  } catch (cause) {
+    optionFormError.value = messageOf(cause, 'Не удалось сохранить вариант.')
+  }
+}
+
 // ──────────────────────────────── модалки ────────────────────────────────
 
 /** Escape закрывает открытую форму: их не больше одной за раз. */
 function onKeydown(event: KeyboardEvent) {
   if (event.key !== 'Escape') return
 
-  if (typeForm.value !== null) closeTypeForm()
+  if (optionForm.value !== null) closeOptionForm()
+  else if (typeForm.value !== null) closeTypeForm()
   else if (attributeForm.value !== null) closeAttributeForm()
 }
 
@@ -420,8 +730,9 @@ onBeforeUnmount(() => {
 
     <p class="mt-2 text-sm text-muted">
       Справочник типов и их характеристик: «Палатка» с вместимостью и моделью, «Пила» с приводом
-      и полотном. Вещи пока живут по-старому — тип и значения характеристик появятся у них
-      следующим шагом, поэтому здесь ничего не ломает личный каталог.
+      и полотном, «Горелка» с соединением из списка «резьбовой / цанговый». Вещи пока живут
+      по-старому — тип и значения характеристик появятся у них следующим шагом, поэтому здесь
+      ничего не ломает личный каталог.
     </p>
 
     <p v-if="error" data-test="gear-types-error" class="mt-3 text-sm text-red-600">{{ error }}</p>
@@ -522,6 +833,36 @@ onBeforeUnmount(() => {
                 в архиве
               </span>
               <p data-test="attribute-meta" class="text-xs text-muted">{{ attributeMeta(attribute) }}</p>
+
+              <!-- Варианты списка: чип открывает форму варианта -->
+              <div
+                v-if="attribute.valueKind === 'select'"
+                data-test="attribute-options"
+                class="mt-1 flex flex-wrap items-center gap-1"
+              >
+                <button
+                  v-for="option in attribute.options"
+                  :key="option.id"
+                  type="button"
+                  data-test="option-chip"
+                  class="cursor-pointer rounded-full border border-border px-2 py-0.5 text-xs text-text hover:border-primary"
+                  :class="option.isActive ? '' : 'opacity-60 line-through'"
+                  @click="openOptionEdit(type, attribute, option)"
+                >
+                  {{ option.name }}
+                  <span v-if="!option.isActive" data-test="option-archived" class="ml-1 text-[10px] text-muted">
+                    в архиве
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  data-test="option-add"
+                  class="cursor-pointer rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-muted hover:border-primary hover:text-text"
+                  @click="openOptionCreate(type, attribute)"
+                >
+                  + вариант
+                </button>
+              </div>
             </div>
 
             <div class="flex flex-wrap gap-1">
@@ -706,6 +1047,7 @@ onBeforeUnmount(() => {
           data-test="attr-form-kind"
           :disabled="attributeForm.id !== null"
           class="mt-1 w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text disabled:opacity-60"
+          @change="onAttributeKindChange"
         >
           <option v-for="kind in GEAR_VALUE_KINDS" :key="kind" :value="kind">
             {{ GEAR_VALUE_KIND_LABELS[kind] }}
@@ -716,19 +1058,104 @@ onBeforeUnmount(() => {
           и новая характеристика с новым кодом.
         </p>
 
-        <label class="mt-3 block text-sm text-muted" for="gear-attr-unit">Единица измерения</label>
-        <input
-          id="gear-attr-unit"
-          v-model="attributeForm.unit"
-          data-test="attr-form-unit"
-          type="text"
-          :maxlength="GEAR_UNIT_MAX_LENGTH"
-          placeholder="мест"
-          class="mt-1 w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
-        />
-        <p class="mt-1 text-xs text-muted">
-          Для числа — «мест», «см», «л»; у текста и галочки единицы обычно нет — оставьте пустым.
-        </p>
+        <!-- Список вариантов: создание — вместе с вариантами, правка — по чипам -->
+        <template v-if="isSelectForm">
+          <template v-if="attributeForm.id === null">
+            <label class="mt-3 block text-sm text-muted">Варианты списка</label>
+            <p class="mt-1 text-xs text-muted">
+              Админ заводит список сразу с вариантами. Код — латиница и не меняется, название можно
+              переименовать потом. Пустая строка не считается вариантом.
+            </p>
+
+            <div
+              v-for="(option, index) in attributeForm.options"
+              :key="option.key"
+              data-test="option-draft"
+              class="mt-2 grid grid-cols-2 gap-1 sm:grid-cols-[1fr_1fr_4.5rem_auto]"
+            >
+              <input
+                v-model="option.code"
+                data-test="option-draft-code"
+                type="text"
+                :maxlength="GEAR_CODE_MAX_LENGTH"
+                placeholder="код"
+                :aria-label="`Код варианта ${index + 1}`"
+                class="min-w-0 rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
+              />
+              <input
+                v-model="option.name"
+                data-test="option-draft-name"
+                type="text"
+                :maxlength="GEAR_NAME_MAX_LENGTH"
+                placeholder="название"
+                :aria-label="`Название варианта ${index + 1}`"
+                class="min-w-0 rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
+              />
+              <input
+                v-model="option.sortOrder"
+                data-test="option-draft-sort"
+                type="number"
+                min="0"
+                placeholder="порядок"
+                :aria-label="`Порядок варианта ${index + 1}`"
+                class="min-w-0 rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
+              />
+              <button
+                type="button"
+                data-test="option-draft-remove"
+                class="cursor-pointer rounded-xl border border-border px-2 py-2 text-xs text-muted hover:border-red-600 hover:text-red-600"
+                @click="removeOptionDraft(option.key)"
+              >
+                Убрать
+              </button>
+            </div>
+
+            <button
+              type="button"
+              data-test="option-draft-add"
+              class="mt-2 cursor-pointer rounded-lg border border-dashed border-border px-3 py-1.5 text-sm text-muted hover:border-primary hover:text-text"
+              @click="addOptionDraft"
+            >
+              Добавить вариант
+            </button>
+          </template>
+
+          <p v-else class="mt-2 text-xs text-muted">
+            Вариантов активно: {{ attributeForm.optionNames.length }}. Каждый правится из строки
+            характеристики — нажмите на его чип, там же архив и возврат.
+          </p>
+
+          <label class="mt-3 flex cursor-pointer items-center gap-2 text-sm text-text">
+            <input
+              v-model="attributeForm.allowCustomValue"
+              data-test="attr-form-allow-custom"
+              type="checkbox"
+              class="h-4 w-4 cursor-pointer"
+            />
+            Разрешить своё значение
+          </label>
+          <p class="mt-1 text-xs text-muted">
+            Человек сможет вписать значение, которого нет в списке. У числа, строки и галочки этого
+            флага нет — сервер отвечает 400. У списка без вариантов флаг обязателен, иначе выбрать
+            нечего.
+          </p>
+        </template>
+
+        <template v-if="!isSelectForm">
+          <label class="mt-3 block text-sm text-muted" for="gear-attr-unit">Единица измерения</label>
+          <input
+            id="gear-attr-unit"
+            v-model="attributeForm.unit"
+            data-test="attr-form-unit"
+            type="text"
+            :maxlength="GEAR_UNIT_MAX_LENGTH"
+            placeholder="мест"
+            class="mt-1 w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
+          />
+          <p class="mt-1 text-xs text-muted">
+            Для числа — «мест», «см», «л»; у текста и галочки единицы обычно нет — оставьте пустым.
+          </p>
+        </template>
 
         <label class="mt-3 flex cursor-pointer items-center gap-2 text-sm text-text">
           <input
@@ -772,15 +1199,15 @@ onBeforeUnmount(() => {
             v-else
             id="gear-attr-fill"
             v-model="attributeForm.fillText"
-            data-test="attr-form-fill-text"
+            :data-test="attributeForm.valueKind === 'select' ? 'attr-form-fill-select' : 'attr-form-fill-text'"
             type="text"
-            placeholder="нет данных"
+            :placeholder="attributeForm.valueKind === 'select' ? 'резьбовой' : 'нет данных'"
             class="mt-1 w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
           />
 
           <p data-test="attr-form-fill-hint" class="mt-1 text-xs text-muted">
-            Подойдёт {{ GEAR_FILL_MISSING_HINTS[attributeForm.valueKind] }}. В Stage A не
-            применяется — экземпляров вещей ещё нет; начнёт применяться в Stage B.
+            Подойдёт {{ fillMissingHint }}. В Stage A не применяется — экземпляров вещей ещё нет;
+            начнёт применяться в Stage B.
           </p>
         </template>
 
@@ -823,6 +1250,109 @@ onBeforeUnmount(() => {
           <button
             type="submit"
             data-test="attr-form-submit"
+            class="cursor-pointer rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white"
+          >
+            Сохранить
+          </button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Форма варианта списка -->
+    <div
+      v-if="optionForm"
+      class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="gear-option-form-title"
+      @click.self="closeOptionForm"
+    >
+      <form
+        data-test="option-form"
+        class="w-full max-w-md rounded-2xl bg-surface p-4 shadow-xl"
+        @submit.prevent="submitOptionForm"
+      >
+        <h2 id="gear-option-form-title" class="text-lg font-semibold text-text">
+          {{ optionForm.id === null ? 'Новый вариант' : 'Вариант' }}
+        </h2>
+
+        <label class="mt-3 block text-sm text-muted" for="gear-option-code">Код</label>
+        <input
+          id="gear-option-code"
+          v-model="optionForm.code"
+          data-test="option-form-code"
+          type="text"
+          :disabled="optionForm.id !== null"
+          :maxlength="GEAR_CODE_MAX_LENGTH"
+          placeholder="thread"
+          class="mt-1 w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text disabled:opacity-60"
+        />
+        <p class="mt-1 text-xs text-muted">
+          {{
+            optionForm.id === null
+              ? GEAR_CODE_HINT
+              : 'Код не меняется: на него опираются фильтры. Исправление — архив и новый вариант с новым кодом.'
+          }}
+        </p>
+
+        <label class="mt-3 block text-sm text-muted" for="gear-option-name">Название</label>
+        <input
+          id="gear-option-name"
+          v-model="optionForm.name"
+          data-test="option-form-name"
+          type="text"
+          :maxlength="GEAR_NAME_MAX_LENGTH"
+          placeholder="резьбовой"
+          class="mt-1 w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
+        />
+        <p class="mt-1 text-xs text-muted">
+          Именно название человек увидит в списке. Значения экземпляров хранятся текстом имени —
+          при переименовании бэкенд обновит и их.
+        </p>
+
+        <label class="mt-3 block text-sm text-muted" for="gear-option-sort">Порядок в списке</label>
+        <input
+          id="gear-option-sort"
+          v-model="optionForm.sortOrder"
+          data-test="option-form-sort"
+          type="number"
+          min="0"
+          class="mt-1 w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
+        />
+
+        <label
+          v-if="optionForm.id !== null"
+          class="mt-3 flex cursor-pointer items-center gap-2 text-sm text-text"
+        >
+          <input
+            v-model="optionForm.isActive"
+            data-test="option-form-active"
+            type="checkbox"
+            class="h-4 w-4 cursor-pointer"
+          />
+          Активен
+        </label>
+        <p v-if="optionForm.id !== null" class="mt-1 text-xs text-muted">
+          Снятая галочка — архив: вариант пропадает из выбора, но строка и код остаются. Последний
+          вариант списка так убрать нельзя, пока не разрешено своё значение.
+        </p>
+
+        <p v-if="optionFormError" data-test="option-form-error" class="mt-3 text-sm text-red-600">
+          {{ optionFormError }}
+        </p>
+
+        <div class="mt-4 flex justify-end gap-2">
+          <button
+            type="button"
+            data-test="option-form-cancel"
+            class="cursor-pointer rounded-lg border border-border bg-bg px-4 py-2 text-sm text-text"
+            @click="closeOptionForm"
+          >
+            Отмена
+          </button>
+          <button
+            type="submit"
+            data-test="option-form-submit"
             class="cursor-pointer rounded-lg bg-primary px-4 py-2 text-sm font-medium text-white"
           >
             Сохранить

@@ -7,6 +7,13 @@
  * публичный `GET /api/gear-types` отдаёт только активное, админский
  * `GET /api/gear/admin/types` — всё, вместе с архивом и флагами `isActive`.
  *
+ * **Четвёртый вид значения — список вариантов (`select`, 30.10.2026).**
+ * Варианты лежат отдельной таблицей: у них есть стабильный код, имя, порядок
+ * и архив, поэтому они переживают переименование и не размазываются по
+ * массивам. Значение такого вида в Stage B ляжет в `text_value` текстом
+ * имени варианта — и выбранного, и своего (если у характеристики разрешено
+ * своё значение).
+ *
  * **`gear_items` этот файл не описывает.** Вид (`kind`) и обязательное название
  * вещи живут в `types/gear.ts` и не меняются до Stage B: справочник пока
  * ни на что пользовательское не влияет.
@@ -15,9 +22,10 @@
 /**
  * Вид значения характеристики — ровно те строки, что принимает бэкенд
  * (CHECK `value_kind` в базе). По нему же выбирается поле ввода: число,
- * строка или галочка; в Stage B — колонка, куда ляжет значение.
+ * строка, галочка или список вариантов; в Stage B — колонка, куда ляжет
+ * значение (`select` ложится в `text_value` текстом варианта).
  */
-export const GEAR_VALUE_KINDS = ['number', 'text', 'bool'] as const
+export const GEAR_VALUE_KINDS = ['number', 'text', 'bool', 'select'] as const
 
 export type GearValueKind = (typeof GEAR_VALUE_KINDS)[number]
 
@@ -26,6 +34,7 @@ export const GEAR_VALUE_KIND_LABELS: Record<GearValueKind, string> = {
   number: 'Число',
   text: 'Текст',
   bool: 'Галочка',
+  select: 'Список вариантов',
 }
 
 /**
@@ -42,6 +51,9 @@ export const GEAR_CODE_HINT = `Код — латиница, начиная с б
 export const GEAR_CODE_MAX_LENGTH = 40
 export const GEAR_NAME_MAX_LENGTH = 100
 export const GEAR_UNIT_MAX_LENGTH = 20
+
+/** Предел вариантов у одной характеристики-списка — как в API. */
+export const GEAR_OPTIONS_MAX = 100
 
 /** Сообщение об ошибке кода: подсказка плюс предел длины. */
 export const GEAR_CODE_ERROR = `${GEAR_CODE_HINT}, до ${GEAR_CODE_MAX_LENGTH} символов`
@@ -69,6 +81,27 @@ export const GEAR_FILL_MISSING_HINTS: Record<GearValueKind, string> = {
   number: 'число, например 0',
   text: 'непустая строка',
   bool: 'true или false',
+  select: 'название одного из вариантов',
+}
+
+/**
+ * Вариант характеристики-списка в публичном ответе.
+ *
+ * `code` — контракт (`thread`, `collet`), `name` — то, что видит человек
+ * («резьбовой»). В Stage B значение экземпляра хранится текстом **имени**,
+ * поэтому переименование варианта станет отдельной заботой бэкенда.
+ */
+export interface GearAttributeOption {
+  id: number
+  code: string
+  name: string
+  sortOrder: number
+}
+
+/** Вариант в админском ответе: то же плюс архив. */
+export interface AdminGearAttributeOption extends GearAttributeOption {
+  /** `false` — в архиве: в публичном списке его нет, вернуть можно. */
+  isActive: boolean
 }
 
 /** Характеристика в публичном ответе: архивных здесь нет по определению. */
@@ -80,15 +113,26 @@ export interface GearTypeAttribute {
   valueKind: GearValueKind
   /** Единица измерения: «мест», «см», «л». `null` — без единицы. */
   unit: string | null
+  /**
+   * Разрешить своё значение вместо выбора из списка.
+   *
+   * Только у `valueKind = 'select'`: у числа, строки и галочки бэкенд
+   * отвечает 400, а в базе то же правило держит CHECK.
+   */
+  allowCustomValue: boolean
   /** Обязательная характеристика: без неё вещь не описать (Stage B). */
   isRequired: boolean
   sortOrder: number
+  /** Варианты списка; у числа, строки и галочки — пустой массив. */
+  options: GearAttributeOption[]
 }
 
 /** Характеристика в админском ответе: то же плюс архив. */
 export interface AdminGearTypeAttribute extends GearTypeAttribute {
   /** `false` — в архиве: в публичном списке её нет, вернуть можно. */
   isActive: boolean
+  /** Все варианты, включая архивные. */
+  options: AdminGearAttributeOption[]
 }
 
 /** Тип снаряжения: «Палатка», «Топор», «Газовый баллон». */
@@ -144,6 +188,10 @@ export interface CreateGearAttributeInput {
   valueKind: GearValueKind
   unit?: string | null
   isRequired?: boolean
+  /** Только при `valueKind: 'select'`; с числом и галочкой сервер — 400. */
+  allowCustomValue?: boolean
+  /** Варианты списка — сразу вместе с характеристикой, одной транзакцией. */
+  options?: CreateGearAttributeOptionInput[]
   sortOrder?: number
   /** Нужен только при `isRequired: true`; в Stage A не применяется. */
   fillMissing?: number | string | boolean | null
@@ -154,13 +202,34 @@ export interface CreateGearAttributeInput {
  *
  * `code` и `valueKind` не входят: код неизменяем (400), вид — 409, даже если
  * прислать тот же самый. Исправление — архив и новая характеристика.
+ * Варианты тоже не входят: у них отдельные ручки, `options` в теле — 400.
  */
 export interface UpdateGearAttributeInput {
   name?: string
   unit?: string | null
   isRequired?: boolean
+  allowCustomValue?: boolean
   isActive?: boolean
   sortOrder?: number
   /** Нужен при включении обязательности (`false → true`). */
   fillMissing?: number | string | boolean | null
+}
+
+/**
+ * Новый вариант списка.
+ *
+ * Одна форма на два запроса: `options` в теле создания характеристики
+ * и `POST …/options` для добавления к существующему списку.
+ */
+export interface CreateGearAttributeOptionInput {
+  code: string
+  name: string
+  sortOrder?: number
+}
+
+/** Тело `PATCH …/attributes/:attributeId/options/:optionId`. */
+export interface UpdateGearAttributeOptionInput {
+  name?: string
+  sortOrder?: number
+  isActive?: boolean
 }
