@@ -22,12 +22,10 @@ import TripRouteCooking from '@/views/trips/TripRouteCooking.vue'
  * - **пилюля «{тип} - {вес}гр ({хозяин})»** — «Горелка - 130 гр. (Анна)»,
  *   как продиктовал заказчик, и с крестиком;
  * - **крестик по правам**: владелец убирает вещь из секции, организатор
- *   только предлагает убрать (зачёркнутая пилюля), остальным крестика нет.
- *
- * Настоящего типа вещи в модели нет, поэтому «костровое» — это виды
- * «кухня» и «техника», а тип уже предложенной вещи узнаётся по словам
- * в названии; когда появится описание снаряжения, узнавание переедет на него
- * (см. `gear.md` §8).
+ *   только предлагает убрать (зачёркнутая пилюля), остальным крестика нет;
+ * - **тип решает всё, а не слово в названии** (30.10.2026): вещь попадает
+ *   в секцию по `typeCode` из справочника, поэтому «Топор» с типом «прочее»
+ *   сюда не попадёт, а «Пилка» с типом `saw` попадёт и подпишется «Пила».
  */
 const mocks = vi.hoisted(() => ({
   listParticipants: vi.fn(),
@@ -104,10 +102,13 @@ function participant(userId: string, displayName: string): TripParticipant {
 }
 
 function tripGearItem(
-  overrides: Partial<TripGearItem> & Pick<TripGearItem, 'id' | 'kind' | 'title' | 'ownerUserId'>,
+  overrides: Partial<TripGearItem> &
+    Pick<TripGearItem, 'id' | 'typeCode' | 'typeName' | 'title' | 'ownerUserId'>,
 ): TripGearItem {
   return {
     gearItemId: overrides.id,
+    typeId: 1,
+    attributes: [],
     weightGrams: null,
     note: null,
     status: 'approved',
@@ -118,14 +119,10 @@ function tripGearItem(
 }
 
 function gearItem(
-  overrides: Partial<GearItem> & Pick<GearItem, 'id' | 'kind' | 'title'>,
+  overrides: Partial<GearItem> & Pick<GearItem, 'id' | 'typeCode' | 'typeName' | 'title'>,
 ): GearItem {
   return {
-    // Тип и значения — обязательные поля `GearItem` с 30.10.2026: экран
-    // «Костровое» их пока не читает, ему хватает вида и названия.
     typeId: 1,
-    typeCode: 'other',
-    typeName: 'Прочее',
     attributes: [],
     weightGrams: null,
     note: null,
@@ -231,8 +228,8 @@ describe('секция «Костровое»', () => {
       tripGearList([
         tripGearItem({
           id: 'g1',
-          gearItemId: '11',
-          kind: 'kitchen',
+          typeCode: 'stove',
+          typeName: 'Горелка',
           title: 'Горелка BRS-3000',
           ownerUserId: ANNA,
           weightGrams: 130,
@@ -249,27 +246,84 @@ describe('секция «Костровое»', () => {
   it('пилюли идут по порядку кнопок, а не по порядку из снаряжения', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
-        tripGearItem({ id: 'g1', kind: 'kitchen', title: 'Горелка BRS-3000', ownerUserId: ANNA }),
-        tripGearItem({ id: 'g2', kind: 'technical', title: 'Топор Fiskars X7', ownerUserId: ME }),
-        tripGearItem({ id: 'g3', kind: 'other', title: 'Розжиг гелевый', ownerUserId: ANNA }),
+        tripGearItem({
+          id: 'g1',
+          typeCode: 'stove',
+          typeName: 'Горелка',
+          title: 'Горелка BRS-3000',
+          ownerUserId: ANNA,
+        }),
+        tripGearItem({
+          id: 'g2',
+          typeCode: 'axe',
+          typeName: 'Топор',
+          title: 'Топор Fiskars X7',
+          ownerUserId: ME,
+        }),
+        tripGearItem({
+          id: 'g3',
+          typeCode: 'firestarter',
+          typeName: 'Розжиг',
+          title: 'Розжиг гелевый',
+          ownerUserId: ANNA,
+        }),
       ]),
     )
 
     const wrapper = await mounted()
 
-    // Розжиг лежит в «прочем»: по одному виду он бы из секции исчез, но тип
-    // узнаётся по названию, поэтому пилюля на месте и стоит второй.
     expect(pillTexts(wrapper)).toEqual(['Топор (Олег)', 'Розжиг (Анна)', 'Горелка (Анна)'])
+  })
+
+  it('тип решает, а не слово в названии: «Топор» с чужим типом в секцию не попадает', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList([
+        // Название говорит «топор», но тип — «прочее»: раньше такая вещь
+        // попадала в «Костровое» по слову, теперь не попадает.
+        tripGearItem({
+          id: 'g1',
+          typeCode: 'other',
+          typeName: 'Прочее',
+          title: 'Топор, который на самом деле не топор',
+          ownerUserId: ME,
+        }),
+        // И наоборот: слово в названии не совпадает, тип — свой.
+        tripGearItem({
+          id: 'g2',
+          typeCode: 'saw',
+          typeName: 'Пила',
+          title: 'Пилка складная',
+          ownerUserId: ANNA,
+        }),
+      ]),
+    )
+
+    const wrapper = await mounted()
+
+    expect(pillTexts(wrapper)).toEqual(['Пила (Анна)'])
   })
 
   it('палатки и спальники в костровое не попадают, «не берём» — тоже', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
-        tripGearItem({ id: 'g1', kind: 'tent', title: 'Палатка', ownerUserId: ME }),
-        tripGearItem({ id: 'g2', kind: 'sleeping', title: 'Спальник', ownerUserId: ME }),
+        tripGearItem({
+          id: 'g1',
+          typeCode: 'tent',
+          typeName: 'Палатка',
+          title: 'Палатка',
+          ownerUserId: ME,
+        }),
+        tripGearItem({
+          id: 'g2',
+          typeCode: 'sleeping_bag',
+          typeName: 'Спальник',
+          title: 'Спальник',
+          ownerUserId: ME,
+        }),
         tripGearItem({
           id: 'g3',
-          kind: 'kitchen',
+          typeCode: 'stove',
+          typeName: 'Горелка',
           title: 'Горелка, которую не берём',
           ownerUserId: ME,
           status: 'declined',
@@ -286,7 +340,13 @@ describe('секция «Костровое»', () => {
   it('кнопка цветная, пока вещи этого типа нет, и белая, когда она есть', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
-        tripGearItem({ id: 'g1', kind: 'technical', title: 'Топор Fiskars X7', ownerUserId: ME }),
+        tripGearItem({
+          id: 'g1',
+          typeCode: 'axe',
+          typeName: 'Топор',
+          title: 'Топор Fiskars X7',
+          ownerUserId: ME,
+        }),
       ]),
     )
 
@@ -296,12 +356,13 @@ describe('секция «Костровое»', () => {
     expect(wrapper.get('[data-test="route-cooking-add-saw"]').classes()).toContain('bg-red-600')
   })
 
-  it('«Добавить топор» предлагает только технику из моего каталога', async () => {
+  it('«Добавить топор» предлагает только вещи типа «Топор» из моего каталога', async () => {
     mocks.listGear.mockResolvedValue(
       gearList([
-        gearItem({ id: '40', kind: 'technical', title: 'Топор Fiskars X7' }),
-        gearItem({ id: '41', kind: 'kitchen', title: 'Горелка BRS-3000' }),
-        gearItem({ id: '42', kind: 'tent', title: 'Палатка' }),
+        gearItem({ id: '40', typeCode: 'axe', typeName: 'Топор', title: 'Топор Fiskars X7' }),
+        gearItem({ id: '41', typeCode: 'stove', typeName: 'Горелка', title: 'Горелка BRS-3000' }),
+        // Название «Топор», а тип другой — в списке ему не место.
+        gearItem({ id: '42', typeCode: 'other', typeName: 'Прочее', title: 'Топор-сувенир' }),
       ]),
     )
 
@@ -319,7 +380,9 @@ describe('секция «Костровое»', () => {
 
   it('вес в списке выбора виден: «Пила · 240 гр.»', async () => {
     mocks.listGear.mockResolvedValue(
-      gearList([gearItem({ id: '50', kind: 'technical', title: 'Пила', weightGrams: 240 })]),
+      gearList([
+        gearItem({ id: '50', typeCode: 'saw', typeName: 'Пила', title: 'Пила', weightGrams: 240 }),
+      ]),
     )
 
     const wrapper = await mounted()
@@ -335,14 +398,21 @@ describe('секция «Костровое»', () => {
   it('предложение уходит на сервер, вещь появляется пилюлей и кнопка белеет', async () => {
     mocks.listGear.mockResolvedValue(
       gearList([
-        gearItem({ id: '40', kind: 'technical', title: 'Топор Fiskars X7', weightGrams: 900 }),
+        gearItem({
+          id: '40',
+          typeCode: 'axe',
+          typeName: 'Топор',
+          title: 'Топор Fiskars X7',
+          weightGrams: 900,
+        }),
       ]),
     )
     mocks.proposeTripGear.mockResolvedValue(
       tripGearItem({
         id: 'g40',
         gearItemId: '40',
-        kind: 'technical',
+        typeCode: 'axe',
+        typeName: 'Топор',
         title: 'Топор Fiksars, как в каталоге',
         ownerUserId: ME,
         weightGrams: 900,
@@ -367,13 +437,25 @@ describe('секция «Костровое»', () => {
   it('уже предложенную вещь второй раз не предлагают', async () => {
     mocks.listGear.mockResolvedValue(
       gearList([
-        gearItem({ id: '40', kind: 'technical', title: 'Топор, который уже в походе' }),
-        gearItem({ id: '41', kind: 'technical', title: 'Пила' }),
+        gearItem({
+          id: '40',
+          typeCode: 'axe',
+          typeName: 'Топор',
+          title: 'Топор, который уже в походе',
+        }),
+        gearItem({ id: '41', typeCode: 'saw', typeName: 'Пила', title: 'Пила' }),
       ]),
     )
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
-        tripGearItem({ id: 'g40', gearItemId: '40', kind: 'technical', title: 'Топор', ownerUserId: ME }),
+        tripGearItem({
+          id: 'g40',
+          gearItemId: '40',
+          typeCode: 'axe',
+          typeName: 'Топор',
+          title: 'Топор',
+          ownerUserId: ME,
+        }),
       ]),
     )
 
@@ -384,12 +466,12 @@ describe('секция «Костровое»', () => {
 
     expect(
       wrapper.get('[data-test="route-cooking-gear"]').findAll('option').map((node) => node.text()),
-    ).toEqual(['выберите…', 'Пила'])
+    ).toEqual(['выберите…'])
   })
 
   it('нет подходящей вещи — подсказка, а не пустой список', async () => {
     mocks.listGear.mockResolvedValue(
-      gearList([gearItem({ id: '41', kind: 'kitchen', title: 'Горелка BRS-3000' })]),
+      gearList([gearItem({ id: '41', typeCode: 'stove', typeName: 'Горелка', title: 'Горелка' })]),
     )
 
     const wrapper = await mounted()
@@ -404,7 +486,7 @@ describe('секция «Костровое»', () => {
 
   it('ошибка предложения видна в модалке', async () => {
     mocks.listGear.mockResolvedValue(
-      gearList([gearItem({ id: '40', kind: 'technical', title: 'Топор' })]),
+      gearList([gearItem({ id: '40', typeCode: 'axe', typeName: 'Топор', title: 'Топор' })]),
     )
     mocks.proposeTripGear.mockRejectedValue(new ApiError(400, 'Эта вещь уже в походе'))
 
@@ -426,7 +508,13 @@ describe('секция «Костровое»', () => {
   it('владелец убирает свою вещь крестиком сразу', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
-        tripGearItem({ id: 'g1', kind: 'technical', title: 'Топор Fiskars X7', ownerUserId: ME }),
+        tripGearItem({
+          id: 'g1',
+          typeCode: 'axe',
+          typeName: 'Топор',
+          title: 'Топор Fiskars X7',
+          ownerUserId: ME,
+        }),
       ]),
     )
 
@@ -443,7 +531,8 @@ describe('секция «Костровое»', () => {
       tripGearList([
         tripGearItem({
           id: 'g1',
-          kind: 'kitchen',
+          typeCode: 'stove',
+          typeName: 'Горелка',
           title: 'Горелка Анны',
           ownerUserId: ANNA,
           weightGrams: 150,
@@ -470,7 +559,13 @@ describe('секция «Костровое»', () => {
   it('крестика нет ни у владельца чужой вещи, ни у постороннего участника', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
-        tripGearItem({ id: 'g1', kind: 'kitchen', title: 'Горелка Анны', ownerUserId: ANNA }),
+        tripGearItem({
+          id: 'g1',
+          typeCode: 'stove',
+          typeName: 'Горелка',
+          title: 'Горелка Анны',
+          ownerUserId: ANNA,
+        }),
       ]),
     )
 

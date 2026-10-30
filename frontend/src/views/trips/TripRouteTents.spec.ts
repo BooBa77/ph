@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 import type { User } from '@/api/types'
-import type { GearItem, TripGearItem } from '@/types/gear'
+import type { GearItem, GearItemAttribute, TripGearItem } from '@/types/gear'
 import type { ParticipantStatus, Trip, TripParticipant } from '@/types/trips'
 import TripRouteTents from '@/views/trips/TripRouteTents.vue'
 
@@ -18,9 +18,11 @@ import TripRouteTents from '@/views/trips/TripRouteTents.vue'
  *
  * - **вместимость не блокирует**: палатка на троих спокойно принимает
  *   четвёртого — «производитель рекомендует, а живут +1»;
- * - **заголовок плашки** — «{хозяин} {основная характеристика} {вес}гр.»,
- *   как продиктовал заказчик: «Анна 3-х местная 2400 гр.»;
- * - **«Добавить тент»** — пока только кнопка: под тентом никто не ночует;
+ * - **заголовок плашки** — «{хозяин} {seats}-х местная {вес}гр.», и число
+ *   мест берётся **из значения характеристики `seats`** (30.10.2026),
+ *   а не из диалога и не из слова «мест» в названии;
+ * - **тип вместо слова в названии**: палатки — вещи типа `tent`, тенты —
+ *   `shelter`; «Добавить тент» уходит на сервер, как и палатка;
  * - **распределяем только «идёт»**: «пока не решил», «приглашён» и «не идёт»
  *   места в палатке не занимают;
  * - **палатки — из снаряжения похода**, «не берём» на экране нет.
@@ -124,11 +126,26 @@ function makePeople(): TripParticipant[] {
   ]
 }
 
+/** Значение характеристики, как его отдаёт API: `seats` — число. */
+function attribute(code: string, name: string, value: number | string): GearItemAttribute {
+  return {
+    attributeId: code === 'seats' ? 1 : 2,
+    code,
+    name,
+    valueKind: typeof value === 'number' ? 'number' : 'text',
+    unit: null,
+    value,
+  }
+}
+
 function tripGearItem(
-  overrides: Partial<TripGearItem> & Pick<TripGearItem, 'id' | 'kind' | 'title' | 'ownerUserId'>,
+  overrides: Partial<TripGearItem> &
+    Pick<TripGearItem, 'id' | 'typeCode' | 'typeName' | 'title' | 'ownerUserId'>,
 ): TripGearItem {
   return {
     gearItemId: overrides.id,
+    typeId: 1,
+    attributes: [],
     weightGrams: null,
     note: null,
     status: 'approved',
@@ -143,27 +160,36 @@ function annaTent(): TripGearItem {
   return tripGearItem({
     id: 'g1',
     gearItemId: '10',
-    kind: 'tent',
+    typeCode: 'tent',
+    typeName: 'Палатка',
     title: 'Палатка на четверых',
     ownerUserId: ANNA,
     weightGrams: 2400,
+    attributes: [attribute('seats', 'Вместимость', 3)],
   })
 }
 
-function gearList(items: GearItem[]): { items: GearItem[]; totalWeightGrams: number; itemsWithoutWeight: number } {
+function gearList(items: GearItem[]): {
+  items: GearItem[]
+  totalWeightGrams: number
+  itemsWithoutWeight: number
+} {
   return { items, totalWeightGrams: 0, itemsWithoutWeight: 0 }
 }
 
-function personalTent(id: string, title: string): GearItem {
+/** Вещь личного каталога: тип задаётся кодом, вместимость — значением `seats`. */
+function personalGear(
+  id: string,
+  title: string,
+  typeCode: 'tent' | 'shelter' | 'other' = 'tent',
+  seats: number | null = null,
+): GearItem {
   return {
     id,
-    // Тип и значения — обязательные поля `GearItem` с 30.10.2026: экран
-    // «Палатки» пока фильтрует по старому виду, а не по коду типа.
     typeId: 1,
-    typeCode: 'tent',
-    typeName: 'Палатка',
-    attributes: [],
-    kind: 'tent',
+    typeCode,
+    typeName: typeCode === 'shelter' ? 'Тент' : typeCode === 'tent' ? 'Палатка' : 'Прочее',
+    attributes: seats === null ? [] : [attribute('seats', 'Вместимость', seats)],
     title,
     weightGrams: null,
     note: null,
@@ -195,14 +221,15 @@ describe('секция «Палатки»', () => {
     mocks.listGear.mockResolvedValue(gearList([]))
   })
 
-  it('палатка — только вид «палатка» и только «берём»', async () => {
+  it('палатка — только тип «палатка» и только «берём»', async () => {
     mocks.listTripGear.mockResolvedValue({
       items: [
         annaTent(),
         tripGearItem({
           id: 'g2',
           gearItemId: '11',
-          kind: 'tent',
+          typeCode: 'tent',
+          typeName: 'Палатка',
           title: 'Палатка, которую не берём',
           ownerUserId: PETR,
           status: 'declined',
@@ -210,7 +237,8 @@ describe('секция «Палатки»', () => {
         tripGearItem({
           id: 'g3',
           gearItemId: '12',
-          kind: 'sleeping',
+          typeCode: 'sleeping_bag',
+          typeName: 'Спальник',
           title: 'Спальник',
           ownerUserId: ME,
         }),
@@ -238,7 +266,7 @@ describe('секция «Палатки»', () => {
     expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe('Анна 3-х местная')
   })
 
-  it('заголовок плашки — «{хозяин} {характеристика} {вес}гр.», владелец уже живёт в ней', async () => {
+  it('заголовок плашки — «{хозяин} {seats}-х местная {вес}гр.», владелец уже живёт в ней', async () => {
     const wrapper = await mounted()
 
     expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe(
@@ -247,12 +275,46 @@ describe('секция «Палатки»', () => {
     expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живёт 1 (Анна)')
   })
 
-  it('«Добавить тент» берёт тент из личного каталога, но в поход его не пишет', async () => {
+  it('вместимость не заполнена — не выдумываем: «Анна 2400 гр.» и никакой пометки', async () => {
+    mocks.listParticipants.mockResolvedValue([
+      ...makePeople(),
+      participant('demo-vasya', 'Вася'),
+      participant('demo-katya', 'Катя'),
+    ])
+    mocks.listTripGear.mockResolvedValue({
+      items: [{ ...annaTent(), attributes: [] }],
+      totalWeightGrams: 0,
+      itemsWithoutWeight: 0,
+    })
+
+    const wrapper = await mounted()
+
+    expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe('Анна 2400 гр.')
+
+    // Вместимости нет — «сверх вместимости» сказать нечего, и не говорим.
+    await wrapper.get('[data-test="route-tent-add-member"]').setValue('demo-vasya')
+    await wrapper.get('[data-test="route-tent-add-member"]').setValue('demo-katya')
+
+    expect(wrapper.find('[data-test="route-tent-over"]').exists()).toBe(false)
+  })
+
+  it('«Добавить тент» берёт вещь типа «Тент» и уводит её в поход', async () => {
     mocks.listGear.mockResolvedValue(
       gearList([
-        { ...personalTent('60', 'Тент 3×4'), kind: 'other', weightGrams: 3000 },
-        { ...personalTent('61', 'Аптечка'), kind: 'other' },
+        personalGear('60', 'Тент 3×4', 'shelter'),
+        personalGear('61', 'Аптечка', 'other'),
       ]),
+    )
+    mocks.proposeTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g60',
+        gearItemId: '60',
+        typeCode: 'shelter',
+        typeName: 'Тент',
+        title: 'Тент 3×4',
+        ownerUserId: ME,
+        weightGrams: 3000,
+      }),
     )
 
     const wrapper = await mounted()
@@ -261,24 +323,58 @@ describe('секция «Палатки»', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="route-awning-dialog"]').exists()).toBe(true)
-    // В списке только тенты: аптечка тентом не считается.
+    // В списке только тенты: тип решает, а не слово в названии.
     expect(
       wrapper.get('[data-test="route-awning-gear"]').findAll('option').map((node) => node.text()),
-    ).toEqual(['выберите…', 'Тент 3×4 · 3000 гр.'])
+    ).toEqual(['выберите…', 'Тент 3×4'])
 
     await wrapper.get('[data-test="route-awning-gear"]').setValue('60')
     await wrapper.get('[data-test="route-awning-save"]').trigger('click')
     await flushPromises()
 
+    expect(mocks.proposeTripGear).toHaveBeenCalledWith('1', '60')
     expect(wrapper.find('[data-test="route-awning-dialog"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="route-awning"] span').text()).toBe('Тент - 3000 гр. (Олег)')
-    // Строка живёт только на экране: ручка предложения не вызывалась.
-    expect(mocks.proposeTripGear).not.toHaveBeenCalled()
+    // Тент — вещь похода, а не строка на экране: плашки палаток он не создаёт.
+    expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(1)
+  })
+
+  it('тент приходит и при загрузке: вещь типа shelter из снаряжения похода', async () => {
+    mocks.listTripGear.mockResolvedValue({
+      items: [
+        annaTent(),
+        tripGearItem({
+          id: 'g60',
+          gearItemId: '60',
+          typeCode: 'shelter',
+          typeName: 'Тент',
+          title: 'Тент 3×4',
+          ownerUserId: ME,
+          weightGrams: 3000,
+        }),
+      ],
+      totalWeightGrams: 0,
+      itemsWithoutWeight: 0,
+    })
+
+    const wrapper = await mounted()
+
+    expect(wrapper.get('[data-test="route-awning"] span').text()).toBe('Тент - 3000 гр. (Олег)')
     expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(1)
   })
 
   it('кнопки цветут по состоянию: палатка — пока не распределён, тент — пока его нет', async () => {
-    mocks.listGear.mockResolvedValue(gearList([{ ...personalTent('60', 'Тент'), kind: 'other' }]))
+    mocks.listGear.mockResolvedValue(gearList([personalGear('60', 'Тент', 'shelter')]))
+    mocks.proposeTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g60',
+        gearItemId: '60',
+        typeCode: 'shelter',
+        typeName: 'Тент',
+        title: 'Тент',
+        ownerUserId: ME,
+      }),
+    )
 
     const wrapper = await mounted()
 
@@ -291,6 +387,7 @@ describe('секция «Палатки»', () => {
     await flushPromises()
     await wrapper.get('[data-test="route-awning-gear"]').setValue('60')
     await wrapper.get('[data-test="route-awning-save"]').trigger('click')
+    await flushPromises()
 
     expect(wrapper.get('[data-test="route-tent-awning"]').classes()).toContain('bg-field')
 
@@ -315,7 +412,8 @@ describe('секция «Палатки»', () => {
         tripGearItem({
           id: 'g9',
           gearItemId: '19',
-          kind: 'tent',
+          typeCode: 'tent',
+          typeName: 'Палатка',
           title: 'Палатка Олега',
           ownerUserId: ME,
         }),
@@ -492,28 +590,35 @@ describe('секция «Палатки»', () => {
     expect(wrapper.find('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
   })
 
-  it('своя палатка: спрашиваем вместимость и получаем заголовок «Олег 5-местная 1000 гр.»', async () => {
+  it('своя палатка: вместимость — значение seats, диалог её не спрашивает', async () => {
     mocks.listGear.mockResolvedValue(
-      gearList([personalTent('20', 'Палатка на пятерых'), personalTent('21', 'Односкатка')]),
+      gearList([
+        personalGear('20', 'Палатка на пятерых', 'tent', 5),
+        personalGear('21', 'Односкатка', 'tent', 1),
+      ]),
     )
     mocks.proposeTripGear
       .mockResolvedValueOnce(
         tripGearItem({
           id: 'g20',
           gearItemId: '20',
-          kind: 'tent',
+          typeCode: 'tent',
+          typeName: 'Палатка',
           title: 'Палатка на пятерых',
           ownerUserId: ME,
           weightGrams: 1000,
+          attributes: [attribute('seats', 'Вместимость', 5)],
         }),
       )
       .mockResolvedValueOnce(
         tripGearItem({
           id: 'g21',
           gearItemId: '21',
-          kind: 'tent',
+          typeCode: 'tent',
+          typeName: 'Палатка',
           title: 'Односкатка',
           ownerUserId: ME,
+          attributes: [attribute('seats', 'Вместимость', 1)],
         }),
       )
 
@@ -522,8 +627,10 @@ describe('секция «Палатки»', () => {
     await wrapper.get('[data-test="route-tent-add"]').trigger('click')
     await flushPromises()
 
+    // Поля вместимости в диалоге больше нет: это характеристика вещи.
+    expect(wrapper.find('[data-test="route-tent-capacity"]').exists()).toBe(false)
+
     await wrapper.get('[data-test="route-tent-gear"]').setValue('20')
-    await wrapper.get('[data-test="route-tent-capacity"]').setValue('5')
     await wrapper.get('[data-test="route-tent-save"]').trigger('click')
     await flushPromises()
 
@@ -539,7 +646,6 @@ describe('секция «Палатки»', () => {
     await flushPromises()
 
     await wrapper.get('[data-test="route-tent-gear"]').setValue('21')
-    await wrapper.get('[data-test="route-tent-capacity"]').setValue('1')
     await wrapper.get('[data-test="route-tent-save"]').trigger('click')
     await flushPromises()
 
@@ -548,11 +654,47 @@ describe('секция «Палатки»', () => {
     ).toContain('Олег одноместная')
   })
 
+  it('своя палатка без вместимости: подсказка в диалоге, заголовок без числа', async () => {
+    mocks.listGear.mockResolvedValue(gearList([personalGear('20', 'Старая палатка', 'tent')]))
+    mocks.proposeTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g20',
+        gearItemId: '20',
+        typeCode: 'tent',
+        typeName: 'Палатка',
+        title: 'Старая палатка',
+        ownerUserId: ME,
+        weightGrams: 1800,
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-tent-add"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="route-tent-gear"]').setValue('20')
+
+    expect(wrapper.get('[data-test="route-tent-no-capacity"]').text()).toContain(
+      'не заполнена вместимость',
+    )
+
+    await wrapper.get('[data-test="route-tent-save"]').trigger('click')
+    await flushPromises()
+
+    expect(
+      wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text()),
+    ).toContain('Олег 1800 гр.')
+  })
+
   it('в списке нет палаток, которые уже взяли в поход', async () => {
     // Предмет каталога 10 уже едет в походе (палатка Анны) — своей она быть
     // не может, но принцип тот же: занятые в списке не предлагаются.
     mocks.listGear.mockResolvedValue(
-      gearList([personalTent('10', 'Моя палатка'), { ...personalTent('30', 'Спальник'), kind: 'sleeping' }]),
+      gearList([
+        personalGear('10', 'Моя палатка', 'tent', 3),
+        personalGear('30', 'Спальник', 'other'),
+      ]),
     )
 
     const wrapper = await mounted()
@@ -564,7 +706,7 @@ describe('секция «Палатки»', () => {
   })
 
   it('ошибка добавления видна в модалке, а не под затемнением', async () => {
-    mocks.listGear.mockResolvedValue(gearList([personalTent('20', 'Палатка')]))
+    mocks.listGear.mockResolvedValue(gearList([personalGear('20', 'Палатка', 'tent', 3)]))
     mocks.proposeTripGear.mockRejectedValue(new ApiError(400, 'Эта палатка уже в походе'))
 
     const wrapper = await mounted()

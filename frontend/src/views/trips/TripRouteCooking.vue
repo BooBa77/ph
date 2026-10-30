@@ -5,7 +5,8 @@ import { listGear, listTripGear, proposeTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
 import { listParticipants } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
-import type { GearItem, GearKind, TripGearItem } from '@/types/gear'
+import { CAMPFIRE_TYPE_CODES, GEAR_TYPE_CODES, STOVE_TYPE_CODES } from '@/types/gear'
+import type { GearItem, TripGearItem } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
 import { weightInGrams } from '@/utils/gearWeight'
 
@@ -30,22 +31,25 @@ import { weightInGrams } from '@/utils/gearWeight'
  *    кнопка цветная (её и надо нажать); появилась — белая, но нажимать её
  *    по-прежнему можно, если топоров нужно два.
  * 3. **Пилюля — «{тип} - {вес}гр ({хозяин})»** и крестик: заказчик продиктовал
- *    формат «Горелка - 100гр (Анна)». Название в пилюле — **слово типа**, а не
- *    название вещи из каталога: «Горелка Анны» с подписью «(Анна)» дублировало
- *    бы хозяйку, а тип — это то, по чему здесь договариваются.
+ *    формат «Горелка - 100гр (Анна)». Название в пилюле — **слово типа**
+ *    из справочника, а не название вещи из каталога: «Горелка Анны» с подписью
+ *    «(Анна)» дублировало бы хозяйку, а тип — это то, по чему здесь
+ *    договариваются.
+ *
+ * **Типы вместо слов в названии (30.10.2026, Stage B, часть 2).** Кнопки
+ * и пилюли собраны по забинденным кодам: при костре — `CAMPFIRE_TYPE_CODES`
+ * (`axe`, `saw`, `firestarter`, `tagan`), при горелке — `STOVE_TYPE_CODES`
+ * (`stove`, `gas`). Раньше фильтр смотрел на виды «кухня» и «техника»,
+ * а тип уже предложенной вещи угадывался по словам в названии, потому что
+ * типов в БД не было; теперь вещь приходит с `typeCode` из справочника,
+ * и угадывать нечего: вещь не того типа в секцию не попадает, а «не берём»
+ * не показывается вовсе.
  *
  * **Крестик — по правам на вещь** (29.10.2026): у владельца он убирает вещь из
  * секции, у организатора — только **предлагает** убрать: пилюля становится
  * зачёркнутой с пунктирной рамкой, повторное нажатие возвращает. Убирает
  * в памяти компонента: ручки удаления вещи из похода нет, она появится вместе
  * с моделью ночёвок.
- *
- * **Типы пока приблизительные.** Списка типов снаряжения в БД ещё нет:
- * у `gear_items` только вид (`kind`) из восьми значений, и «топор» или
- * «горелка» в него не входят. Пока кнопка смотрит на виды «кухня»
- * и «техника», а вещь, предложенная в прошлых сессиях, узнаётся по словам
- * в названии (`marker`). Когда появится описание снаряжения (основная
- * характеристика и тип), фильтр и узнавание переедут на него (`gear.md` §8).
  */
 const props = defineProps<{
   trip: Trip
@@ -60,24 +64,20 @@ const auth = useAuthStore()
 /** План ночёвки, который показывает кнопку: костёр или горелка. */
 type CookingPlan = 'fire' | 'stove'
 
-/** Заголовок модалки — «Топор», подпись кнопки — «Добавить топор». */
+/**
+ * Кнопка секции: код типа, слова для человека и план ночёвок.
+ *
+ * `code` — контракт: он приходит у вещи полем `typeCode`, и по нему же
+ * фильтруется личный каталог при выборе. `label` и `button` — слова
+ * заказчика (30.10.2026): он называл кнопки сам, и слова в справочнике
+ * («Газовый баллон») для кнопки коротки — «Добавить газовый баллон».
+ */
 interface CookingType {
-  id: string
+  code: string
   label: string
   button: string
-  /**
-   * Виды личного снаряжения, из которых берём вещь этого типа. Настоящего
-   * типа вещи в модели нет, поэтому «костровое» — это «кухня» и «техника».
-   */
-  gearKinds: readonly GearKind[]
   /** Какой план ночёвок показывает кнопку. */
   plan: CookingPlan
-  /**
-   * По каким словам в названии узнаём вещь этого типа. Типа в БД нет, поэтому
-   * вещь, предложенную раньше, видно только по названию: «Топор Fiskars X7»,
-   * «Горелка Анны», «Баллон газовый 230 г».
-   */
-  marker: RegExp
 }
 
 /**
@@ -86,57 +86,45 @@ interface CookingType {
  */
 const COOKING_TYPES: readonly CookingType[] = [
   {
-    id: 'axe',
+    code: GEAR_TYPE_CODES.axe,
     label: 'Топор',
     button: 'Добавить топор',
-    gearKinds: ['technical'],
     plan: 'fire',
-    marker: /топор|axe/i,
   },
   {
-    id: 'saw',
+    code: GEAR_TYPE_CODES.saw,
     label: 'Пила',
     button: 'Добавить пилу',
-    gearKinds: ['technical'],
     plan: 'fire',
-    marker: /пил[аыу]|saw/i,
   },
   {
-    id: 'firestarter',
+    code: GEAR_TYPE_CODES.firestarter,
     label: 'Розжиг',
     button: 'Добавить розжиг',
-    gearKinds: ['technical', 'kitchen', 'other'],
     plan: 'fire',
-    marker: /розжиг|спичк|зажигал/i,
   },
   {
-    id: 'tagan',
+    code: GEAR_TYPE_CODES.tagan,
     label: 'Таган',
     button: 'Добавить таган',
-    gearKinds: ['kitchen'],
     plan: 'fire',
-    marker: /таган|треног/i,
   },
   {
-    id: 'stove',
+    code: GEAR_TYPE_CODES.stove,
     label: 'Горелка',
     button: 'Добавить горелку',
-    gearKinds: ['kitchen'],
     plan: 'stove',
-    marker: /горелк|burner/i,
   },
   {
-    id: 'gas',
+    code: GEAR_TYPE_CODES.gas,
     label: 'Газовый баллон',
     button: 'Добавить газовый баллон',
-    gearKinds: ['kitchen'],
     plan: 'stove',
-    marker: /баллон|газов/i,
   },
 ]
 
-/** Что из снаряжения похода считается костровым: кухня и техника. */
-const COOKING_GEAR_KINDS: readonly GearKind[] = ['kitchen', 'technical']
+/** Что из снаряжения похода относится к костровому: оба набора кодов. */
+const COOKING_TYPE_CODES: readonly string[] = [...CAMPFIRE_TYPE_CODES, ...STOVE_TYPE_CODES]
 
 /**
  * Кнопка одна на два состояния: цветная — такой вещи в секции ещё нет,
@@ -161,49 +149,30 @@ const isOrganizer = computed(
   () => meId.value !== '' && props.trip.organizerUserId === meId.value,
 )
 
-/** Типы, чьи вещи уже в секции: помним по вещи, чтобы не гадать по названию. */
-const proposedTypeIds = new Map<string, string>()
-
-function typeOfTitle(title: string): CookingType | null {
-  return COOKING_TYPES.find((type) => type.marker.test(title)) ?? null
-}
-
-/** Тип вещи: свой из этой сессии, иначе — угаданный по названию. */
+/** Тип вещи по коду из справочника: угадывать по названию больше не нужно. */
 function typeOf(item: TripGearItem): CookingType | null {
-  const known = proposedTypeIds.get(item.id)
-
-  if (known !== undefined) return COOKING_TYPES.find((type) => type.id === known) ?? null
-
-  return typeOfTitle(item.title)
+  return COOKING_TYPES.find((type) => type.code === item.typeCode) ?? null
 }
 
 interface CookingRow {
   item: TripGearItem
-  /** `null` — тип не узнали: пилюля подпишется названием вещи. */
-  type: CookingType | null
+  type: CookingType
 }
 
-function typeOrder(type: CookingType | null): number {
-  return type === null ? COOKING_TYPES.length : COOKING_TYPES.findIndex((row) => row.id === type.id)
+function typeOrder(type: CookingType): number {
+  return COOKING_TYPES.findIndex((row) => row.code === type.code)
 }
 
 /**
  * Предложенное костровое, по порядку типов: «Топор - 900 гр. (Сергей)».
  * «Не берём» не показываем — этой вещи в походе нет, и предлагать её снова
  * бессмысленно.
- *
- * Вид «кухня» и «техника» — грубый фильтр, но не единственный: розжиг
- * в демо-данных лежит в «прочем», и по одному виду он бы из секции исчезал.
- * Поэтому вещь показывается ещё и тогда, когда её тип узнан по названию.
  */
 const cookingRows = computed<CookingRow[]>(() =>
   items.value
-    .filter(
-      (item) =>
-        item.status !== 'declined' &&
-        (COOKING_GEAR_KINDS.includes(item.kind) || typeOf(item) !== null),
-    )
+    .filter((item) => item.status !== 'declined' && COOKING_TYPE_CODES.includes(item.typeCode))
     .map((item) => ({ item, type: typeOf(item) }))
+    .filter((row): row is CookingRow => row.type !== null)
     .sort(
       (left, right) =>
         typeOrder(left.type) - typeOrder(right.type) ||
@@ -217,7 +186,7 @@ const visibleTypes = computed(() =>
 )
 
 function hasType(type: CookingType): boolean {
-  return cookingRows.value.some((row) => row.type?.id === type.id)
+  return cookingRows.value.some((row) => row.type.code === type.code)
 }
 
 function buttonClass(type: CookingType): string {
@@ -238,14 +207,14 @@ function gearOptionText(item: GearItem): string {
 /**
  * Пилюля предложенной вещи: «Горелка - 130 гр. (Анна)».
  *
- * Вес — из каталога предмета, формат «гр.» общий с заголовком палатки
- * (`weightInGrams`). Веса нет — пилюля без «- 130 гр.»: прочерк читался бы
- * как ошибка, а не как «не взвесили».
+ * Слово типа — из справочника (`typeName`): там оно и живёт, а сид называет
+ * типы теми же словами, что заказчик. Вес — из каталога предмета, формат
+ * «гр.» общий с заголовком палатки (`weightInGrams`). Веса нет — пилюля
+ * без «- 130 гр»: прочерк читался бы как ошибка, а не как «не взвесили».
  */
 function pillText(row: CookingRow): string {
   const weight = weightInGrams(row.item.weightGrams)
-  const name = row.type?.label ?? row.item.title
-  const head = weight === null ? name : `${name} - ${weight}`
+  const head = weight === null ? row.item.typeName : `${row.item.typeName} - ${weight}`
 
   return `${head} (${nameOf(row.item.ownerUserId)})`
 }
@@ -350,7 +319,7 @@ async function openDialog(type: CookingType): Promise<void> {
     const inTrip = new Set(items.value.map((item) => item.gearItemId))
 
     myGear.value = list.items.filter(
-      (item) => type.gearKinds.includes(item.kind) && !inTrip.has(item.id),
+      (item) => item.typeCode === type.code && !inTrip.has(item.id),
     )
   } catch (problem) {
     dialogError.value =
@@ -363,15 +332,12 @@ async function openDialog(type: CookingType): Promise<void> {
 async function saveItem(): Promise<void> {
   if (isSaving.value || draftGearItemId.value === '' || activeType.value === null) return
 
-  const type = activeType.value
-
   isSaving.value = true
   dialogError.value = null
 
   try {
     const item = await proposeTripGear(props.trip.id, draftGearItemId.value)
 
-    proposedTypeIds.set(item.id, type.id)
     items.value = [...items.value, item]
     isDialogOpen.value = false
   } catch (problem) {
@@ -441,10 +407,10 @@ async function saveItem(): Promise<void> {
       <div class="flex flex-wrap items-center gap-2" data-test="route-cooking-buttons">
         <button
           v-for="type in visibleTypes"
-          :key="type.id"
+          :key="type.code"
           type="button"
           :class="buttonClass(type)"
-          :data-test="`route-cooking-add-${type.id}`"
+          :data-test="`route-cooking-add-${type.code}`"
           @click="openDialog(type)"
         >
           {{ type.button }}

@@ -5,7 +5,8 @@ import { listGear, listTripGear, proposeTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
 import { listParticipants } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
-import type { GearItem, TripGearItem } from '@/types/gear'
+import { GEAR_TYPE_CODES } from '@/types/gear'
+import type { GearItem, GearItemAttribute, TripGearItem } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
 import { weightInGrams } from '@/utils/gearWeight'
 
@@ -18,16 +19,23 @@ import { weightInGrams } from '@/utils/gearWeight'
  * ночёвки сразу** — палатка у человека одна на поход, и делить её по ночам
  * не нужно.
  *
- * Что здесь настоящее, а что макет:
+ * **Типы вместо слов в названии (30.10.2026, Stage B, часть 2).** Секция
+ * собрана из `TENT_TYPE_CODES`: `tent` — палатка, `shelter` — тент. Раньше
+ * вид и тент угадывались по словам в названии, потому что типов в базе
+ * не было; теперь оба типа есть в справочнике, и вещь приходит с `typeCode`.
  *
- * - **люди** — участники похода (`GET /api/trips/:id/participants`), только
- *   «идёт»: место в палатке занимает решивший (заказчик 29.10.2026, строже
- *   карты вкладок, где распределялись и «50/50»);
- * - **палатки** — снаряжение похода (`GET /api/trips/:id/gear`, вид `tent`,
- *   кроме «не берём»): плашка палатки — это вещь, а не текст в ночёвках;
+ * - **палатка** (`tent`) — плашка с людьми и распределением;
+ * - **тент** (`shelter`) — пилюля «Тент - 3000 гр. (Олег)», в распределении
+ *   его нет: под тентом никто не ночует;
+ * - **вместимость — значение характеристики `seats`** типа `tent`, а не
+ *   число из диалога: заказчик решил 30.10.2026, что вместимость это
+ *   характеристика вещи (`NEXT.md` §3, вопрос 10), и слово «мест» в названии
+ *   для неё больше не нужно. Не заполнена — плашка честно подписывается
+ *   хозяином и весом, без выдуманного «3-х местная».
  * - **добавить свою** — та же ручка, что «взять палатку в поход» на вкладке
  *   «Снаряжение» (`POST /api/trips/:id/gear`), поэтому палатка не исчезает
- *   при перезагрузке и её видит вся группа;
+ *   при перезагрузке и её видит вся группа. Так же добавляется и тент:
+ *   с 30.10.2026 это настоящий тип, а не строка на экране.
  * - **кто в какой палатке живёт — в памяти компонента** и никуда не уходит:
  *   таблицы распределения ещё нет, это следующий шаг (NEXT.md §2–§3).
  *
@@ -38,17 +46,9 @@ import { weightInGrams } from '@/utils/gearWeight'
  * «живут 2 (Пётр, Анна)» и тихая пометка «сверх вместимости», когда народу
  * больше паспортного.
  *
- * **Заголовок плашки** — «{хозяин} {основная характеристика} {вес}гр.»,
- * например «Анна 3-х местная 2400 гр.» (29.10.2026). «Основная
- * характеристика» — будущее поле всей таблицы снаряжения (`gear.md` §8):
- * у палатки это число мест, и пока его играет вместимость из диалога.
- * Веса нет — нет и «гр.» в заголовке.
- *
- * **Тент — не палатка.** Кнопка «Добавить тент» открывает выбор из личного
- * каталога, но строка в снаряжение похода не пишется: вида «тент» в модели
- * нет, и пилюля живёт только на экране. Под тентом никто не ночует, места
- * в распределении у него нет (заказчик 29.10.2026: «пока просто кнопка» —
- * теперь кнопка хотя бы показывает формат пилюли и крестик).
+ * **Заголовок плашки** — «{хозяин} {seats}-х местная {вес}гр.», например
+ * «Анна 3-х местная 2400 гр.». Веса нет — нет и «гр.»; вместимости нет —
+ * нет и числа.
  *
  * **Крестики — по правам на вещь** (29.10.2026): у владельца палатки или
  * тента крестик убирает его из секции, у организатора — только **предлагает**
@@ -69,12 +69,8 @@ const props = defineProps<{ trip: Trip }>()
 
 const auth = useAuthStore()
 
-/** Вместимость, пока её не спросили: «3-х местная» — обычная палатка. */
-const DEFAULT_CAPACITY = 3
-
-/** Пределы поля вместимости: одна палатка — до восьми мест. */
-const MIN_CAPACITY = 1
-const MAX_CAPACITY = 8
+/** Код характеристики вместимости у типа `tent` (сид и справочник админа). */
+const SEATS_ATTRIBUTE = 'seats'
 
 type TentPersonStatus = 'accepted' | 'requested'
 
@@ -93,8 +89,11 @@ interface TentCard {
   tripGearId: string
   ownerUserId: string
   ownerName: string
-  /** Основная характеристика палатки: сколько мест. */
-  capacity: number
+  /**
+   * Вместимость — значение характеристики `seats`. `null` — у вещи оно
+   * не заполнено: число не выдумываем, плашка обойдётся без него.
+   */
+  capacity: number | null
   /** Вес вещи из каталога: его показываем в заголовке, если он известен. */
   weightGrams: number | null
   members: TentMember[]
@@ -103,24 +102,26 @@ interface TentCard {
 }
 
 /**
- * Тент в секции «Палатки» (29.10.2026).
+ * Тент в секции «Палатки» — вещь типа `shelter` из снаряжения похода.
  *
- * В снаряжении похода вида «тент» нет: `gear_items.kind` знает только
- * палатку, а тент — не спальное место, и под ним никто не ночует. Поэтому
- * тент пока **локальная пилюля**: его нельзя предложить серверу, зато видно
- * формат «Тент - 3000 гр. (Олег)» и крестик с теми же правами, что у вещей.
- * Серверная модель появится вместе с описанием снаряжения (`gear.md` §8).
+ * С 30.10.2026 тент — настоящий тип, поэтому и пилюля настоящая: вещь
+ * уходит в поход той же ручкой, что палатка, и её видит вся группа.
+ * В распределении тента нет: под ним никто не ночует, спальных мест он
+ * не держит.
  */
 interface AwningPill {
-  /** Ключ строки: предмет личного каталога, из которого взяли тент. */
+  /** Ключ строки — вещь снаряжения похода. */
+  tripGearId: string
+  /** Предмет каталога: по нему ищется, что уже взято в поход. */
   gearItemId: string
+  /** Слово типа из справочника: «Тент». */
+  typeName: string
   title: string
   weightGrams: number | null
   ownerUserId: string
   ownerName: string
   removalProposed: boolean
 }
-
 
 const meId = computed(() => auth.user?.id ?? '')
 
@@ -132,16 +133,26 @@ const isLoading = ref(true)
 const error = ref<string | null>(null)
 
 const tents = ref<TentCard[]>([])
+const awnings = ref<AwningPill[]>([])
 
 /**
- * Вместимость по вещи снаряжения. Живёт отдельно от плашки, чтобы правка
- * перезагрузки не теряла число: плашки пересобираются из снаряжения,
- * а характеристика остаётся.
+ * Вместимость вещи: значение характеристики `seats`.
+ *
+ * Число приходит числом (`GearItemAttributeDto`), но старые данные могли
+ * лечь строкой — поэтому смотрим на тип, а не на истинность: `0` и пустая
+ * строка означают «не заполнено», а не «ноль мест».
  */
-const capacities = new Map<string, number>()
+function seatsOf(item: { attributes?: GearItemAttribute[] }): number | null {
+  const value = (item.attributes ?? []).find((row) => row.code === SEATS_ATTRIBUTE)?.value
 
-function capacityOf(tripGearId: string): number {
-  return capacities.get(tripGearId) ?? DEFAULT_CAPACITY
+  if (typeof value === 'number') return value > 0 ? value : null
+  if (typeof value === 'string') {
+    const parsed = Number(value)
+
+    return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+  }
+
+  return null
 }
 
 /** Кого распределяем: только «идёт». */
@@ -170,10 +181,9 @@ function nameOf(userId: string): string {
 /**
  * Заголовок плашки — формат заказчика 29.10.2026:
  * **«{хозяин} {основная характеристика} {вес}гр.»** — «Анна 3-х местная
- * 2400 гр.». Веса нет в каталоге — его нет и в заголовке: «Анна 3-х местная».
- *
- * «Основная характеристика» — будущее поле всей таблицы снаряжения
- * (`gear.md` §8). Пока его нет, у палатки эту роль играет вместимость.
+ * 2400 гр.». Вместимость берётся из значения `seats`, вес — из каталога;
+ * чего нет, того в заголовке нет: «Анна 2400 гр.» честнее, чем
+ * «Анна 3-х местная» у палатки без заполненной вместимости.
  */
 function capacityText(capacity: number): string {
   if (capacity === 1) return 'одноместная'
@@ -183,10 +193,14 @@ function capacityText(capacity: number): string {
 }
 
 function tentTitle(tent: TentCard): string {
-  const base = `${tent.ownerName} ${capacityText(tent.capacity)}`
-  const weight = weightInGrams(tent.weightGrams)
+  const parts = [tent.ownerName]
 
-  return weight === null ? base : `${base} ${weight}`
+  if (tent.capacity !== null) parts.push(capacityText(tent.capacity))
+
+  const weight = weightInGrams(tent.weightGrams)
+  if (weight !== null) parts.push(weight)
+
+  return parts.join(' ')
 }
 
 /** Сколько в палатке живёт и кто — словами, как «занято 4 из 4» у рейса. */
@@ -211,7 +225,7 @@ function requestedOf(tent: TentCard): TentMember[] {
 
 /** Пометка «народу больше, чем паспортных мест»: не запрет, а информация. */
 function isOverCapacity(tent: TentCard): boolean {
-  return acceptedOf(tent).length > tent.capacity
+  return tent.capacity !== null && acceptedOf(tent).length > tent.capacity
 }
 
 /** Кого ещё можно позвать в эту палатку: идущих и не занятых в ней. */
@@ -262,12 +276,6 @@ const amUnassigned = computed(() =>
   unassigned.value.some((person) => person.userId === meId.value),
 )
 
-/** Тенты: локальные пилюли секции, серверной модели ещё нет. */
-const awnings = ref<AwningPill[]>([])
-
-/** Как узнаём тент в личном каталоге: вида «тент» в `gear_items` нет. */
-const AWNING_TITLE = /тент|tarp|навес|маркиз/i
-
 const hasAwning = computed(() => awnings.value.length > 0)
 
 // ───────────────────────────── загрузка ─────────────────────────────
@@ -278,10 +286,12 @@ const hasAwning = computed(() => awnings.value.length > 0)
  * обновлении списка палаток нельзя.
  */
 function syncTents(items: TripGearItem[]): void {
-  const inTrip = items.filter((item) => item.kind === 'tent' && item.status !== 'declined')
+  const cards = items.filter(
+    (item) => item.typeCode === GEAR_TYPE_CODES.tent && item.status !== 'declined',
+  )
   const known = new Map(tents.value.map((tent) => [tent.tripGearId, tent]))
 
-  tents.value = inTrip.map((item) => {
+  tents.value = cards.map((item) => {
     const existing = known.get(item.id)
     if (existing !== undefined) return existing
 
@@ -291,7 +301,7 @@ function syncTents(items: TripGearItem[]): void {
       tripGearId: item.id,
       ownerUserId: item.ownerUserId,
       ownerName,
-      capacity: capacityOf(item.id),
+      capacity: seatsOf(item),
       weightGrams: item.weightGrams,
       /**
        * Владелец живёт в своей палатке, пока не сказал иначе: он её и несёт.
@@ -301,6 +311,30 @@ function syncTents(items: TripGearItem[]): void {
       members: goingPeople.value.some((person) => person.userId === item.ownerUserId)
         ? [{ userId: item.ownerUserId, displayName: ownerName, status: 'accepted' }]
         : [],
+      removalProposed: false,
+    }
+  })
+}
+
+/** Тенты — из тех же вещей похода: тип `shelter`, «не берём» не показываем. */
+function syncAwnings(items: TripGearItem[]): void {
+  const pills = items.filter(
+    (item) => item.typeCode === GEAR_TYPE_CODES.shelter && item.status !== 'declined',
+  )
+  const known = new Map(awnings.value.map((awning) => [awning.tripGearId, awning]))
+
+  awnings.value = pills.map((item) => {
+    const existing = known.get(item.id)
+    if (existing !== undefined) return existing
+
+    return {
+      tripGearId: item.id,
+      gearItemId: item.gearItemId,
+      typeName: item.typeName,
+      title: item.title,
+      weightGrams: item.weightGrams,
+      ownerUserId: item.ownerUserId,
+      ownerName: nameOf(item.ownerUserId),
       removalProposed: false,
     }
   })
@@ -319,6 +353,7 @@ async function load(): Promise<void> {
     people.value = members
     gear.value = list.items
     syncTents(list.items)
+    syncAwnings(list.items)
   } catch (problem) {
     error.value =
       problem instanceof ApiError ? problem.message : 'Не удалось загрузить палатки'
@@ -407,6 +442,7 @@ function removeTentHint(tent: TentCard): string {
 
 const isAwningDialogOpen = ref(false)
 const isAwningLoading = ref(false)
+const isAwningSaving = ref(false)
 const awningError = ref<string | null>(null)
 
 /** Тенты, которые можно взять: свои и ещё не взятые. */
@@ -421,10 +457,10 @@ async function openAwningDialog(): Promise<void> {
 
   try {
     const list = await listGear()
-    const taken = new Set(awnings.value.map((awning) => awning.gearItemId))
+    const taken = new Set(gear.value.map((item) => item.gearItemId))
 
     myAwnings.value = list.items.filter(
-      (item) => AWNING_TITLE.test(item.title) && !taken.has(item.id),
+      (item) => item.typeCode === GEAR_TYPE_CODES.shelter && !taken.has(item.id),
     )
   } catch (problem) {
     awningError.value =
@@ -435,27 +471,40 @@ async function openAwningDialog(): Promise<void> {
 }
 
 /**
- * Тент добавляется только на экране: вида «тент» в снаряжении похода нет,
- * и предложить вещь серверу значило бы показать её потом палаткой.
+ * Тент уходит в снаряжение похода той же ручкой, что палатка: с 30.10.2026
+ * это настоящий тип `shelter`, и строка переживает перезагрузку.
  */
-function saveAwning(): void {
-  const item = myAwnings.value.find((row) => row.id === draftAwningId.value)
+async function saveAwning(): Promise<void> {
+  if (isAwningSaving.value || draftAwningId.value === '') return
 
-  if (item === undefined) return
+  isAwningSaving.value = true
+  awningError.value = null
 
-  awnings.value = [
-    ...awnings.value,
-    {
-      gearItemId: item.id,
-      title: item.title,
-      weightGrams: item.weightGrams,
-      ownerUserId: meId.value,
-      ownerName: auth.user?.displayName ?? 'Участник',
-      removalProposed: false,
-    },
-  ]
+  try {
+    const item = await proposeTripGear(props.trip.id, draftAwningId.value)
 
-  isAwningDialogOpen.value = false
+    gear.value = [...gear.value, item]
+    awnings.value = [
+      ...awnings.value,
+      {
+        tripGearId: item.id,
+        gearItemId: item.gearItemId,
+        typeName: item.typeName,
+        title: item.title,
+        weightGrams: item.weightGrams,
+        ownerUserId: item.ownerUserId,
+        ownerName: auth.user?.displayName ?? nameOf(item.ownerUserId),
+        removalProposed: false,
+      },
+    ]
+    isAwningDialogOpen.value = false
+  } catch (problem) {
+    // Ошибка — в модалке, а не строкой под затемнением (правило «Трансфера»).
+    awningError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось добавить тент'
+  } finally {
+    isAwningSaving.value = false
+  }
 }
 
 /** Строка выбора: «Тент 3×4 · 3000 гр.». */
@@ -468,7 +517,7 @@ function awningOptionText(item: GearItem): string {
 /** Пилюля тента в формате заказчика: «Тент - 3000 гр. (Олег)». */
 function awningText(awning: AwningPill): string {
   const weight = weightInGrams(awning.weightGrams)
-  const head = weight === null ? 'Тент' : `Тент - ${weight}`
+  const head = weight === null ? awning.typeName : `${awning.typeName} - ${weight}`
 
   return `${head} (${awning.ownerName})`
 }
@@ -482,14 +531,13 @@ function canManageAwning(awning: AwningPill): boolean {
 
 function removeAwning(awning: AwningPill): void {
   if (awning.ownerUserId === meId.value) {
-    awnings.value = awnings.value.filter((row) => row.gearItemId !== awning.gearItemId)
+    awnings.value = awnings.value.filter((row) => row.tripGearId !== awning.tripGearId)
 
     return
   }
 
   awning.removalProposed = !awning.removalProposed
 }
-
 
 // ───────────────────────────── своя палатка ─────────────────────────────
 
@@ -501,13 +549,20 @@ const dialogError = ref<string | null>(null)
 /** Мои палатки, которых ещё нет в снаряжении похода. */
 const myTents = ref<GearItem[]>([])
 const draftGearItemId = ref('')
-const draftCapacity = ref(String(DEFAULT_CAPACITY))
+
+/** Выбранная в форме палатка: у неё может не быть значения вместимости. */
+const selectedTent = computed<GearItem | null>(
+  () => myTents.value.find((item) => item.id === draftGearItemId.value) ?? null,
+)
+
+const selectedTentSeats = computed(() =>
+  selectedTent.value === null ? null : seatsOf(selectedTent.value),
+)
 
 async function openDialog(): Promise<void> {
   isDialogOpen.value = true
   dialogError.value = null
   draftGearItemId.value = ''
-  draftCapacity.value = String(DEFAULT_CAPACITY)
   isGearLoading.value = true
 
   try {
@@ -515,7 +570,7 @@ async function openDialog(): Promise<void> {
     const inTrip = new Set(gear.value.map((item) => item.gearItemId))
 
     myTents.value = list.items.filter(
-      (item) => item.kind === 'tent' && !inTrip.has(item.id),
+      (item) => item.typeCode === GEAR_TYPE_CODES.tent && !inTrip.has(item.id),
     )
   } catch (problem) {
     dialogError.value =
@@ -528,20 +583,11 @@ async function openDialog(): Promise<void> {
 async function saveTent(): Promise<void> {
   if (isSaving.value || draftGearItemId.value === '') return
 
-  const capacity = Number(draftCapacity.value)
-
-  if (!Number.isInteger(capacity) || capacity < MIN_CAPACITY || capacity > MAX_CAPACITY) {
-    dialogError.value = `Вместимость — целое число от ${MIN_CAPACITY} до ${MAX_CAPACITY}`
-    return
-  }
-
   isSaving.value = true
   dialogError.value = null
 
   try {
     const item = await proposeTripGear(props.trip.id, draftGearItemId.value)
-
-    capacities.set(item.id, capacity)
 
     const me = goingPeople.value.find((person) => person.userId === meId.value)
 
@@ -552,7 +598,7 @@ async function saveTent(): Promise<void> {
         ownerUserId: item.ownerUserId,
         // Имя — из профиля смотрящего: его палатка, и он подписан на плашке.
         ownerName: auth.user?.displayName ?? nameOf(item.ownerUserId),
-        capacity,
+        capacity: seatsOf(item),
         weightGrams: item.weightGrams,
         members:
           me === undefined
@@ -779,9 +825,10 @@ async function saveTent(): Promise<void> {
       </article>
 
       <!--
-        Тенты — локальные пилюли в формате «Тент - 3000 гр. (Олег)»: под
-        тентом никто не ночует, поэтому в распределении его нет, но у вещи
-        есть хозяин, вес и крестик с теми же правами, что у палаток.
+        Тенты — вещи типа `shelter` из снаряжения похода, пилюлями в формате
+        «Тент - 3000 гр. (Олег)»: под тентом никто не ночует, поэтому
+        в распределении его нет, но у вещи есть хозяин, вес и крестик
+        с теми же правами, что у палаток.
       -->
       <div
         v-if="awnings.length > 0"
@@ -790,7 +837,7 @@ async function saveTent(): Promise<void> {
       >
         <span
           v-for="awning in awnings"
-          :key="awning.gearItemId"
+          :key="awning.tripGearId"
           class="flex items-center gap-1 rounded-full border px-2 py-1 text-sm"
           :class="
             awning.removalProposed
@@ -813,7 +860,7 @@ async function saveTent(): Promise<void> {
                 ? 'Убрать тент из секции'
                 : 'Предложить убрать тент: решает владелец'
             "
-            :data-test="`route-awning-remove-${awning.gearItemId}`"
+            :data-test="`route-awning-remove-${awning.tripGearId}`"
             @click="removeAwning(awning)"
           >
             ×
@@ -860,8 +907,8 @@ async function saveTent(): Promise<void> {
 
         <!--
           Тент — не палатка и не спальное место: под ним никто не ночует.
-          Вида «тент» в снаряжении похода нет, поэтому пилюля живёт только
-          на экране; серверная модель — вместе с описанием снаряжения.
+          Это отдельный тип `shelter`, поэтому вещь уходит в снаряжение
+          похода и живёт в секции наравне с палатками.
         -->
         <button
           type="button"
@@ -878,7 +925,7 @@ async function saveTent(): Promise<void> {
         </button>
       </div>
 
-      <!-- Одна форма на добавление: палатка из личного каталога + вместимость -->
+      <!-- Одна форма на добавление: палатка из личного каталога -->
       <div
         v-if="isDialogOpen"
         class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/30 p-4"
@@ -913,18 +960,19 @@ async function saveTent(): Promise<void> {
             на вкладке «Снаряжение».
           </p>
 
-          <label class="flex flex-col gap-1 text-sm text-muted">
-            Вместимость, мест
-            <input
-              v-model="draftCapacity"
-              type="number"
-              :min="MIN_CAPACITY"
-              :max="MAX_CAPACITY"
-              inputmode="numeric"
-              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
-              data-test="route-tent-capacity"
-            />
-          </label>
+          <!--
+            Вместимость не спрашиваем: это характеристика `seats` у вещи,
+            и правят её в каталоге. Если она не заполнена — говорим словами,
+            а не подставляем «3 места» за человека.
+          -->
+          <p
+            v-if="selectedTent !== null && selectedTentSeats === null"
+            class="text-xs text-muted"
+            data-test="route-tent-no-capacity"
+          >
+            У этой палатки не заполнена вместимость — впишите её в профиле,
+            на вкладке «Снаряжение». Пока плашка подпишется хозяином и весом.
+          </p>
 
           <p class="text-xs text-muted">
             Вместимость — характеристика вещи для информации: производитель
@@ -960,11 +1008,7 @@ async function saveTent(): Promise<void> {
         </div>
       </div>
 
-      <!--
-        Тент: выбор из личного каталога, но строка в поход не пишется.
-        Вида «тент» в снаряжении похода нет — вещь с тем же видом «палатка»
-        показалась бы потом палаткой, а не тентом.
-      -->
+      <!-- Тент: тот же путь, что у палатки — вещь уходит в снаряжение похода -->
       <div
         v-if="isAwningDialogOpen"
         class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/30 p-4"
@@ -995,8 +1039,8 @@ async function saveTent(): Promise<void> {
             class="text-xs text-muted"
             data-test="route-awning-no-gear"
           >
-            Тента в личном снаряжении нет — заведите вещь со словом «тент»
-            в названии, в профиле на вкладке «Снаряжение».
+            Тента в личном снаряжении нет — заведите вещь типа «Тент»
+            в профиле, на вкладке «Снаряжение».
           </p>
 
           <p v-if="awningError" class="text-sm text-red-600" data-test="route-awning-error">
@@ -1007,7 +1051,7 @@ async function saveTent(): Promise<void> {
             <button
               type="button"
               class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-              :disabled="draftAwningId === ''"
+              :disabled="isAwningSaving || draftAwningId === ''"
               data-test="route-awning-save"
               @click="saveAwning"
             >
@@ -1017,6 +1061,7 @@ async function saveTent(): Promise<void> {
             <button
               type="button"
               class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary"
+              :disabled="isAwningSaving"
               data-test="route-awning-cancel"
               @click="isAwningDialogOpen = false"
             >
