@@ -52,6 +52,14 @@ describe('Снаряжение похода (e2e)', () => {
   let ropeId: string;
   let potId: string;
 
+  /**
+   * Типы заводим свои: спека про снаряжение похода, а не про справочник,
+   * и зависеть от `seed:gear-types` ей незачем. Коды с префиксом
+   * `e2e_trip_` убираются за собой в `afterAll`.
+   */
+  let tentTypeId: number;
+  let plainTypeId: number;
+
   /** Строки снаряжения похода, которые заводятся по ходу тестов. */
   let tentTripGearId: string;
   let ropeTripGearId: string;
@@ -83,6 +91,25 @@ describe('Снаряжение похода (e2e)', () => {
     };
   }
 
+  /**
+   * Тип для проверок — прямая вставка в базу: спека про снаряжение похода,
+   * а справочник типов проверяется в `gear-types.e2e-spec.ts`. Повторный
+   * прогон не спорит с прошлым: `ON CONFLICT` оставляет прежнюю строку.
+   */
+  async function makeType(code: string, name: string): Promise<number> {
+    await dataSource.query(
+      `INSERT INTO gear_types (code, name) VALUES ($1, $2)
+       ON CONFLICT (code) DO NOTHING`,
+      [code, name],
+    );
+    const rows: Array<{ id: number }> = await dataSource.query(
+      'SELECT id FROM gear_types WHERE code = $1',
+      [code],
+    );
+
+    return rows[0].id;
+  }
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -96,6 +123,9 @@ describe('Снаряжение похода (e2e)', () => {
     await app.init();
 
     dataSource = moduleFixture.get(DataSource);
+
+    tentTypeId = await makeType('e2e_trip_tent', 'Проверочная палатка');
+    plainTypeId = await makeType('e2e_trip_plain', 'Проверочный ящик');
 
     const emailCodeService = moduleFixture.get(EmailCodeService);
     const realCreateCode = emailCodeService.createCode.bind(emailCodeService);
@@ -173,16 +203,16 @@ describe('Снаряжение похода (e2e)', () => {
 
     // Предметы каталога — через API: путь тот же, что у человека.
     tentId = await addGear(organizerToken, {
-      kind: 'tent',
+      typeId: tentTypeId,
       title: 'Палатка на четверых',
       weightGrams: 2400,
     });
     ropeId = await addGear(organizerToken, {
-      kind: 'technical',
+      typeId: plainTypeId,
       title: 'Верёвка 40 м',
     });
     potId = await addGear(quartermasterToken, {
-      kind: 'kitchen',
+      typeId: plainTypeId,
       title: 'Котелок 5 л',
       weightGrams: 900,
     });
@@ -197,6 +227,7 @@ describe('Снаряжение похода (e2e)', () => {
         'DELETE FROM gear_items WHERE owner_user_id = ANY($1::uuid[])',
         [[organizerId, quartermasterId]],
       );
+      await dataSource.query(`DELETE FROM gear_types WHERE code LIKE 'e2e\\_trip\\_%'`);
       await dataSource.query('DELETE FROM roles WHERE code = $1', [
         gearRoleCode,
       ]);
@@ -263,10 +294,13 @@ describe('Снаряжение похода (e2e)', () => {
     expect(response.body.ownerUserId).toBe(organizerId);
     expect(response.body.assignedUserId).toBe(organizerId);
     expect(response.body.status).toBe('proposed');
-    // Вид, название и вес приходят из каталога, а не копируются в поход.
-    expect(response.body.kind).toBe('tent');
+    // Тип, название и вес приходят из каталога, а не копируются в поход.
+    expect(response.body.typeCode).toBe('e2e_trip_tent');
     expect(response.body.title).toBe('Палатка на четверых');
     expect(response.body.weightGrams).toBe(2400);
+    // Вида старого каталога в строке похода больше нет: «Ночёвки» читают
+    // `typeCode` и значения характеристик.
+    expect(response.body.kind).toBeUndefined();
   });
 
   it('чужой предмет в свой поход не предложить: 404', async () => {

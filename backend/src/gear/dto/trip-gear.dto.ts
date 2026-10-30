@@ -1,8 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
 
-import type { GearKind } from '../gear.types';
-import { GEAR_KINDS, legacyKindOfTypeCode } from '../gear.types';
 import { TRIP_GEAR_STATUSES, type TripGearStatus } from '../trip-gear.types';
 import type { TripGear } from '../entities/trip-gear.entity';
 import { GearItemAttributeDto } from './gear.dto';
@@ -22,9 +20,9 @@ import { GearItemAttributeDto } from './gear.dto';
  * «Анна 3-х местная 2400 гр.» — складывается из вместимости и веса,
  * то есть из значения, а не из названия вещи.
  *
- * `kind` остаётся ещё на один шаг: его читают экраны, которые перейдут
- * на коды типов. Считается он по коду типа (`legacyKindOfTypeCode`),
- * в данных его больше нет.
+ * лежит в каталоге, а каталог с 30.10.2026 живёт на типах: вида старого
+ * каталога в ответе нет — экраны перешли на коды типов, и прослойка
+ * `kind` удалена вместе с последним потребителем.
  *
  * Имён владельца и назначенного здесь нет: вкладка уже загрузила состав
  * (`GET /api/trips/:id/participants`) с именами и полом, и дублировать
@@ -46,14 +44,6 @@ export class TripGearItemDto {
 
   @ApiProperty({ description: 'Название типа', example: 'Палатка' })
   typeName: string;
-
-  @ApiProperty({
-    description:
-      'Вид старого каталога, посчитанный по типу. Временно: экраны переходят на коды типов',
-    enum: GEAR_KINDS,
-    example: 'tent',
-  })
-  kind: GearKind;
 
   @ApiProperty({ description: 'Название', example: 'Палатка на четверых' })
   title: string;
@@ -118,7 +108,6 @@ export class TripGearItemDto {
       typeId: row.gearItem.gearTypeId,
       typeCode: row.gearItem.gearType.code,
       typeName: row.gearItem.gearType.name,
-      kind: legacyKindOfTypeCode(row.gearItem.gearType.code),
       title: row.gearItem.title,
       attributes: values.map((value) => GearItemAttributeDto.from(value)),
       weightGrams: row.gearItem.weightGrams,

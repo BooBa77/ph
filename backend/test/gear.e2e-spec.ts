@@ -17,6 +17,12 @@ import { SmtpService } from './../src/email/services/smtp.service';
  * на чужой предмет** (а не 403 — иначе перебором id видно чужие каталоги)
  * и **три состояния веса** в `PATCH`: поля нет — не трогаем, число —
  * записываем, `null` — стираем.
+ *
+ * **Тип вместо вида (30.10.2026).** Каталог живёт на типах с Stage B,
+ * а вид старого каталога удалён из контракта совсем. Здесь проверяется
+ * именно каталог, а не справочник, поэтому тип заводится своим кодом
+ * (`e2e_gear_*`) напрямую в базе: спека не должна зависеть от того,
+ * прогнали ли на этой базе `seed:gear-types`.
  */
 describe('Снаряжение (e2e)', () => {
   let app: NestExpressApplication;
@@ -26,6 +32,9 @@ describe('Снаряжение (e2e)', () => {
   let ownerToken: string;
   let strangerId: string;
   let strangerToken: string;
+
+  /** Тип без обязательных характеристик — годится любой вещи из спеки. */
+  let plainTypeId: number;
 
   let lastCode: string | null = null;
 
@@ -49,6 +58,24 @@ describe('Снаряжение (e2e)', () => {
     };
   }
 
+  /**
+   * Тип для проверок. Повторный прогон не спорит с прошлым: код уникален
+   * сам по себе, а `ON CONFLICT` оставляет прежнюю строку.
+   */
+  async function makeType(code: string, name: string): Promise<number> {
+    await dataSource.query(
+      `INSERT INTO gear_types (code, name) VALUES ($1, $2)
+       ON CONFLICT (code) DO NOTHING`,
+      [code, name],
+    );
+    const rows: Array<{ id: number }> = await dataSource.query(
+      'SELECT id FROM gear_types WHERE code = $1',
+      [code],
+    );
+
+    return rows[0].id;
+  }
+
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
@@ -62,6 +89,8 @@ describe('Снаряжение (e2e)', () => {
     await app.init();
 
     dataSource = moduleFixture.get(DataSource);
+
+    plainTypeId = await makeType('e2e_gear_plain', 'Проверочный ящик');
 
     const emailCodeService = moduleFixture.get(EmailCodeService);
     const realCreateCode = emailCodeService.createCode.bind(emailCodeService);
@@ -81,11 +110,13 @@ describe('Снаряжение (e2e)', () => {
 
   afterAll(async () => {
     if (dataSource?.isInitialized) {
-      // Снаряжение — до пользователей: внешний ключ на владельца RESTRICT.
+      // Снаряжение — до типов и пользователей: `gear_type_id` — RESTRICT,
+      // `owner_user_id` — RESTRICT.
       await dataSource.query(
         'DELETE FROM gear_items WHERE owner_user_id = ANY($1::uuid[])',
         [[ownerId, strangerId]],
       );
+      await dataSource.query(`DELETE FROM gear_types WHERE code LIKE 'e2e\\_gear\\_%'`);
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
         [ownerId, strangerId],
       ]);
@@ -108,8 +139,11 @@ describe('Снаряжение (e2e)', () => {
   }
 
   /** Добавить предмет и вернуть его тело. */
-  async function addItem(body: Record<string, unknown>): Promise<Record<string, unknown>> {
-    const response = await call('post', '/api/gear', ownerToken, body);
+  async function addItem(body: Record<string, unknown> = {}): Promise<Record<string, unknown>> {
+    const response = await call('post', '/api/gear', ownerToken, {
+      typeId: plainTypeId,
+      ...body,
+    });
     expect(response.status).toBe(201);
 
     return response.body as Record<string, unknown>;
@@ -123,23 +157,26 @@ describe('Снаряжение (e2e)', () => {
     expect(response.body.itemsWithoutWeight).toBe(0);
   });
 
-  it('предмет создаётся с видом, названием и весом', async () => {
+  it('предмет создаётся с типом, названием и весом', async () => {
     const item = await addItem({
-      kind: 'tent',
       title: 'Палатка на четверых',
       weightGrams: 2400,
       note: 'проклеена',
     });
 
-    expect(item.kind).toBe('tent');
+    expect(item.typeId).toBe(plainTypeId);
+    expect(item.typeCode).toBe('e2e_gear_plain');
+    expect(item.typeName).toBe('Проверочный ящик');
     expect(item.title).toBe('Палатка на четверых');
     expect(item.weightGrams).toBe(2400);
     expect(item.note).toBe('проклеена');
+    // Вида старого каталога в ответе больше нет: экраны живут на кодах типов.
+    expect(item.kind).toBeUndefined();
   });
 
   it('итог складывает известные веса и считает неизвестные отдельно', async () => {
-    await addItem({ kind: 'sleeping', title: 'Спальник зимний', weightGrams: 1500 });
-    await addItem({ kind: 'kitchen', title: 'Котелок 3 л' });
+    await addItem({ title: 'Спальник зимний', weightGrams: 1500 });
+    await addItem({ title: 'Котелок 3 л' });
 
     const response = await call('get', '/api/gear', ownerToken).expect(200);
 
@@ -152,27 +189,33 @@ describe('Снаряжение (e2e)', () => {
     expect(kettle?.weightGrams).toBeNull();
   });
 
-  it('название из одних пробелов и неверный вид — 400', async () => {
+  it('название из одних пробелов, несуществующий тип и отсутствие типа — 400', async () => {
     await call('post', '/api/gear', ownerToken, {
-      kind: 'tent',
+      typeId: plainTypeId,
       title: '   ',
     }).expect(400);
 
     await call('post', '/api/gear', ownerToken, {
-      kind: 'spaceship',
-      title: 'Звездолёт',
+      typeId: 999999,
+      title: 'Ящик несуществующего типа',
+    }).expect(400);
+
+    // Тип обязателен: без него неизвестно даже, какие характеристики
+    // спрашивать, и вещь молча легла бы в «прочее».
+    await call('post', '/api/gear', ownerToken, {
+      title: 'Ящик без типа',
     }).expect(400);
   });
 
   it('нулевой и отрицательный вес — 400', async () => {
     await call('post', '/api/gear', ownerToken, {
-      kind: 'tent',
+      typeId: plainTypeId,
       title: 'Невесомость',
       weightGrams: 0,
     }).expect(400);
 
     await call('post', '/api/gear', ownerToken, {
-      kind: 'tent',
+      typeId: plainTypeId,
       title: 'Антивес',
       weightGrams: -100,
     }).expect(400);
@@ -180,7 +223,6 @@ describe('Снаряжение (e2e)', () => {
 
   it('правка меняет поля, а null стирает вес', async () => {
     const item = await addItem({
-      kind: 'backpack',
       title: 'Рюкзак 90 л',
       weightGrams: 2100,
     });
@@ -198,7 +240,7 @@ describe('Снаряжение (e2e)', () => {
   });
 
   it('чужой предмет не существует: 404 на правку и удаление', async () => {
-    const item = await addItem({ kind: 'other', title: 'Свой предмет' });
+    const item = await addItem({ title: 'Свой предмет' });
 
     await call('patch', `/api/gear/${item.id}`, strangerToken, {
       title: 'Чужой',
@@ -208,7 +250,6 @@ describe('Снаряжение (e2e)', () => {
 
   it('удаление убирает предмет и уменьшает итог', async () => {
     const item = await addItem({
-      kind: 'technical',
       title: 'Ледоруб',
       weightGrams: 600,
     });
@@ -222,7 +263,7 @@ describe('Снаряжение (e2e)', () => {
 
   it('лишнее поле в теле — 400', async () => {
     await call('post', '/api/gear', ownerToken, {
-      kind: 'tent',
+      typeId: plainTypeId,
       title: 'Палатка',
       ownerUserId: strangerId,
     }).expect(400);

@@ -1,6 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
-  IsIn,
   IsInt,
   IsObject,
   IsOptional,
@@ -9,12 +8,8 @@ import {
   Min,
 } from 'class-validator';
 
-import type { GearKind, GearValueKind } from '../gear.types';
-import {
-  GEAR_KINDS,
-  GEAR_VALUE_KINDS,
-  legacyKindOfTypeCode,
-} from '../gear.types';
+import type { GearValueKind } from '../gear.types';
+import { GEAR_VALUE_KINDS } from '../gear.types';
 import type { GearItemAttribute } from '../entities/gear-item-attribute.entity';
 import type { GearItem } from '../entities/gear-item.entity';
 
@@ -83,14 +78,6 @@ export class GearItemDto {
   @ApiProperty({ description: 'Название типа', example: 'Палатка' })
   typeName: string;
 
-  @ApiProperty({
-    description:
-      'Вид старого каталога, посчитанный по типу. Временно: экраны переходят на коды типов',
-    enum: GEAR_KINDS,
-    example: 'tent',
-  })
-  kind: GearKind;
-
   @ApiProperty({ description: 'Название', example: 'Палатка на четверых' })
   title: string;
 
@@ -123,7 +110,6 @@ export class GearItemDto {
       typeId: item.gearTypeId,
       typeCode: item.gearType.code,
       typeName: item.gearType.name,
-      kind: legacyKindOfTypeCode(item.gearType.code),
       title: item.title,
       weightGrams: item.weightGrams,
       note: item.note,
@@ -162,11 +148,10 @@ export class GearListDto {
 /**
  * Тело `POST /api/gear` — новый предмет.
  *
- * **Тип обязателен, но вид ещё принимается.** Этап перехода: форма личного
- * каталога присылает `kind`, и сервер переводит его в код типа
- * (`legacyTypeCodeOfKind`). Если прислан и `typeId`, и `kind`, побеждает
- * `typeId` — вид в этом случае только необязательный ярлык. Когда экраны
- * перейдут на типы, `kind` исчезнет из контракта.
+ * **Тип обязателен** (30.10.2026): вид старого каталога удалён из контракта
+ * вместе с прослойкой перехода. `typeId` — единственный способ сказать,
+ * что это за вещь, и единственный источник набора характеристик: без типа
+ * неизвестно даже, какие значения спрашивать.
  *
  * `attributes` — **карта** «код характеристики → значение», а не список
  * пар: код уникален внутри типа, и карта не даёт прислать одну
@@ -175,26 +160,10 @@ export class GearListDto {
  * `null` или пустая строка — стереть значение.
  */
 export class CreateGearItemDto {
-  @ApiProperty({
-    description: 'Id типа снаряжения',
-    example: 1,
-    required: false,
-  })
-  @IsOptional()
+  @ApiProperty({ description: 'Id типа снаряжения', example: 1 })
   @IsInt({ message: 'Тип снаряжения должен быть указан числом' })
   @Min(1, { message: 'Некорректный тип снаряжения' })
-  typeId?: number;
-
-  @ApiProperty({
-    description:
-      'Вид старого каталога. Временно, вместо типа: переводится в код типа',
-    enum: GEAR_KINDS,
-    example: 'tent',
-    required: false,
-  })
-  @IsOptional()
-  @IsIn(GEAR_KINDS, { message: 'Недопустимый вид снаряжения' })
-  kind?: GearKind;
+  typeId: number;
 
   @ApiProperty({
     description: 'Название: «Палатка на четверых»',
@@ -250,15 +219,6 @@ export class UpdateGearItemDto {
   @IsInt({ message: 'Тип снаряжения должен быть указан числом' })
   @Min(1, { message: 'Некорректный тип снаряжения' })
   typeId?: number;
-
-  @ApiProperty({
-    description: 'Вид старого каталога. Временно, вместо типа',
-    enum: GEAR_KINDS,
-    required: false,
-  })
-  @IsOptional()
-  @IsIn(GEAR_KINDS, { message: 'Недопустимый вид снаряжения' })
-  kind?: GearKind;
 
   @ApiProperty({ description: 'Название', maxLength: 120, required: false })
   @IsOptional()

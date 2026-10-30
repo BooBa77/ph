@@ -29,8 +29,9 @@ import { SmtpService } from './../src/email/services/smtp.service';
  *   обязательной, пустые значения у существующих вещей заполняются
  *   замещающим — это первое место, где замещающее значение пишется, а не
  *   только проверяется;
- * - **переходная прослойка `kind`**: старая форма каталога присылает вид,
- *   сервер переводит его в код типа, а в ответе вид считается по типу.
+ * - **переходная прослойка `kind` убрана**: вид старого каталога больше
+ *   не принимается и не отдаётся — экраны перешли на коды типов, и тип
+ *   остался единственным способом сказать, что это за вещь.
  *
  * Своих пользователей заводим через вход по коду (как в `gear.e2e-spec`):
  * у `gear_items` внешний ключ на владельца, а `JwtStrategy` проверяет только
@@ -374,47 +375,42 @@ describe('Тип вещи и значения характеристик (e2e)',
     expect(item.body.attributes).toEqual([]);
   });
 
-  // ─────────────────────── переходный вид ───────────────────────
+  // ─────────────────── вид убран из контракта (30.10.2026) ───────────────────
 
-  it('старая форма присылает вид — сервер переводит его в тип', async () => {
-    // Виды старого каталога переводятся в коды типов миграцией
-    // `1792271000000-GearItemTypes`; `other` («Прочее») есть в любой базе,
-    // потому что на него приходится вид по умолчанию.
-    const response = await call('post', '/api/gear', ownerToken, {
-      kind: 'other',
-      title: 'Вещь по-старому',
-    }).expect(201);
-
-    expect(response.body.typeCode).toBe('other');
-    expect(response.body.kind).toBe('other');
-    // Старая форма не умеет заполнять значения — обязательные
-    // характеристики у неё не спрашиваются.
-    expect(response.body.attributes).toEqual([]);
-  });
-
-  it('вид переводится в тип и у палатки: kind = tent → тип tent', async () => {
+  it('вид старого каталога больше не принимается: 400', async () => {
+    // Прослойка `kind` жила ровно до перехода экранов на коды типов.
+    // Глобальный ValidationPipe с `forbidNonWhitelisted` отвечает на
+    // неизвестное поле 400-й, а не молчанием: иначе старый клиент решил бы,
+    // что вид записан, и вещь уехала бы в тип по умолчанию.
     const response = await call('post', '/api/gear', ownerToken, {
       kind: 'tent',
       title: 'Палатка по-старому',
-    }).expect(201);
+    }).expect(400);
 
-    expect(response.body.typeCode).toBe('tent');
-    expect(response.body.kind).toBe('tent');
+    expect(JSON.stringify(response.body.message)).toContain('kind');
   });
 
-  it('неизвестный вид — 400', async () => {
-    await call('post', '/api/gear', ownerToken, {
-      kind: 'spaceship',
-      title: 'Звездолёт',
+  it('вид не отдаётся и в ответе: в контракте остался только тип', async () => {
+    const item = await addTent();
+
+    expect(item.kind).toBeUndefined();
+    expect(item.typeCode).toBe(tentCode);
+  });
+
+  it('вид не принимается и в правке: 400', async () => {
+    const item = await addTent();
+
+    await call('patch', `/api/gear/${item.id}`, ownerToken, {
+      kind: 'sleeping',
     }).expect(400);
   });
 
-  it('без типа и вида — 400', async () => {
+  it('без типа — 400: тип единственный способ сказать, что это за вещь', async () => {
     const response = await call('post', '/api/gear', ownerToken, {
       title: 'Вещь в никуда',
     }).expect(400);
 
-    expect(response.body.message).toContain('тип');
+    expect(JSON.stringify(response.body.message)).toMatch(/тип/i);
   });
 
   // ─────────────────────── правка ───────────────────────

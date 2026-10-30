@@ -16,8 +16,6 @@ import {
   parseAttributeValue,
   type GearValueColumns,
 } from './gear-attribute-values';
-import type { GearKind } from './gear.types';
-import { legacyTypeCodeOfKind } from './gear.types';
 import { GearItem } from './entities/gear-item.entity';
 import { GearItemAttribute } from './entities/gear-item-attribute.entity';
 import { GearType } from './entities/gear-type.entity';
@@ -32,10 +30,9 @@ import { TripGear } from './entities/trip-gear.entity';
  * отвечает 404, а не 403: перебирать id чужого снаряжения нечего.
  *
  * **Вещь знает тип, а тип знает характеристики** (Stage B, 30.10.2026).
- * Вид старого каталога ещё принимается в теле запроса и отдаётся в ответе,
- * но в базе его нет: `kind` переводится в код типа (`legacyTypeCodeOfKind`),
- * а в ответе считается по коду типа (`legacyKindOfTypeCode`). Это временная
- * прослойка на один шаг — экраны переходят на типы.
+ * Вида старого каталога (`kind`) в контракте больше нет: экраны перешли
+ * на коды типов, и прослойка «вид → тип» удалена. `typeId` обязателен
+ * при создании и единственный способ сменить тип при правке.
  *
  * Вес необязателен. `NULL` значит «не знаю», и такой предмет не попадает
  * в итог: считать его нулём — врать в сумме рюкзака, а отказываться
@@ -84,23 +81,21 @@ export class GearService {
     }
 
     const id = await this.dataSource.transaction(async (tx) => {
-      const type = await this.resolveType(tx, dto);
+      const type = await this.resolveType(tx, dto.typeId);
       const attributes = await this.typeAttributes(tx, type.id);
       const active = attributes.filter((attribute) => attribute.isActive);
 
       const values = this.parseValues(active, dto.attributes ?? {});
-      // Обязательные характеристики проверяются, когда тип пришёл полем
-      // `typeId` — это новый контракт, и вместе с ним приходит форма,
-      // которая обязательные поля спрашивает. Старая форма присылает
-      // только вид (`kind`), заполнять значения не умеет, и блокировать
-      // её значило бы «палатку в каталог больше не добавить». Прослойка
-      // умирает вместе с `kind`.
+      // Обязательные характеристики спрашиваются у нового предмета всегда:
+      // тип приходит полем `typeId`, а вместе с ним приходит форма, которая
+      // знает набор полей и умеет их спрашивать. Форма, которая присылала
+      // только вид, ушла вместе с видом.
       //
       // Считаем **заполненные** характеристики, а не присланные ключи:
       // форма нового каталога отправляет карту целиком, а пустые значения —
       // `null`. Иначе `{ seats: null }` проходил бы проверку и вещь
       // сохранялась бы без обязательного значения.
-      if (dto.typeId !== undefined) this.assertRequired(active, this.filledIds(values));
+      this.assertRequired(active, this.filledIds(values));
 
       const saved = await tx.save(
         tx.create(GearItem, {
@@ -148,8 +143,9 @@ export class GearService {
       });
       if (!current) throw new NotFoundException('Предмет не найден');
 
-      const changingType = dto.typeId !== undefined || dto.kind !== undefined;
-      const type = changingType ? await this.resolveType(tx, dto) : null;
+      const changingType = dto.typeId !== undefined;
+      const type =
+        dto.typeId === undefined ? null : await this.resolveType(tx, dto.typeId);
       const typeId = type?.id ?? current.gearTypeId;
       const typeChanged = type !== null && type.id !== current.gearTypeId;
 
@@ -179,11 +175,10 @@ export class GearService {
       }
 
       // Обязательные характеристики проверяются, когда тип пришёл полем
-      // `typeId` — это новый контракт, и вместе с ним приходит форма,
-      // которая обязательные поля спрашивает. Старая форма присылает
-      // только вид (`kind`), заполнять значения не умеет, и блокировать
-      // её значило бы «палатку в каталог больше не добавить» или «вид
-      // не поменять». Прослойка умирает вместе с `kind`.
+      // `typeId`: с ним приходит форма, которая знает набор полей и умеет
+      // их спрашивать. Правка одной характеристики или названия старую вещь
+      // с дырой в обязательном значении не блокирует — правило «состав
+      // характеристик определяется заново» (создание и смена типа).
       const strict = dto.typeId !== undefined;
 
       if (strict && (typeChanged || values !== null)) {
@@ -254,41 +249,22 @@ export class GearService {
   // ───────────────────────── внутреннее ─────────────────────────
 
   /**
-   * Тип из тела запроса: `typeId` побеждает `kind`.
+   * Тип из тела запроса по `typeId`.
    *
-   * `kind` — прослойка перехода: форма личного каталога ещё присылает вид,
-   * и сервер переводит его в код типа, заведённый миграцией
-   * (`1792271000000-GearItemTypes`). Архивный тип не принимается: вещь
-   * в архивном типе нечем показать и не по чему фильтровать.
+   * Вида старого каталога (`kind`) в контракте больше нет: он был
+   * прослойкой перехода, пока экраны читали вид, и удалён вместе
+   * с последним потребителем (30.10.2026). Архивный тип не принимается:
+   * вещь в архивном типе нечем показать и не по чему фильтровать.
    */
   private async resolveType(
     manager: EntityManager,
-    dto: { typeId?: number; kind?: GearKind },
+    typeId: number,
   ): Promise<GearType> {
-    if (dto.typeId !== undefined) {
-      const type = await manager.findOne(GearType, {
-        where: { id: dto.typeId },
-      });
-      if (!type) throw new BadRequestException('Тип снаряжения не найден');
-      this.assertTypeActive(type);
+    const type = await manager.findOne(GearType, { where: { id: typeId } });
+    if (!type) throw new BadRequestException('Тип снаряжения не найден');
+    this.assertTypeActive(type);
 
-      return type;
-    }
-
-    if (dto.kind !== undefined) {
-      const code = legacyTypeCodeOfKind(dto.kind);
-      const type = await manager.findOne(GearType, { where: { code } });
-      if (!type) {
-        throw new BadRequestException(
-          'Для этого вида снаряжения не заведён тип — выберите тип из справочника',
-        );
-      }
-      this.assertTypeActive(type);
-
-      return type;
-    }
-
-    throw new BadRequestException('Укажите тип снаряжения');
+    return type;
   }
 
   private assertTypeActive(type: GearType): void {
