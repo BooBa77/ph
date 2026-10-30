@@ -7,13 +7,10 @@ import {
   listGear,
   updateGearItem,
 } from '@/api/gear'
+import { fetchGearTypes } from '@/api/gearTypes'
 import { ApiError } from '@/api/errors'
-import {
-  GEAR_KINDS,
-  GEAR_KIND_LABELS,
-  type GearItem,
-  type GearKind,
-} from '@/types/gear'
+import type { GearItem } from '@/types/gear'
+import type { GearType, GearTypeAttribute } from '@/types/gearTypes'
 import {
   createVehicle,
   fetchVehicles,
@@ -26,6 +23,13 @@ import {
   type Vehicle,
   type VehicleKind,
 } from '@/types/trips'
+import GearAttributeFields from '@/components/gear/GearAttributeFields.vue'
+import {
+  buildGearAttributes,
+  gearAttributeDrafts,
+  gearAttributesSummary,
+  type GearAttributeDrafts,
+} from '@/utils/gearAttributes'
 import { formatWeight, formatWeightTotal } from '@/utils/gearWeight'
 
 /**
@@ -36,10 +40,30 @@ import { formatWeight, formatWeightTotal } from '@/utils/gearWeight'
  * нужен вкладке «Снаряжение» похода (Ф7): участники предлагают предметы
  * из своих каталогов, а вес рюкзака считается из этих чисел.
  *
+ * **Тип вместо вида (Stage B, 30.10.2026).** Вид был списком в коде: восемь
+ * категорий, и «топор» в него не влезал — приходилось писать «Техника».
+ * Теперь типами правит админ (`/admin/gear`), и вместе с типом приходят
+ * **характеристики**: у палатки вместимость и модель, у горелки соединение
+ * и мощность. Поэтому форма собрана из двух частей — выбор типа и поля
+ * его характеристик под ним, — а список сгруппирован по типам.
+ *
+ * **Обязательные спрашиваются сразу.** Поле, без которого вещь не описать
+ * (у палатки — вместимость), помечено звёздочкой, и отправка без него
+ * не уходит на сервер: человек узнаёт про пустое поле до запроса, а текст
+ * ошибки совпадает с серверным. Правило теперь одно для всех клиентов —
+ * старая прослойка, где обязательные проверялись только при присланном
+ * `typeId`, умирает вместе с видом.
+ *
  * **Вес правится на месте.** Самая частая правка — «взвесил позже»:
  * поэтому вес в строке — поле ввода, которое сохраняется по `change`
  * (то есть по потере фокуса, если значение изменилось). Отдельного режима
  * правки нет: он нужен ради одной цифры.
+ *
+ * **Характеристики правятся в раскрывающемся блоке под строкой.** Их
+ * бывает до четырёх, у каждой свой вид поля (число, текст, галочка, список),
+ * и держать это в строке рядом с названием и весом значило бы превратить
+ * строку в ещё одну форму. Правка открывается кнопкой, тип в ней меняется
+ * там же: смена типа стирает значения прежнего типа, и это делает сервер.
  *
  * **Итог считается на клиенте** из уже загруженных предметов. Бэкенд отдаёт
  * те же два числа, но после каждой правки перечитывать список ради суммы
@@ -49,12 +73,31 @@ const items = ref<GearItem[]>([])
 const isLoading = ref(true)
 const error = ref<string | null>(null)
 
+/**
+ * Справочник типов: из него собраны выбор типа и поля характеристик.
+ *
+ * Справочник маленький и меняется редко, поэтому грузится целиком и один
+ * раз. Ошибка загрузки — не повод прятать каталог: список вещей покажется,
+ * а форма нового предмета скажет словами, чего не хватает.
+ */
+const types = ref<GearType[]>([])
+const typesError = ref<string | null>(null)
+
 /** Форма нового предмета. */
-const newKind = ref<GearKind>('tent')
+const newTypeId = ref<number | null>(null)
 const newTitle = ref('')
 const newWeight = ref('')
 const newNote = ref('')
+const newDrafts = ref<GearAttributeDrafts>({})
 const isAdding = ref(false)
+
+/** Выбранный тип и его характеристики — из них собираются поля формы. */
+const newType = computed(
+  () => types.value.find((type) => type.id === newTypeId.value) ?? null,
+)
+const newAttributes = computed<readonly GearTypeAttribute[]>(
+  () => newType.value?.attributes ?? [],
+)
 
 /** Что сейчас сохраняется: id предмета, чтобы не дёргать его дважды. */
 const savingId = ref<string | null>(null)
@@ -82,13 +125,63 @@ const itemsWithoutWeight = computed(
   () => items.value.filter((item) => item.weightGrams === null).length,
 )
 
-/** Предметы по видам, в порядке справочника. Пустые виды не рисуем. */
-const groups = computed(() =>
-  GEAR_KINDS.map((kind) => ({
-    kind,
-    label: GEAR_KIND_LABELS[kind],
-    items: items.value.filter((item) => item.kind === kind),
-  })).filter((group) => group.items.length > 0),
+/**
+ * Предметы по типам: название группы — имя типа из справочника.
+ *
+ * Порядок групп — порядок справочника (его задаёт админ), а типы, которых
+ * в действующем справочнике нет (вещь в архивном типе), идут после и по
+ * имени: молча потерять такую вещь нельзя, она правдоподобно исчезла бы
+ * из каталога.
+ */
+const groups = computed(() => {
+  const order = new Map(types.value.map((type, index) => [type.code, index]))
+  const byCode = new Map<string, { code: string; label: string; items: GearItem[] }>()
+
+  for (const item of items.value) {
+    const group = byCode.get(item.typeCode) ?? {
+      code: item.typeCode,
+      label: item.typeName,
+      items: [],
+    }
+    group.items.push(item)
+    byCode.set(item.typeCode, group)
+  }
+
+  return [...byCode.values()].sort((left, right) => {
+    const leftOrder = order.get(left.code) ?? Number.MAX_SAFE_INTEGER
+    const rightOrder = order.get(right.code) ?? Number.MAX_SAFE_INTEGER
+
+    if (leftOrder !== rightOrder) return leftOrder - rightOrder
+
+    return left.label.localeCompare(right.label, 'ru')
+  })
+})
+
+/** Правка характеристик: id предмета, тип и черновик значений. */
+const editingItemId = ref<string | null>(null)
+const editTypeId = ref<number | null>(null)
+const editDrafts = ref<GearAttributeDrafts>({})
+
+const editingItem = computed(
+  () => items.value.find((item) => item.id === editingItemId.value) ?? null,
+)
+const editType = computed(
+  () => types.value.find((type) => type.id === editTypeId.value) ?? null,
+)
+const editAttributes = computed<readonly GearTypeAttribute[]>(
+  () => editType.value?.attributes ?? [],
+)
+
+/**
+ * Тип вещи, которого нет в действующем справочнике.
+ *
+ * Так бывает, когда админ отправил тип в архив: значения у вещи остались,
+ * а полей для них взять негде. Экран говорит это словами и предлагает
+ * выбрать действующий тип — молча показать пустую форму значило бы
+ * «сохранить» и стереть значения, ничего не объяснив.
+ */
+const editTypeArchived = computed(
+  () => editingItem.value !== null && editType.value === null,
 )
 
 function messageOf(cause: unknown, fallback: string): string {
@@ -105,6 +198,21 @@ async function load() {
     error.value = messageOf(cause, 'Не удалось загрузить снаряжение.')
   } finally {
     isLoading.value = false
+  }
+}
+
+async function loadTypes() {
+  typesError.value = null
+
+  try {
+    types.value = await fetchGearTypes()
+    // Первый тип по умолчанию: пустой список типов оставлял бы форму
+    // в состоянии «выберите тип», которое нечем исправить.
+    if (newTypeId.value === null && types.value.length > 0) {
+      newTypeId.value = types.value[0]?.id ?? null
+    }
+  } catch (cause) {
+    typesError.value = messageOf(cause, 'Не удалось загрузить типы снаряжения.')
   }
 }
 
@@ -127,6 +235,12 @@ function parseWeight(value: string | number): number | null | undefined {
 
 async function add() {
   const title = newTitle.value.trim()
+  const type = newType.value
+
+  if (type === null) {
+    error.value = 'Выберите тип снаряжения: характеристики вещи задаёт тип.'
+    return
+  }
   if (title.length === 0 || isAdding.value) return
 
   const weightGrams = parseWeight(newWeight.value)
@@ -135,24 +249,90 @@ async function add() {
     return
   }
 
+  const built = buildGearAttributes(type.attributes, newDrafts.value)
+  if (built.error !== null) {
+    error.value = built.error
+    return
+  }
+
   isAdding.value = true
   error.value = null
 
   try {
     const created = await createGearItem({
-      kind: newKind.value,
+      typeId: type.id,
       title,
       weightGrams,
       note: newNote.value.trim() || null,
+      attributes: built.attributes,
     })
     items.value.push(created)
     newTitle.value = ''
     newWeight.value = ''
     newNote.value = ''
+    newDrafts.value = {}
   } catch (cause) {
     error.value = messageOf(cause, 'Не удалось добавить предмет.')
   } finally {
     isAdding.value = false
+  }
+}
+
+/** Открыть правку характеристик: тип и уже сохранённые значения. */
+function startEditAttributes(item: GearItem) {
+  error.value = null
+  confirmingItemId.value = null
+  editingItemId.value = item.id
+  editTypeId.value = item.typeId
+  editDrafts.value = gearAttributeDrafts(item.attributes)
+}
+
+function cancelEditAttributes() {
+  editingItemId.value = null
+  editTypeId.value = null
+  editDrafts.value = {}
+}
+
+/**
+ * Сохранить характеристики и (если поменяли) тип.
+ *
+ * `typeId` уходит только при смене типа: без него `PATCH` — обычная правка,
+ * и вещь с дырой в обязательной характеристике (значение появилось раньше,
+ * чем обязательность) правится свободно, как и записано в правилах бэкенда.
+ * При смене типа сервер стирает значения прежнего типа и заново спрашивает
+ * обязательные — поэтому пустые поля здесь проверяются и на клиенте.
+ */
+async function saveAttributes(item: GearItem) {
+  const type = editType.value
+  if (type === null) {
+    error.value = 'Выберите действующий тип снаряжения: тип вещи в архиве.'
+    return
+  }
+
+  const built = buildGearAttributes(type.attributes, editDrafts.value)
+  if (built.error !== null) {
+    error.value = built.error
+    return
+  }
+
+  savingId.value = item.id
+  error.value = null
+
+  try {
+    const updated = await updateGearItem(item.id, {
+      ...(type.id === item.typeId ? {} : { typeId: type.id }),
+      attributes: built.attributes,
+    })
+    Object.assign(item, updated)
+    editingItemId.value = null
+    editTypeId.value = null
+    editDrafts.value = {}
+  } catch (cause) {
+    error.value = messageOf(cause, 'Не удалось сохранить характеристики.')
+    // Значения в форме могли разойтись с базой — перечитываем список.
+    await load()
+  } finally {
+    savingId.value = null
   }
 }
 
@@ -220,6 +400,7 @@ async function save(
 
 async function remove(item: GearItem) {
   confirmingItemId.value = null
+  if (editingItemId.value === item.id) cancelEditAttributes()
   savingId.value = item.id
   error.value = null
 
@@ -234,6 +415,7 @@ async function remove(item: GearItem) {
 }
 
 onMounted(load)
+onMounted(loadTypes)
 onMounted(loadVehicles)
 
 // ───────────────────────────── моя техника ─────────────────────────────
@@ -352,21 +534,22 @@ async function removeVehicleById(vehicle: Vehicle) {
       {{ formatWeightTotal(totalWeightGrams, itemsWithoutWeight) }}
     </p>
 
-    <!-- Новый предмет -->
+    <!-- Новый предмет: сначала тип, потом его характеристики -->
     <form
-      class="mb-6 grid gap-2 sm:grid-cols-[9rem_1fr_6rem_1fr_auto] sm:items-end"
+      class="grid gap-2 sm:grid-cols-[11rem_1fr_6rem_1fr_auto] sm:items-end"
       @submit.prevent="add"
     >
       <label class="flex flex-col gap-1">
-        <span class="text-xs text-muted">Вид</span>
+        <span class="text-xs text-muted">Тип</span>
         <select
-          v-model="newKind"
-          class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-sm text-text focus:border-primary focus:outline-none"
-          data-test="gear-kind"
+          v-model="newTypeId"
+          :disabled="types.length === 0"
+          class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60"
+          data-test="gear-type"
+          @change="newDrafts = {}"
         >
-          <option v-for="kind in GEAR_KINDS" :key="kind" :value="kind">
-            {{ GEAR_KIND_LABELS[kind] }}
-          </option>
+          <option v-if="types.length === 0" :value="null">—</option>
+          <option v-for="type in types" :key="type.id" :value="type.id">{{ type.name }}</option>
         </select>
       </label>
 
@@ -377,7 +560,7 @@ async function removeVehicleById(vehicle: Vehicle) {
           type="text"
           maxlength="120"
           placeholder="Палатка на четверых"
-          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors focus:border-primary focus:outline-none"
+          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
           data-test="gear-title"
         />
       </label>
@@ -390,7 +573,7 @@ async function removeVehicleById(vehicle: Vehicle) {
           min="1"
           step="1"
           placeholder="2400"
-          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors focus:border-primary focus:outline-none"
+          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
           data-test="gear-weight"
         />
       </label>
@@ -402,14 +585,14 @@ async function removeVehicleById(vehicle: Vehicle) {
           type="text"
           maxlength="500"
           placeholder="проклеена, течёт по шву"
-          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors focus:border-primary focus:outline-none"
+          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
           data-test="gear-note"
         />
       </label>
 
       <button
         type="submit"
-        :disabled="isAdding || newTitle.trim().length === 0"
+        :disabled="isAdding || newTitle.trim().length === 0 || newType === null"
         class="cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         data-test="gear-add"
       >
@@ -417,100 +600,204 @@ async function removeVehicleById(vehicle: Vehicle) {
       </button>
     </form>
 
-    <p v-if="isLoading" class="text-sm text-muted" data-test="gear-loading">
+    <p v-if="typesError" class="mt-2 text-sm text-red-600" data-test="gear-types-error">
+      {{ typesError }}
+    </p>
+
+    <!-- Характеристики выбранного типа: их набор задаёт справочник -->
+    <div
+      v-if="newAttributes.length > 0"
+      class="mt-3 rounded-xl border border-border bg-surface p-3"
+      data-test="gear-attributes"
+    >
+      <h3 class="mb-2 text-sm font-medium text-text">
+        Характеристики типа «{{ newType?.name }}»
+      </h3>
+      <GearAttributeFields
+        v-model="newDrafts"
+        :attributes="newAttributes"
+        prefix="new"
+        :disabled="isAdding"
+      />
+    </div>
+
+    <p v-if="isLoading" class="mt-4 text-sm text-muted" data-test="gear-loading">
       Загружаем снаряжение…
     </p>
 
     <p
       v-else-if="items.length === 0"
-      class="rounded-xl border border-dashed border-border p-4 text-sm text-muted"
+      class="mt-4 rounded-xl border border-dashed border-border p-4 text-sm text-muted"
       data-test="gear-empty"
     >
       Список пуст. Начните с того, что точно поедет в следующий поход: палатка, спальник, рюкзак.
     </p>
 
-    <div v-else class="flex flex-col gap-5">
-      <section v-for="group in groups" :key="group.kind" data-test="gear-group">
+    <div v-else class="mt-5 flex flex-col gap-5">
+      <section v-for="group in groups" :key="group.code" data-test="gear-group">
         <h3 class="mb-1 text-sm font-medium text-text">{{ group.label }}</h3>
 
         <ul class="flex flex-col">
           <li
             v-for="item in group.items"
             :key="item.id"
-            class="grid gap-2 border-t border-border py-2 sm:grid-cols-[1fr_6rem_1fr_auto] sm:items-center"
+            class="border-t border-border py-2"
             data-test="gear-item"
           >
-            <input
-              :value="item.title"
-              type="text"
-              maxlength="120"
-              :disabled="savingId === item.id"
-              class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
-              aria-label="Название предмета"
-              data-test="item-title"
-              @change="saveTitle(item, $event)"
-            />
-
-            <div class="flex items-center gap-1">
+            <div class="grid gap-2 sm:grid-cols-[1fr_6rem_1fr_auto] sm:items-center">
               <input
-                :value="item.weightGrams ?? ''"
-                type="number"
-                min="1"
-                step="1"
-                placeholder="—"
+                :value="item.title"
+                type="text"
+                maxlength="120"
                 :disabled="savingId === item.id"
-                class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-right text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
-                aria-label="Вес в граммах"
-                data-test="item-weight"
-                @change="saveWeight(item, $event)"
+                class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                aria-label="Название предмета"
+                data-test="item-title"
+                @change="saveTitle(item, $event)"
               />
-              <span class="shrink-0 text-xs text-muted">{{ formatWeight(item.weightGrams) }}</span>
-            </div>
 
-            <input
-              :value="item.note ?? ''"
-              type="text"
-              maxlength="500"
-              placeholder="заметка"
-              :disabled="savingId === item.id"
-              class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-xs text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
-              aria-label="Заметка"
-              data-test="item-note"
-              @change="saveNote(item, $event)"
-            />
+              <div class="flex items-center gap-1">
+                <input
+                  :value="item.weightGrams ?? ''"
+                  type="number"
+                  min="1"
+                  step="1"
+                  placeholder="—"
+                  :disabled="savingId === item.id"
+                  class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-right text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                  aria-label="Вес в граммах"
+                  data-test="item-weight"
+                  @change="saveWeight(item, $event)"
+                />
+                <span class="shrink-0 text-xs text-muted">{{ formatWeight(item.weightGrams) }}</span>
+              </div>
 
-            <div class="flex flex-wrap items-center gap-2 justify-self-start">
-              <template v-if="confirmingItemId === item.id">
-                <span class="text-xs text-muted">Удалить?</span>
+              <input
+                :value="item.note ?? ''"
+                type="text"
+                maxlength="500"
+                placeholder="заметка"
+                :disabled="savingId === item.id"
+                class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-xs text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                aria-label="Заметка"
+                data-test="item-note"
+                @change="saveNote(item, $event)"
+              />
+
+              <div class="flex flex-wrap items-center gap-2 justify-self-start">
+                <template v-if="confirmingItemId === item.id">
+                  <span class="text-xs text-muted">Удалить?</span>
+                  <button
+                    type="button"
+                    :disabled="savingId === item.id"
+                    class="cursor-pointer rounded-xl border border-red-600 px-2 py-1 text-xs text-red-600 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50"
+                    data-test="item-delete-confirm"
+                    @click="remove(item)"
+                  >
+                    Да
+                  </button>
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:text-text"
+                    data-test="item-delete-cancel"
+                    @click="confirmingItemId = null"
+                  >
+                    Нет
+                  </button>
+                </template>
+
                 <button
+                  v-else
                   type="button"
                   :disabled="savingId === item.id"
-                  class="cursor-pointer rounded-xl border border-red-600 px-2 py-1 text-xs text-red-600 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50"
-                  data-test="item-delete-confirm"
-                  @click="remove(item)"
+                  class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600 disabled:opacity-50"
+                  data-test="item-delete"
+                  @click="confirmingItemId = item.id"
                 >
-                  Да
+                  Удалить
+                </button>
+              </div>
+            </div>
+
+            <!-- Характеристики: подпись словами и кнопка правки -->
+            <div class="mt-1 flex flex-wrap items-center justify-between gap-2 px-2">
+              <p class="text-xs text-muted" data-test="item-attributes-summary">
+                {{ gearAttributesSummary(item) || 'Характеристики не заполнены' }}
+              </p>
+
+              <button
+                type="button"
+                class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+                data-test="item-attributes"
+                @click="editingItemId === item.id ? cancelEditAttributes() : startEditAttributes(item)"
+              >
+                {{ editingItemId === item.id ? 'Скрыть' : 'Характеристики' }}
+              </button>
+            </div>
+
+            <div
+              v-if="editingItemId === item.id"
+              class="mt-2 flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
+              data-test="item-attributes-editor"
+            >
+              <label class="flex flex-col gap-1">
+                <span class="text-xs text-muted">Тип</span>
+                <select
+                  v-model="editTypeId"
+                  :disabled="savingId === item.id"
+                  class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 sm:max-w-xs"
+                  data-test="item-type"
+                  @change="editDrafts = {}"
+                >
+                  <option v-for="type in types" :key="type.id" :value="type.id">
+                    {{ type.name }}
+                  </option>
+                  <option v-if="editTypeArchived" :value="item.typeId">
+                    {{ item.typeName }} — в архиве
+                  </option>
+                </select>
+              </label>
+
+              <p
+                v-if="editTypeArchived"
+                class="text-xs text-muted"
+                data-test="item-type-archived"
+              >
+                Тип вещи в архиве справочника: выберите действующий. При смене типа значения прежнего
+                типа стираются.
+              </p>
+
+              <GearAttributeFields
+                v-else-if="editAttributes.length > 0"
+                v-model="editDrafts"
+                :attributes="editAttributes"
+                prefix="edit"
+                :disabled="savingId === item.id"
+              />
+
+              <p v-else class="text-xs text-muted" data-test="item-attributes-empty">
+                У выбранного типа нет характеристик.
+              </p>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  :disabled="savingId === item.id || editTypeArchived"
+                  class="cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                  data-test="item-attributes-save"
+                  @click="saveAttributes(item)"
+                >
+                  Сохранить
                 </button>
                 <button
                   type="button"
-                  class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:text-text"
-                  data-test="item-delete-cancel"
-                  @click="confirmingItemId = null"
+                  class="cursor-pointer rounded-xl border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-text"
+                  data-test="item-attributes-cancel"
+                  @click="cancelEditAttributes"
                 >
-                  Нет
+                  Отмена
                 </button>
-              </template>
-
-              <button
-                v-else
-                type="button"
-                :disabled="savingId === item.id"
-                class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600 disabled:opacity-50"
-                data-test="item-delete"
-                @click="confirmingItemId = item.id"
-              >
-                Удалить
-              </button>
+              </div>
             </div>
           </li>
         </ul>

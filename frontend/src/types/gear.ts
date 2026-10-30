@@ -6,6 +6,8 @@
  * бэкенд отдаёт значения, а как их назвать человеку — дело интерфейса.
  */
 
+import type { GearValueKind } from '@/types/gearTypes'
+
 export const GEAR_KINDS = [
   'tent',
   'sleeping',
@@ -36,14 +38,48 @@ export const GEAR_KIND_LABELS: Record<GearKind, string> = {
   other: 'Прочее',
 }
 
-/** Предмет снаряжения: вид, название, необязательный вес. */
+/**
+ * Значение характеристики у вещи — как его отдаёт `GearItemAttributeDto`.
+ *
+ * `code` нужен, чтобы правка собирала карту «код → значение» (так их
+ * принимает `PATCH /api/gear/:id`), `name` и `unit` — для подписи на экране,
+ * `valueKind` — чтобы решить, как нарисовать поле.
+ */
+export interface GearItemAttribute {
+  /** Id характеристики: стабильнее кода, но для запросов хватает кода. */
+  attributeId: number
+  code: string
+  name: string
+  valueKind: GearValueKind
+  /** Единица измерения: «мест», «см», «л». `null` — без единицы. */
+  unit: string | null
+  /** Число, строка (у списка — имя варианта) или галочка. */
+  value: number | string | boolean
+}
+
+/**
+ * Предмет снаряжения: тип, название, необязательный вес и значения.
+ *
+ * **Вид (`kind`) — уходящее поле** (Stage B). С 30.10.2026 в базе живёт тип,
+ * а `kind` бэкенд считает по коду типа и отдаёт ещё один шаг: на нём держатся
+ * экраны «Костровое» и «Палатки», пока не перейдут на коды типов. Личный
+ * каталог вид не использует — он группирует вещи по типу.
+ */
 export interface GearItem {
   id: string
+  typeId: number
+  /** Код типа: `tent`, `axe`, `shelter`. Контракт, на нём фильтруют экраны. */
+  typeCode: string
+  /** Название типа для человека: «Палатка», «Топор». */
+  typeName: string
+  /** @deprecated вид старого каталога, посчитанный по коду типа. */
   kind: GearKind
   title: string
   /** Вес в граммах. null — не указан. */
   weightGrams: number | null
   note: string | null
+  /** Значения характеристик в порядке справочника. */
+  attributes: GearItemAttribute[]
   createdAt: string
 }
 

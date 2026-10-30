@@ -121,6 +121,12 @@ function gearItem(
   overrides: Partial<GearItem> & Pick<GearItem, 'id' | 'kind' | 'title'>,
 ): GearItem {
   return {
+    // Тип и значения — обязательные поля `GearItem` с 30.10.2026: экран
+    // «Костровое» их пока не читает, ему хватает вида и названия.
+    typeId: 1,
+    typeCode: 'other',
+    typeName: 'Прочее',
+    attributes: [],
     weightGrams: null,
     note: null,
     createdAt: '2026-10-20T10:00:00.000Z',

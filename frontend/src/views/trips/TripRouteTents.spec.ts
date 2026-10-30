@@ -157,6 +157,12 @@ function gearList(items: GearItem[]): { items: GearItem[]; totalWeightGrams: num
 function personalTent(id: string, title: string): GearItem {
   return {
     id,
+    // Тип и значения — обязательные поля `GearItem` с 30.10.2026: экран
+    // «Палатки» пока фильтрует по старому виду, а не по коду типа.
+    typeId: 1,
+    typeCode: 'tent',
+    typeName: 'Палатка',
+    attributes: [],
     kind: 'tent',
     title,
     weightGrams: null,
