@@ -151,6 +151,16 @@ const router = createRouter({
       component: () => import('@/views/admin/ActivityModeration.vue'),
       meta: { requiresAuth: true },
     },
+    {
+      // Справочник типов снаряжения (Stage A): типы и их характеристики.
+      // Правит только администратор — проверка на бэкенде: чужому 403,
+      // а фронт показывает его сообщение. Экран — ещё и редактор, поэтому
+      // отдельная страница, а не модалка в «Модерации иконок».
+      path: '/admin/gear',
+      name: 'admin-gear',
+      component: () => import('@/views/admin/GearTypesAdmin.vue'),
+      meta: { requiresAuth: true },
+    },
   ],
 })
 
