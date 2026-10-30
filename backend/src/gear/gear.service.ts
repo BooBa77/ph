@@ -95,7 +95,12 @@ export class GearService {
       // только вид (`kind`), заполнять значения не умеет, и блокировать
       // её значило бы «палатку в каталог больше не добавить». Прослойка
       // умирает вместе с `kind`.
-      if (dto.typeId !== undefined) this.assertRequired(active, values.keys());
+      //
+      // Считаем **заполненные** характеристики, а не присланные ключи:
+      // форма нового каталога отправляет карту целиком, а пустые значения —
+      // `null`. Иначе `{ seats: null }` проходил бы проверку и вещь
+      // сохранялась бы без обязательного значения.
+      if (dto.typeId !== undefined) this.assertRequired(active, this.filledIds(values));
 
       const saved = await tx.save(
         tx.create(GearItem, {
@@ -367,6 +372,23 @@ export class GearService {
     }
 
     return values;
+  }
+
+  /**
+   * Id характеристик, у которых есть значение.
+   *
+   * `null` в карте — «стереть» / «не задано»: ключ при этом есть, и считать
+   * его заполненным значило бы принимать `{ seats: null }` за ответ.
+   */
+  private filledIds(
+    values: Map<number, GearValueColumns | null>,
+  ): Set<number> {
+    const ids = new Set<number>();
+    for (const [attributeId, columns] of values) {
+      if (columns !== null) ids.add(attributeId);
+    }
+
+    return ids;
   }
 
   /**

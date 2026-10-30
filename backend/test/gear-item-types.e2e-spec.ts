@@ -345,6 +345,19 @@ describe('Тип вещи и значения характеристик (e2e)',
     expect(response.body.message).toContain('Вместимость');
   });
 
+  it('обязательная характеристика, присланная null, — тоже 400', async () => {
+    // Форма нового каталога присылает карту целиком, а пустые значения —
+    // `null`: «ключ есть» не значит «значение заполнено», и без этой
+    // проверки вещь сохранялась бы без обязательной вместимости.
+    const response = await call('post', '/api/gear', ownerToken, {
+      typeId: tentTypeId,
+      title: 'Палатка с пустой вместимостью',
+      attributes: { seats: null },
+    }).expect(400);
+
+    expect(response.body.message).toContain('Вместимость');
+  });
+
   it('архивный тип не принимается — 400', async () => {
     await call('post', '/api/gear', ownerToken, {
       typeId: archivedTypeId,
