@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { User } from '../entities/user.entity';
+import { isAdminUser } from '../../calendar/admin';
 import { USER_GENDERS, type UserGender } from '../gender.types';
 import { SportExperienceResponseDto } from './sport-experience-response.dto';
 
@@ -84,6 +85,23 @@ export class UserResponseDto {
   sportExperience: SportExperienceResponseDto | null;
 
   /**
+   * Админ ли смотрящий.
+   *
+   * Считается по тому же списку, что и доступ к админским ручкам
+   * (`isAdminUser`), поэтому фронту не нужно ни знать UUID, ни спрашивать
+   * календарь: одно поле в своём профиле — и меню показывает раздел
+   * «Админка» только тому, кому он открыт.
+   *
+   * Флаг **справочный, а не право**: ограда стоит на бэкенде, и запрос
+   * без прав всё равно получит 403. Этот флаг рисует меню, а не пускает.
+   */
+  @ApiProperty({
+    description: 'Администратор ли пользователь (показывает админку в меню)',
+    example: false,
+  })
+  isAdmin: boolean;
+
+  /**
    * Собрать DTO из entity User.
    *
    * Явный маппинг: перечисляем каждое поле руками.
@@ -102,6 +120,7 @@ export class UserResponseDto {
     dto.sportExperience = SportExperienceResponseDto.from(
       user.sportExperience ?? null,
     );
+    dto.isAdmin = isAdminUser(user.id);
     return dto;
   }
 }
