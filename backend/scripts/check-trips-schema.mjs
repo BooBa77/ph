@@ -986,6 +986,209 @@ rows.push([
 
 await client.query(`DELETE FROM gear_types WHERE id = $1`, [gearAxeId]);
 
+// ─── Вещь, её тип и значения характеристик ───
+/**
+ * Инварианты `gear_items` и `gear_item_attributes` (Stage B, часть 1).
+ *
+ * Проверяется то, из-за чего данные придётся чинить руками: вещь без типа,
+ * тип, которого нет, «две вместимости у одной палатки» и значение
+ * не в своей колонке. Отдельно — **форма таблицы**: вида `kind` больше нет,
+ * а `gear_type_id` обязателен; удаление вещи уносит значения (`CASCADE`),
+ * а тип с вещами не удаляется (`RESTRICT`) — иначе палатка осталась бы
+ * без типа молча.
+ */
+const gearShape = await client.query(
+  `SELECT column_name, is_nullable
+     FROM information_schema.columns
+    WHERE table_name = 'gear_items'
+      AND column_name IN ('kind', 'gear_type_id')
+    ORDER BY column_name`,
+);
+const gearShapeOk =
+  gearShape.rows.length === 1 &&
+  gearShape.rows[0].column_name === 'gear_type_id' &&
+  gearShape.rows[0].is_nullable === 'NO';
+if (!gearShapeOk) failed += 1;
+rows.push([
+  gearShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
+  'вещь: вида kind нет, gear_type_id обязателен',
+  `колонки: ${gearShape.rows.map((row) => `${row.column_name}(${row.is_nullable})`).join(', ') || 'нет'}`,
+]);
+
+const itemTypeId = (
+  await client.query(
+    `INSERT INTO gear_types (code, name)
+     VALUES ('e2e_check_item_type', 'Проверочный тип вещи')
+     RETURNING id`,
+  )
+).rows[0].id;
+
+const itemSeatsId = (
+  await client.query(
+    `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)
+     VALUES ($1, 'seats', 'Вместимость', 'number')
+     RETURNING id`,
+    [itemTypeId],
+  )
+).rows[0].id;
+
+const itemModelId = (
+  await client.query(
+    `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)
+     VALUES ($1, 'model', 'Модель', 'text')
+     RETURNING id`,
+    [itemTypeId],
+  )
+).rows[0].id;
+
+const itemId = (
+  await client.query(
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+     VALUES ($1, $2, 'Проверочная палатка')
+     RETURNING id`,
+    [user1, itemTypeId],
+  )
+).rows[0].id;
+
+await check(
+  'вещь: без типа не создаётся (NOT NULL)',
+  'fail',
+  `INSERT INTO gear_items (owner_user_id, title) VALUES ($1, 'Вещь без типа')`,
+  [user1],
+);
+
+await check(
+  'вещь: несуществующий тип запрещён (внешний ключ)',
+  'fail',
+  `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+   VALUES ($1, 2147483000, 'Вещь с чужим типом')`,
+  [user1],
+);
+
+await check(
+  'вещь: колонки kind больше нет',
+  'fail',
+  `INSERT INTO gear_items (owner_user_id, gear_type_id, title, kind)
+   VALUES ($1, $2, 'Вещь по-старому', 'tent')`,
+  [user1, itemTypeId],
+);
+
+await check(
+  'тип: с вещами не удаляется (RESTRICT)',
+  'fail',
+  `DELETE FROM gear_types WHERE id = $1`,
+  [itemTypeId],
+);
+
+await check(
+  'значение: число у числовой характеристики записывается',
+  'ok',
+  `INSERT INTO gear_item_attributes
+     (gear_item_id, gear_type_attribute_id, number_value)
+   VALUES ($1, $2, 3)`,
+  [itemId, itemSeatsId],
+);
+
+await check(
+  'значение: две вместимости у одной вещи запрещены (unique)',
+  'fail',
+  `INSERT INTO gear_item_attributes
+     (gear_item_id, gear_type_attribute_id, number_value)
+   VALUES ($1, $2, 4)`,
+  [itemId, itemSeatsId],
+);
+
+await check(
+  'значение: два значения сразу запрещены (num_nonnulls)',
+  'fail',
+  `INSERT INTO gear_item_attributes
+     (gear_item_id, gear_type_attribute_id, number_value, text_value)
+   VALUES ($1, $2, 3, 'MSR')`,
+  [itemId, itemModelId],
+);
+
+await check(
+  'значение: пустое значение запрещено (num_nonnulls)',
+  'fail',
+  `INSERT INTO gear_item_attributes
+     (gear_item_id, gear_type_attribute_id)
+   VALUES ($1, $2)`,
+  [itemId, itemModelId],
+);
+
+await check(
+  'значение: текст из пробелов запрещён (btrim)',
+  'fail',
+  `INSERT INTO gear_item_attributes
+     (gear_item_id, gear_type_attribute_id, text_value)
+   VALUES ($1, $2, '   ')`,
+  [itemId, itemModelId],
+);
+
+await check(
+  'значение: текст записывается',
+  'ok',
+  `INSERT INTO gear_item_attributes
+     (gear_item_id, gear_type_attribute_id, text_value)
+   VALUES ($1, $2, 'MSR')`,
+  [itemId, itemModelId],
+);
+
+// Каскады считаем вручную: `check()` откатывает упавшие вставки, а тут
+// нужны две успешные операции подряд и сравнение до/после.
+const valuesBeforeItemDelete = await client.query(
+  `SELECT count(*)::int AS count FROM gear_item_attributes WHERE gear_item_id = $1`,
+  [itemId],
+);
+await client.query(`DELETE FROM gear_items WHERE id = $1`, [itemId]);
+const valuesAfterItemDelete = await client.query(
+  `SELECT count(*)::int AS count FROM gear_item_attributes WHERE gear_item_id = $1`,
+  [itemId],
+);
+const valuesCascadeClean =
+  valuesBeforeItemDelete.rows[0].count === 2 &&
+  valuesAfterItemDelete.rows[0].count === 0;
+if (!valuesCascadeClean) failed += 1;
+rows.push([
+  valuesCascadeClean ? 'ok' : 'ОСТАЛИСЬ ЗНАЧЕНИЯ',
+  `вещь: удаление уносит значения (CASCADE, было ${valuesBeforeItemDelete.rows[0].count})`,
+  '',
+]);
+
+const modelItemId = (
+  await client.query(
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+     VALUES ($1, $2, 'Проверочная модель')
+     RETURNING id`,
+    [user1, itemTypeId],
+  )
+).rows[0].id;
+await client.query(
+  `INSERT INTO gear_item_attributes
+     (gear_item_id, gear_type_attribute_id, text_value)
+   VALUES ($1, $2, 'Naturehike')`,
+  [modelItemId, itemModelId],
+);
+await client.query(`DELETE FROM gear_type_attributes WHERE id = $1`, [
+  itemModelId,
+]);
+const valuesAfterAttributeDelete = await client.query(
+  `SELECT count(*)::int AS count
+     FROM gear_item_attributes
+    WHERE gear_type_attribute_id = $1`,
+  [itemModelId],
+);
+const attributeCascadeClean = valuesAfterAttributeDelete.rows[0].count === 0;
+if (!attributeCascadeClean) failed += 1;
+rows.push([
+  attributeCascadeClean ? 'ok' : 'ОСТАЛИСЬ ЗНАЧЕНИЯ',
+  'характеристика: удаление уносит значения (CASCADE)',
+  '',
+]);
+
+await client.query(`DELETE FROM gear_items WHERE id = $1`, [modelItemId]);
+await client.query(`DELETE FROM gear_types WHERE id = $1`, [itemTypeId]);
+
 await client.query('ROLLBACK');
 await client.end();
 

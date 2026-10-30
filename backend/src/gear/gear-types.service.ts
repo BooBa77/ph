@@ -25,6 +25,7 @@ import {
 import { GearAttributeOption } from './entities/gear-attribute-option.entity';
 import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
+import { parseAttributeValue } from './gear-attribute-values';
 import { GEAR_CODE_PATTERN, GEAR_OPTIONS_MAX } from './gear.types';
 import type { GearValueKind } from './gear.types';
 
@@ -260,6 +261,20 @@ export class GearTypesService {
           );
         }
 
+        // Обязательная характеристика сразу заполняет пустые значения
+        // у существующих вещей: иначе она была бы обязательной только
+        // на словах, а старые вещи остались бы с дырой.
+        if (saved.isRequired) {
+          await this.backfillValues(
+            tx,
+            type.id,
+            saved,
+            dto.fillMissing,
+            allowCustomValue,
+            options.map((option) => option.name),
+          );
+        }
+
         return saved.id;
       });
 
@@ -361,7 +376,27 @@ export class GearTypesService {
     if (dto.isActive !== undefined) attribute.isActive = dto.isActive;
     if (dto.sortOrder !== undefined) attribute.sortOrder = dto.sortOrder;
 
-    await manager.save(attribute);
+    // Обязательность и замещающее значение пишутся вместе: включили
+    // обязательность — пустые значения у существующих вещей заполнились,
+    // иначе «обязательная» характеристика осталась бы с дырой.
+    await this.dataSource.transaction(async (tx) => {
+      await tx.save(attribute);
+
+      if (
+        attribute.isRequired &&
+        attribute.isActive &&
+        this.hasFillMissing(dto.fillMissing)
+      ) {
+        await this.backfillValues(
+          tx,
+          typeId,
+          attribute,
+          dto.fillMissing,
+          allowCustomValue,
+          activeOptionNames,
+        );
+      }
+    });
 
     return this.adminAttribute(manager, typeId, attribute.id);
   }
@@ -761,6 +796,67 @@ export class GearTypesService {
           : `Для списка замещающее значение — один из вариантов: ${list}. Своё значение не разрешено`,
       );
     }
+  }
+
+  /**
+   * «Замещающее значение» в дело (Stage B, 30.10.2026).
+   *
+   * В Stage A значение проверялось и **отбрасывалось**: таблицы значений
+   * ещё не было. Теперь она есть, и момент применения один — когда
+   * характеристика становится обязательной: у существующих вещей этого типа
+   * пустое значение заполняется замещающим. Так «Вместимость» палатки
+   * получает «3» у всех, кто завёл палатку до появления обязательности,
+   * и вещь не остаётся полупустой.
+   *
+   * Заполняются **только пустые** значения: если у вещи уже стоит своё
+   * «4 места», замещающее её не тронет. Второй прогон тоже ничего не
+   * меняет — вставка идёт `WHERE NOT EXISTS` и `ON CONFLICT DO NOTHING`,
+   * поэтому повторная отправка того же `fillMissing` безопасна.
+   *
+   * Один `INSERT ... SELECT`: вещей у типа может быть много, а по одной
+   * в цикле — это N запросов в транзакции админки.
+   */
+  private async backfillValues(
+    manager: EntityManager,
+    typeId: number,
+    attribute: GearTypeAttribute,
+    fillMissing: unknown,
+    allowCustom: boolean,
+    optionNames: readonly string[],
+  ): Promise<number> {
+    const columns = parseAttributeValue(
+      {
+        valueKind: attribute.valueKind,
+        allowCustomValue: allowCustom,
+        name: attribute.name,
+      },
+      fillMissing,
+      optionNames,
+    );
+    // `null` — «стереть», а не «заполнить»: замещающего значения нет.
+    if (columns === null) return 0;
+
+    const inserted: Array<{ id: number }> = await manager.query(
+      `INSERT INTO gear_item_attributes
+         (gear_item_id, gear_type_attribute_id, number_value, text_value, bool_value)
+       SELECT i.id, $1, $2::numeric, $3, $4::boolean
+         FROM gear_items i
+        WHERE i.gear_type_id = $5
+          AND NOT EXISTS (
+            SELECT 1 FROM gear_item_attributes v
+             WHERE v.gear_item_id = i.id AND v.gear_type_attribute_id = $1)
+       ON CONFLICT (gear_item_id, gear_type_attribute_id) DO NOTHING
+       RETURNING id`,
+      [
+        attribute.id,
+        columns.numberValue,
+        columns.textValue,
+        columns.boolValue,
+        typeId,
+      ],
+    );
+
+    return inserted.length;
   }
 
   /**

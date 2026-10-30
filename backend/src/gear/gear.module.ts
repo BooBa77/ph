@@ -4,6 +4,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { TripsModule } from '../trips/trips.module';
 import { GearAttributeOption } from './entities/gear-attribute-option.entity';
 import { GearItem } from './entities/gear-item.entity';
+import { GearItemAttribute } from './entities/gear-item-attribute.entity';
 import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
 import { TripGear } from './entities/trip-gear.entity';
@@ -40,6 +41,7 @@ import { TripGearService } from './trip-gear.service';
   imports: [
     TypeOrmModule.forFeature([
       GearItem,
+      GearItemAttribute,
       TripGear,
       GearType,
       GearTypeAttribute,

@@ -2,9 +2,10 @@ import { ApiProperty } from '@nestjs/swagger';
 import { IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
 
 import type { GearKind } from '../gear.types';
-import { GEAR_KINDS } from '../gear.types';
+import { GEAR_KINDS, legacyKindOfTypeCode } from '../gear.types';
 import { TRIP_GEAR_STATUSES, type TripGearStatus } from '../trip-gear.types';
 import type { TripGear } from '../entities/trip-gear.entity';
+import { GearItemAttributeDto } from './gear.dto';
 
 /**
  * Вещь в общественном снаряжении похода — как её видит вкладка.
@@ -12,6 +13,18 @@ import type { TripGear } from '../entities/trip-gear.entity';
  * Название, вид и вес приходят из каталога владельца: строка похода —
  * это ссылка на предмет (`gear_items`), а не копия. Поэтому одно и то же
  * поле веса правится в профиле и сразу видно в походе.
+ *
+ * **Тип и его значения (Stage B, 30.10.2026).** Экранам «Ночёвок» нужен
+ * не вид старого каталога, а **код типа**: «Палатки» собираются по `tent`
+ * и `shelter`, «Костровое» — по `axe`, `saw`, `firestarter`, `tagan`,
+ * `stove` и `gas` (заказчик: «в Ночёвках используем забинденные типы»).
+ * Вместе с типом отдаются значения характеристик: подпись палатки —
+ * «Анна 3-х местная 2400 гр.» — складывается из вместимости и веса,
+ * то есть из значения, а не из названия вещи.
+ *
+ * `kind` остаётся ещё на один шаг: его читают экраны, которые перейдут
+ * на коды типов. Считается он по коду типа (`legacyKindOfTypeCode`),
+ * в данных его больше нет.
  *
  * Имён владельца и назначенного здесь нет: вкладка уже загрузила состав
  * (`GET /api/trips/:id/participants`) с именами и полом, и дублировать
@@ -25,11 +38,31 @@ export class TripGearItemDto {
   @ApiProperty({ description: 'Id предмета в каталоге владельца', example: '5' })
   gearItemId: string;
 
-  @ApiProperty({ description: 'Вид снаряжения', enum: GEAR_KINDS, example: 'tent' })
+  @ApiProperty({ description: 'Id типа снаряжения', example: 1 })
+  typeId: number;
+
+  @ApiProperty({ description: 'Код типа: на него опираются экраны', example: 'tent' })
+  typeCode: string;
+
+  @ApiProperty({ description: 'Название типа', example: 'Палатка' })
+  typeName: string;
+
+  @ApiProperty({
+    description:
+      'Вид старого каталога, посчитанный по типу. Временно: экраны переходят на коды типов',
+    enum: GEAR_KINDS,
+    example: 'tent',
+  })
   kind: GearKind;
 
   @ApiProperty({ description: 'Название', example: 'Палатка на четверых' })
   title: string;
+
+  @ApiProperty({
+    description: 'Значения характеристик в порядке справочника',
+    type: [GearItemAttributeDto],
+  })
+  attributes: GearItemAttributeDto[];
 
   @ApiProperty({
     description: 'Вес в граммах. null — не указан и в сумму не входит',
@@ -69,11 +102,25 @@ export class TripGearItemDto {
   createdAt: string;
 
   static from(row: TripGear): TripGearItemDto {
+    const values = [...(row.gearItem.attributes ?? [])].sort((left, right) => {
+      const leftAttribute = left.gearTypeAttribute;
+      const rightAttribute = right.gearTypeAttribute;
+      if (leftAttribute.sortOrder !== rightAttribute.sortOrder) {
+        return leftAttribute.sortOrder - rightAttribute.sortOrder;
+      }
+
+      return leftAttribute.id - rightAttribute.id;
+    });
+
     return {
       id: row.id,
       gearItemId: row.gearItemId,
-      kind: row.gearItem.kind,
+      typeId: row.gearItem.gearTypeId,
+      typeCode: row.gearItem.gearType.code,
+      typeName: row.gearItem.gearType.name,
+      kind: legacyKindOfTypeCode(row.gearItem.gearType.code),
       title: row.gearItem.title,
+      attributes: values.map((value) => GearItemAttributeDto.from(value)),
       weightGrams: row.gearItem.weightGrams,
       note: row.gearItem.note,
       status: row.status,

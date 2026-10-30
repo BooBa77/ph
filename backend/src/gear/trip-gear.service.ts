@@ -69,7 +69,7 @@ export class TripGearService {
 
     const rows = await manager.find(TripGear, {
       where: { tripId: trip.id },
-      relations: { gearItem: true },
+      relations: { gearItem: { gearType: true, attributes: { gearTypeAttribute: true } } },
       order: { id: 'ASC' },
     });
 
@@ -101,6 +101,7 @@ export class TripGearService {
     // id чужих списков снаряжения нечего.
     const item = await manager.findOne(GearItem, {
       where: { id: String(dto.gearItemId), ownerUserId: userId },
+      relations: { gearType: true, attributes: { gearTypeAttribute: true } },
     });
     if (!item) throw new NotFoundException('Предмет не найден');
 
@@ -145,7 +146,7 @@ export class TripGearService {
 
     const row = await manager.findOne(TripGear, {
       where: { id: String(id), tripId: trip.id },
-      relations: { gearItem: true },
+      relations: { gearItem: { gearType: true, attributes: { gearTypeAttribute: true } } },
     });
     if (!row) throw new NotFoundException('Вещь в снаряжении похода не найдена');
 
