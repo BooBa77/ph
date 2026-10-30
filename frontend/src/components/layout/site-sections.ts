@@ -29,7 +29,32 @@ export const SITE_SECTIONS = [
   { to: '/profile/settings', label: 'Настройки', icon: 'settings' },
 ] as const
 
-export type SiteSection = (typeof SITE_SECTIONS)[number]
+/**
+ * Админка — отдельный пункт, который видит только админ.
+ *
+ * Решение заказчика 30.10.2026: ссылка на админку живёт в общем меню, а не
+ * только внутри «Календаря», где она была спрятана. Ведём в корень `/admin`:
+ * там оглавление разделов (типы снаряжения, модерация иконок), и меню
+ * не растёт с каждым новым админским экраном.
+ *
+ * **Пункт виден по флагу с бэкенда** (`user.isAdmin`, тот же список админов,
+ * что и у 403 на админских ручках), а не по адресу и не по захардкоженному
+ * UUID во фронте: список админов должен жить в одном месте. Проверка при
+ * этом остаётся на сервере — здесь только видимость пункта.
+ */
+export const ADMIN_SECTION = { to: '/admin', label: 'Админка', icon: 'shield' } as const
+
+export type SiteSection = (typeof SITE_SECTIONS)[number] | typeof ADMIN_SECTION
 
 /** Имя иконки раздела: подмножество набора `SidebarIcon`. */
 export type SiteIconName = SiteSection['icon']
+
+/**
+ * Список разделов для конкретного человека.
+ *
+ * Одна функция на оба меню: колонка и гамбургер обязаны показывать одно и то
+ * же, и решать это в каждом компоненте отдельно — значит разойтись.
+ */
+export function siteSections(isAdmin: boolean): readonly SiteSection[] {
+  return isAdmin ? [...SITE_SECTIONS, ADMIN_SECTION] : SITE_SECTIONS
+}

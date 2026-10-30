@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 
 import SiteSidebar from '@/components/layout/SiteSidebar.vue'
+import { useAuthStore } from '@/stores/auth'
+import type { User } from '@/api/types'
 
 /**
  * Тесты колонки меню на десктопе.
@@ -34,8 +36,33 @@ function makeRouter(): Router {
         name: 'profile-personal',
         component: { template: '<div />' },
       },
+      {
+        // Админка — раздел с оглавлением и дочерними экранами: на вложенном
+        // адресе пункт меню должен остаться подсвеченным.
+        path: '/admin',
+        component: { template: '<div><RouterView /></div>' },
+        children: [
+          { path: '', name: 'admin-home', component: { template: '<div />' } },
+          { path: 'gear', name: 'admin-gear', component: { template: '<div />' } },
+        ],
+      },
     ],
   })
+}
+
+/** Профиль для теста: остальное — как отдаёт бэкенд. */
+function makeUser(isAdmin: boolean): User {
+  return {
+    id: 'u1',
+    displayName: 'Тест',
+    location: null,
+    avatarUrl: null,
+    gender: 'm',
+    isVegetarian: false,
+    allergies: null,
+    sportExperience: null,
+    isAdmin,
+  }
 }
 
 async function mountSidebar(router: Router = makeRouter()) {
@@ -80,6 +107,47 @@ describe('SiteSidebar', () => {
     const { wrapper } = await mountSidebar()
 
     expect(wrapper.findAll('a')[0]?.attributes('href')).toBe('/')
+  })
+
+  it('обычному пользователю админку не показывает', async () => {
+    useAuthStore().setAuth(makeUser(false), 'token')
+    const { wrapper } = await mountSidebar()
+
+    const labels = wrapper.findAll('a').map((link) => link.attributes('aria-label'))
+
+    expect(labels).toHaveLength(10)
+    expect(labels).not.toContain('Админка')
+  })
+
+  it('админу добавляет «Админку» последним пунктом', async () => {
+    useAuthStore().setAuth(makeUser(true), 'token')
+    const { wrapper } = await mountSidebar()
+
+    const links = wrapper.findAll('a')
+    const labels = links.map((link) => link.attributes('aria-label'))
+
+    // Пункт стоит после «Настроек»: это не раздел аккаунта, а служебный
+    // вход, и место у него — на отшибе.
+    expect(labels).toHaveLength(11)
+    expect(labels.at(-1)).toBe('Админка')
+    expect(links.at(-1)?.attributes('href')).toBe('/admin')
+  })
+
+  it('подсвечивает «Админку» и на вложенном экране', async () => {
+    useAuthStore().setAuth(makeUser(true), 'token')
+
+    const router = makeRouter()
+    await router.push('/admin/gear')
+    await router.isReady()
+
+    const wrapper = mount(SiteSidebar, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const link = wrapper.findAll('a').find((item) => item.attributes('aria-label') === 'Админка')
+
+    // Подсветка корня на дочерних адресах — то, ради чего админка собрана
+    // вложенными маршрутами, а не двумя отдельными.
+    expect(link?.classes()).toContain('text-primary')
   })
 
   it('виден только от md и скрыт на мобиле', async () => {

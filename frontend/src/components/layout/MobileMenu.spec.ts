@@ -51,6 +51,7 @@ function makeUser(): User {
     isVegetarian: false,
     allergies: null,
     sportExperience: null,
+    isAdmin: false,
   }
 }
 
@@ -102,6 +103,29 @@ describe('MobileMenu', () => {
     expect(wrapper.findAll('[data-test="mobile-menu-link"]')).toHaveLength(10)
     expect(wrapper.text()).toContain('Походы')
     expect(wrapper.text()).toContain('Настройки')
+  })
+
+  it('админу добавляет в разделы сайта «Админку»', async () => {
+    useAuthStore().setAuth({ ...makeUser(), isAdmin: true }, 'token')
+    const { wrapper } = await mountMenu()
+    await openMenu(wrapper)
+
+    const links = wrapper.findAll('[data-test="mobile-menu-link"]')
+
+    // Тот же список, что в колонке на десктопе: один пункт добавляется
+    // по флагу профиля, а не отдельным списком в этом компоненте.
+    expect(links).toHaveLength(11)
+    expect(links.at(-1)?.text()).toBe('Админка')
+    expect(links.at(-1)?.attributes('href')).toBe('/admin')
+  })
+
+  it('обычному пользователю «Админки» в разделах нет', async () => {
+    useAuthStore().setAuth(makeUser(), 'token')
+    const { wrapper } = await mountMenu()
+    await openMenu(wrapper)
+
+    expect(wrapper.findAll('[data-test="mobile-menu-link"]')).toHaveLength(10)
+    expect(wrapper.text()).not.toContain('Админка')
   })
 
   it('по кнопке похода показывает вкладки похода, а не разделы сайта', async () => {

@@ -74,6 +74,7 @@ function signIn(id: string) {
     isVegetarian: false,
     allergies: null,
     sportExperience: null,
+    isAdmin: false,
   } satisfies User
 }
 

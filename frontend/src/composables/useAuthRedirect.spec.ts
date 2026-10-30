@@ -15,6 +15,7 @@ const user: User = {
   isVegetarian: false,
   allergies: null,
   sportExperience: null,
+  isAdmin: false,
 }
 
 /**

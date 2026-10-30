@@ -66,6 +66,7 @@ function makeUser(): User {
     isVegetarian: false,
     allergies: null,
     sportExperience: null,
+    isAdmin: false,
   }
 }
 

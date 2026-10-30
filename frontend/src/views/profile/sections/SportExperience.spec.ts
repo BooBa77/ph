@@ -37,6 +37,7 @@ function makeUser(overrides: Partial<User> = {}): User {
     isVegetarian: false,
     allergies: null,
     sportExperience: null,
+    isAdmin: false,
     ...overrides,
   }
 }

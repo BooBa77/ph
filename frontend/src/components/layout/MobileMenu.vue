@@ -4,7 +4,7 @@ import { RouterLink, useRoute } from 'vue-router'
 
 import SidebarIcon from '@/components/ui/SidebarIcon.vue'
 import TripTabIcon from '@/components/trips/TripTabIcon.vue'
-import { SITE_SECTIONS, type SiteIconName } from '@/components/layout/site-sections'
+import { siteSections, type SiteIconName } from '@/components/layout/site-sections'
 import { useLogout } from '@/composables/useLogout'
 import { useMobileMenuStore, type MobileMenuEntry } from '@/stores/mobileMenu'
 import { useAuthStore } from '@/stores/auth'
@@ -37,10 +37,17 @@ const title = computed(() =>
   isSiteMenu.value ? 'Разделы сайта' : (menu.context?.title ?? 'Разделы похода'),
 )
 
+/**
+ * Разделы сайта: их отдаёт `siteSections`, тот же список кормит колонку
+ * на десктопе. «Админка» попадает сюда только у админа — флаг приходит
+ * в профиле с бэкенда.
+ */
+const siteEntries = computed(() => siteSections(auth.user?.isAdmin === true))
+
 /** Разделы сайта или вкладки похода — что открыли, то и показываем. */
 const entries = computed<MobileMenuEntry[]>(() => {
   if (!isSiteMenu.value) return menu.context?.items ?? []
-  return SITE_SECTIONS.map((section) => ({
+  return siteEntries.value.map((section) => ({
     key: section.to,
     label: section.label,
     icon: section.icon,

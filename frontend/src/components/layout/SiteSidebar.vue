@@ -1,9 +1,11 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import SidebarIcon from '@/components/ui/SidebarIcon.vue'
-import { SITE_SECTIONS } from '@/components/layout/site-sections'
+import { siteSections } from '@/components/layout/site-sections'
 import { useLogout } from '@/composables/useLogout'
+import { useAuthStore } from '@/stores/auth'
 
 /**
  * Меню сайта — колонка на десктопе.
@@ -17,14 +19,21 @@ import { useLogout } from '@/composables/useLogout'
  * плохо, занимали верх страницы и дублировали гамбургер: разделы либо
  * в меню, либо в полосе. Теперь на телефоне меню одно — гамбургер в шапке
  * (`MobileMenu`), а эта колонка живёт только от `md`.
+ *
+ * **Админка — по флагу профиля** (30.10.2026): пункт «Админка» добавляет
+ * `siteSections`, и та же функция кормит гамбургер. Список решается в одном
+ * месте, чтобы два меню не разошлись.
  */
+const auth = useAuthStore()
 const { isConfirming, isLoggingOut, ask, cancel, confirm } = useLogout()
+
+const sections = computed(() => siteSections(auth.user?.isAdmin === true))
 </script>
 
 <template>
   <nav class="hidden md:flex md:flex-col" aria-label="Разделы сайта">
     <RouterLink
-      v-for="section in SITE_SECTIONS"
+      v-for="section in sections"
       :key="section.to"
       :to="section.to"
       class="flex items-center gap-2 rounded-none px-4 py-2 text-sm text-muted no-underline transition-colors hover:bg-surface hover:text-text"

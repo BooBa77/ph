@@ -13,6 +13,7 @@ const updatedUser: User = {
   isVegetarian: false,
   allergies: null,
   sportExperience: null,
+  isAdmin: false,
 }
 
 interface Call {
