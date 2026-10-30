@@ -622,16 +622,23 @@ await check(
   [objectId],
 );
 
-// ─── Типы снаряжения и их характеристики (Stage A) ───
+// ─── Типы снаряжения, их характеристики и списки вариантов ───
 /**
- * Инварианты справочника `gear_types` / `gear_type_attributes`.
+ * Инварианты справочника `gear_types` / `gear_type_attributes` /
+ * `gear_attribute_options`.
  *
  * Проверяется то, из-за чего справочник придётся чинить руками: код
  * нелатинской записью, пустое имя из формы, `sort_order` меньше нуля,
- * вид значения вне трёх разрешённых. Отдельно — **уникальность кода
+ * вид значения вне разрешённых. Отдельно — **уникальность кода
  * с архивными строками**: в Stage B на код будут ссылаться значения, и
  * активный с архивным атрибут с одним кодом сделали бы `attributes {code:
  * value}` неоднозначным.
+ *
+ * С 30.10.2026 здесь же четвёртый вид значения — `select` — и его флаг
+ * `allow_custom_value`: флаг осмыслен только у списка, поэтому у числа,
+ * строки и галочки его запрещает CHECK. Варианты списка
+ * (`gear_attribute_options`) держат код, имя, порядок и архив отдельными
+ * колонками, а не массивом.
  */
 const gearTentId = (
   await client.query(
@@ -707,7 +714,7 @@ rows.push([
 ]);
 
 await check(
-  'характеристика: вид значения вне number/text/bool запрещён',
+  'характеристика: вид значения вне number/text/bool/select запрещён',
   'fail',
   `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)
    VALUES ($1, 'volume', 'Объём', 'число')`,
@@ -779,6 +786,170 @@ await check(
   [gearTentId],
 );
 
+// ─── Списки вариантов (30.10.2026) ───
+/**
+ * Четвёртый вид значения и его варианты.
+ *
+ * `allow_custom_value` осмыслен только у списка — флаг у числа или галочки
+ * означал бы галочку, которая ничего не меняет. Правило держится CHECK-ом,
+ * а не только API. Варианты: код латиницей, имя не из пробелов, порядок
+ * не отрицательный, код уникален внутри характеристики **вместе
+ * с архивными** строками — на код будут опираться фильтры Stage B.
+ */
+const gearSelectAttribute = (
+  await client.query(
+    `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)
+     VALUES ($1, 'connection', 'Соединение', 'select')
+     RETURNING id, allow_custom_value, is_active`,
+    [gearTentId],
+  )
+).rows[0];
+
+const selectDefaultsOk =
+  gearSelectAttribute.allow_custom_value === false &&
+  gearSelectAttribute.is_active === true;
+if (!selectDefaultsOk) failed += 1;
+rows.push([
+  selectDefaultsOk ? 'ok' : 'НЕВЕРНЫЕ УМОЛЧАНИЯ',
+  'характеристика: вид select разрешён, allow_custom_value по умолчанию false',
+  '',
+]);
+
+await check(
+  'характеристика: allow_custom_value у числа запрещён',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind, allow_custom_value)
+   VALUES ($1, 'custom_number', 'Своё число', 'number', true)`,
+  [gearTentId],
+);
+
+await check(
+  'характеристика: allow_custom_value у галочки запрещён',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind, allow_custom_value)
+   VALUES ($1, 'custom_bool', 'Своя галочка', 'bool', true)`,
+  [gearTentId],
+);
+
+const gearCustomListId = (
+  await client.query(
+    `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind, allow_custom_value)
+     VALUES ($1, 'own_list', 'Свой список', 'select', true)
+     RETURNING id`,
+    [gearTentId],
+  )
+).rows[0].id;
+
+const gearOption = (
+  await client.query(
+    `INSERT INTO gear_attribute_options (gear_type_attribute_id, code, name)
+     VALUES ($1, 'thread', 'резьбовой')
+     RETURNING id, is_active, sort_order`,
+    [gearSelectAttribute.id],
+  )
+).rows[0];
+
+const optionDefaultsOk =
+  gearOption.is_active === true && gearOption.sort_order === 0;
+if (!optionDefaultsOk) failed += 1;
+rows.push([
+  optionDefaultsOk ? 'ok' : 'НЕВЕРНЫЕ УМОЛЧАНИЯ',
+  'вариант: is_active = true и sort_order = 0 по умолчанию',
+  '',
+]);
+
+await check(
+  'вариант: латинский код обязателен',
+  'fail',
+  `INSERT INTO gear_attribute_options (gear_type_attribute_id, code, name)
+   VALUES ($1, 'Thread', 'резьбовой')`,
+  [gearSelectAttribute.id],
+);
+
+await check(
+  'вариант: код длиннее 40 символов запрещён',
+  'fail',
+  `INSERT INTO gear_attribute_options (gear_type_attribute_id, code, name)
+   VALUES ($1, 'a' || repeat('b', 40), 'Длинный код')`,
+  [gearSelectAttribute.id],
+);
+
+await check(
+  'вариант: имя из пробелов запрещено (btrim)',
+  'fail',
+  `INSERT INTO gear_attribute_options (gear_type_attribute_id, code, name)
+   VALUES ($1, 'blank_name', '   ')`,
+  [gearSelectAttribute.id],
+);
+
+await check(
+  'вариант: имя длиннее 100 символов запрещено',
+  'fail',
+  `INSERT INTO gear_attribute_options (gear_type_attribute_id, code, name)
+   VALUES ($1, 'long_name', repeat('я', 101))`,
+  [gearSelectAttribute.id],
+);
+
+await check(
+  'вариант: отрицательный sort_order запрещён',
+  'fail',
+  `INSERT INTO gear_attribute_options (gear_type_attribute_id, code, name, sort_order)
+   VALUES ($1, 'negative_sort', 'Порядок', -1)`,
+  [gearSelectAttribute.id],
+);
+
+await check(
+  'вариант: код повторно у той же характеристики запрещён',
+  'fail',
+  `INSERT INTO gear_attribute_options (gear_type_attribute_id, code, name)
+   VALUES ($1, 'thread', 'резьбовой снова')`,
+  [gearSelectAttribute.id],
+);
+
+await check(
+  'вариант: тот же код у другой характеристики разрешён',
+  'ok',
+  `INSERT INTO gear_attribute_options (gear_type_attribute_id, code, name)
+   VALUES ($1, 'thread', 'резьбовой')`,
+  [gearCustomListId],
+);
+
+/** Архив — это `UPDATE`, а не удаление: строка остаётся и держит код. */
+await client.query(
+  `UPDATE gear_attribute_options SET is_active = false WHERE id = $1`,
+  [gearOption.id],
+);
+const archivedOption = await client.query(
+  `SELECT is_active FROM gear_attribute_options WHERE id = $1`,
+  [gearOption.id],
+);
+const archivedOptionKept = archivedOption.rows[0]?.is_active === false;
+if (!archivedOptionKept) failed += 1;
+rows.push([
+  archivedOptionKept ? 'ok' : 'АРХИВ НЕ СОХРАНИЛСЯ',
+  'вариант: архив — это is_active = false, строка остаётся',
+  '',
+]);
+
+await check(
+  'вариант: архивная строка держит код (unique без WHERE is_active)',
+  'fail',
+  `INSERT INTO gear_attribute_options (gear_type_attribute_id, code, name)
+   VALUES ($1, 'thread', 'Тот же код после архива')`,
+  [gearSelectAttribute.id],
+);
+
+// Варианты вложены в характеристику: удаление типа уносит и их. Считаем
+// до удаления и после — по id характеристик, которых к тому моменту уже
+// не будет, поэтому id запоминаем заранее.
+const optionAttributeIds = [gearSelectAttribute.id, gearCustomListId];
+const optionCountBefore = await client.query(
+  `SELECT count(*)::int AS count
+     FROM gear_attribute_options
+    WHERE gear_type_attribute_id = ANY($1::int[])`,
+  [optionAttributeIds],
+);
+
 const attributeCountBefore = await client.query(
   `SELECT count(*)::int AS count FROM gear_type_attributes WHERE gear_type_id = $1`,
   [gearTentId],
@@ -795,6 +966,21 @@ if (!attributesCascadeClean) failed += 1;
 rows.push([
   attributesCascadeClean ? 'ok' : 'ОСТАЛИСЬ ХАРАКТЕРИСТИКИ',
   `тип: удаление уносит характеристики (CASCADE, было ${attributeCountBefore.rows[0].count})`,
+  '',
+]);
+
+const optionCountAfter = await client.query(
+  `SELECT count(*)::int AS count
+     FROM gear_attribute_options
+    WHERE gear_type_attribute_id = ANY($1::int[])`,
+  [optionAttributeIds],
+);
+const optionsCascadeClean =
+  optionCountBefore.rows[0].count > 0 && optionCountAfter.rows[0].count === 0;
+if (!optionsCascadeClean) failed += 1;
+rows.push([
+  optionsCascadeClean ? 'ok' : 'ОСТАЛИСЬ ВАРИАНТЫ',
+  `тип: удаление уносит и варианты списков (CASCADE, было ${optionCountBefore.rows[0].count})`,
   '',
 ]);
 

@@ -22,11 +22,14 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
+  CreateGearAttributeOptionDto,
   CreateGearTypeAttributeDto,
   CreateGearTypeDto,
+  GearAdminAttributeOptionDto,
   GearAdminTypeAttributeDto,
   GearAdminTypeDto,
   GearAdminTypeListDto,
+  UpdateGearAttributeOptionDto,
   UpdateGearTypeAttributeDto,
   UpdateGearTypeDto,
 } from './dto/gear-type.dto';
@@ -43,7 +46,12 @@ import { GearTypesService } from './gear-types.service';
  *
  * **Удаление — архив.** `DELETE` отвечает 204 и ставит `is_active = false`;
  * повторный вызов тоже 204. Физического удаления нет: в Stage B на тип
- * будут ссылаться вещи, а на характеристику — значения.
+ * будут ссылаться вещи, а на характеристику и её вариант — значения.
+ *
+ * **Три уровня вложенности:** тип → характеристика → вариант списка.
+ * Пути повторяют модель (`/types/:id/attributes/:attributeId/options`),
+ * потому что каждый уровень проверяет принадлежность верхнему: чужой id
+ * отвечает 404, а не правит строку соседа.
  */
 @ApiTags('gear')
 @Controller('gear/admin/types')
@@ -100,7 +108,8 @@ export class GearAdminTypesController {
    * Новая характеристика типа.
    *
    * `fillMissing` принимается и валидируется по виду значения, но в Stage A
-   * никуда не пишется — таблицы значений ещё нет.
+   * никуда не пишется — таблицы значений ещё нет. `options` позволяет завести
+   * список вариантов сразу, одной транзакцией с характеристикой.
    */
   @Post(':id/attributes')
   @ApiOperation({ summary: 'Добавить характеристику типа' })
@@ -145,6 +154,76 @@ export class GearAdminTypesController {
       authUser.id,
       id,
       attributeId,
+    );
+  }
+
+  // ─────────────────── варианты характеристики-списка ───────────────────
+
+  /**
+   * Новый вариант списка.
+   *
+   * Второй способ завести варианты: первый — сразу в `POST attributes`
+   * (`options` в теле). Отдельная ручка нужна, чтобы добавлять варианты
+   * к уже существующей характеристике, не пересоздавая её.
+   */
+  @Post(':id/attributes/:attributeId/options')
+  @ApiOperation({ summary: 'Добавить вариант списка' })
+  @ApiCreatedResponse({ type: GearAdminAttributeOptionDto })
+  async createOption(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('attributeId', ParseIntPipe) attributeId: number,
+    @Body() dto: CreateGearAttributeOptionDto,
+  ): Promise<GearAdminAttributeOptionDto> {
+    return this.gearTypesService.createOption(
+      authUser.id,
+      id,
+      attributeId,
+      dto,
+    );
+  }
+
+  /** Переименование и порядок варианта. `code` — 400. */
+  @Patch(':id/attributes/:attributeId/options/:optionId')
+  @ApiOperation({ summary: 'Изменить вариант списка' })
+  @ApiOkResponse({ type: GearAdminAttributeOptionDto })
+  async updateOption(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('attributeId', ParseIntPipe) attributeId: number,
+    @Param('optionId', ParseIntPipe) optionId: number,
+    @Body() dto: UpdateGearAttributeOptionDto,
+  ): Promise<GearAdminAttributeOptionDto> {
+    return this.gearTypesService.updateOption(
+      authUser.id,
+      id,
+      attributeId,
+      optionId,
+      dto,
+    );
+  }
+
+  /**
+   * В архив: `is_active = false`, ответ 204.
+   *
+   * Последний вариант списка без разрешённого своего значения убрать
+   * нельзя — 409: характеристика осталась бы «выбирать не из чего».
+   */
+  @Delete(':id/attributes/:attributeId/options/:optionId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Убрать вариант в архив' })
+  @ApiNoContentResponse({ description: 'Вариант в архиве' })
+  async archiveOption(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('attributeId', ParseIntPipe) attributeId: number,
+    @Param('optionId', ParseIntPipe) optionId: number,
+  ): Promise<void> {
+    return this.gearTypesService.archiveOption(
+      authUser.id,
+      id,
+      attributeId,
+      optionId,
     );
   }
 }

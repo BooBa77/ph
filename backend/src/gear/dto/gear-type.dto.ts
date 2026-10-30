@@ -1,5 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
   IsIn,
   IsInt,
@@ -8,13 +11,16 @@ import {
   Matches,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
+import { GearAttributeOption } from '../entities/gear-attribute-option.entity';
 import { GearType } from '../entities/gear-type.entity';
 import { GearTypeAttribute } from '../entities/gear-type-attribute.entity';
 import {
   GEAR_CODE_MAX_LENGTH,
   GEAR_CODE_PATTERN,
+  GEAR_OPTIONS_MAX,
   GEAR_VALUE_KINDS,
 } from '../gear.types';
 import type { GearValueKind } from '../gear.types';
@@ -23,10 +29,61 @@ import type { GearValueKind } from '../gear.types';
 const CODE_HINT = 'Код — латиница, начиная с буквы: ^[a-z][a-z0-9_]*$';
 
 /**
+ * Вариант характеристики-списка в ответе API.
+ *
+ * `code` — контракт (на него опираются фильтры), `name` — то, что видит
+ * человек и что в Stage B ляжет в `text_value` значения экземпляра.
+ */
+export class GearAttributeOptionDto {
+  @ApiProperty({ description: 'Id варианта', example: 1 })
+  id: number;
+
+  @ApiProperty({ description: 'Код варианта', example: 'thread' })
+  code: string;
+
+  @ApiProperty({ description: 'Название для человека', example: 'резьбовой' })
+  name: string;
+
+  @ApiProperty({ description: 'Порядок в списке', example: 0 })
+  sortOrder: number;
+
+  static from(option: GearAttributeOption): GearAttributeOptionDto {
+    return {
+      id: option.id,
+      code: option.code,
+      name: option.name,
+      sortOrder: option.sortOrder,
+    };
+  }
+}
+
+/**
+ * Вариант в админском ответе: то же плюс `isActive`.
+ *
+ * Архивные варианты админке нужны — иначе «вернуть» нечего показывать.
+ * В публичном ответе флага нет: там только активное.
+ */
+export class GearAdminAttributeOptionDto extends GearAttributeOptionDto {
+  @ApiProperty({ description: 'Активен; false — в архиве', example: true })
+  isActive: boolean;
+
+  static fromAdmin(option: GearAttributeOption): GearAdminAttributeOptionDto {
+    return {
+      ...GearAttributeOptionDto.from(option),
+      isActive: option.isActive,
+    };
+  }
+}
+
+/**
  * Характеристика типа в ответе API.
  *
  * `valueKind` — не украшение: по нему фронт выбирает поле ввода (число,
- * строка, галочка), а Stage B — колонку для значения.
+ * строка, галочка, список), а Stage B — колонку для значения.
+ *
+ * `options` есть всегда, даже у числа и строки — пустым массивом: клиенту
+ * не приходится спрашивать «а это поле бывает?», а сервер не отдаёт
+ * варианты там, где их не может быть.
  */
 export class GearTypeAttributeDto {
   @ApiProperty({ description: 'Id характеристики', example: 1 })
@@ -52,11 +109,24 @@ export class GearTypeAttributeDto {
   })
   unit: string | null;
 
+  @ApiProperty({
+    description:
+      'Разрешить своё значение вместо выбора из списка. Только у valueKind = select',
+    example: false,
+  })
+  allowCustomValue: boolean;
+
   @ApiProperty({ description: 'Обязательная характеристика', example: true })
   isRequired: boolean;
 
   @ApiProperty({ description: 'Порядок в форме', example: 0 })
   sortOrder: number;
+
+  @ApiProperty({
+    description: 'Варианты списка в порядке показа; у других видов пусто',
+    type: [GearAttributeOptionDto],
+  })
+  options: GearAttributeOptionDto[];
 
   static from(attribute: GearTypeAttribute): GearTypeAttributeDto {
     return {
@@ -65,8 +135,12 @@ export class GearTypeAttributeDto {
       name: attribute.name,
       valueKind: attribute.valueKind,
       unit: attribute.unit,
+      allowCustomValue: attribute.allowCustomValue,
       isRequired: attribute.isRequired,
       sortOrder: attribute.sortOrder,
+      options: (attribute.options ?? [])
+        .filter((option) => option.isActive)
+        .map((option) => GearAttributeOptionDto.from(option)),
     };
   }
 }
@@ -81,10 +155,19 @@ export class GearAdminTypeAttributeDto extends GearTypeAttributeDto {
   @ApiProperty({ description: 'Активна; false — в архиве', example: true })
   isActive: boolean;
 
+  @ApiProperty({
+    description: 'Все варианты списка, включая архивные',
+    type: [GearAdminAttributeOptionDto],
+  })
+  declare options: GearAdminAttributeOptionDto[];
+
   static fromAdmin(attribute: GearTypeAttribute): GearAdminTypeAttributeDto {
     return {
       ...GearTypeAttributeDto.from(attribute),
       isActive: attribute.isActive,
+      options: (attribute.options ?? []).map((option) =>
+        GearAdminAttributeOptionDto.fromAdmin(option),
+      ),
     };
   }
 }
@@ -234,6 +317,52 @@ export class UpdateGearTypeDto {
   sortOrder?: number;
 }
 
+/**
+ * Новый вариант характеристики-списка.
+ *
+ * Используется в двух местах и намеренно одной формой: в теле
+ * `POST …/attributes` (админ заводит список сразу с вариантами — чтобы
+ * не получить «мёртвую» характеристику без единого варианта) и в теле
+ * `POST …/options` (добавить вариант к уже существующему списку).
+ *
+ * `code` — стабильный контракт, в `PATCH` его нет; `name` — то, что видит
+ * человек и что попадёт в значение экземпляра в Stage B.
+ */
+export class CreateGearAttributeOptionDto {
+  @ApiProperty({
+    description: `${CODE_HINT}. Не меняется после создания`,
+    example: 'thread',
+    maxLength: GEAR_CODE_MAX_LENGTH,
+  })
+  @IsString({ message: 'Код варианта должен быть строкой' })
+  @Matches(GEAR_CODE_PATTERN, { message: CODE_HINT })
+  @MaxLength(GEAR_CODE_MAX_LENGTH, {
+    message: `Код варианта не должен превышать ${GEAR_CODE_MAX_LENGTH} символов`,
+  })
+  code: string;
+
+  @ApiProperty({
+    description: 'Название варианта: «резьбовой»',
+    example: 'резьбовой',
+    maxLength: 100,
+  })
+  @IsString({ message: 'Название варианта должно быть строкой' })
+  @MaxLength(100, {
+    message: 'Название варианта не должно превышать 100 символов',
+  })
+  name: string;
+
+  @ApiProperty({
+    description: 'Порядок в списке, по умолчанию 0',
+    example: 10,
+    required: false,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Порядок варианта должен быть целым числом' })
+  @Min(0, { message: 'Порядок варианта не может быть отрицательным' })
+  sortOrder?: number;
+}
+
 /** Тело `POST /api/gear/admin/types/:id/attributes`. */
 export class CreateGearTypeAttributeDto {
   @ApiProperty({
@@ -287,6 +416,46 @@ export class CreateGearTypeAttributeDto {
   @IsBoolean({ message: 'Обязательность должна быть boolean' })
   isRequired?: boolean;
 
+  /**
+   * Разрешить своё значение. **Только для `valueKind = 'select'`.**
+   *
+   * Для числа, строки и галочки сервис отвечает 400: там своё значение
+   * и так единственное, и флаг означал бы галочку, которая ничего не делает.
+   */
+  @ApiProperty({
+    description:
+      'Разрешить своё значение вместо выбора из списка. Только для valueKind = select',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг «своё значение» должен быть boolean' })
+  allowCustomValue?: boolean;
+
+  /**
+   * Варианты списка — сразу при создании характеристики.
+   *
+   * Так админ заводит «Соединение» вместе с «резьбовой» и «цанговый» одним
+   * действием: иначе он получил бы характеристику без вариантов, которая
+   * ничего не предлагает, и добавлял бы их по одному. Пустой список у
+   * `select` допустим только с разрешённым своим значением — иначе выбирать
+   * не из чего.
+   */
+  @ApiProperty({
+    description:
+      'Варианты списка: создаются вместе с характеристикой. Только для valueKind = select',
+    type: [CreateGearAttributeOptionDto],
+    required: false,
+  })
+  @IsOptional()
+  @IsArray({ message: 'Варианты должны быть списком' })
+  @ArrayMaxSize(GEAR_OPTIONS_MAX, {
+    message: `Вариантов не может быть больше ${GEAR_OPTIONS_MAX}`,
+  })
+  @ValidateNested({ each: true })
+  @Type(() => CreateGearAttributeOptionDto)
+  options?: CreateGearAttributeOptionDto[];
+
   @ApiProperty({ description: 'Порядок в форме', example: 0, required: false })
   @IsOptional()
   @IsInt({ message: 'Порядок должен быть целым числом' })
@@ -303,7 +472,7 @@ export class CreateGearTypeAttributeDto {
    */
   @ApiProperty({
     description:
-      'Замещающее значение: число / непустая строка / boolean по valueKind. В Stage A не применяется',
+      'Замещающее значение: число / непустая строка / boolean / название варианта по valueKind. В Stage A не применяется',
     example: 3,
     required: false,
   })
@@ -351,13 +520,37 @@ export class UpdateGearTypeAttributeDto {
   unit?: string | null;
 
   @ApiProperty({
-    description:
-      'Обязательность. При включении (false → true) нужен fillMissing',
+    description: 'Обязательность. При включении (false → true) нужен fillMissing',
     required: false,
   })
   @IsOptional()
   @IsBoolean({ message: 'Обязательность должна быть boolean' })
   isRequired?: boolean;
+
+  @ApiProperty({
+    description:
+      'Разрешить своё значение. Только для списка; запретить при пустом списке нельзя',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг «своё значение» должен быть boolean' })
+  allowCustomValue?: boolean;
+
+  /**
+   * Варианты здесь не меняются.
+   *
+   * Поле объявлено, чтобы админка получила причину («варианты меняются
+   * отдельными ручками»), а не общий отказ whitelist. Вариант добавляют,
+   * переименовывают и архивируют по одному — тогда каждое действие видно
+   * в ответе и в журнале, а замена «набора» целиком молча архивировала бы
+   * всё, чего не оказалось в теле.
+   */
+  @ApiProperty({
+    description: 'Только для понятной ошибки: варианты меняются отдельными ручками',
+    required: false,
+  })
+  @IsOptional()
+  options?: unknown;
 
   @ApiProperty({
     description: 'true — вернуть из архива, false — в архив',
@@ -376,9 +569,55 @@ export class UpdateGearTypeAttributeDto {
   /** См. `CreateGearTypeAttributeDto.fillMissing` — в Stage A только проверка. */
   @ApiProperty({
     description:
-      'Замещающее значение: число / непустая строка / boolean по valueKind. В Stage A не применяется',
+      'Замещающее значение: число / непустая строка / boolean / название варианта по valueKind. В Stage A не применяется',
     required: false,
   })
   @IsOptional()
   fillMissing?: number | string | boolean | null;
+}
+
+/**
+ * Тело `PATCH …/attributes/:attributeId/options/:optionId`.
+ *
+ * `code` объявлен для понятной ошибки (400), как у типов и характеристик;
+ * переименование меняет `name`, а `code` остаётся контрактом.
+ *
+ * Переименование варианта в Stage B будет обязано одной транзакцией обновить
+ * `gear_item_attributes.text_value`, где хранится имя варианта: иначе старые
+ * вещи разойдутся с новым именем. Сейчас таблицы значений нет, но правило
+ * записано в `docs/ph/gear-types.md`, чтобы Stage B не узнал о нём случайно.
+ */
+export class UpdateGearAttributeOptionDto {
+  @ApiProperty({
+    description: 'Только для понятной ошибки: код варианта не меняется',
+    required: false,
+  })
+  @IsOptional()
+  code?: string;
+
+  @ApiProperty({
+    description: 'Название варианта',
+    maxLength: 100,
+    required: false,
+  })
+  @IsOptional()
+  @IsString({ message: 'Название варианта должно быть строкой' })
+  @MaxLength(100, {
+    message: 'Название варианта не должно превышать 100 символов',
+  })
+  name?: string;
+
+  @ApiProperty({ description: 'Порядок в списке', required: false })
+  @IsOptional()
+  @IsInt({ message: 'Порядок варианта должен быть целым числом' })
+  @Min(0, { message: 'Порядок варианта не может быть отрицательным' })
+  sortOrder?: number;
+
+  @ApiProperty({
+    description: 'true — вернуть из архива, false — в архив',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Активность должна быть boolean' })
+  isActive?: boolean;
 }

@@ -4,6 +4,7 @@ import {
   Entity,
   JoinColumn,
   ManyToOne,
+  OneToMany,
   PrimaryGeneratedColumn,
   Unique,
 } from 'typeorm';
@@ -11,6 +12,7 @@ import {
 import { sqlValues } from '../../users/sport-experience.types';
 import { GEAR_CODE_PATTERN, GEAR_VALUE_KINDS } from '../gear.types';
 import type { GearValueKind } from '../gear.types';
+import { GearAttributeOption } from './gear-attribute-option.entity';
 import { GearType } from './gear-type.entity';
 
 /**
@@ -23,15 +25,24 @@ import { GearType } from './gear-type.entity';
  *
  * **`valueKind` говорит, куда ляжет значение.** В Stage A таблицы значений
  * ещё нет, но вид задаётся сразу: `number` → `number_value`, `text` →
- * `text_value`, `bool` → `bool_value` в Stage B. Поэтому вид **не меняется**
- * ни при каких обстоятельствах (API отвечает 409): смена вида означала бы
- * перенос уже записанных значений, а их тип — часть контракта.
+ * `text_value`, `bool` → `bool_value` в Stage B. Четвёртый вид, `select`
+ * (30.10.2026), ложится в `text_value` текстом выбранного варианта или своим
+ * значением — поэтому вид **не меняется** ни при каких обстоятельствах (API
+ * отвечает 409): смена вида означала бы перенос уже записанных значений,
+ * а их тип — часть контракта.
  *
  * **`code` уникален внутри типа, включая архивные.** `UNIQUE (gear_type_id,
  * code)` без `WHERE is_active`: архивный код остаётся занятым. Иначе
  * активный и архивный атрибуты с одним кодом сосуществовали бы, а
  * `attributes {code: value}` в Stage B стал бы неоднозначным. Ошибка
  * в коде лечится архивом и новой строкой с новым кодом.
+ *
+ * **`allowCustomValue` — только у списка.** Флаг «разрешить своё значение»
+ * имеет смысл исключительно при `valueKind = 'select'`: у числа, строки
+ * и галочки своё значение и так единственное. Поэтому правило держится в двух
+ * местах сразу — CHECK в базе (`chk_gear_type_attributes_allow_custom`)
+ * и ответ 400 в API, — чтобы «галочка, которая ничего не меняет» не завелась
+ * ни из формы, ни из сида, ни руками в `psql`.
  *
  * **`isRequired` — про значения, а не про форму справочника.** Обязательный
  * атрибут в Stage B потребует замещающего значения (`fillMissing`), чтобы
@@ -55,6 +66,10 @@ import { GearType } from './gear-type.entity';
 @Check(
   'chk_gear_type_attributes_unit',
   `"unit" IS NULL OR (btrim("unit") <> '' AND char_length("unit") <= 20)`,
+)
+@Check(
+  'chk_gear_type_attributes_allow_custom',
+  `"allow_custom_value" = false OR "value_kind" = 'select'`,
 )
 @Check('chk_gear_type_attributes_sort', `"sort_order" >= 0`)
 export class GearTypeAttribute {
@@ -89,6 +104,16 @@ export class GearTypeAttribute {
   @Column({ type: 'text', nullable: true })
   unit: string | null;
 
+  /**
+   * Разрешить своё значение вместо выбора из списка.
+   *
+   * Только для `valueKind = 'select'`; у остальных видов запрещено CHECK-ом
+   * в базе. Своё значение в Stage B хранится так же, как выбранный вариант —
+   * текстом в `text_value`.
+   */
+  @Column({ name: 'allow_custom_value', type: 'boolean', default: false })
+  allowCustomValue: boolean;
+
   /** Обязательное значение у вещи (в Stage A только флаг). */
   @Column({ name: 'is_required', type: 'boolean', default: false })
   isRequired: boolean;
@@ -99,4 +124,8 @@ export class GearTypeAttribute {
 
   @Column({ name: 'sort_order', type: 'integer', default: 0 })
   sortOrder: number;
+
+  /** Варианты списка: только у `valueKind = 'select'`, иначе пусто. */
+  @OneToMany(() => GearAttributeOption, (option) => option.gearTypeAttribute)
+  options: GearAttributeOption[];
 }

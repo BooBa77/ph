@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { TripsModule } from '../trips/trips.module';
+import { GearAttributeOption } from './entities/gear-attribute-option.entity';
 import { GearItem } from './entities/gear-item.entity';
 import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
@@ -42,6 +43,7 @@ import { TripGearService } from './trip-gear.service';
       TripGear,
       GearType,
       GearTypeAttribute,
+      GearAttributeOption,
     ]),
     TripsModule,
   ],
