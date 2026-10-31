@@ -3,13 +3,17 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { TripsModule } from '../trips/trips.module';
 import { GearAttributeOption } from './entities/gear-attribute-option.entity';
+import { GearGroup } from './entities/gear-group.entity';
 import { GearItem } from './entities/gear-item.entity';
 import { GearItemAttribute } from './entities/gear-item-attribute.entity';
 import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
 import { TripGear } from './entities/trip-gear.entity';
+import { GearAdminGroupsController } from './gear-admin-groups.controller';
 import { GearAdminTypesController } from './gear-admin.controller';
 import { GearController } from './gear.controller';
+import { GearGroupsController } from './gear-groups.controller';
+import { GearGroupsService } from './gear-groups.service';
 import { GearService } from './gear.service';
 import { GearTypesController } from './gear-types.controller';
 import { GearTypesService } from './gear-types.service';
@@ -46,6 +50,7 @@ import { TripGearService } from './trip-gear.service';
       GearType,
       GearTypeAttribute,
       GearAttributeOption,
+      GearGroup,
     ]),
     TripsModule,
   ],
@@ -54,8 +59,15 @@ import { TripGearService } from './trip-gear.service';
     TripGearController,
     GearTypesController,
     GearAdminTypesController,
+    GearGroupsController,
+    GearAdminGroupsController,
   ],
-  providers: [GearService, TripGearService, GearTypesService],
-  exports: [GearService, TripGearService, GearTypesService],
+  providers: [
+    GearService,
+    TripGearService,
+    GearTypesService,
+    GearGroupsService,
+  ],
+  exports: [GearService, TripGearService, GearTypesService, GearGroupsService],
 })
 export class GearModule {}

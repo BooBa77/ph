@@ -24,6 +24,7 @@ import {
   CreateGearItemDto,
   GearItemDto,
   GearListDto,
+  MoveGearItemDto,
   UpdateGearItemDto,
 } from './dto/gear.dto';
 import { GearService } from './gear.service';
@@ -69,6 +70,25 @@ export class GearController {
     @Body() dto: UpdateGearItemDto,
   ): Promise<GearItemDto> {
     return this.gearService.update(authUser.id, id, dto);
+  }
+
+  /**
+   * Переставить предмет выше или ниже **внутри его группы**.
+   *
+   * Порядок групп задаёт админ, поэтому через границу группы стрелка
+   * не переставляет. Отвечаем списком целиком: после перестановки
+   * изменились две строки.
+   */
+  @Post(':id/move')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Переставить предмет в каталоге' })
+  @ApiOkResponse({ type: GearListDto })
+  async move(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: MoveGearItemDto,
+  ): Promise<GearListDto> {
+    return this.gearService.move(authUser.id, id, dto.direction);
   }
 
   /** Удалить предмет. */

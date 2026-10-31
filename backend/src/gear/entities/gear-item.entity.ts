@@ -12,6 +12,7 @@ import {
 } from 'typeorm';
 
 import { User } from '../../users/entities/user.entity';
+import { GearGroup } from './gear-group.entity';
 import { GearItemAttribute } from './gear-item-attribute.entity';
 import { GearType } from './gear-type.entity';
 
@@ -35,6 +36,17 @@ import { GearType } from './gear-type.entity';
  * что угодно, и ограничивать его незачем. В снаряжении похода `title`
  * не участвует: строка собирается из типа, характеристик, веса и хозяина.
  *
+ * **Полка каталога — группа (31.10.2026).** У вещи обязательный
+ * `group_id`: каталог собран секциями по группам, и вещь без полки выпала
+ * бы из него. Группа собирает вещи разных типов — топор, пилу и розжиг
+ * в «Костровое», — поэтому она ссылка на `gear_groups`, а не код типа.
+ * Группу выбирает человек, а по умолчанию (поле не передали) стоит «Прочее».
+ *
+ * **Порядок внутри группы задаёт владелец** (`sort_order`): это второй,
+ * личный порядок, а порядок самих групп настраивает админ. Нули у всех
+ * старых вещей миграция заменила шагом 10, иначе первая же перестановка
+ * меняла бы местами две одинаковые цифры и ничего не двигала.
+ *
  * **Вес необязателен, но если указан — то в граммах.** Граммы, а не
  * килограммы с дробью: `numeric` в Node приезжает строкой и утёк бы
  * в JSON строкой, а дробные килограммы в снаряжении всё равно округляют.
@@ -50,11 +62,18 @@ import { GearType } from './gear-type.entity';
 @Entity('gear_items')
 @Index('IDX_gear_items_owner_type', ['ownerUserId', 'gearTypeId', 'id'])
 @Index('IDX_gear_items_owner_trip_only', ['ownerUserId', 'isTripOnly'])
+@Index('IDX_gear_items_owner_order', [
+  'ownerUserId',
+  'groupId',
+  'sortOrder',
+  'id',
+])
 @Check(
   'chk_gear_items_weight',
   `"weight_grams" IS NULL OR "weight_grams" > 0`,
 )
 @Check('chk_gear_items_title', `char_length(btrim("title")) > 0`)
+@Check('chk_gear_items_sort', `"sort_order" >= 0`)
 export class GearItem {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: string;
@@ -79,6 +98,32 @@ export class GearItem {
     foreignKeyConstraintName: 'FK_gear_items_type',
   })
   gearType: GearType;
+
+  /**
+   * Полка каталога: «Костровое», «Кров», «Прочее».
+   *
+   * `RESTRICT` — группу с вещами физически не удалить; в API удаления
+   * и нет, только архив.
+   */
+  @Column({ name: 'group_id', type: 'integer' })
+  groupId: number;
+
+  @ManyToOne(() => GearGroup, { onDelete: 'RESTRICT' })
+  @JoinColumn({
+    name: 'group_id',
+    foreignKeyConstraintName: 'FK_gear_items_group',
+  })
+  group: GearGroup;
+
+  /**
+   * Личный порядок вещи внутри её группы.
+   *
+   * Не `id` и не алфавит: «сначала палатка, потом спальник» — решение
+   * человека. Стрелки в каталоге меняют местами соседей, и сервер хранит
+   * результат здесь. Порядок групп — другой: его задаёт админ.
+   */
+  @Column({ name: 'sort_order', type: 'integer', default: 0 })
+  sortOrder: number;
 
   /** Название словами: «Палатка на четверых», «Спальник зимний». */
   @Column({ type: 'varchar', length: 120 })

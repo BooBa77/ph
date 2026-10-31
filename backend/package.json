@@ -28,6 +28,7 @@
     "seed:objects": "node scripts/seed-objects.mjs",
     "seed:products": "node scripts/seed-products.mjs",
     "seed:gear-types": "node scripts/seed-gear-types.mjs",
+    "seed:gear-groups": "node scripts/seed-gear-groups.mjs",
     "import:nature": "node scripts/nature-import.mjs",
     "check:trips-schema": "node scripts/check-trips-schema.mjs",
     "start": "nest start",

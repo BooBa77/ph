@@ -1,5 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
+  IsIn,
   IsInt,
   IsObject,
   IsOptional,
@@ -78,6 +79,21 @@ export class GearItemDto {
   @ApiProperty({ description: 'Название типа', example: 'Палатка' })
   typeName: string;
 
+  @ApiProperty({ description: 'Id группы — полки каталога', example: 1 })
+  groupId: number;
+
+  @ApiProperty({ description: 'Код группы', example: 'roof' })
+  groupCode: string;
+
+  @ApiProperty({ description: 'Название группы', example: 'Кров' })
+  groupName: string;
+
+  @ApiProperty({
+    description: 'Личный порядок вещи внутри группы',
+    example: 10,
+  })
+  sortOrder: number;
+
   @ApiProperty({ description: 'Название', example: 'Палатка на четверых' })
   title: string;
 
@@ -110,6 +126,10 @@ export class GearItemDto {
       typeId: item.gearTypeId,
       typeCode: item.gearType.code,
       typeName: item.gearType.name,
+      groupId: item.groupId,
+      groupCode: item.group.code,
+      groupName: item.group.name,
+      sortOrder: item.sortOrder,
       title: item.title,
       weightGrams: item.weightGrams,
       note: item.note,
@@ -158,12 +178,27 @@ export class GearListDto {
  * характеристику дважды. Неизвестный код — 400: молча игнорировать
  * опечатку значило бы сохранить вещь без значения и не сказать об этом.
  * `null` или пустая строка — стереть значение.
+ *
+ * **`groupId` — полка каталога (31.10.2026).** В базе группа обязательна,
+ * но в API поле необязательное: его отсутствие значит «Прочее». Иначе
+ * каждая старая форма и каждый тест пришлось бы учить новой группе ради
+ * фонарика, который и так лежит в «Прочем».
  */
 export class CreateGearItemDto {
   @ApiProperty({ description: 'Id типа снаряжения', example: 1 })
   @IsInt({ message: 'Тип снаряжения должен быть указан числом' })
   @Min(1, { message: 'Некорректный тип снаряжения' })
   typeId: number;
+
+  @ApiProperty({
+    description: 'Id группы — полки каталога. Не указан — «Прочее»',
+    example: 1,
+    required: false,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Группа снаряжения должна быть указана числом' })
+  @Min(1, { message: 'Некорректная группа снаряжения' })
+  groupId?: number;
 
   @ApiProperty({
     description: 'Название: «Палатка на четверых»',
@@ -220,6 +255,16 @@ export class UpdateGearItemDto {
   @Min(1, { message: 'Некорректный тип снаряжения' })
   typeId?: number;
 
+  @ApiProperty({
+    description: 'Id группы — полки каталога. Смена группы переносит вещь в конец',
+    example: 2,
+    required: false,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Группа снаряжения должна быть указана числом' })
+  @Min(1, { message: 'Некорректная группа снаряжения' })
+  groupId?: number;
+
   @ApiProperty({ description: 'Название', maxLength: 120, required: false })
   @IsOptional()
   @IsString({ message: 'Название должно быть строкой' })
@@ -255,4 +300,30 @@ export class UpdateGearItemDto {
   @IsOptional()
   @IsObject({ message: 'Значения характеристик — объект «код: значение»' })
   attributes?: Record<string, unknown>;
+}
+
+/** Куда двигать вещь: порядок внутри группы, соседи меняются местами. */
+export const GEAR_MOVE_DIRECTIONS = ['up', 'down'] as const;
+
+export type GearMoveDirection = (typeof GEAR_MOVE_DIRECTIONS)[number];
+
+/**
+ * Тело `POST /api/gear/:id/move` (31.10.2026).
+ *
+ * Стрелки в каталоге двигают вещь на одну позицию **внутри её группы**:
+ * через границу группы не переставляют, потому что порядок групп задаёт
+ * админ, а не человек. Сервер отвечает списком целиком — после перестановки
+ * изменились две строки, и отдавать одну значило бы заставлять клиент
+ * догадываться о второй.
+ */
+export class MoveGearItemDto {
+  @ApiProperty({
+    description: 'Направление: up — выше, down — ниже',
+    enum: GEAR_MOVE_DIRECTIONS,
+    example: 'up',
+  })
+  @IsIn(GEAR_MOVE_DIRECTIONS, {
+    message: 'Направление — «up» или «down»',
+  })
+  direction: GearMoveDirection;
 }
