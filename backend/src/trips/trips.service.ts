@@ -56,6 +56,7 @@ import { TripMembershipRequest } from './entities/trip-membership-request.entity
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
+import { TripRouteNight } from './entities/trip-route-night.entity';
 import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
 import { TripTransferPassenger } from './entities/trip-transfer-passenger.entity';
 import { TripType } from './entities/trip-type.entity';
@@ -459,16 +460,26 @@ export class TripsService {
   /**
    * Есть ли у похода хотя бы одна ночь — то, что открывает вкладку «Ночёвки».
    *
-   * Пока таблицы ночёвок нет, ночи выводятся из дат (`NIGHTS_TAB`):
-   * решённые даты считаются по календарным дням, прогноз — по минимальной
-   * продолжительности варианта с конкретным числом. Часы в решённых датах
-   * не в счёт: поход «5 мая 09:00 — 5 мая 18:00» однодневный, ночи нет,
-   * хотя между моментами десять часов.
+   * **Источник — сама таблица ночёвок** (`trip_route_nights`, с 31.10.2026):
+   * записал хотя бы одну ночь — вкладка есть. Пока не записано ни одной,
+   * работает прежнее правило по датам (`NIGHTS_TAB`): решённые даты
+   * считаются по календарным дням, прогноз — по минимальной
+   * продолжительности варианта с конкретным числом. Иначе вкладка
+   * пропадала бы у похода с датами, но с пустой таблицей, — а именно
+   * с неё и начинают. Часы в решённых датах не в счёт: поход «5 мая
+   * 09:00 — 5 мая 18:00» однодневный, ночи нет, хотя между моментами
+   * десять часов.
    */
   private async hasNights(
     manager: EntityManager,
     trip: Trip,
   ): Promise<boolean> {
+    const stored = await manager.count(TripRouteNight, {
+      where: { tripId: trip.id },
+    });
+
+    if (stored > 0) return true;
+
     if (trip.startsAt !== null && trip.endsAt !== null) {
       return dayDistance(trip.startsAt, trip.endsAt) >= 1;
     }

@@ -1527,6 +1527,345 @@ await check(
   [virtualUserId, manualTypeId, defaultGroupId],
 );
 
+// ─── Таблица ночёвок: ночи, варианты и кто где живёт (31.10.2026) ───
+/**
+ * Инварианты «Ночёвок» (`docs/ph/NEXT.md` §3, решения 31.10.2026): ночь,
+ * варианты ночи и место жительства.
+ *
+ * Проверяется то, чего не видно из API: правило «ссылка есть ровно у того
+ * варианта, которому она нужна» живёт в CHECK, «одно место на поход» —
+ * в уникальном ключе, «палатка из чужого похода не приедет» — в составном
+ * внешнем ключе, уборка — в каскадах. Тесты API останутся зелёными, если
+ * из базы убрать CHECK, — а данные поедут. Ровно так уже случалось
+ * с видом снаряжения.
+ */
+const routeShape = await client.query(
+  `SELECT table_name
+     FROM information_schema.tables
+    WHERE table_name IN ('trip_route_nights', 'trip_route_options',
+                         'trip_route_lodgers')`,
+);
+const routeShapeOk = routeShape.rowCount === 3;
+if (!routeShapeOk) failed += 1;
+rows.push([
+  routeShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
+  'ночёвки: таблицы ночей, вариантов и мест жительства',
+  routeShape.rows.map((row) => row.table_name).join(', ') || 'таблиц нет',
+]);
+
+/**
+ * Свой поход для блока ночёвок: основной `tripId` скрипта к этому месту
+ * уже удалён проверкой каскадов, поэтому «ночной» поход заводится здесь же
+ * (id переиспользуется, чтобы остальные проверки блока читались прежними).
+ * Состав — раньше снаряжения: `trip_gear.owner_user_id` ссылается
+ * на участника, и «вещь не участника похода» база не примет.
+ */
+const routeObjectId = (
+  await client.query(
+    `INSERT INTO objects (name, type)
+     VALUES ('Перевал проверки ночёвок', 'перевал') RETURNING id`,
+  )
+).rows[0].id;
+
+await client.query(
+  `INSERT INTO trips (id, organizer_user_id, goal_object_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, user1, routeObjectId],
+);
+
+await client.query(
+  `INSERT INTO trip_participants (trip_id, user_id, status)
+   VALUES ($1, $2, 'going'), ($1, $3, 'going')
+   ON CONFLICT (trip_id, user_id) DO NOTHING`,
+  [tripId, user1, user2],
+);
+
+const routeTentTypeId = (
+  await client.query(
+    `INSERT INTO gear_types (code, name)
+     VALUES ('check_route_tent', 'Палатка проверки ночёвок') RETURNING id`,
+  )
+).rows[0].id;
+
+const routeAxeTypeId = (
+  await client.query(
+    `INSERT INTO gear_types (code, name)
+     VALUES ('check_route_axe', 'Топор проверки ночёвок') RETURNING id`,
+  )
+).rows[0].id;
+
+const routeTentItemId = (
+  await client.query(
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
+     VALUES ($1, $2, $3, 'Палатка проверки') RETURNING id`,
+    [user1, routeTentTypeId, defaultGroupId],
+  )
+).rows[0].id;
+
+const routeAxeItemId = (
+  await client.query(
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
+     VALUES ($1, $2, $3, 'Топор проверки') RETURNING id`,
+    [user1, routeAxeTypeId, defaultGroupId],
+  )
+).rows[0].id;
+
+const routeTentGearId = (
+  await client.query(
+    `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id, status)
+     VALUES ($1, $2, $3, 'approved') RETURNING id`,
+    [tripId, routeTentItemId, user1],
+  )
+).rows[0].id;
+
+await client.query(
+  `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id, status)
+   VALUES ($1, $2, $3, 'approved')`,
+  [tripId, routeAxeItemId, user1],
+);
+
+await client.query(
+  `INSERT INTO trip_transfer_legs
+     (trip_id, direction, departs_at, from_place, to_place, mode,
+      is_own_vehicle, owner_user_id, seats)
+   VALUES ($1, 'there', now(), 'Иркутск', 'Ольхон', 'car', true, $2, 4)`,
+  [tripId, user1],
+);
+
+const routeNightId = (
+  await client.query(
+    `INSERT INTO trip_route_nights (trip_id, position, place)
+     VALUES ($1, 1, 'Ольхон, у скалы') RETURNING id`,
+    [tripId],
+  )
+).rows[0].id;
+
+await client.query(
+  `INSERT INTO trip_route_options (trip_id, night_id, kind, tent_gear_id, cooking)
+   VALUES ($1, $2, 'tent', $3, 'fire')`,
+  [tripId, routeNightId, routeTentGearId],
+);
+
+await check(
+  'ночёвки: номер ночи начинается с 1',
+  'fail',
+  `INSERT INTO trip_route_nights (trip_id, position) VALUES ($1, 0)`,
+  [tripId],
+);
+
+await check(
+  'ночёвки: две «ночи 1» в походе невозможны',
+  'fail',
+  `INSERT INTO trip_route_nights (trip_id, position) VALUES ($1, 1)`,
+  [tripId],
+);
+
+await check(
+  'ночёвки: место — не длиннее 120 знаков',
+  'fail',
+  `INSERT INTO trip_route_nights (trip_id, position, place)
+   VALUES ($1, 9, repeat('я', 121))`,
+  [tripId],
+);
+
+await check(
+  'ночёвки: «палатка» без палатки запрещена',
+  'fail',
+  `INSERT INTO trip_route_options (trip_id, night_id, kind)
+   VALUES ($1, $2, 'tent')`,
+  [tripId, routeNightId],
+);
+
+await check(
+  'ночёвки: «гостиница» со ссылкой на палатку запрещена',
+  'fail',
+  `INSERT INTO trip_route_options (trip_id, night_id, kind, tent_gear_id)
+   VALUES ($1, $2, 'hotel', $3)`,
+  [tripId, routeNightId, routeTentGearId],
+);
+
+await check(
+  'ночёвки: «машина» без карточки ТС запрещена',
+  'fail',
+  `INSERT INTO trip_route_options (trip_id, night_id, kind)
+   VALUES ($1, $2, 'car')`,
+  [tripId, routeNightId],
+);
+
+await check(
+  'ночёвки: готовка у гостиницы запрещена',
+  'fail',
+  `INSERT INTO trip_route_options (trip_id, night_id, kind, cooking)
+   VALUES ($1, $2, 'hotel', 'fire')`,
+  [tripId, routeNightId],
+);
+
+await check(
+  'ночёвки: вид ночи — только из словаря',
+  'fail',
+  `INSERT INTO trip_route_options (trip_id, night_id, kind)
+   VALUES ($1, $2, 'spaceship')`,
+  [tripId, routeNightId],
+);
+
+await check(
+  'ночёвки: одна палатка в ночи — одна строка',
+  'fail',
+  `INSERT INTO trip_route_options (trip_id, night_id, kind, tent_gear_id)
+   VALUES ($1, $2, 'tent', $3)`,
+  [tripId, routeNightId, routeTentGearId],
+);
+
+await check(
+  'ночёвки: готовка у избы разрешена',
+  'ok',
+  `INSERT INTO trip_route_options (trip_id, night_id, kind, cooking)
+   VALUES ($1, $2, 'hut', 'both')`,
+  [tripId, routeNightId],
+);
+
+/**
+ * Палатка того же каталога, но взятого в другой поход: составной ключ
+ * `(trip_id, tent_gear_id)` не пускает её в эту ночь. Одного внешнего
+ * ключа по `tent_gear_id` мало — он бы пропустил чужую строку.
+ */
+const routeOtherTripId = (
+  await client.query(
+    `INSERT INTO trips (organizer_user_id, goal_object_id)
+     SELECT $1, goal_object_id FROM trips WHERE id = $2 RETURNING id`,
+    [user1, tripId],
+  )
+).rows[0].id;
+
+// В чужом походе нужен свой участник: `trip_gear.owner_user_id` ссылается
+// на состав именно этого похода.
+await client.query(
+  `INSERT INTO trip_participants (trip_id, user_id, status)
+   VALUES ($1, $2, 'going')
+   ON CONFLICT (trip_id, user_id) DO NOTHING`,
+  [routeOtherTripId, user1],
+);
+
+const routeForeignGearId = (
+  await client.query(
+    `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id, status)
+     VALUES ($1, $2, $3, 'approved') RETURNING id`,
+    [routeOtherTripId, routeTentItemId, user1],
+  )
+).rows[0].id;
+
+await check(
+  'ночёвки: палатка из чужого похода не принимается (составной ключ)',
+  'fail',
+  `INSERT INTO trip_route_options (trip_id, night_id, kind, tent_gear_id)
+   VALUES ($1, $2, 'tent', $3)`,
+  [tripId, routeNightId, routeForeignGearId],
+);
+
+await client.query(
+  `INSERT INTO trip_route_lodgers (trip_id, user_id, tent_gear_id, status)
+   VALUES ($1, $2, $3, 'accepted')`,
+  [tripId, user1, routeTentGearId],
+);
+
+await check(
+  'ночёвки: у человека одно место на поход',
+  'fail',
+  `INSERT INTO trip_route_lodgers (trip_id, user_id, tent_gear_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, user1, routeTentGearId],
+);
+
+await check(
+  'ночёвки: статус места — только «заявка» или «живёт»',
+  'fail',
+  `INSERT INTO trip_route_lodgers (trip_id, user_id, tent_gear_id, status)
+   VALUES ($1, $2, $3, 'sleeping')`,
+  [tripId, user2, routeTentGearId],
+);
+
+await check(
+  'ночёвки: жить в палатке может только участник похода',
+  'fail',
+  `INSERT INTO trip_route_lodgers (trip_id, user_id, tent_gear_id)
+   VALUES ($1, '00000000-0000-0000-0000-000000000000', $2)`,
+  [tripId, routeTentGearId],
+);
+
+await client.query(
+  `INSERT INTO trip_route_lodgers (trip_id, user_id, tent_gear_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, user2, routeTentGearId],
+);
+
+// Убрали ночь — ушли её варианты.
+const routeExtraNightId = (
+  await client.query(
+    `INSERT INTO trip_route_nights (trip_id, position)
+     VALUES ($1, 2) RETURNING id`,
+    [tripId],
+  )
+).rows[0].id;
+
+await client.query(
+  `INSERT INTO trip_route_options (trip_id, night_id, kind)
+   VALUES ($1, $2, 'allnight')`,
+  [tripId, routeExtraNightId],
+);
+await client.query(`DELETE FROM trip_route_nights WHERE id = $1`, [
+  routeExtraNightId,
+]);
+
+const routeOptionsLeft = (
+  await client.query(
+    `SELECT count(*)::int AS count FROM trip_route_options
+      WHERE night_id = $1`,
+    [routeExtraNightId],
+  )
+).rows[0].count;
+
+if (routeOptionsLeft !== 0) failed += 1;
+rows.push([
+  routeOptionsLeft === 0 ? 'ok' : 'ОСТАЛИСЬ ВАРИАНТЫ',
+  'ночёвки: убрали ночь — ушли её варианты (каскад)',
+  routeOptionsLeft === 0 ? '' : `осталось ${routeOptionsLeft}`,
+]);
+
+// Убрали палатку из похода — ушёл вариант ночи и место живущего.
+await client.query(`DELETE FROM trip_gear WHERE id = $1`, [routeTentGearId]);
+
+const routeTentOptionsLeft = (
+  await client.query(
+    `SELECT count(*)::int AS count FROM trip_route_options
+      WHERE tent_gear_id = $1`,
+    [routeTentGearId],
+  )
+).rows[0].count;
+const routeLodgersLeft = (
+  await client.query(
+    `SELECT count(*)::int AS count FROM trip_route_lodgers
+      WHERE tent_gear_id = $1`,
+    [routeTentGearId],
+  )
+).rows[0].count;
+const routeGearCascadeOk = routeTentOptionsLeft === 0 && routeLodgersLeft === 0;
+if (!routeGearCascadeOk) failed += 1;
+rows.push([
+  routeGearCascadeOk ? 'ok' : 'ОСТАЛИСЬ СТРОКИ',
+  'ночёвки: убрали палатку из похода — ушёл вариант и место живущего',
+  routeGearCascadeOk
+    ? ''
+    : `вариантов ${routeTentOptionsLeft}, мест ${routeLodgersLeft}`,
+]);
+
+await check(
+  'ночёвки: вариант машины ссылается на карточку из этого похода',
+  'fail',
+  `INSERT INTO trip_route_options (trip_id, night_id, kind, car_leg_id)
+   VALUES ($1, $2, 'car', 999999999)`,
+  [tripId, routeNightId],
+);
+
 await client.query('ROLLBACK');
 await client.end();
 

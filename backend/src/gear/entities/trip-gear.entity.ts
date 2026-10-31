@@ -52,6 +52,14 @@ import { TRIP_GEAR_STATUSES, type TripGearStatus } from '../trip-gear.types';
 @Entity('trip_gear')
 @Index('UQ_trip_gear_item', ['tripId', 'gearItemId'], { unique: true })
 @Index('IDX_trip_gear_trip', ['tripId', 'id'])
+/**
+ * Пара `(trip_id, id)` уникальна — на неё ссылается составной внешний ключ
+ * «ночёвок» (`trip_route_options.tent_gear_id`, `trip_route_lodgers`).
+ * Уникальность здесь тривиальна (`id` и так ключ), но Postgres требует
+ * уникальный ключ ровно по тем колонкам, на которые ссылаются, иначе
+ * строка «палатка из чужого похода» прошла бы молча.
+ */
+@Index('UQ_trip_gear_trip_id', ['tripId', 'id'], { unique: true })
 @Check(
   'chk_trip_gear_status',
   `"status" IN (${sqlValues(TRIP_GEAR_STATUSES)})`,
