@@ -11,23 +11,31 @@ import {
   updateChecklistItem,
 } from '@/api/checklists'
 import { ApiError } from '@/api/errors'
+import ChecklistGearPicker from '@/components/checklists/ChecklistGearPicker.vue'
 import type { Checklist, ChecklistItem } from '@/types/checklists'
+import type { GearItem } from '@/types/gear'
+import { formatWeight } from '@/utils/gearWeight'
 
 /**
- * «Чек-листы» — шаблоны пользователя.
+ * «Чек-листы» — личные списки-шаблоны пользователя.
  *
  * **Шаблон живёт вне похода** и нужен, чтобы не писать список снаряжения
  * заново к каждому походу: в поход из шаблона попадает **копия**, поэтому
  * правка шаблона не переписывает прошедший поход, а удаление шаблона
  * не обнуляет список, по которому уже ходили (`docs/ph/trip-tabs.md`, Ф2).
  *
+ * **В шаблоне нет отметок.** Заказчик 31.10.2026: чек-лист — это список,
+ * а «флаги выполнения» появляются, когда шаблон подгрузили в поход. Отметка
+ * в заготовке означала бы «эту палатку я уже взял» ещё до похода.
+ *
+ * **Пункт — текст или вещь (31.10.2026).** Свободный текст («спички»)
+ * и конкретный экземпляр из «Снаряжения» — два вида строки. У ссылки
+ * показывается живое название вещи и её тип с весом; если вещь удалить,
+ * сервер превратит пункт в текст имени типа, и строка останется.
+ *
  * Списков похода здесь нет намеренно: им нужна вкладка похода, а вкладки
  * (Ф6–Ф7) ещё не собраны. Заводить «пока хоть где-то» — значит сделать
  * экран, который потом придётся выкинуть.
- *
- * Отметки в шаблонах — не «собранное», а «что вообще берём»: чек-лист
- * шаблона отмечают редко, но это тот же механизм, что и в походе, и второй
- * интерфейс для него не нужен.
  */
 const templates = ref<Checklist[]>([])
 const isLoading = ref(true)
@@ -43,6 +51,26 @@ const renameDraft = ref('')
 
 /** Текст нового пункта по каждому списку — свой черновик. */
 const itemDrafts = ref<Record<string, string>>({})
+
+/** Правка текста пункта: какой пункт и что в поле. */
+const editingItemId = ref<string | null>(null)
+const itemTitleDraft = ref('')
+
+/**
+ * Выбор вещи: для какого списка открыт и что заменить.
+ *
+ * `pickerItem === null` — добавляем новый пункт, иначе заменяем вещь
+ * у существующего. Один компонент на два действия: список вещей и поиск
+ * в обоих случаях одинаковые.
+ */
+const pickerChecklistId = ref<string | null>(null)
+const pickerItem = ref<ChecklistItem | null>(null)
+
+/**
+ * Ошибка привязки — своя, а не общая: она показывается **в модалке**,
+ * иначе отказ сервера оказался бы под затемнением, а выбор — потерянным.
+ */
+const pickerError = ref<string | null>(null)
 
 /** Какая карточка ждёт подтверждения удаления. */
 const confirmingDeleteId = ref<string | null>(null)
@@ -136,6 +164,13 @@ async function remove(checklist: Checklist) {
   }
 }
 
+/** Заменить пункт в состоянии тем, что вернул сервер. */
+function applyItem(checklist: Checklist, updated: ChecklistItem) {
+  const index = checklist.items.findIndex((row) => row.id === updated.id)
+  if (index >= 0) checklist.items[index] = updated
+  else checklist.items.push(updated)
+}
+
 async function addItem(checklist: Checklist) {
   const title = (itemDrafts.value[checklist.id] ?? '').trim()
   if (title.length === 0) return
@@ -144,7 +179,7 @@ async function addItem(checklist: Checklist) {
   error.value = null
 
   try {
-    const item = await addChecklistItem(checklist.id, title)
+    const item = await addChecklistItem(checklist.id, { title })
     checklist.items.push(item)
     itemDrafts.value[checklist.id] = ''
   } catch (cause) {
@@ -154,24 +189,89 @@ async function addItem(checklist: Checklist) {
   }
 }
 
+function startEditItem(item: ChecklistItem) {
+  editingItemId.value = item.id
+  itemTitleDraft.value = item.title
+}
+
+function cancelEditItem() {
+  editingItemId.value = null
+  itemTitleDraft.value = ''
+}
+
 /**
- * Отметка пункта.
+ * Переименовать текстовый пункт.
  *
- * Обновляем по ответу сервера, а не переключаем флаг на клиенте: он же
- * возвращает «кто и когда отметил», и локальная догадка разошлась бы
- * с правдой при отказе.
+ * Пустой текст не отправляем: сервер ответит 400, но пункт без текста
+ * нечем показать, и доводить до отказа незачем — выходим из правки.
  */
-async function toggleItem(item: ChecklistItem) {
+async function saveItemTitle(checklist: Checklist, item: ChecklistItem) {
+  const title = itemTitleDraft.value.trim()
+  if (title.length === 0) {
+    cancelEditItem()
+    return
+  }
+
   pendingItemId.value = item.id
   error.value = null
 
   try {
-    const updated = await updateChecklistItem(item.id, { isDone: !item.isDone })
-    item.isDone = updated.isDone
-    item.doneByUserId = updated.doneByUserId
-    item.doneAt = updated.doneAt
+    applyItem(checklist, await updateChecklistItem(item.id, { title }))
+    cancelEditItem()
   } catch (cause) {
-    error.value = messageOf(cause, 'Не удалось отметить пункт.')
+    error.value = messageOf(cause, 'Не удалось переименовать пункт.')
+  } finally {
+    pendingItemId.value = null
+  }
+}
+
+/** Открыть выбор вещи: без пункта — новый, с пунктом — заменить вещь. */
+function openPicker(checklist: Checklist, item: ChecklistItem | null = null) {
+  pickerChecklistId.value = checklist.id
+  pickerItem.value = item
+  pickerError.value = null
+}
+
+function closePicker() {
+  pickerChecklistId.value = null
+  pickerItem.value = null
+  pickerError.value = null
+}
+
+/**
+ * Вещь выбрана.
+ *
+ * У пункта-ссылки текст не спрашивают: его подписывает сервер названием
+ * вещи. Ошибку показываем строкой над списком и модалку не закрываем —
+ * иначе человек потерял бы выбор из-за одного отказа.
+ */
+async function onGearSelected(gear: GearItem) {
+  const checklistId = pickerChecklistId.value
+  const checklist = templates.value.find((row) => row.id === checklistId)
+  if (!checklist || pendingItemId.value !== null) return
+
+  const replacing = pickerItem.value
+  pendingItemId.value = replacing?.id ?? checklist.id
+  error.value = null
+
+  try {
+    if (replacing) {
+      applyItem(
+        checklist,
+        await updateChecklistItem(replacing.id, { gearItemId: Number(gear.id) }),
+      )
+    } else {
+      checklist.items.push(
+        await addChecklistItem(checklist.id, { gearItemId: Number(gear.id) }),
+      )
+    }
+
+    closePicker()
+  } catch (cause) {
+    const message = messageOf(cause, 'Не удалось привязать вещь.')
+    pickerError.value = message
+    // И в общую строку тоже: модалку можно закрыть, а причина должна остаться.
+    error.value = message
   } finally {
     pendingItemId.value = null
   }
@@ -191,6 +291,15 @@ async function removeItem(checklist: Checklist, item: ChecklistItem) {
   }
 }
 
+/** Подпись ссылки: «Палатка · 2,4 кг», без прочерка вместо неизвестного веса. */
+function gearSubtitle(item: ChecklistItem): string {
+  if (!item.gear) return ''
+
+  return item.gear.weightGrams === null
+    ? item.gear.typeName
+    : `${item.gear.typeName} · ${formatWeight(item.gear.weightGrams)}`
+}
+
 onMounted(load)
 </script>
 
@@ -200,7 +309,9 @@ onMounted(load)
 
     <p class="mb-4 text-sm text-muted">
       Шаблон — это заготовка списка: снаряжение, продукты, аптечка. В поход из него попадает
-      копия, поэтому правка шаблона не меняет походы, в которые он уже уехал.
+      копия, поэтому правка шаблона не меняет походы, в которые он уже уехал. Пункт бывает
+      свободным текстом или конкретной вещью из «Снаряжения». Отметки «взял» появляются, когда
+      шаблон подгрузили в поход.
     </p>
 
     <p v-if="error" class="mb-3 text-sm text-red-600" data-test="checklists-error">
@@ -327,38 +438,85 @@ onMounted(load)
         </div>
 
         <!-- Пункты -->
-        <ul v-if="checklist.items.length > 0" class="mb-3 flex flex-col gap-1">
+        <ul v-if="checklist.items.length > 0" class="mb-3 flex flex-col gap-2">
           <li
             v-for="item in checklist.items"
             :key="item.id"
-            class="flex items-center gap-3"
+            class="flex flex-col gap-1 border-b border-border/60 pb-2 last:border-b-0 last:pb-0"
             data-test="checklist-item"
           >
-            <input
-              :id="`item-${item.id}`"
-              type="checkbox"
-              :checked="item.isDone"
-              :disabled="pendingItemId === item.id"
-              class="h-5 w-5 shrink-0 cursor-pointer accent-[var(--theme-primary)]"
-              data-test="item-toggle"
-              @change="toggleItem(item)"
-            />
-            <label
-              :for="`item-${item.id}`"
-              class="min-w-0 flex-1 cursor-pointer text-sm"
-              :class="item.isDone ? 'text-muted line-through' : 'text-text'"
+            <form
+              v-if="editingItemId === item.id"
+              class="flex flex-wrap gap-2"
+              @submit.prevent="saveItemTitle(checklist, item)"
             >
-              {{ item.title }}
-            </label>
-            <button
-              type="button"
-              :disabled="pendingItemId === item.id"
-              class="shrink-0 cursor-pointer text-xs text-muted underline transition-colors hover:text-text disabled:opacity-50"
-              data-test="item-delete"
-              @click="removeItem(checklist, item)"
-            >
-              Убрать
-            </button>
+              <input
+                v-model="itemTitleDraft"
+                type="text"
+                maxlength="200"
+                class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-1.5 text-base text-text focus:border-primary focus:outline-none"
+                data-test="item-title-input"
+                @keydown.esc="cancelEditItem"
+              />
+              <button
+                type="submit"
+                :disabled="pendingItemId === item.id"
+                class="cursor-pointer rounded-xl border border-primary px-3 py-1.5 text-sm text-primary transition-colors hover:bg-primary hover:text-white disabled:opacity-50"
+                data-test="item-title-save"
+              >
+                Сохранить
+              </button>
+              <button
+                type="button"
+                class="cursor-pointer rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-text"
+                data-test="item-title-cancel"
+                @click="cancelEditItem"
+              >
+                Отмена
+              </button>
+            </form>
+
+            <div v-else class="flex items-start justify-between gap-3">
+              <div class="min-w-0 flex-1">
+                <p class="break-words text-sm text-text" data-test="item-title">
+                  {{ item.gear ? item.gear.title : item.title }}
+                </p>
+                <p v-if="item.gear" class="text-xs text-muted" data-test="item-gear">
+                  {{ gearSubtitle(item) }} · из снаряжения
+                </p>
+              </div>
+
+              <div class="flex shrink-0 items-center gap-2">
+                <button
+                  v-if="!item.gear"
+                  type="button"
+                  class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
+                  data-test="item-edit"
+                  @click="startEditItem(item)"
+                >
+                  Править
+                </button>
+                <button
+                  v-else
+                  type="button"
+                  :disabled="pendingItemId === item.id"
+                  class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text disabled:opacity-50"
+                  data-test="item-replace"
+                  @click="openPicker(checklist, item)"
+                >
+                  Заменить
+                </button>
+                <button
+                  type="button"
+                  :disabled="pendingItemId === item.id"
+                  class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text disabled:opacity-50"
+                  data-test="item-delete"
+                  @click="removeItem(checklist, item)"
+                >
+                  Убрать
+                </button>
+              </div>
+            </div>
           </li>
         </ul>
 
@@ -366,14 +524,14 @@ onMounted(load)
           Пунктов пока нет.
         </p>
 
-        <!-- Новый пункт -->
+        <!-- Новый пункт: текст или вещь -->
         <form class="flex flex-wrap gap-2" @submit.prevent="addItem(checklist)">
           <input
             v-model="itemDrafts[checklist.id]"
             type="text"
             maxlength="200"
-            placeholder="Добавить пункт: «Палатка на четверых»"
-            class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors focus:border-primary focus:outline-none"
+            placeholder="Добавить пункт: «Спички»"
+            class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
             data-test="new-item-input"
           />
           <button
@@ -386,8 +544,24 @@ onMounted(load)
           >
             Добавить
           </button>
+          <button
+            type="button"
+            :disabled="pendingItemId === checklist.id"
+            class="cursor-pointer rounded-xl border border-border px-3 py-2 text-sm text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+            data-test="add-from-gear"
+            @click="openPicker(checklist)"
+          >
+            Из снаряжения
+          </button>
         </form>
       </li>
     </ul>
+
+    <ChecklistGearPicker
+      v-if="pickerChecklistId"
+      :error="pickerError"
+      @select="onGearSelected"
+      @close="closePicker"
+    />
   </section>
 </template>

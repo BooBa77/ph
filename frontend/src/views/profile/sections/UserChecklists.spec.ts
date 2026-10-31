@@ -3,15 +3,17 @@ import type { VueWrapper } from '@vue/test-utils'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
 import { ApiError } from '@/api/errors'
-import type { Checklist, ChecklistItem } from '@/types/checklists'
+import type { Checklist, ChecklistItem, ChecklistItemGear } from '@/types/checklists'
+import type { GearItem } from '@/types/gear'
 import UserChecklists from '@/views/profile/sections/UserChecklists.vue'
 
 /**
- * Тесты раздела «Чек-листы» (шаблоны).
+ * Тесты раздела «Чек-листы» (личные списки-шаблоны).
  *
  * API подменён: проверяем то, что легко сломать незаметно, — что действия
- * уходят на сервер с правильными аргументами и что состояние обновляется
- * **по ответу**, а не догадкой клиента (иначе при отказе интерфейс врал бы).
+ * уходят на сервер с правильными аргументами, что состояние обновляется
+ * **по ответу**, а не догадкой клиента, и что у шаблона нет отметок
+ * «взял»: они появляются только в походе (решение заказчика 31.10.2026).
  */
 vi.mock('@/api/checklists', () => ({
   listTemplates: vi.fn(),
@@ -23,9 +25,33 @@ vi.mock('@/api/checklists', () => ({
   deleteChecklistItem: vi.fn(),
 }))
 
+vi.mock('@/api/gear', () => ({
+  listGear: vi.fn(),
+}))
+
 import * as api from '@/api/checklists'
+import * as gearApi from '@/api/gear'
 
 const mocked = vi.mocked(api)
+
+function makeGearItem(overrides: Partial<GearItem> = {}): GearItem {
+  return {
+    id: '5',
+    typeId: 1,
+    typeCode: 'tent',
+    typeName: 'Палатка',
+    groupId: 1,
+    groupCode: 'roof',
+    groupName: 'Кров',
+    sortOrder: 10,
+    title: 'Палатка Анны',
+    weightGrams: 2400,
+    note: null,
+    attributes: [],
+    createdAt: '2026-10-31T08:00:00.000Z',
+    ...overrides,
+  }
+}
 
 function makeItem(overrides: Partial<ChecklistItem> = {}): ChecklistItem {
   return {
@@ -35,7 +61,19 @@ function makeItem(overrides: Partial<ChecklistItem> = {}): ChecklistItem {
     doneByUserId: null,
     doneAt: null,
     createdByUserId: 'u-1',
+    gear: null,
     createdAt: '2026-10-21T08:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function makeGearRef(overrides: Partial<ChecklistItemGear> = {}): ChecklistItemGear {
+  return {
+    id: '5',
+    title: 'Палатка Анны',
+    typeCode: 'tent',
+    typeName: 'Палатка',
+    weightGrams: 2400,
     ...overrides,
   }
 }
@@ -57,7 +95,10 @@ function makeChecklist(overrides: Partial<Checklist> = {}): Checklist {
 async function mountSection(checklists: Checklist[] = [makeChecklist()]): Promise<VueWrapper> {
   mocked.listTemplates.mockResolvedValue(checklists)
 
-  const wrapper = mount(UserChecklists)
+  const wrapper = mount(UserChecklists, {
+    // Пикер в пустом каталоге показывает ссылку в «Снаряжение».
+    global: { stubs: { RouterLink: { template: '<a><slot /></a>' } } },
+  })
   await flushPromises()
 
   return wrapper
@@ -66,17 +107,21 @@ async function mountSection(checklists: Checklist[] = [makeChecklist()]): Promis
 describe('UserChecklists', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(gearApi.listGear).mockResolvedValue({
+      items: [makeGearItem()],
+      totalWeightGrams: 2400,
+      itemsWithoutWeight: 0,
+    })
+
     mocked.createTemplate.mockResolvedValue(makeChecklist({ id: 'new', title: 'Аптечка' }))
     mocked.renameChecklist.mockResolvedValue(makeChecklist({ title: 'Новое имя' }))
     mocked.deleteChecklist.mockResolvedValue(undefined)
     mocked.addChecklistItem.mockResolvedValue(makeItem({ id: 'item-2', title: 'Газ' }))
-    mocked.updateChecklistItem.mockResolvedValue(
-      makeItem({ isDone: true, doneByUserId: 'u-1', doneAt: '2026-10-21T09:00:00.000Z' }),
-    )
+    mocked.updateChecklistItem.mockResolvedValue(makeItem({ title: 'Новый текст' }))
     mocked.deleteChecklistItem.mockResolvedValue(undefined)
   })
 
-  it('показывает шаблоны с пунктами', async () => {
+  it('показывает шаблоны с пунктами и без отметок', async () => {
     const wrapper = await mountSection([
       makeChecklist(),
       makeChecklist({ id: 'checklist-2', title: 'Аптечка', items: [] }),
@@ -87,6 +132,9 @@ describe('UserChecklists', () => {
     expect(cards[0]?.find('[data-test="checklist-title"]').text()).toBe('Снаряжение, лето')
     expect(cards[0]?.text()).toContain('Палатка')
     expect(cards[1]?.find('[data-test="checklist-items-empty"]').exists()).toBe(true)
+
+    // Отметок «взял» в шаблоне нет: это состояние похода, а не заготовки.
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false)
   })
 
   it('без шаблонов показывает приглашение завести первый', async () => {
@@ -122,28 +170,33 @@ describe('UserChecklists', () => {
     expect(mocked.createTemplate).not.toHaveBeenCalled()
   })
 
-  it('добавляет пункт и очищает поле ввода', async () => {
+  it('добавляет текстовый пункт и очищает поле ввода', async () => {
     const wrapper = await mountSection()
 
     const input = wrapper.find('[data-test="new-item-input"]')
     await input.setValue('Газ')
+    // Формы: 0 — создание шаблона, 1 — добавление пункта.
     await wrapper.findAll('form')[1]?.trigger('submit')
     await flushPromises()
 
-    expect(mocked.addChecklistItem).toHaveBeenCalledWith('checklist-1', 'Газ')
+    expect(mocked.addChecklistItem).toHaveBeenCalledWith('checklist-1', { title: 'Газ' })
     expect(wrapper.findAll('[data-test="checklist-item"]')).toHaveLength(2)
     expect((input.element as HTMLInputElement).value).toBe('')
   })
 
-  it('отметка уходит на сервер и берётся из ответа', async () => {
+  it('правит текст пункта', async () => {
     const wrapper = await mountSection()
 
-    await wrapper.find('[data-test="item-toggle"]').trigger('change')
+    await wrapper.find('[data-test="item-edit"]').trigger('click')
+    await wrapper.find('[data-test="item-title-input"]').setValue('Новый текст')
+    // Формы: 0 — создание шаблона, 1 — правка пункта, 2 — добавление пункта.
+    await wrapper.findAll('form')[1]?.trigger('submit')
     await flushPromises()
 
-    expect(mocked.updateChecklistItem).toHaveBeenCalledWith('item-1', { isDone: true })
-    const label = wrapper.find('[data-test="checklist-item"] label')
-    expect(label.classes()).toContain('line-through')
+    expect(mocked.updateChecklistItem).toHaveBeenCalledWith('item-1', {
+      title: 'Новый текст',
+    })
+    expect(wrapper.find('[data-test="item-title"]').text()).toBe('Новый текст')
   })
 
   it('убирает пункт из списка', async () => {
@@ -221,5 +274,99 @@ describe('UserChecklists', () => {
     expect(wrapper.find('[data-test="checklists-error"]').text()).toContain(
       'У шаблона должен быть заголовок',
     )
+  })
+
+  it('добавляет пункт-ссылку на вещь через выбор из снаряжения', async () => {
+    const wrapper = await mountSection()
+
+    mocked.addChecklistItem.mockResolvedValue(
+      makeItem({ id: 'item-gear', title: 'Палатка Анны', gear: makeGearRef() }),
+    )
+
+    await wrapper.find('[data-test="add-from-gear"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="gear-picker"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="gear-option"]').trigger('click')
+    await flushPromises()
+
+    expect(mocked.addChecklistItem).toHaveBeenCalledWith('checklist-1', { gearItemId: 5 })
+    expect(wrapper.find('[data-test="gear-picker"]').exists()).toBe(false)
+
+    const gearLine = wrapper.find('[data-test="item-gear"]')
+    expect(gearLine.exists()).toBe(true)
+    expect(gearLine.text()).toContain('Палатка · 2,4 кг')
+    expect(gearLine.text()).toContain('из снаряжения')
+  })
+
+  it('ошибка привязки видна в модалке и не закрывает выбор', async () => {
+    const wrapper = await mountSection()
+    mocked.addChecklistItem.mockRejectedValue(new ApiError(404, 'Вещь не найдена', null))
+
+    await wrapper.find('[data-test="add-from-gear"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-test="gear-option"]').trigger('click')
+    await flushPromises()
+
+    // Модалка осталась: закрыть её значило бы потерять выбор из-за отказа.
+    expect(wrapper.find('[data-test="gear-picker"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="gear-attach-error"]').text()).toContain(
+      'Вещь не найдена',
+    )
+  })
+
+  it('пункт-ссылка показывает название вещи, а править можно только текст', async () => {
+    const wrapper = await mountSection([
+      makeChecklist({
+        items: [makeItem({ title: 'Палатка Анны', gear: makeGearRef() })],
+      }),
+    ])
+
+    expect(wrapper.find('[data-test="item-title"]').text()).toBe('Палатка Анны')
+    expect(wrapper.find('[data-test="item-edit"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="item-replace"]').exists()).toBe(true)
+  })
+
+  it('заменяет вещь у существующего пункта', async () => {
+    const wrapper = await mountSection([
+      makeChecklist({
+        items: [makeItem({ title: 'Палатка Анны', gear: makeGearRef() })],
+      }),
+    ])
+
+    vi.mocked(gearApi.listGear).mockResolvedValue({
+      items: [makeGearItem({ id: '7', title: 'Палатка Петра', weightGrams: 3100 })],
+      totalWeightGrams: 3100,
+      itemsWithoutWeight: 0,
+    })
+
+    mocked.updateChecklistItem.mockResolvedValue(
+      makeItem({
+        title: 'Палатка Петра',
+        gear: makeGearRef({ id: '7', title: 'Палатка Петра', weightGrams: 3100 }),
+      }),
+    )
+
+    await wrapper.find('[data-test="item-replace"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-test="gear-option"]').trigger('click')
+    await flushPromises()
+
+    expect(mocked.updateChecklistItem).toHaveBeenCalledWith('item-1', { gearItemId: 7 })
+    expect(wrapper.find('[data-test="item-title"]').text()).toBe('Палатка Петра')
+  })
+
+  it('после удаления вещи пункт остаётся текстом типа', async () => {
+    // Сервер уже превратил ссылку в текст: `gear` null, `title` — тип.
+    const wrapper = await mountSection([
+      makeChecklist({ items: [makeItem({ title: 'Палатка', gear: null })] }),
+    ])
+
+    expect(wrapper.find('[data-test="item-title"]').text()).toBe('Палатка')
+    expect(wrapper.find('[data-test="item-gear"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="item-edit"]').exists()).toBe(true)
   })
 })

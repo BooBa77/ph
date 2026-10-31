@@ -39,24 +39,34 @@ export async function deleteChecklist(id: string): Promise<void> {
   await apiFetch<void>(`/checklists/${id}`, { method: 'DELETE' })
 }
 
-/** POST /api/checklists/:id/items — добавить пункт. */
-export async function addChecklistItem(checklistId: string, title: string): Promise<ChecklistItem> {
+/**
+ * POST /api/checklists/:id/items — добавить пункт.
+ *
+ * Два вида пункта — две формы тела: свободный текст (`title`) или
+ * конкретная вещь личного каталога (`gearItemId`, 31.10.2026). У ссылки
+ * текст не присылают: сервер подписывает её названием вещи.
+ */
+export async function addChecklistItem(
+  checklistId: string,
+  body: { title?: string; gearItemId?: number },
+): Promise<ChecklistItem> {
   return apiFetch<ChecklistItem>(`/checklists/${checklistId}/items`, {
     method: 'POST',
-    body: JSON.stringify({ title }),
+    body: JSON.stringify(body),
   })
 }
 
 /**
- * PATCH /api/checklists/items/:id — текст и/или отметка.
+ * PATCH /api/checklists/items/:id — текст, отметка и/или ссылка на вещь.
  *
- * Отметка и текст — разные права на бэкенде (в общем списке похода
- * отмечает участник, правит организатор), поэтому и здесь это одно тело
- * с двумя необязательными полями, а не два разных метода.
+ * Отметка, текст и ссылка — разные права на бэкенде (в общем списке похода
+ * отмечает участник, правит организатор), поэтому здесь одно тело
+ * с независимыми полями, а не три метода. `gearItemId: null` — отвязать
+ * вещь: пункт остаётся текстом со своим текущим названием.
  */
 export async function updateChecklistItem(
   itemId: string,
-  patch: { title?: string; isDone?: boolean },
+  patch: { title?: string; isDone?: boolean; gearItemId?: number | null },
 ): Promise<ChecklistItem> {
   return apiFetch<ChecklistItem>(`/checklists/items/${itemId}`, {
     method: 'PATCH',

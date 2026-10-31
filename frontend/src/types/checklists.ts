@@ -19,7 +19,32 @@ export interface ChecklistItem {
   /** Когда отметили. Всегда пара с `doneByUserId`. */
   doneAt: string | null
   createdByUserId: string | null
+  /**
+   * Конкретная вещь снаряжения, на которую указывает пункт (31.10.2026).
+   *
+   * `null` — обычный текстовый пункт, и тогда `title` и есть весь текст.
+   * Вещь удалили в каталоге — сервер присылает `null`, а `title` становится
+   * именем типа («Палатка»): пункт не исчезает, а превращается в текст.
+   */
+  gear: ChecklistItemGear | null
   createdAt: string
+}
+
+/**
+ * Вещь, на которую ссылается пункт: подпись без каталоговых подробностей.
+ *
+ * `title` живой: переименовали вещь — пункт показывает новое имя. Снимок
+ * названия лежит в `ChecklistItem.title` и нужен только после удаления вещи.
+ */
+export interface ChecklistItemGear {
+  id: string
+  title: string
+  /** Код типа: `tent`, `axe`. Контракт, на нём фильтруют экраны похода. */
+  typeCode: string
+  /** Название типа для человека: «Палатка», «Топор». */
+  typeName: string
+  /** Вес в граммах. `null` — не указан. */
+  weightGrams: number | null
 }
 
 /**
