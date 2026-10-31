@@ -35,6 +35,7 @@ const mocks = vi.hoisted(() => ({
   listTripGear: vi.fn(),
   listGear: vi.fn(),
   proposeTripGear: vi.fn(),
+  removeTripGear: vi.fn(),
   addManualTripGear: vi.fn(),
   fetchGearTypes: vi.fn(),
 }))
@@ -45,6 +46,7 @@ vi.mock('@/api/gear', () => ({
   listGear: mocks.listGear,
   listTripGear: mocks.listTripGear,
   proposeTripGear: mocks.proposeTripGear,
+  removeTripGear: mocks.removeTripGear,
   addManualTripGear: mocks.addManualTripGear,
 }))
 
@@ -196,6 +198,10 @@ function personalGear(
     typeId: 1,
     typeCode,
     typeName: typeCode === 'shelter' ? 'Тент' : typeCode === 'tent' ? 'Палатка' : 'Прочее',
+    groupId: 1,
+    groupCode: 'roof',
+    groupName: 'Кров',
+    sortOrder: 10,
     attributes: seats === null ? [] : [attribute('seats', 'Вместимость', seats)],
     title,
     weightGrams: null,
@@ -226,6 +232,7 @@ describe('секция «Палатки»', () => {
       itemsWithoutWeight: 0,
     })
     mocks.listGear.mockResolvedValue(gearList([]))
+    mocks.removeTripGear.mockResolvedValue(undefined)
     // Типы контекста «Палаток»: палатка (с обязательной вместимостью) и тент.
     mocks.fetchGearTypes.mockResolvedValue([
       {
@@ -436,7 +443,7 @@ describe('секция «Палатки»', () => {
     expect(join.classes()).not.toContain('bg-primary')
   })
 
-  it('владелец убирает свою палатку крестиком сразу', async () => {
+  it('владелец убирает свою палатку крестиком: настоящий DELETE', async () => {
     mocks.listTripGear.mockResolvedValue({
       items: [
         tripGearItem({
@@ -455,27 +462,38 @@ describe('секция «Палатки»', () => {
     const wrapper = await mounted(makeTrip({ organizerUserId: ANNA }))
 
     await wrapper.get('[data-test="route-tent-remove-g9"]').trigger('click')
+    await flushPromises()
 
+    expect(mocks.removeTripGear).toHaveBeenCalledWith('1', 'g9')
     expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(0)
     expect(wrapper.find('[data-test="route-tents-empty"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
   })
 
-  it('организатор чужую палатку только предлагает убрать', async () => {
+  it('организатор убирает чужую палатку тем же DELETE', async () => {
     const wrapper = await mounted()
 
     await wrapper.get('[data-test="route-tent-remove-g1"]').trigger('click')
+    await flushPromises()
 
-    // Палатка на месте, заголовок зачёркнут, рядом — словами, кто предлагает.
-    expect(wrapper.get('[data-test="route-tent-title"]').classes()).toContain('line-through')
-    expect(wrapper.get('[data-test="route-tent-removal"]').text()).toBe(
-      'организатор предлагает убрать',
+    expect(mocks.removeTripGear).toHaveBeenCalledWith('1', 'g1')
+    expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(0)
+  })
+
+  it('сервер отказал в удалении — текст ошибки, палатка на месте', async () => {
+    mocks.removeTripGear.mockRejectedValue(
+      new ApiError(403, 'Чужую вещь убирает владелец или тот, кто ведёт снаряжение похода'),
     )
 
-    await wrapper.get('[data-test="route-tent-remove-g1"]').trigger('click')
+    const wrapper = await mounted()
 
-    expect(wrapper.get('[data-test="route-tent-title"]').classes()).not.toContain('line-through')
-    expect(wrapper.find('[data-test="route-tent-removal"]').exists()).toBe(false)
+    await wrapper.get('[data-test="route-tent-remove-g1"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="route-tents-remove-error"]').text()).toContain(
+      'тот, кто ведёт снаряжение',
+    )
+    expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(1)
   })
 
   it('постороннему участнику крестика палатки нет', async () => {

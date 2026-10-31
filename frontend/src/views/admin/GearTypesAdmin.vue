@@ -32,6 +32,7 @@ import type {
   CreateGearAttributeOptionInput,
   GearValueKind,
 } from '@/types/gearTypes'
+import GearGroupsAdmin from '@/views/admin/GearGroupsAdmin.vue'
 
 /**
  * Справочник типов снаряжения — админка Stage A.
@@ -901,6 +902,9 @@ onBeforeUnmount(() => {
         </p>
       </li>
     </ul>
+
+    <!-- Полки каталога: группы живут рядом с типами, но не в них -->
+    <GearGroupsAdmin />
 
     <!-- Форма типа -->
     <div

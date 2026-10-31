@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   listTripGear: vi.fn(),
   listGear: vi.fn(),
   proposeTripGear: vi.fn(),
+  removeTripGear: vi.fn(),
   addManualTripGear: vi.fn(),
   fetchGearTypes: vi.fn(),
 }))
@@ -42,6 +43,7 @@ vi.mock('@/api/gear', () => ({
   listGear: mocks.listGear,
   listTripGear: mocks.listTripGear,
   proposeTripGear: mocks.proposeTripGear,
+  removeTripGear: mocks.removeTripGear,
   addManualTripGear: mocks.addManualTripGear,
 }))
 
@@ -130,6 +132,10 @@ function gearItem(
 ): GearItem {
   return {
     typeId: 1,
+    groupId: 4,
+    groupCode: 'other',
+    groupName: 'Прочее',
+    sortOrder: 10,
     attributes: [],
     weightGrams: null,
     note: null,
@@ -189,6 +195,7 @@ describe('секция «Костровое»', () => {
     mocks.listParticipants.mockResolvedValue([participant(ME, 'Олег'), participant(ANNA, 'Анна')])
     mocks.listTripGear.mockResolvedValue(tripGearList([]))
     mocks.listGear.mockResolvedValue(gearList([]))
+    mocks.removeTripGear.mockResolvedValue(undefined)
     mocks.fetchGearTypes.mockResolvedValue([
       { id: 3, code: 'axe', name: 'Топор', sortOrder: 3, attributes: [] },
     ])
@@ -515,7 +522,7 @@ describe('секция «Костровое»', () => {
     )
   })
 
-  it('владелец убирает свою вещь крестиком сразу', async () => {
+  it('владелец убирает свою вещь крестиком: настоящий DELETE', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
         tripGearItem({
@@ -531,12 +538,14 @@ describe('секция «Костровое»', () => {
     const wrapper = await mounted()
 
     await wrapper.get('[data-test="route-cooking-remove-g1"]').trigger('click')
+    await flushPromises()
 
+    expect(mocks.removeTripGear).toHaveBeenCalledWith('1', 'g1')
     expect(wrapper.find('[data-test="route-cooking-items"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="route-cooking-empty"]').text()).toContain('Пока никто не взял')
   })
 
-  it('организатор чужую вещь только предлагает убрать: пилюля зачёркнута', async () => {
+  it('организатор убирает чужую вещь тем же DELETE', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
         tripGearItem({
@@ -553,17 +562,37 @@ describe('секция «Костровое»', () => {
     const wrapper = await mounted()
 
     await wrapper.get('[data-test="route-cooking-remove-g1"]').trigger('click')
+    await flushPromises()
 
-    // Вещь на месте, но зачёркнута и в пунктирной рамке — «предложено убрать».
-    expect(pillTexts(wrapper)).toEqual(['Горелка - 150 гр. (Анна)'])
-    expect(wrapper.get('[data-test="route-cooking-item"]').classes()).toContain('border-dashed')
-    expect(wrapper.find('[data-test="route-cooking-item"] .line-through').exists()).toBe(true)
+    expect(mocks.removeTripGear).toHaveBeenCalledWith('1', 'g1')
+    expect(wrapper.find('[data-test="route-cooking-items"]').exists()).toBe(false)
+  })
 
-    // Повторное нажатие снимает предложение.
+  it('сервер отказал в удалении — текст ошибки, вещь на месте', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList([
+        tripGearItem({
+          id: 'g1',
+          typeCode: 'stove',
+          typeName: 'Горелка',
+          title: 'Горелка Анны',
+          ownerUserId: ANNA,
+        }),
+      ]),
+    )
+    mocks.removeTripGear.mockRejectedValue(
+      new ApiError(403, 'Чужую вещь убирает владелец или тот, кто ведёт снаряжение похода'),
+    )
+
+    const wrapper = await mounted()
+
     await wrapper.get('[data-test="route-cooking-remove-g1"]').trigger('click')
+    await flushPromises()
 
-    expect(wrapper.get('[data-test="route-cooking-item"]').classes()).toContain('bg-amber-100')
-    expect(wrapper.find('[data-test="route-cooking-item"] .line-through').exists()).toBe(false)
+    expect(wrapper.get('[data-test="route-cooking-remove-error"]').text()).toContain(
+      'тот, кто ведёт снаряжение',
+    )
+    expect(pillTexts(wrapper)).toEqual(['Горелка (Анна)'])
   })
 
   it('крестика нет ни у владельца чужой вещи, ни у постороннего участника', async () => {

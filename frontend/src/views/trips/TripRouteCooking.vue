@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
-import { listGear, listTripGear, proposeTripGear } from '@/api/gear'
+import { listGear, listTripGear, proposeTripGear, removeTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
 import { listParticipants } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
@@ -46,11 +46,12 @@ import { weightInGrams } from '@/utils/gearWeight'
  * и угадывать нечего: вещь не того типа в секцию не попадает, а «не берём»
  * не показывается вовсе.
  *
- * **Крестик — по правам на вещь** (29.10.2026): у владельца он убирает вещь из
- * секции, у организатора — только **предлагает** убрать: пилюля становится
- * зачёркнутой с пунктирной рамкой, повторное нажатие возвращает. Убирает
- * в памяти компонента: ручки удаления вещи из похода нет, она появится вместе
- * с моделью ночёвок.
+ * **Крестик — настоящий `DELETE`** (31.10.2026). Раньше у владельца крестик
+ * убирал вещь из секции, а у организатора только **предлагал** убрать:
+ * пилюля становилась зачёркнутой, повторное нажатие возвращало. Ручки
+ * удаления вещи из похода не было, и предложение жило в памяти. Теперь
+ * `DELETE /api/trips/:id/gear/:gearId` есть, и крестик зовёт его у всех,
+ * кому виден: у владельца и организатора. Права проверяет сервер.
  *
  * **«Указать вручную» (31.10.2026).** Последний пункт в диалоге кнопки:
  * топора в каталоге нет, а «бутылку бензина на розжиг» человек покупает
@@ -225,10 +226,13 @@ function pillText(row: CookingRow): string {
   return `${head} (${nameOf(row.item.ownerUserId)})`
 }
 
-// ───────────────────────────── удаление и предложение убрать ─────────────────────────────
+// ───────────────────────────── удаление ─────────────────────────────
 
-/** Вещи, которые организатор предлагает убрать: зачёркнуты, пока не вернут. */
-const removalProposed = ref<string[]>([])
+/** Что сейчас убирается: повторное нажатие крестика не шлёт второй запрос. */
+const removingId = ref<string | null>(null)
+
+/** Ошибка удаления — отдельно от загрузки: упавшее удаление не прячет секцию. */
+const removalError = ref<string | null>(null)
 
 function isMine(ownerUserId: string): boolean {
   return meId.value !== '' && ownerUserId === meId.value
@@ -239,42 +243,42 @@ function canRemove(item: TripGearItem): boolean {
   return isMine(item.ownerUserId) || isOrganizer.value
 }
 
-function isRemovalProposed(id: string): boolean {
-  return removalProposed.value.includes(id)
-}
-
 /**
- * Два разных действия одним крестиком:
- * - владелец убирает свою вещь из секции сразу;
- * - организатор чужую только **предлагает** убрать: зачёркивает, а снимает
- *   вещь владелец. Повторное нажатие организатора отменяет предложение.
+ * Убрать вещь из похода настоящим `DELETE` (31.10.2026).
+ *
+ * Раньше действие жило в памяти: убранная вещь возвращалась после
+ * перезагрузки, а организатор мог только предложить убрать. Теперь строка
+ * `trip_gear` удаляется на сервере, одноразовая вещь уходит вместе с ней,
+ * вещь каталога остаётся у владельца. Права проверяет сервер, и его текст
+ * (403 «чужую вещь убирает владелец или тот, кто ведёт снаряжение»)
+ * показывается на экране.
  */
-function removeItem(row: CookingRow): void {
-  if (isMine(row.item.ownerUserId)) {
+async function removeItem(row: CookingRow): Promise<void> {
+  if (removingId.value !== null) return
+
+  removingId.value = row.item.id
+  removalError.value = null
+
+  try {
+    await removeTripGear(props.trip.id, row.item.id)
     items.value = items.value.filter((item) => item.id !== row.item.id)
-    removalProposed.value = removalProposed.value.filter((id) => id !== row.item.id)
-
-    return
+  } catch (problem) {
+    removalError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось убрать вещь из похода'
+  } finally {
+    removingId.value = null
   }
-
-  removalProposed.value = isRemovalProposed(row.item.id)
-    ? removalProposed.value.filter((id) => id !== row.item.id)
-    : [...removalProposed.value, row.item.id]
 }
 
-function removeHint(row: CookingRow): string {
-  if (isMine(row.item.ownerUserId)) return 'Убрать из секции'
-
-  return isRemovalProposed(row.item.id)
-    ? 'Вернуть вещь: предложение убрать отменено'
-    : 'Предложить убрать: решает владелец'
+function removeHint(): string {
+  return 'Убрать из похода'
 }
 
-/** Пилюля: обычная — жёлтая, предложенная к удалению — зачёркнутая. */
-function pillClass(row: CookingRow): string {
-  return isRemovalProposed(row.item.id)
-    ? 'border-dashed border-amber-400 bg-transparent text-amber-800'
-    : 'border-amber-300 bg-amber-100 text-amber-900'
+/** Пилюля предложенной вещи — жёлтая, как в макете заказчика. */
+function pillClass(): string {
+  return 'border-amber-300 bg-amber-100 text-amber-900'
 }
 
 // ───────────────────────────── загрузка ─────────────────────────────
@@ -413,6 +417,14 @@ function onManualCreated(item: TripGearItem): void {
     </p>
 
     <template v-else>
+      <p
+        v-if="removalError"
+        class="text-sm text-red-600"
+        data-test="route-cooking-remove-error"
+      >
+        {{ removalError }}
+      </p>
+
       <div
         v-if="cookingRows.length > 0"
         class="flex flex-wrap items-center gap-2"
@@ -422,23 +434,23 @@ function onManualCreated(item: TripGearItem): void {
           v-for="row in cookingRows"
           :key="row.item.id"
           class="flex items-center gap-1 rounded-full border px-2 py-1 text-sm"
-          :class="pillClass(row)"
+          :class="pillClass()"
           :title="row.item.title"
           data-test="route-cooking-item"
         >
-          <span :class="isRemovalProposed(row.item.id) ? 'line-through' : ''">
-            {{ pillText(row) }}
-          </span>
+          <span>{{ pillText(row) }}</span>
 
           <!--
-            Крестик: владелец убирает вещь из секции, организатор предлагает
-            убрать (пилюля зачёркивается). Чужому участнику крестика нет.
+            Крестик убирает вещь из похода настоящим DELETE: владелец свою,
+            организатор любую (права проверяет сервер). Чужому участнику
+            крестика нет.
           -->
           <button
             v-if="canRemove(row.item)"
             type="button"
-            class="cursor-pointer border-0 bg-transparent p-0 text-amber-700 transition-colors hover:text-amber-900"
-            :title="removeHint(row)"
+            :disabled="removingId !== null"
+            class="cursor-pointer border-0 bg-transparent p-0 text-amber-700 transition-colors hover:text-amber-900 disabled:cursor-not-allowed disabled:opacity-40"
+            :title="removeHint()"
             :data-test="`route-cooking-remove-${row.item.id}`"
             @click="removeItem(row)"
           >

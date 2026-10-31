@@ -4,12 +4,15 @@ import { computed, onMounted, ref } from 'vue'
 import {
   createGearItem,
   deleteGearItem,
+  fetchGearGroups,
   listGear,
+  moveGearItem,
   updateGearItem,
 } from '@/api/gear'
 import { fetchGearTypes } from '@/api/gearTypes'
 import { ApiError } from '@/api/errors'
-import type { GearItem } from '@/types/gear'
+import { GEAR_DEFAULT_GROUP_CODE } from '@/types/gear'
+import type { GearGroup, GearItem } from '@/types/gear'
 import type { GearType, GearTypeAttribute } from '@/types/gearTypes'
 import {
   createVehicle,
@@ -45,7 +48,15 @@ import { formatWeight, formatWeightTotal, parseWeightGrams } from '@/utils/gearW
  * Теперь типами правит админ (`/admin/gear`), и вместе с типом приходят
  * **характеристики**: у палатки вместимость и модель, у горелки соединение
  * и мощность. Поэтому форма собрана из двух частей — выбор типа и поля
- * его характеристик под ним, — а список сгруппирован по типам.
+ * его характеристик под ним.
+ *
+ * **Секции — по группам (31.10.2026).** Группа — полка каталога, а не тип:
+ * «Костровое» собирает топор, пилу и розжиг, которые лежат в разных типах.
+ * Тип у вещи остаётся и виден строкой («Топор · 900 г»), но список
+ * группируется по полкам. Порядок полок задаёт админ (`GET /api/gear-groups`),
+ * порядок вещей внутри полки — сам человек: стрелки ↑ и ↓ в строке меняют
+ * соседей местами, и сервер хранит результат в `sort_order`. Через границу
+ * группы стрелка не переставляет — порядок полок не его дело.
  *
  * **Обязательные спрашиваются сразу.** Поле, без которого вещь не описать
  * (у палатки — вместимость), помечено звёздочкой, и отправка без него
@@ -53,6 +64,11 @@ import { formatWeight, formatWeightTotal, parseWeightGrams } from '@/utils/gearW
  * ошибки совпадает с серверным. Правило теперь одно для всех клиентов —
  * старая прослойка, где обязательные проверялись только при присланном
  * `typeId`, умирает вместе с видом.
+ *
+ * **Группа у вещи обязательна.** В форме полка выбирается, по умолчанию
+ * стоит «Прочее»: вещь без полки выпала бы из секций. Если справочник
+ * групп не загрузился, форма не отправляет `groupId` — сервер положит вещь
+ * в «Прочее» сам, и каталог не сломается из-за одного запроса.
  *
  * **Вес правится на месте.** Самая частая правка — «взвесил позже»:
  * поэтому вес в строке — поле ввода, которое сохраняется по `change`
@@ -83,8 +99,20 @@ const error = ref<string | null>(null)
 const types = ref<GearType[]>([])
 const typesError = ref<string | null>(null)
 
+/**
+ * Справочник групп — полки каталога.
+ *
+ * Как и типы, справочник маленький и грузится один раз. Отдельная ошибка,
+ * а не общая: каталог с вещами покажется и без групп (имя полки приходит
+ * самой вещью), а форма нового предмета просто не пришлёт `groupId` —
+ * сервер положит вещь в «Прочее».
+ */
+const groupsList = ref<GearGroup[]>([])
+const groupsError = ref<string | null>(null)
+
 /** Форма нового предмета. */
 const newTypeId = ref<number | null>(null)
+const newGroupId = ref<number | null>(null)
 const newTitle = ref('')
 const newWeight = ref('')
 const newNote = ref('')
@@ -126,30 +154,43 @@ const itemsWithoutWeight = computed(
 )
 
 /**
- * Предметы по типам: название группы — имя типа из справочника.
+ * Предметы по группам: название секции — имя группы из справочника.
  *
- * Порядок групп — порядок справочника (его задаёт админ), а типы, которых
- * в действующем справочнике нет (вещь в архивном типе), идут после и по
- * имени: молча потерять такую вещь нельзя, она правдоподобно исчезла бы
- * из каталога.
+ * Порядок секций — порядок админа (`sortOrder`), а группы, которых
+ * в действующем справочнике нет (вещь в архивной полке), идут после
+ * и по имени: молча потерять такую вещь нельзя, она правдоподобно исчезла
+ * бы из каталога. Внутри секции — личный порядок `sortOrder`, тот самый,
+ * который меняют стрелки; `id` разрешает ничьи, если у старых вещей
+ * порядок совпал.
  */
 const groups = computed(() => {
-  const order = new Map(types.value.map((type, index) => [type.code, index]))
-  const byCode = new Map<string, { code: string; label: string; items: GearItem[] }>()
+  const order = new Map(groupsList.value.map((group, index) => [group.id, index]))
+  const byId = new Map<
+    number,
+    { id: number; code: string; label: string; items: GearItem[] }
+  >()
 
   for (const item of items.value) {
-    const group = byCode.get(item.typeCode) ?? {
-      code: item.typeCode,
-      label: item.typeName,
+    const group = byId.get(item.groupId) ?? {
+      id: item.groupId,
+      code: item.groupCode,
+      label: item.groupName,
       items: [],
     }
     group.items.push(item)
-    byCode.set(item.typeCode, group)
+    byId.set(item.groupId, group)
   }
 
-  return [...byCode.values()].sort((left, right) => {
-    const leftOrder = order.get(left.code) ?? Number.MAX_SAFE_INTEGER
-    const rightOrder = order.get(right.code) ?? Number.MAX_SAFE_INTEGER
+  for (const group of byId.values()) {
+    group.items.sort(
+      (left, right) =>
+        left.sortOrder - right.sortOrder || Number(left.id) - Number(right.id),
+    )
+  }
+
+  return [...byId.values()].sort((left, right) => {
+    const leftOrder = order.get(left.id) ?? Number.MAX_SAFE_INTEGER
+    const rightOrder = order.get(right.id) ?? Number.MAX_SAFE_INTEGER
 
     if (leftOrder !== rightOrder) return leftOrder - rightOrder
 
@@ -157,9 +198,10 @@ const groups = computed(() => {
   })
 })
 
-/** Правка характеристик: id предмета, тип и черновик значений. */
+/** Правка характеристик: id предмета, тип, группа и черновик значений. */
 const editingItemId = ref<string | null>(null)
 const editTypeId = ref<number | null>(null)
+const editGroupId = ref<number | null>(null)
 const editDrafts = ref<GearAttributeDrafts>({})
 
 const editingItem = computed(
@@ -217,6 +259,29 @@ async function loadTypes() {
 }
 
 /**
+ * Группы: полки каталога и умолчание формы.
+ *
+ * По умолчанию выбирается «Прочее» (`other`), а если его нет — первая
+ * группа: форма с пустым обязательным выбором не давала бы завести вещь,
+ * хотя сервер прекрасно кладёт её в «Прочее» и без поля.
+ */
+async function loadGroups() {
+  groupsError.value = null
+
+  try {
+    groupsList.value = await fetchGearGroups()
+    if (newGroupId.value === null) {
+      const fallback =
+        groupsList.value.find((group) => group.code === GEAR_DEFAULT_GROUP_CODE) ??
+        groupsList.value[0]
+      newGroupId.value = fallback?.id ?? null
+    }
+  } catch (cause) {
+    groupsError.value = messageOf(cause, 'Не удалось загрузить группы снаряжения.')
+  }
+}
+
+/**
  * Вес из поля: пусто — «не указан», мусор — `undefined` (и ошибка).
  *
  * Само правило — в `utils/gearWeight.ts`: тот же вес спрашивает «Указать
@@ -251,6 +316,7 @@ async function add() {
   try {
     const created = await createGearItem({
       typeId: type.id,
+      ...(newGroupId.value === null ? {} : { groupId: newGroupId.value }),
       title,
       weightGrams,
       note: newNote.value.trim() || null,
@@ -274,12 +340,14 @@ function startEditAttributes(item: GearItem) {
   confirmingItemId.value = null
   editingItemId.value = item.id
   editTypeId.value = item.typeId
+  editGroupId.value = item.groupId
   editDrafts.value = gearAttributeDrafts(item.attributes)
 }
 
 function cancelEditAttributes() {
   editingItemId.value = null
   editTypeId.value = null
+  editGroupId.value = null
   editDrafts.value = {}
 }
 
@@ -311,11 +379,15 @@ async function saveAttributes(item: GearItem) {
   try {
     const updated = await updateGearItem(item.id, {
       ...(type.id === item.typeId ? {} : { typeId: type.id }),
+      ...(editGroupId.value === null || editGroupId.value === item.groupId
+        ? {}
+        : { groupId: editGroupId.value }),
       attributes: built.attributes,
     })
     Object.assign(item, updated)
     editingItemId.value = null
     editTypeId.value = null
+    editGroupId.value = null
     editDrafts.value = {}
   } catch (cause) {
     error.value = messageOf(cause, 'Не удалось сохранить характеристики.')
@@ -404,8 +476,53 @@ async function remove(item: GearItem) {
   }
 }
 
+// ───────────────────────────── личный порядок ─────────────────────────────
+
+/** Что сейчас переставляется: второе нажатие стрелки не шлёт второй запрос. */
+const movingId = ref<string | null>(null)
+
+/**
+ * Соседи вещи в её группе — в том порядке, в каком они нарисованы.
+ *
+ * Стрелка через границу группы не работает: порядок полок задаёт админ,
+ * поэтому «выше» в начале секции и «ниже» в конце — просто нечего делать.
+ */
+function canMove(item: GearItem, direction: 'up' | 'down'): boolean {
+  const siblings = groups.value.find((group) => group.id === item.groupId)?.items ?? []
+  const index = siblings.findIndex((row) => row.id === item.id)
+
+  if (index === -1) return false
+
+  return direction === 'up' ? index > 0 : index < siblings.length - 1
+}
+
+/**
+ * Переставить вещь на позицию выше или ниже.
+ *
+ * Сервер отвечает списком целиком: после перестановки изменились две строки,
+ * и склеивать их на клиенте значило бы повторять правило сервера. Ответ
+ * заменяет `items`, поэтому и порядок, и `sortOrder` сразу согласованы
+ * с базой — без перечитывания каталога.
+ */
+async function move(item: GearItem, direction: 'up' | 'down') {
+  if (movingId.value !== null || !canMove(item, direction)) return
+
+  movingId.value = item.id
+  error.value = null
+
+  try {
+    const list = await moveGearItem(item.id, direction)
+    items.value = list.items
+  } catch (cause) {
+    error.value = messageOf(cause, 'Не удалось переставить предмет.')
+  } finally {
+    movingId.value = null
+  }
+}
+
 onMounted(load)
 onMounted(loadTypes)
+onMounted(loadGroups)
 onMounted(loadVehicles)
 
 // ───────────────────────────── моя техника ─────────────────────────────
@@ -524,11 +641,26 @@ async function removeVehicleById(vehicle: Vehicle) {
       {{ formatWeightTotal(totalWeightGrams, itemsWithoutWeight) }}
     </p>
 
-    <!-- Новый предмет: сначала тип, потом его характеристики -->
+    <!-- Новый предмет: сначала группа и тип, потом его характеристики -->
     <form
-      class="grid gap-2 sm:grid-cols-[11rem_1fr_6rem_1fr_auto] sm:items-end"
+      class="grid gap-2 sm:grid-cols-[9rem_9rem_1fr_5rem_1fr_auto] sm:items-end"
       @submit.prevent="add"
     >
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-muted">Группа</span>
+        <select
+          v-model="newGroupId"
+          :disabled="groupsList.length === 0"
+          class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60"
+          data-test="gear-new-group"
+        >
+          <option v-if="groupsList.length === 0" :value="null">—</option>
+          <option v-for="group in groupsList" :key="group.id" :value="group.id">
+            {{ group.name }}
+          </option>
+        </select>
+      </label>
+
       <label class="flex flex-col gap-1">
         <span class="text-xs text-muted">Тип</span>
         <select
@@ -594,6 +726,10 @@ async function removeVehicleById(vehicle: Vehicle) {
       {{ typesError }}
     </p>
 
+    <p v-if="groupsError" class="mt-2 text-sm text-red-600" data-test="gear-groups-error">
+      {{ groupsError }}
+    </p>
+
     <!-- Характеристики выбранного типа: их набор задаёт справочник -->
     <div
       v-if="newAttributes.length > 0"
@@ -624,8 +760,10 @@ async function removeVehicleById(vehicle: Vehicle) {
     </p>
 
     <div v-else class="mt-5 flex flex-col gap-5">
-      <section v-for="group in groups" :key="group.code" data-test="gear-group">
-        <h3 class="mb-1 text-sm font-medium text-text">{{ group.label }}</h3>
+      <section v-for="group in groups" :key="group.id" data-test="gear-group">
+        <h3 class="mb-1 text-sm font-medium text-text" data-test="gear-group-name">
+          {{ group.label }}
+        </h3>
 
         <ul class="flex flex-col">
           <li
@@ -675,6 +813,34 @@ async function removeVehicleById(vehicle: Vehicle) {
               />
 
               <div class="flex flex-wrap items-center gap-2 justify-self-start">
+                <!--
+                  Личный порядок внутри полки — стрелками, а не перетаскиванием:
+                  на телефоне стрелка работает так же, как мышью, и не требует
+                  отдельного кода сенсорных событий.
+                -->
+                <div class="flex items-center gap-1">
+                  <button
+                    type="button"
+                    :disabled="movingId !== null || !canMove(item, 'up')"
+                    class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                    title="Выше в группе"
+                    data-test="item-move-up"
+                    @click="move(item, 'up')"
+                  >
+                    ↑
+                  </button>
+                  <button
+                    type="button"
+                    :disabled="movingId !== null || !canMove(item, 'down')"
+                    class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                    title="Ниже в группе"
+                    data-test="item-move-down"
+                    @click="move(item, 'down')"
+                  >
+                    ↓
+                  </button>
+                </div>
+
                 <template v-if="confirmingItemId === item.id">
                   <span class="text-xs text-muted">Удалить?</span>
                   <button
@@ -709,10 +875,14 @@ async function removeVehicleById(vehicle: Vehicle) {
               </div>
             </div>
 
-            <!-- Характеристики: подпись словами и кнопка правки -->
+            <!-- Характеристики: тип, подпись словами и кнопка правки -->
             <div class="mt-1 flex flex-wrap items-center justify-between gap-2 px-2">
               <p class="text-xs text-muted" data-test="item-attributes-summary">
-                {{ gearAttributesSummary(item) || 'Характеристики не заполнены' }}
+                <span class="text-text" data-test="item-type-name">{{ item.typeName }}</span>
+                <template v-if="gearAttributesSummary(item)">
+                  · {{ gearAttributesSummary(item) }}
+                </template>
+                <template v-else> · характеристики не заполнены</template>
               </p>
 
               <button
@@ -744,6 +914,26 @@ async function removeVehicleById(vehicle: Vehicle) {
                   </option>
                   <option v-if="editTypeArchived" :value="item.typeId">
                     {{ item.typeName }} — в архиве
+                  </option>
+                </select>
+              </label>
+
+              <label class="flex flex-col gap-1">
+                <span class="text-xs text-muted">Группа</span>
+                <select
+                  v-model="editGroupId"
+                  :disabled="savingId === item.id"
+                  class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 sm:max-w-xs"
+                  data-test="item-group"
+                >
+                  <option v-for="group in groupsList" :key="group.id" :value="group.id">
+                    {{ group.name }}
+                  </option>
+                  <option
+                    v-if="!groupsList.some((group) => group.id === item.groupId)"
+                    :value="item.groupId"
+                  >
+                    {{ item.groupName }} — в архиве
                   </option>
                 </select>
               </label>

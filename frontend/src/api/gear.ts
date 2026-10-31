@@ -1,6 +1,13 @@
 import { apiFetch } from '@/api/client'
 import type { GearAttributePayload } from '@/utils/gearAttributes'
-import type { GearItem, GearList, TripGearItem, TripGearList } from '@/types/gear'
+import type {
+  GearGroup,
+  GearGroupList,
+  GearItem,
+  GearList,
+  TripGearItem,
+  TripGearList,
+} from '@/types/gear'
 
 /**
  * Личное снаряжение: каталог предметов с весом.
@@ -21,6 +28,19 @@ export async function listGear(): Promise<GearList> {
 }
 
 /**
+ * GET /api/gear-groups — полки каталога, только действующие.
+ *
+ * Из этого списка экран берёт названия секций, их порядок и выбор группы
+ * в форме вещи. Архивных групп здесь нет: вещь в архивной полке покажется
+ * после действующих, и её имя приходит самой вещью (`groupName`).
+ */
+export async function fetchGearGroups(): Promise<GearGroup[]> {
+  const list = await apiFetch<GearGroupList>('/gear-groups')
+
+  return list.items
+}
+
+/**
  * POST /api/gear — новый предмет. Вес и характеристики можно не указывать.
  *
  * `attributes` — карта «код → значение», а не список пар: код уникален
@@ -29,6 +49,7 @@ export async function listGear(): Promise<GearList> {
  */
 export async function createGearItem(body: {
   typeId: number
+  groupId?: number
   title: string
   weightGrams?: number | null
   note?: string | null
@@ -55,6 +76,7 @@ export async function updateGearItem(
   id: string,
   patch: {
     typeId?: number
+    groupId?: number
     title?: string
     weightGrams?: number | null
     note?: string | null
@@ -64,6 +86,23 @@ export async function updateGearItem(
   return apiFetch<GearItem>(`/gear/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
+  })
+}
+
+/**
+ * POST /api/gear/:id/move — переставить вещь выше или ниже в её группе.
+ *
+ * Через границу группы стрелка не переставляет: порядок полок задаёт админ,
+ * а не человек. Ответ — список целиком: после перестановки изменились две
+ * строки, и клиенту не нужно угадывать вторую.
+ */
+export async function moveGearItem(
+  id: string,
+  direction: 'up' | 'down',
+): Promise<GearList> {
+  return apiFetch<GearList>(`/gear/${id}/move`, {
+    method: 'POST',
+    body: JSON.stringify({ direction }),
   })
 }
 
@@ -135,4 +174,24 @@ export async function addManualTripGear(
     method: 'POST',
     body: JSON.stringify(body),
   })
+}
+
+/**
+ * DELETE /api/trips/:id/gear/:gearId — убрать вещь из похода (31.10.2026).
+ *
+ * Крестики в «Палатках» и «Костровом» раньше жили в памяти: ручки не было,
+ * и после перезагрузки убранная вещь возвращалась. Теперь это настоящая
+ * строка `trip_gear`: владелец убирает свою вещь, тот, кто ведёт снаряжение
+ * (организатор, завхоз), — любую. Одноразовая вещь уходит вместе со строкой,
+ * вещь из каталога остаётся у владельца — из похода уходит только решение
+ * её взять.
+ *
+ * Права проверяет сервер: чужая вещь без права на вкладку «Снаряжение» —
+ * 403, и текст ошибки показывается на экране.
+ */
+export async function removeTripGear(
+  tripId: string,
+  gearId: string,
+): Promise<void> {
+  await apiFetch<void>(`/trips/${tripId}/gear/${gearId}`, { method: 'DELETE' })
 }

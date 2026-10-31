@@ -74,6 +74,55 @@ export interface GearItemAttribute {
 }
 
 /**
+ * Группа снаряжения — **полка каталога** (31.10.2026).
+ *
+ * Одна группа собирает вещи разных типов: «Костровое» — топор, пилу
+ * и розжиг; «Кров» — палатку и тент. Порядок групп задаёт админ
+ * (`sortOrder`), а порядок вещей внутри группы — сам человек.
+ */
+export interface GearGroup {
+  id: number
+  /** Стабильный код: `roof`, `campfire`, `kitchen`, `other`. */
+  code: string
+  /** Название для человека: «Кров», «Прочее». */
+  name: string
+  /** Порядок секций каталога: его задаёт админ, а не алфавит. */
+  sortOrder: number
+}
+
+/**
+ * Группа по умолчанию — «Прочее» (`other`), как в бэкенде.
+ *
+ * Группа у вещи обязательна, но человеку не нужно выбирать полку для
+ * фонарика: `POST /api/gear` без `groupId` кладёт вещь сюда. Поэтому
+ * каталог подставляет «Прочее» в форму, а админка запрещает его архив —
+ * иначе умолчание некуда девать.
+ */
+export const GEAR_DEFAULT_GROUP_CODE = 'other'
+
+/** Ответ `GET /api/gear-groups`. */
+export interface GearGroupList {
+  items: GearGroup[]
+}
+
+/**
+ * Группа в админке: с архивом и числом вещей.
+ *
+ * `itemsCount` нужен, чтобы админ видел, что лежит в полке, прежде чем
+ * отправить её в архив: вещи при этом остаются на месте и просто уезжают
+ * в конец каталога.
+ */
+export interface AdminGearGroup extends GearGroup {
+  isActive: boolean
+  itemsCount: number
+}
+
+/** Ответ `GET /api/gear/admin/groups`. */
+export interface AdminGearGroupList {
+  items: AdminGearGroup[]
+}
+
+/**
  * Предмет снаряжения: тип, название, необязательный вес и значения.
  *
  * Экраны похода читают тип (`typeCode`) и значения (`attributes`), а личный
@@ -87,6 +136,12 @@ export interface GearItem {
   typeCode: string
   /** Название типа для человека: «Палатка», «Топор». */
   typeName: string
+  /** Полка каталога: id, код и имя группы. */
+  groupId: number
+  groupCode: string
+  groupName: string
+  /** Личный порядок внутри группы: его меняют стрелки в каталоге. */
+  sortOrder: number
   title: string
   /** Вес в граммах. null — не указан. */
   weightGrams: number | null

@@ -3,7 +3,7 @@ import type { VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api/errors'
-import type { GearItem, GearItemAttribute, GearList } from '@/types/gear'
+import type { GearGroup, GearItem, GearItemAttribute, GearList } from '@/types/gear'
 import type { GearType, GearTypeAttribute } from '@/types/gearTypes'
 import type { Vehicle } from '@/types/trips'
 import UserGear from '@/views/profile/sections/UserGear.vue'
@@ -17,6 +17,9 @@ import UserGear from '@/views/profile/sections/UserGear.vue'
  * складывается только из известных, правится на месте, пустое поле значит
  * «не знаю», а не ноль.
  *
+ * **Группы (31.10.2026):** список собран секциями по полкам, полка выбирается
+ * в форме и в правке, а стрелки меняют личный порядок внутри полки.
+ *
  * API подменён: проверяем аргументы запросов и состояние экрана, а не
  * разметку целиком.
  */
@@ -25,6 +28,8 @@ vi.mock('@/api/gear', () => ({
   createGearItem: vi.fn(),
   updateGearItem: vi.fn(),
   deleteGearItem: vi.fn(),
+  fetchGearGroups: vi.fn(),
+  moveGearItem: vi.fn(),
 }))
 
 vi.mock('@/api/gearTypes', () => ({
@@ -123,6 +128,19 @@ const AXE: GearType = { id: 4, code: 'axe', name: 'Топор', sortOrder: 20, a
 
 const TYPES = [TENT, AXE, GAS, STOVE]
 
+/**
+ * Полки каталога: «Кров» первой, «Прочее» последней — как в сиде.
+ *
+ * У «Палатки» группа `roof`, у баллона — `kitchen`; «Прочее» нужно формой
+ * как умолчание, поэтому оно в списке даже без вещей.
+ */
+const GROUPS: GearGroup[] = [
+  { id: 1, code: 'roof', name: 'Кров', sortOrder: 10 },
+  { id: 2, code: 'campfire', name: 'Костровое', sortOrder: 20 },
+  { id: 3, code: 'kitchen', name: 'Кухня', sortOrder: 30 },
+  { id: 4, code: 'other', name: 'Прочее', sortOrder: 100 },
+]
+
 function savedAttribute(
   overrides: Partial<GearItemAttribute> &
     Pick<GearItemAttribute, 'code' | 'name' | 'valueKind' | 'value'>,
@@ -136,6 +154,10 @@ function makeItem(overrides: Partial<GearItem> = {}): GearItem {
     typeId: 1,
     typeCode: 'tent',
     typeName: 'Палатка',
+    groupId: 1,
+    groupCode: 'roof',
+    groupName: 'Кров',
+    sortOrder: 10,
     title: 'Палатка на четверых',
     weightGrams: 2400,
     note: null,
@@ -170,6 +192,7 @@ async function mountSection(
   mocked.listGear.mockResolvedValue(makeList(items))
   mockedVehicles.fetchVehicles.mockResolvedValue(vehicles)
   mockedTypes.fetchGearTypes.mockResolvedValue(types)
+  mocked.fetchGearGroups.mockResolvedValue(GROUPS)
 
   const wrapper = mount(UserGear)
   await flushPromises()
@@ -195,11 +218,12 @@ describe('UserGear', () => {
       }),
     )
     mocked.deleteGearItem.mockResolvedValue(undefined)
+    mocked.moveGearItem.mockResolvedValue(makeList([]))
   })
 
   // ───────────────────────────── список ─────────────────────────────
 
-  it('группирует предметы по типам, а не по видам', async () => {
+  it('группирует предметы по полкам, а не по типам', async () => {
     const wrapper = await mountSection([
       makeItem(),
       makeItem({
@@ -207,6 +231,10 @@ describe('UserGear', () => {
         typeId: 2,
         typeCode: 'gas',
         typeName: 'Газовый баллон',
+        groupId: 3,
+        groupCode: 'kitchen',
+        groupName: 'Кухня',
+        sortOrder: 10,
         title: 'Баллон 450',
         weightGrams: 1500,
         attributes: [],
@@ -215,25 +243,59 @@ describe('UserGear', () => {
 
     const groups = wrapper.findAll('[data-test="gear-group"]')
     expect(groups).toHaveLength(2)
+    expect(groups[0]?.text()).toContain('Кров')
+    expect(groups[1]?.text()).toContain('Кухня')
+    // Тип остался подписью строки, а не заголовком секции.
     expect(groups[0]?.text()).toContain('Палатка')
-    expect(groups[1]?.text()).toContain('Газовый баллон')
     expect(wrapper.find('[data-test="gear-total"]').text()).toBe('Всего: 3,9 кг')
   })
 
-  it('порядок групп — как в справочнике, а не как пришли вещи', async () => {
+  it('порядок полок — как в справочнике, а не как пришли вещи', async () => {
     const wrapper = await mountSection([
       makeItem({
         id: 'gear-2',
         typeId: 2,
         typeCode: 'gas',
         typeName: 'Газовый баллон',
+        groupId: 3,
+        groupCode: 'kitchen',
+        groupName: 'Кухня',
         attributes: [],
       }),
       makeItem(),
     ])
 
-    expect(wrapper.findAll('[data-test="gear-group"]')[0]?.text()).toContain('Палатка')
+    expect(wrapper.findAll('[data-test="gear-group"]')[0]?.text()).toContain('Кров')
     expect(titles(wrapper)).toContain('Палатка на четверых')
+  })
+
+  it('вещь в архивной полке идёт после действующих', async () => {
+    // Справочник без «Кострового»: полка вещи в нём не числится.
+    mocked.fetchGearGroups.mockResolvedValue(
+      GROUPS.filter((group) => group.code !== 'campfire'),
+    )
+    mockedVehicles.fetchVehicles.mockResolvedValue([])
+    mockedTypes.fetchGearTypes.mockResolvedValue(TYPES)
+    mocked.listGear.mockResolvedValue(
+      makeList([
+        makeItem({
+          id: 'gear-2',
+          groupId: 2,
+          groupCode: 'campfire',
+          groupName: 'Костровое',
+          title: 'Топор',
+          attributes: [],
+        }),
+        makeItem(),
+      ]),
+    )
+
+    const wrapper = mount(UserGear)
+    await flushPromises()
+
+    const groups = wrapper.findAll('[data-test="gear-group"]')
+    expect(groups[0]?.text()).toContain('Кров')
+    expect(groups[1]?.text()).toContain('Костровое')
   })
 
   it('неизвестный вес не считается в итог, но виден в подписи', async () => {
@@ -273,6 +335,7 @@ describe('UserGear', () => {
 
     expect(mocked.createGearItem).toHaveBeenCalledWith({
       typeId: 1,
+      groupId: 4,
       title: 'Палатка 4',
       weightGrams: 450,
       note: 'алюминиевая',
@@ -291,6 +354,7 @@ describe('UserGear', () => {
 
     expect(mocked.createGearItem).toHaveBeenCalledWith({
       typeId: 1,
+      groupId: 4,
       title: 'Верёвка',
       weightGrams: null,
       note: null,
@@ -342,6 +406,7 @@ describe('UserGear', () => {
 
     expect(mocked.createGearItem).toHaveBeenCalledWith({
       typeId: 3,
+      groupId: 4,
       title: 'Горелка',
       weightGrams: null,
       note: null,
@@ -362,6 +427,7 @@ describe('UserGear', () => {
 
     expect(mocked.createGearItem).toHaveBeenCalledWith({
       typeId: 2,
+      groupId: 4,
       title: 'Баллон',
       weightGrams: null,
       note: null,
@@ -443,8 +509,96 @@ describe('UserGear', () => {
     const wrapper = await mountSection()
 
     expect(wrapper.find('[data-test="item-attributes-summary"]').text()).toBe(
-      'Вместимость: 3 мест',
+      'Палатка · Вместимость: 3 мест',
     )
+  })
+
+  it('полка по умолчанию в форме — «Прочее»', async () => {
+    const wrapper = await mountSection([])
+
+    expect(
+      (wrapper.find('[data-test="gear-new-group"]').element as HTMLSelectElement).value,
+    ).toBe('4')
+
+    await wrapper.find('[data-test="gear-title"]').setValue('Фонарик')
+    await wrapper.find('[data-test="new-seats"]').setValue('1')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocked.createGearItem).toHaveBeenCalledWith(
+      expect.objectContaining({ groupId: 4, title: 'Фонарик' }),
+    )
+  })
+
+  it('выбранная полка уходит в тело запроса', async () => {
+    const wrapper = await mountSection([])
+
+    await wrapper.find('[data-test="gear-new-group"]').setValue(2)
+    await wrapper.find('[data-test="gear-title"]').setValue('Топор')
+    await wrapper.find('[data-test="new-seats"]').setValue('1')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocked.createGearItem).toHaveBeenCalledWith(
+      expect.objectContaining({ groupId: 2, title: 'Топор' }),
+    )
+  })
+
+  it('смена полки в правке уходит вместе с характеристиками', async () => {
+    const wrapper = await mountSection()
+
+    await wrapper.find('[data-test="item-attributes"]').trigger('click')
+    await wrapper.find('[data-test="item-group"]').setValue(2)
+    await wrapper.find('[data-test="item-attributes-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocked.updateGearItem).toHaveBeenCalledWith('gear-1', {
+      groupId: 2,
+      attributes: { seats: 3, model: null },
+    })
+  })
+
+  it('стрелки меняют личный порядок внутри полки', async () => {
+    mocked.listGear.mockResolvedValue(
+      makeList([
+        makeItem({ id: 'g1', title: 'Первая', sortOrder: 10 }),
+        makeItem({ id: 'g2', title: 'Вторая', sortOrder: 20 }),
+      ]),
+    )
+    mocked.fetchGearGroups.mockResolvedValue(GROUPS)
+    mockedVehicles.fetchVehicles.mockResolvedValue([])
+    mockedTypes.fetchGearTypes.mockResolvedValue(TYPES)
+    mocked.moveGearItem.mockResolvedValue(
+      makeList([
+        makeItem({ id: 'g2', title: 'Вторая', sortOrder: 10 }),
+        makeItem({ id: 'g1', title: 'Первая', sortOrder: 20 }),
+      ]),
+    )
+
+    const wrapper = mount(UserGear)
+    await flushPromises()
+
+    // В начале полки «выше» некуда: стрелка выключена.
+    const ups = wrapper.findAll('[data-test="item-move-up"]')
+    expect((ups[0]?.element as HTMLButtonElement).disabled).toBe(true)
+
+    await wrapper.findAll('[data-test="item-move-down"]')[0]?.trigger('click')
+    await flushPromises()
+
+    expect(mocked.moveGearItem).toHaveBeenCalledWith('g1', 'down')
+    expect(titles(wrapper)).toEqual(['Вторая', 'Первая'])
+  })
+
+  it('в полке из одной вещи обе стрелки выключены', async () => {
+    const wrapper = await mountSection()
+
+    expect(
+      (wrapper.find('[data-test="item-move-up"]').element as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(
+      (wrapper.find('[data-test="item-move-down"]').element as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(mocked.moveGearItem).not.toHaveBeenCalled()
   })
 
   it('характеристики правятся в раскрывающемся блоке и уходят картой', async () => {

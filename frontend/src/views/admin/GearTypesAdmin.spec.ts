@@ -30,6 +30,18 @@ vi.mock('@/api/gearTypes', () => ({
   archiveGearAttributeOption: vi.fn(),
 }))
 
+/**
+ * Группы живут вложенным компонентом (`GearGroupsAdmin`) и ходят в свой
+ * API. Своя спека у них есть — здесь важно лишь, что экран типов
+ * не падает от их присутствия, поэтому список групп пуст.
+ */
+vi.mock('@/api/gearGroups', () => ({
+  fetchAdminGearGroups: vi.fn().mockResolvedValue([]),
+  createGearGroup: vi.fn(),
+  updateGearGroup: vi.fn(),
+  archiveGearGroup: vi.fn(),
+}))
+
 import * as api from '@/api/gearTypes'
 
 const mocked = vi.mocked(api)

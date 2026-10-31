@@ -1,7 +1,7 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
-import { listGear, listTripGear, proposeTripGear } from '@/api/gear'
+import { listGear, listTripGear, proposeTripGear, removeTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
 import { listParticipants } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
@@ -51,11 +51,13 @@ import { weightInGrams } from '@/utils/gearWeight'
  * «Анна 3-х местная 2400 гр.». Веса нет — нет и «гр.»; вместимости нет —
  * нет и числа.
  *
- * **Крестики — по правам на вещь** (29.10.2026): у владельца палатки или
- * тента крестик убирает его из секции, у организатора — только **предлагает**
- * убрать: подпись зачёркивается, пунктирная рамка, а решает владелец.
- * Повторное нажатие организатора отменяет предложение. Удаление пока
- * в памяти: ручки удаления вещи из похода нет.
+ * **Крестики — настоящий `DELETE`** (31.10.2026). Раньше у владельца
+ * крестик убирал палатку из секции, а у организатора только **предлагал**
+ * убрать: подпись зачёркивалась, а убирал владелец. Ручки удаления вещи
+ * из похода не было, и предложение жило в памяти. Теперь ручка есть —
+ * `DELETE /api/trips/:id/gear/:gearId`, — и крестик зовёт её у всех, кому
+ * он виден: у владельца и организатора. Права проверяет сервер: чужую
+ * вещь убирает владелец или тот, кто ведёт снаряжение похода.
  *
  * **Цвет кнопок — ответ на «мне это ещё нужно?»** (29.10.2026): «Добавить
  * свою палатку» цветная, пока смотрящий не распределён, «Добавить тент» —
@@ -106,8 +108,6 @@ interface TentCard {
   /** Вес вещи из каталога: его показываем в заголовке, если он известен. */
   weightGrams: number | null
   members: TentMember[]
-  /** Организатор предложил убрать палатку: заголовок зачёркнут, решает владелец. */
-  removalProposed: boolean
 }
 
 /**
@@ -129,7 +129,6 @@ interface AwningPill {
   weightGrams: number | null
   ownerUserId: string
   ownerName: string
-  removalProposed: boolean
 }
 
 const meId = computed(() => auth.user?.id ?? '')
@@ -320,7 +319,6 @@ function syncTents(items: TripGearItem[]): void {
       members: goingPeople.value.some((person) => person.userId === item.ownerUserId)
         ? [{ userId: item.ownerUserId, displayName: ownerName, status: 'accepted' }]
         : [],
-      removalProposed: false,
     }
   })
 }
@@ -344,7 +342,6 @@ function syncAwnings(items: TripGearItem[]): void {
       weightGrams: item.weightGrams,
       ownerUserId: item.ownerUserId,
       ownerName: nameOf(item.ownerUserId),
-      removalProposed: false,
     }
   })
 }
@@ -423,28 +420,65 @@ function acceptRequest(tent: TentCard, person: TentMember): void {
 
 // ───────────────────────────── крестик палатки ─────────────────────────────
 
+/** Что сейчас убирается: повторное нажатие крестика не шлёт второй запрос. */
+const removingGearId = ref<string | null>(null)
+
 /**
- * Крестик на плашке (29.10.2026): владелец убирает свою палатку из секции,
- * организатор чужую только **предлагает** убрать — заголовок зачёркивается,
- * а убирает владелец. Действие в памяти: ручки удаления вещи из похода нет,
- * она появится вместе с моделью ночёвок.
+ * Ошибка удаления — отдельно от ошибки загрузки.
+ *
+ * Ошибка загрузки заменяет секцию целиком, и это правильно: показывать
+ * нечего. Упавшее удаление, наоборот, не должно прятать палатки — человек
+ * нажал крестик, получил 403 и должен видеть и текст, и то, что осталось.
  */
-function removeTent(tent: TentCard): void {
-  if (isMyTent(tent)) {
-    tents.value = tents.value.filter((card) => card.tripGearId !== tent.tripGearId)
+const removalError = ref<string | null>(null)
 
-    return
+/**
+ * Убрать вещь из снаряжения похода — настоящим `DELETE`.
+ *
+ * Крестик у палатки и у тента делает одно и то же, поэтому общий помощник:
+ * строка `trip_gear` удаляется на сервере, одноразовая вещь уходит вместе
+ * с ней, вещь каталога остаётся у владельца. Права проверяет сервер: чужая
+ * вещь без права на вкладку «Снаряжение» — 403, и его текст показывается
+ * на экране, а не проглатывается.
+ */
+async function removeTripItem(tripGearId: string): Promise<boolean> {
+  if (removingGearId.value !== null) return false
+
+  removingGearId.value = tripGearId
+  removalError.value = null
+
+  try {
+    await removeTripGear(props.trip.id, tripGearId)
+    gear.value = gear.value.filter((row) => row.id !== tripGearId)
+
+    return true
+  } catch (problem) {
+    removalError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось убрать вещь из похода'
+
+    return false
+  } finally {
+    removingGearId.value = null
   }
-
-  tent.removalProposed = !tent.removalProposed
 }
 
-function removeTentHint(tent: TentCard): string {
-  if (isMyTent(tent)) return 'Убрать палатку из секции'
+/**
+ * Крестик на плашке: палатка уходит из снаряжения похода (31.10.2026).
+ *
+ * Раньше действие жило в памяти, а организатор мог только предложить
+ * убрать — ручки удаления не было. Теперь `DELETE` настоящий, и после
+ * перезагрузки палатка не возвращается.
+ */
+async function removeTent(tent: TentCard): Promise<void> {
+  if (!(await removeTripItem(tent.tripGearId))) return
 
-  return tent.removalProposed
-    ? 'Вернуть палатку: предложение убрать отменено'
-    : 'Предложить убрать палатку: решает владелец'
+  tents.value = tents.value.filter((card) => card.tripGearId !== tent.tripGearId)
+}
+
+function removeTentHint(): string {
+  return 'Убрать палатку из похода'
 }
 
 // ───────────────────────────── тент ─────────────────────────────
@@ -503,7 +537,6 @@ async function saveAwning(): Promise<void> {
         weightGrams: item.weightGrams,
         ownerUserId: item.ownerUserId,
         ownerName: auth.user?.displayName ?? nameOf(item.ownerUserId),
-        removalProposed: false,
       },
     ]
     isAwningDialogOpen.value = false
@@ -538,14 +571,12 @@ function canManageAwning(awning: AwningPill): boolean {
   )
 }
 
-function removeAwning(awning: AwningPill): void {
-  if (awning.ownerUserId === meId.value) {
-    awnings.value = awnings.value.filter((row) => row.tripGearId !== awning.tripGearId)
+async function removeAwning(awning: AwningPill): Promise<void> {
+  if (!(await removeTripItem(awning.tripGearId))) return
 
-    return
-  }
-
-  awning.removalProposed = !awning.removalProposed
+  awnings.value = awnings.value.filter(
+    (row) => row.tripGearId !== awning.tripGearId,
+  )
 }
 
 // ───────────────────────────── своя палатка ─────────────────────────────
@@ -613,7 +644,6 @@ async function saveTent(): Promise<void> {
           me === undefined
             ? []
             : [{ userId: me.userId, displayName: me.displayName, status: 'accepted' }],
-        removalProposed: false,
       },
     ]
 
@@ -694,6 +724,14 @@ function onManualCreated(item: TripGearItem): void {
     </p>
 
     <template v-else>
+      <p
+        v-if="removalError"
+        class="text-sm text-red-600"
+        data-test="route-tents-remove-error"
+      >
+        {{ removalError }}
+      </p>
+
       <p v-if="tents.length === 0" class="text-sm text-muted" data-test="route-tents-empty">
         Пока никто не взял палатку — добавьте свою из личного снаряжения.
       </p>
@@ -701,30 +739,26 @@ function onManualCreated(item: TripGearItem): void {
       <article
         v-for="tent in tents"
         :key="tent.tripGearId"
-        class="flex flex-col gap-2 rounded-xl border bg-surface p-3"
-        :class="tent.removalProposed ? 'border-dashed border-emerald-400' : 'border-border'"
+        class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
         data-test="route-tent"
       >
         <header class="flex flex-col gap-0.5">
           <!--
             Заголовок и крестик — одной строкой: крестик убирает палатку
-            из секции. У владельца — сразу, у организатора — предложением
-            (заголовок зачёркивается), как у костровых вещей.
+            из снаряжения похода настоящим DELETE. Виден владельцу
+            и организатору; права окончательно проверяет сервер.
           -->
           <div class="flex items-start justify-between gap-2">
-            <h4
-              class="text-base font-medium"
-              :class="tent.removalProposed ? 'text-muted line-through' : 'text-text'"
-              data-test="route-tent-title"
-            >
+            <h4 class="text-base font-medium text-text" data-test="route-tent-title">
               {{ tentTitle(tent) }}
             </h4>
 
             <button
               v-if="canManage(tent)"
               type="button"
-              class="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-base text-muted transition-colors hover:text-text"
-              :title="removeTentHint(tent)"
+              :disabled="removingGearId !== null"
+              class="shrink-0 cursor-pointer border-0 bg-transparent p-0 text-base text-muted transition-colors hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+              :title="removeTentHint()"
               :data-test="`route-tent-remove-${tent.tripGearId}`"
               @click="removeTent(tent)"
             >
@@ -734,18 +768,6 @@ function onManualCreated(item: TripGearItem): void {
 
           <span class="text-sm text-muted" data-test="route-tent-summary">
             {{ membersText(tent) }}
-          </span>
-
-          <!--
-            Предложение организатора видно словами: зачёркнутый заголовок
-            сам по себе можно принять за «палатка ушла», а решает владелец.
-          -->
-          <span
-            v-if="tent.removalProposed"
-            class="text-xs text-muted"
-            data-test="route-tent-removal"
-          >
-            организатор предлагает убрать
           </span>
 
           <!--
@@ -897,28 +919,18 @@ function onManualCreated(item: TripGearItem): void {
         <span
           v-for="awning in awnings"
           :key="awning.tripGearId"
-          class="flex items-center gap-1 rounded-full border px-2 py-1 text-sm"
-          :class="
-            awning.removalProposed
-              ? 'border-dashed border-emerald-400 bg-transparent text-emerald-800'
-              : 'border-emerald-300 bg-emerald-50 text-emerald-900'
-          "
+          class="flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-1 text-sm text-emerald-900"
           :title="awning.title"
           data-test="route-awning"
         >
-          <span :class="awning.removalProposed ? 'line-through' : ''">
-            {{ awningText(awning) }}
-          </span>
+          <span>{{ awningText(awning) }}</span>
 
           <button
             v-if="canManageAwning(awning)"
             type="button"
-            class="cursor-pointer border-0 bg-transparent p-0 text-emerald-700 transition-colors hover:text-emerald-900"
-            :title="
-              awning.ownerUserId === meId
-                ? 'Убрать тент из секции'
-                : 'Предложить убрать тент: решает владелец'
-            "
+            :disabled="removingGearId !== null"
+            class="cursor-pointer border-0 bg-transparent p-0 text-emerald-700 transition-colors hover:text-emerald-900 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Убрать тент из похода"
             :data-test="`route-awning-remove-${awning.tripGearId}`"
             @click="removeAwning(awning)"
           >
