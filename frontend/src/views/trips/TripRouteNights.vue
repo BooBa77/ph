@@ -20,7 +20,8 @@ import TripRouteTents from '@/views/trips/TripRouteTents.vue'
  * - «Ночь 1 · 29 октября» — заголовок как «День 1 · 23 октября» в «Питании»
  *   (мелкий, дата серым после точки-разделителя): единообразие важнее
  *   собственной типографики; справа в той же строке — поле «Место» (район
- *   ночёвки, текст);
+ *   ночёвки, текст). Место спрашивают все варианты, кроме «В пути» и
+ *   «Идём всю ночь» (30.10.2026): без стоянки района не бывает;
  * - выпадающий список варианта ночёвки: палатка / гостиница / изба / машина /
  *   идём всю ночь / в пути; пустой пункт — **пустой строкой**, без подписи
  *   «Не выбрано»: так незаполненная ночь бросается в глаза (29.10.2026);
@@ -99,6 +100,18 @@ function effectiveKind(kind: NightKind | ''): NightKind {
 
 function needsCooking(kind: NightKind | ''): boolean {
   return COOKING_KINDS.includes(effectiveKind(kind))
+}
+
+/**
+ * Место спрашивают все варианты, кроме дороги и ночного перехода (заказчик
+ * 30.10.2026: «Место ночёвки у всех вариантов, кроме „В пути“ и „Идём всю
+ * ночь“»). Пустое поле считается как ночной переход, поэтому место в нём
+ * тоже не спрашивается: пока варианта нет, района тоже нет.
+ */
+function needsPlace(kind: NightKind | ''): boolean {
+  const actual = effectiveKind(kind)
+
+  return actual !== 'allnight' && actual !== 'transit'
 }
 
 /** Сколько ночей показывать, когда дат похода нет вовсе. */
@@ -240,12 +253,14 @@ const stoveHint = computed(() => {
 })
 
 /**
- * Выбрали гостиницу, ночной переход или дорогу — способ готовки больше не
- * нужен. Без сброса значение осталось бы в памяти и вернулось при возврате
- * к «палатке», хотя человек его не подтверждал.
+ * Выбрали вариант, который больше не спрашивает готовку или место, — чистим
+ * введённое. Без сброса значения остались бы в памяти и вернулись при
+ * возврате к палатке, хотя человек их не подтверждал: способ готовки вернулся
+ * бы к палатке, а район — к ночи, которой он не подходит.
  */
 function onKindChange(row: NightRow) {
   if (!needsCooking(row.kind)) row.cooking = ''
+  if (!needsPlace(row.kind)) row.place = ''
 }
 </script>
 
@@ -279,6 +294,8 @@ function onKindChange(row: NightRow) {
           ночи и спрашивается раньше варианта. Поле узкое и тянется на
           телефоне, поэтому подпись стоит перед ним, а не над ним: вторая
           строка оторвала бы место от «Ночь 1 · 24 октября».
+          Самого поля нет у «В пути» и «Идём всю ночь» (30.10.2026): без
+          стоянки района не бывает, и пустое поле там только мешает.
         -->
         <div class="flex items-center gap-2" data-test="route-night-head">
           <h3 class="shrink-0 text-sm font-medium text-text" data-test="route-night-title">
@@ -286,7 +303,10 @@ function onKindChange(row: NightRow) {
             <span class="text-muted"> · {{ row.label }}</span>
           </h3>
 
-          <label class="flex min-w-0 flex-1 items-center justify-end gap-2 text-sm text-muted">
+          <label
+            v-if="needsPlace(row.kind)"
+            class="flex min-w-0 flex-1 items-center justify-end gap-2 text-sm text-muted"
+          >
             Место
             <input
               v-model="row.place"

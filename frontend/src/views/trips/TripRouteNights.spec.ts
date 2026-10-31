@@ -404,8 +404,13 @@ describe('плашки ночёвок', () => {
 
   it('место ночёвки — поле с подписью в строке заголовка', async () => {
     const wrapper = mount(TripRouteNights, { props: { trip: trip(TWO_NIGHTS) } })
-    const heads = wrapper.findAll('[data-test="route-night-head"]')
+    const kinds = nightKinds(wrapper)
 
+    // Место спрашивают все варианты с ночлегом — берём два разных.
+    await at(kinds, 0).setValue('tent')
+    await at(kinds, 1).setValue('car')
+
+    const heads = wrapper.findAll('[data-test="route-night-head"]')
     expect(heads).toHaveLength(2)
 
     // У каждой ночи своя строка: заголовок и поле рядом, а не друг под другом.
@@ -422,5 +427,36 @@ describe('плашки ночёвок', () => {
     expect((at(places, 0).element as HTMLInputElement).value).toBe('Слюдянка')
     // Место одной ночи не переезжает в другую.
     expect((at(places, 1).element as HTMLInputElement).value).toBe('')
+  })
+
+  it('«в пути» и «идём всю ночь» место не спрашивают, остальные — спрашивают', async () => {
+    const wrapper = mount(TripRouteNights, { props: { trip: trip() } })
+    const kind = wrapper.get('[data-test="route-night-kind"]')
+
+    for (const value of ['allnight', 'transit', '']) {
+      await kind.setValue(value)
+      expect(wrapper.find('[data-test="route-night-place"]').exists()).toBe(false)
+    }
+
+    for (const value of ['tent', 'hut', 'hotel', 'car']) {
+      await kind.setValue(value)
+      expect(wrapper.find('[data-test="route-night-place"]').exists()).toBe(true)
+    }
+  })
+
+  it('место сбрасывается, когда вариант перестал его спрашивать', async () => {
+    const wrapper = mount(TripRouteNights, { props: { trip: trip() } })
+    const kind = wrapper.get('[data-test="route-night-kind"]')
+
+    await kind.setValue('tent')
+    await wrapper.get('[data-test="route-night-place"]').setValue('Слюдянка')
+
+    await kind.setValue('transit')
+    await kind.setValue('tent')
+
+    // Вернулись к палатке — района нет: его никто не подтверждал обратно.
+    expect((wrapper.get('[data-test="route-night-place"]').element as HTMLInputElement).value).toBe(
+      '',
+    )
   })
 })
