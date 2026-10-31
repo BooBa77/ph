@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatWeight, formatWeightTotal } from '@/utils/gearWeight'
+import { formatWeight, formatWeightTotal, parseWeightGrams } from '@/utils/gearWeight'
 
 /**
  * Тесты формата веса.
@@ -29,5 +29,24 @@ describe('gearWeight', () => {
     expect(formatWeightTotal(3900, 0)).toBe('Всего: 3,9 кг')
     expect(formatWeightTotal(3900, 2)).toBe('Всего: 3,9 кг · без веса: 2')
     expect(formatWeightTotal(0, 0)).toBe('Всего: 0 г')
+  })
+
+  /**
+   * Вес из формы: «пусто» и «мусор» — разные ответы. Пустое поле законно
+   * (вес необязателен), а `0`, `-5`, `2,5` и буквы — нет: дробный вес
+   * бэкенд тоже не принимает, `weightGrams` — целые граммы.
+   */
+  it('вес из поля: пусто — null, целое — число', () => {
+    expect(parseWeightGrams('')).toBeNull()
+    expect(parseWeightGrams('   ')).toBeNull()
+    expect(parseWeightGrams('2400')).toBe(2400)
+    expect(parseWeightGrams(900)).toBe(900)
+  })
+
+  it('вес из поля: мусор — undefined, а не ноль', () => {
+    expect(parseWeightGrams('abc')).toBeUndefined()
+    expect(parseWeightGrams('2,5')).toBeUndefined()
+    expect(parseWeightGrams('0')).toBeUndefined()
+    expect(parseWeightGrams('-100')).toBeUndefined()
   })
 })

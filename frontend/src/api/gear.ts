@@ -101,3 +101,38 @@ export async function proposeTripGear(
     body: JSON.stringify({ gearItemId: Number(gearItemId) }),
   })
 }
+
+/**
+ * Тело `POST /api/trips/:id/gear/manual` — вещь, заведённая в походе вручную.
+ *
+ * Второй путь снаряжения (31.10.2026), слова заказчика: «При добавлении
+ * снаряги нужен пункт „Указать вручную“». Любой участник заводит себе
+ * одноразовую вещь («бутылка бензина на розжиг»); организатор может
+ * указать хозяином человека без аккаунта.
+ *
+ * - `title` необязателен: пусто — сервер подпишет вещь именем типа;
+ * - `ownerUserId` не указан — хозяин я; чужому настоящему участнику вещь
+ *   не добавляют (403), виртуальному этого похода — можно;
+ * - `addToCatalog` — «добавить в список для регулярного использования»:
+ *   у настоящего хозяина заводит вещь ещё и в его каталоге, у виртуального
+ *   каталога нет и `true` при нём — 400.
+ */
+export interface AddManualTripGearRequest {
+  typeId: number
+  attributes?: GearAttributePayload
+  title?: string | null
+  weightGrams?: number | null
+  ownerUserId?: string | null
+  addToCatalog?: boolean
+}
+
+/** POST /api/trips/:id/gear/manual — вещь «вручную» → строка похода. */
+export async function addManualTripGear(
+  tripId: string,
+  body: AddManualTripGearRequest,
+): Promise<TripGearItem> {
+  return apiFetch<TripGearItem>(`/trips/${tripId}/gear/manual`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}

@@ -5,7 +5,8 @@ import { listGear, listTripGear, proposeTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
 import { listParticipants } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
-import { GEAR_TYPE_CODES } from '@/types/gear'
+import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
+import { GEAR_TYPE_CODES, TENT_TYPE_CODES } from '@/types/gear'
 import type { GearItem, GearItemAttribute, TripGearItem } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
 import { weightInGrams } from '@/utils/gearWeight'
@@ -64,6 +65,14 @@ import { weightInGrams } from '@/utils/gearWeight'
  * Права: владелец правит свою палатку, организатор — любую. Матрицу ролей
  * фронт не повторяет — здесь она и не нужна, потому что серверного ответа
  * по ночёвкам ещё нет.
+ *
+ * **«Указать вручную» (31.10.2026).** Последний пункт в диалогах палатки
+ * и тента открывает `TripGearManualModal`: вещи в каталоге нет, а в поход
+ * она нужна («кусок целлофана на тент»). Модалка одна на палатки, тент
+ * и «Костровое», поэтому здесь только её вызов и приём результата: вещь
+ * уходит в снаряжение похода, и секция пересобирается из общего списка.
+ * Хозяин выбирается лишь организатором и только когда в походе есть люди
+ * без аккаунта — вещь «для Дяди Вити» заводят именно так.
  */
 const props = defineProps<{ trip: Trip }>()
 
@@ -618,6 +627,56 @@ async function saveTent(): Promise<void> {
     isSaving.value = false
   }
 }
+
+// ───────────────────────────── «указать вручную» ─────────────────────────────
+
+/** Тип, с которым откроется модалка: палатка из одного диалога, тент из другого. */
+const manualTypeCode = ref<string>(GEAR_TYPE_CODES.tent)
+const isManualOpen = ref(false)
+
+/**
+ * Комплект хозяев для вещи, заведённой вручную.
+ *
+ * Список есть только у организатора и только если в походе есть люди без
+ * аккаунта: другому настоящему участнику вещь не добавляют (решение
+ * заказчика 31.10.2026 — каждый добавляет своё сам), а если виртуальных
+ * нет, выбирать не из кого. Первым идёт «я» — вещь себе.
+ */
+const manualOwnerOptions = computed(() => {
+  if (meId.value === '' || props.trip.organizerUserId !== meId.value) return []
+
+  const virtuals = people.value.filter((person) => person.isVirtual)
+  if (virtuals.length === 0) return []
+
+  return [
+    { userId: meId.value, displayName: `${auth.user?.displayName ?? 'Я'} (я)` },
+    ...virtuals.map((person) => ({
+      userId: person.userId,
+      displayName: `${person.displayName} (без аккаунта)`,
+    })),
+  ]
+})
+
+function openManual(typeCode: string): void {
+  manualTypeCode.value = typeCode
+  isDialogOpen.value = false
+  isAwningDialogOpen.value = false
+  isManualOpen.value = true
+}
+
+/**
+ * Завели вещь вручную — кладём её в снаряжение похода и пересобираем секцию.
+ *
+ * Пересборка идёт из общего списка, а не «дорисовкой» одной плашки: модалка
+ * позволяет выбрать и палатку, и тент, и вещь кострового типа — в какую
+ * секцию она попадёт, решает её тип, а не диалог, из которого её открыли.
+ */
+function onManualCreated(item: TripGearItem): void {
+  gear.value = [...gear.value, item]
+  syncTents(gear.value)
+  syncAwnings(gear.value)
+  isManualOpen.value = false
+}
 </script>
 
 <template>
@@ -957,8 +1016,22 @@ async function saveTent(): Promise<void> {
             data-test="route-tent-no-gear"
           >
             Свободной палатки в личном снаряжении нет — заведите её в профиле,
-            на вкладке «Снаряжение».
+            на вкладке «Снаряжение», или укажите вручную.
           </p>
+
+          <!--
+            «Указать вручную» — последний пункт выбора снаряжения: вещи нет
+            в каталоге, а в поход она нужна. Открывает общую модалку с типом,
+            характеристиками, весом и хозяином.
+          -->
+          <button
+            type="button"
+            class="cursor-pointer self-start border-0 bg-transparent p-0 text-sm text-primary underline transition-opacity hover:opacity-80"
+            data-test="route-tent-manual"
+            @click="openManual(GEAR_TYPE_CODES.tent)"
+          >
+            Указать вручную
+          </button>
 
           <!--
             Вместимость не спрашиваем: это характеристика `seats` у вещи,
@@ -1040,8 +1113,17 @@ async function saveTent(): Promise<void> {
             data-test="route-awning-no-gear"
           >
             Тента в личном снаряжении нет — заведите вещь типа «Тент»
-            в профиле, на вкладке «Снаряжение».
+            в профиле, на вкладке «Снаряжение», или укажите вручную.
           </p>
+
+          <button
+            type="button"
+            class="cursor-pointer self-start border-0 bg-transparent p-0 text-sm text-primary underline transition-opacity hover:opacity-80"
+            data-test="route-awning-manual"
+            @click="openManual(GEAR_TYPE_CODES.shelter)"
+          >
+            Указать вручную
+          </button>
 
           <p v-if="awningError" class="text-sm text-red-600" data-test="route-awning-error">
             {{ awningError }}
@@ -1070,6 +1152,20 @@ async function saveTent(): Promise<void> {
           </div>
         </div>
       </div>
+
+      <!--
+        «Указать вручную» — одна модалка на палатки и тенты: тип выбирается
+        из TENT_TYPE_CODES, поэтому вещь сама попадёт в свою секцию.
+      -->
+      <TripGearManualModal
+        v-if="isManualOpen"
+        :trip-id="trip.id"
+        :type-codes="TENT_TYPE_CODES"
+        :default-type-code="manualTypeCode"
+        :owner-options="manualOwnerOptions"
+        @created="onManualCreated"
+        @close="isManualOpen = false"
+      />
     </template>
   </section>
 </template>

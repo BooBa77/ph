@@ -1,4 +1,5 @@
 import { apiFetch } from '@/api/client'
+import type { Gender } from '@/api/types'
 import type {
   ChatKind,
   CreateTripRequest,
@@ -215,6 +216,41 @@ export async function setMyStatus(
 /** DELETE /api/trips/:id/participants/:userId — убрать человека. Только организатор. */
 export async function removeParticipant(tripId: string, userId: string): Promise<void> {
   await apiFetch<void>(`/trips/${tripId}/participants/${userId}`, { method: 'DELETE' })
+}
+
+/**
+ * POST /api/trips/:id/participants/virtual — завести человека без аккаунта
+ * и сразу добавить в поход (31.10.2026).
+ *
+ * Только организатор: «организаторам доступно добавление виртуальных
+ * участников — людей, не пользователей нашего сайта». Статус — сразу
+ * `going`: приглашать некуда, входа у человека нет. Пол необязателен,
+ * по умолчанию мужской; он нужен распределению веса.
+ */
+export async function createVirtualParticipant(
+  tripId: string,
+  body: { displayName: string; gender?: Gender },
+): Promise<TripParticipant> {
+  return apiFetch<TripParticipant>(`/trips/${tripId}/participants/virtual`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+/**
+ * POST /api/trips/:id/participants/virtual/:userId — добавить в поход уже
+ * заведённого своего человека без аккаунта.
+ *
+ * Чужой виртуальный не существует (404), уже в составе — 409. Строка
+ * `users` одна на человека, поэтому переименование видно во всех походах.
+ */
+export async function addVirtualParticipant(
+  tripId: string,
+  userId: string,
+): Promise<TripParticipant> {
+  return apiFetch<TripParticipant>(`/trips/${tripId}/participants/virtual/${userId}`, {
+    method: 'POST',
+  })
 }
 
 // ─────────────────────── приглашения и заявки ───────────────────────

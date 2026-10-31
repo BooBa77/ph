@@ -5,6 +5,7 @@ import { listGear, listTripGear, proposeTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
 import { listParticipants } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
+import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
 import { CAMPFIRE_TYPE_CODES, GEAR_TYPE_CODES, STOVE_TYPE_CODES } from '@/types/gear'
 import type { GearItem, TripGearItem } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
@@ -50,6 +51,11 @@ import { weightInGrams } from '@/utils/gearWeight'
  * зачёркнутой с пунктирной рамкой, повторное нажатие возвращает. Убирает
  * в памяти компонента: ручки удаления вещи из похода нет, она появится вместе
  * с моделью ночёвок.
+ *
+ * **«Указать вручную» (31.10.2026).** Последний пункт в диалоге кнопки:
+ * топора в каталоге нет, а «бутылку бензина на розжиг» человек покупает
+ * по дороге. Открывает общую `TripGearManualModal` с типом той кнопки,
+ * которую нажали, — поэтому вещь попадает именно в эту секцию.
  */
 const props = defineProps<{
   trip: Trip
@@ -348,6 +354,52 @@ async function saveItem(): Promise<void> {
     isSaving.value = false
   }
 }
+
+// ───────────────────────────── «указать вручную» ─────────────────────────────
+
+const isManualOpen = ref(false)
+
+/** Типы для модалки — тот, который задала нажатая кнопка: топор, горелка и т.д. */
+const manualTypeCodes = computed<readonly string[]>(() =>
+  activeType.value === null ? [] : [activeType.value.code],
+)
+
+const manualDefaultTypeCode = computed(() => activeType.value?.code ?? '')
+
+/**
+ * Хозяин выбирается организатором и только если в походе есть люди без
+ * аккаунта: другому настоящему участнику вещь не добавляют.
+ */
+const manualOwnerOptions = computed(() => {
+  if (meId.value === '' || props.trip.organizerUserId !== meId.value) return []
+
+  const virtuals = people.value.filter((person) => person.isVirtual)
+  if (virtuals.length === 0) return []
+
+  return [
+    { userId: meId.value, displayName: `${auth.user?.displayName ?? 'Я'} (я)` },
+    ...virtuals.map((person) => ({
+      userId: person.userId,
+      displayName: `${person.displayName} (без аккаунта)`,
+    })),
+  ]
+})
+
+/**
+ * «Указать вручную» из диалога кнопки: тип берём у кнопки, а выбор вещи
+ * из каталога закрываем — человек уже сказал, что подходящей вещи нет.
+ */
+function openManual(): void {
+  if (activeType.value === null) return
+
+  isDialogOpen.value = false
+  isManualOpen.value = true
+}
+
+function onManualCreated(item: TripGearItem): void {
+  items.value = [...items.value, item]
+  isManualOpen.value = false
+}
 </script>
 
 <template>
@@ -450,8 +502,22 @@ async function saveItem(): Promise<void> {
           data-test="route-cooking-no-gear"
         >
           Подходящей вещи в личном снаряжении нет — заведите её в профиле,
-          на вкладке «Снаряжение».
+          на вкладке «Снаряжение», или укажите вручную.
         </p>
+
+        <!--
+          Одноразовая вещь: её нет в каталоге, и в профиль она не поедет.
+          Тип уже задан кнопкой — модалка спрашивает характеристики, вес
+          и хозяина.
+        -->
+        <button
+          type="button"
+          class="cursor-pointer self-start border-0 bg-transparent p-0 text-sm text-primary underline transition-opacity hover:opacity-80"
+          data-test="route-cooking-manual"
+          @click="openManual"
+        >
+          Указать вручную
+        </button>
 
         <p v-if="dialogError" class="text-sm text-red-600" data-test="route-cooking-error-dialog">
           {{ dialogError }}
@@ -480,5 +546,19 @@ async function saveItem(): Promise<void> {
         </div>
       </div>
     </div>
+
+    <!--
+      Одна модалка «вручную» на все костровые типы: кнопка задала тип,
+      дальше спрашиваются характеристики, вес и хозяин.
+    -->
+    <TripGearManualModal
+      v-if="isManualOpen"
+      :trip-id="trip.id"
+      :type-codes="manualTypeCodes"
+      :default-type-code="manualDefaultTypeCode"
+      :owner-options="manualOwnerOptions"
+      @created="onManualCreated"
+      @close="isManualOpen = false"
+    />
   </section>
 </template>

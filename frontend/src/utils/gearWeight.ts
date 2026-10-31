@@ -41,3 +41,24 @@ export function formatWeightTotal(totalGrams: number, itemsWithoutWeight: number
 
   return itemsWithoutWeight > 0 ? `${base} · без веса: ${itemsWithoutWeight}` : base
 }
+
+/**
+ * Вес из поля формы: пусто — `null`, мусор — `undefined`.
+ *
+ * Три состояния, а не два, потому что «не указал» и «указал неправильно» —
+ * разные вещи: первое законно (вес необязателен), второе надо объяснить
+ * словами, а не молча отправить `NaN`. `v-model` на `<input type="number">`
+ * отдаёт число, а через `:value` — строку, поэтому на входе принимаем оба.
+ *
+ * Живёт здесь, а не в форме, потому что вес спрашивают два экрана:
+ * личный каталог и «Указать вручную» в походе, — и правило у них одно.
+ */
+export function parseWeightGrams(value: string | number): number | null | undefined {
+  const text = String(value).trim()
+  if (text === '') return null
+
+  const grams = Number(text)
+  if (!Number.isInteger(grams) || grams <= 0) return undefined
+
+  return grams
+}

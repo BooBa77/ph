@@ -139,6 +139,16 @@ export interface TripGearItem {
   attributes: GearItemAttribute[]
   weightGrams: number | null
   note: string | null
+  /**
+   * Вещь заведена **в походе вручную** и каталогу не принадлежит
+   * (31.10.2026): «бутылка бензина на розжиг», «кусок целлофана на тент».
+   *
+   * `GET /api/gear` такие вещи не отдаёт, поэтому строки в профиле нет
+   * и правка по `gearItemId` ответит 404. На экранах похода — «Палатках»
+   * и «Костровом» — это обычная вещь, разницы нет; флаг нужен лишь там,
+   * где человеку предлагают «править в каталоге».
+   */
+  isTripOnly: boolean
   status: TripGearStatus
   ownerUserId: string
   /** Кто несёт. `null` — ещё не распределена. */

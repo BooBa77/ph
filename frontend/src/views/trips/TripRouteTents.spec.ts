@@ -35,6 +35,8 @@ const mocks = vi.hoisted(() => ({
   listTripGear: vi.fn(),
   listGear: vi.fn(),
   proposeTripGear: vi.fn(),
+  addManualTripGear: vi.fn(),
+  fetchGearTypes: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({ listParticipants: mocks.listParticipants }))
@@ -43,7 +45,10 @@ vi.mock('@/api/gear', () => ({
   listGear: mocks.listGear,
   listTripGear: mocks.listTripGear,
   proposeTripGear: mocks.proposeTripGear,
+  addManualTripGear: mocks.addManualTripGear,
 }))
+
+vi.mock('@/api/gearTypes', () => ({ fetchGearTypes: mocks.fetchGearTypes }))
 
 const ME = 'demo-me'
 const ANNA = 'demo-anna'
@@ -110,6 +115,7 @@ function participant(
     status,
     roles: [],
     isOrganizer: false,
+    isVirtual: false,
     createdAt: '2026-10-14T10:00:00.000Z',
     updatedAt: '2026-10-14T10:00:00.000Z',
   }
@@ -148,6 +154,7 @@ function tripGearItem(
     attributes: [],
     weightGrams: null,
     note: null,
+    isTripOnly: false,
     status: 'approved',
     assignedUserId: null,
     createdAt: '2026-10-29T10:00:00.000Z',
@@ -219,6 +226,29 @@ describe('секция «Палатки»', () => {
       itemsWithoutWeight: 0,
     })
     mocks.listGear.mockResolvedValue(gearList([]))
+    // Типы контекста «Палаток»: палатка (с обязательной вместимостью) и тент.
+    mocks.fetchGearTypes.mockResolvedValue([
+      {
+        id: 1,
+        code: 'tent',
+        name: 'Палатка',
+        sortOrder: 1,
+        attributes: [
+          {
+            id: 11,
+            code: 'seats',
+            name: 'Вместимость',
+            valueKind: 'number',
+            unit: 'мест',
+            allowCustomValue: false,
+            isRequired: true,
+            sortOrder: 0,
+            options: [],
+          },
+        ],
+      },
+      { id: 2, code: 'shelter', name: 'Тент', sortOrder: 2, attributes: [] },
+    ])
   })
 
   it('палатка — только тип «палатка» и только «берём»', async () => {
@@ -732,5 +762,84 @@ describe('секция «Палатки»', () => {
 
     expect(wrapper.get('[data-test="route-tents-error"]').text()).toBe('Снаряжение недоступно')
     expect(wrapper.find('[data-test="route-tent-add"]').exists()).toBe(false)
+  })
+
+  /**
+   * «Указать вручную» (31.10.2026): палатки в каталоге нет, а в поход
+   * она нужна. Модалка спрашивает характеристики, вещь уходит в снаряжение
+   * похода, и плашка собирается из общего списка — как у любой другой вещи.
+   */
+  it('«Указать вручную» добавляет палатку в распределение', async () => {
+    mocks.addManualTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g-manual',
+        gearItemId: 'gi-manual',
+        typeCode: 'tent',
+        typeName: 'Палатка',
+        title: 'Палатка',
+        ownerUserId: ME,
+        weightGrams: 2400,
+        isTripOnly: true,
+        attributes: [attribute('seats', 'Вместимость', 2)],
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-tent-add"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-tent-manual"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="manual-seats"]').setValue('2')
+    await wrapper.get('[data-test="manual-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addManualTripGear).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({ typeId: 1, addToCatalog: false }),
+    )
+    expect(
+      wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text()),
+    ).toContain('Олег 2-х местная 2400 гр.')
+  })
+
+  /**
+   * Тент — второй тип контекста «Палаток»: кнопка в диалоге тента открывает
+   * ту же модалку с типом `shelter`, и пилюля собирается из ответа сервера.
+   */
+  it('«Указать вручную» из диалога тента добавляет тент пилюлей', async () => {
+    mocks.addManualTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g-awning',
+        gearItemId: 'gi-awning',
+        typeCode: 'shelter',
+        typeName: 'Тент',
+        title: 'Тент',
+        ownerUserId: ME,
+        isTripOnly: true,
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-tent-awning"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-awning-manual"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="manual-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addManualTripGear).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({ typeId: 2 }),
+    )
+    // В тексте пилюли есть и крестик — проверяем подпись, а не весь узел.
+    const awningTexts = wrapper
+      .findAll('[data-test="route-awning"]')
+      .map((node) => node.text())
+
+    expect(awningTexts.some((text) => text.startsWith('Тент (Олег)'))).toBe(true)
   })
 })

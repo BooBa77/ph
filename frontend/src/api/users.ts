@@ -1,7 +1,7 @@
 // frontend/src/api/users.ts
 
 import { apiFetch } from '@/api/client'
-import type { UpdateUserRequest, User } from '@/api/types'
+import type { Gender, UpdateUserRequest, User } from '@/api/types'
 
 /**
  * GET /api/users/me
@@ -123,4 +123,59 @@ export async function uploadAvatar(file: Blob): Promise<User> {
  */
 export async function deleteAvatar(): Promise<User> {
   return apiFetch<User>('/users/me/avatar', { method: 'DELETE' })
+}
+
+// ─────────────────────── люди без аккаунта (31.10.2026) ───────────────────────
+
+/**
+ * Человек без аккаунта, которого завёл организатор.
+ *
+ * Живёт в походе как обычный участник (состав, палатки, трансфер, питание),
+ * но войти на сайт не может: логина у него нет. Пол нужен распределению
+ * веса рюкзака, профиля и аватарки у такого человека не бывает.
+ */
+export interface VirtualUser {
+  id: string
+  displayName: string
+  gender: Gender
+  createdAt: string
+}
+
+/**
+ * GET /api/users/me/virtual — мои люди без аккаунта.
+ *
+ * Личная записная книжка организатора: одна строка на человека, а не на
+ * поход. По ней человек добавляется в следующий поход одним нажатием.
+ */
+export async function listMyVirtual(): Promise<VirtualUser[]> {
+  const response = await apiFetch<{ users: VirtualUser[] }>('/users/me/virtual')
+
+  return response.users
+}
+
+/**
+ * PATCH /api/users/me/virtual/:userId — переименовать или поменять пол.
+ *
+ * Только своё: чужой виртуальный не существует (бэкенд отвечает 404).
+ * Переименование видно везде сразу — строка `users` одна на человека.
+ */
+export async function updateVirtual(
+  userId: string,
+  patch: { displayName?: string; gender?: Gender },
+): Promise<VirtualUser> {
+  return apiFetch<VirtualUser>(`/users/me/virtual/${userId}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+}
+
+/**
+ * DELETE /api/users/me/virtual/:userId — убрать из личного списка.
+ *
+ * Из походов человек при этом не исчезает: если он ещё где-то участник,
+ * бэкенд отвечает 409 и говорит словами, что сначала надо убрать его
+ * из состава.
+ */
+export async function removeVirtual(userId: string): Promise<void> {
+  await apiFetch<void>(`/users/me/virtual/${userId}`, { method: 'DELETE' })
 }

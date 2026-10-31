@@ -4,6 +4,7 @@ import type { VueWrapper } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { User } from '@/api/types'
+import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 import type { Trip, TripParticipant, TripRequest } from '@/types/trips'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
@@ -30,6 +31,11 @@ const mocks = vi.hoisted(() => ({
   setParticipantRoles: vi.fn(),
   listTripMessages: vi.fn(),
   sendTripMessage: vi.fn(),
+  listMyVirtual: vi.fn(),
+  createVirtualParticipant: vi.fn(),
+  addVirtualParticipant: vi.fn(),
+  updateVirtual: vi.fn(),
+  removeVirtual: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
@@ -44,9 +50,16 @@ vi.mock('@/api/trips', () => ({
   setParticipantRoles: mocks.setParticipantRoles,
   listTripMessages: mocks.listTripMessages,
   sendTripMessage: mocks.sendTripMessage,
+  createVirtualParticipant: mocks.createVirtualParticipant,
+  addVirtualParticipant: mocks.addVirtualParticipant,
 }))
 
-vi.mock('@/api/users', () => ({ searchUsers: mocks.searchUsers }))
+vi.mock('@/api/users', () => ({
+  searchUsers: mocks.searchUsers,
+  listMyVirtual: mocks.listMyVirtual,
+  updateVirtual: mocks.updateVirtual,
+  removeVirtual: mocks.removeVirtual,
+}))
 
 const ORGANIZER = 'u-org'
 const ME = 'u-me'
@@ -86,6 +99,7 @@ function person(overrides: Partial<TripParticipant> = {}): TripParticipant {
     status: 'going',
     roles: [],
     isOrganizer: false,
+    isVirtual: false,
     createdAt: '2026-10-14T10:00:00.000Z',
     updatedAt: '2026-10-14T10:00:00.000Z',
     ...overrides,
@@ -149,6 +163,20 @@ describe('TripParticipants', () => {
     mocks.fetchRoles.mockResolvedValue([{ code: 'organizer', name: 'Организатор' }, { code: 'quartermaster', name: 'Завхоз' }])
     mocks.setParticipantRoles.mockResolvedValue(person())
     mocks.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
+    mocks.listMyVirtual.mockResolvedValue([])
+    mocks.createVirtualParticipant.mockResolvedValue(
+      person({ userId: 'u-virtual', displayName: 'Дядя Витя', isVirtual: true }),
+    )
+    mocks.addVirtualParticipant.mockResolvedValue(
+      person({ userId: 'u-virtual', displayName: 'Дядя Витя', isVirtual: true }),
+    )
+    mocks.updateVirtual.mockResolvedValue({
+      id: 'u-virtual',
+      displayName: 'Дядя Витя',
+      gender: 'm',
+      createdAt: '2026-10-14T10:00:00.000Z',
+    })
+    mocks.removeVirtual.mockResolvedValue(undefined)
   })
 
   it('показывает состав с ролями и статусами', async () => {
@@ -358,5 +386,149 @@ describe('TripParticipants', () => {
     expect(mocks.setParticipantRoles).toHaveBeenCalledWith('7', ME, ['quartermaster'])
     expect(wrapper.find('[data-test="roles-dialog"]').exists()).toBe(false)
     expect(wrapper.emitted('changed')).toBeTruthy()
+  })
+
+  // ─── люди без аккаунта (31.10.2026) ───
+
+  /**
+   * Организатор заводит человека, которого нет на сайте. Он сразу в составе,
+   * статус «идёт» — приглашать его некуда, входа у него нет. Заведение идёт
+   * ручкой похода, а не профиля: человек заводится «в поход».
+   */
+  it('организатор заводит человека без аккаунта — он сразу в составе', async () => {
+    signIn(ORGANIZER)
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true })])
+
+    expect(wrapper.find('[data-test="virtual-panel"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="virtual-name"]').setValue('Дядя Витя')
+    await wrapper.find('[data-test="virtual-gender"]').setValue('f')
+    await wrapper.find('[data-test="virtual-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.createVirtualParticipant).toHaveBeenCalledWith('7', {
+      displayName: 'Дядя Витя',
+      gender: 'f',
+    })
+  })
+
+  it('человек без аккаунта помечен в составе, и роли ему не предлагаются', async () => {
+    signIn(ORGANIZER)
+    const wrapper = await open(
+      [
+        person({ userId: ORGANIZER, isOrganizer: true }),
+        person({ userId: 'u-virtual', displayName: 'Дядя Витя', isVirtual: true }),
+      ],
+      [],
+      TRIP,
+      true,
+    )
+
+    expect(wrapper.find('[data-test="participant-virtual"]').text()).toBe('без аккаунта')
+    // Решение заказчика: роль виртуальному назначается только «для информации»,
+    // а все действия совершает организатор — фронт её не предлагает.
+    expect(wrapper.find('[data-test="roles-u-virtual"]').exists()).toBe(false)
+  })
+
+  it('своего виртуального добавляет в поход одним нажатием', async () => {
+    signIn(ORGANIZER)
+    // Человек уже заведён в прошлом походе — в этом его ещё нет.
+    mocks.listMyVirtual.mockResolvedValue([
+      {
+        id: 'u-virtual',
+        displayName: 'Дядя Витя',
+        gender: 'm',
+        createdAt: '2026-10-01T10:00:00.000Z',
+      },
+    ])
+
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true })])
+
+    await wrapper.find('[data-test="virtual-add"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addVirtualParticipant).toHaveBeenCalledWith('7', 'u-virtual')
+  })
+
+  it('виртуальный, который уже в походе, не предлагается второй раз', async () => {
+    signIn(ORGANIZER)
+    mocks.listMyVirtual.mockResolvedValue([
+      {
+        id: 'u-virtual',
+        displayName: 'Дядя Витя',
+        gender: 'm',
+        createdAt: '2026-10-01T10:00:00.000Z',
+      },
+    ])
+
+    const wrapper = await open([
+      person({ userId: ORGANIZER, isOrganizer: true }),
+      person({ userId: 'u-virtual', displayName: 'Дядя Витя', isVirtual: true }),
+    ])
+
+    expect(wrapper.find('[data-test="virtual-add"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="virtual-in-trip"]').text()).toBe('уже в походе')
+  })
+
+  it('правка виртуального: переименование уходит в свой список', async () => {
+    signIn(ORGANIZER)
+    mocks.listMyVirtual.mockResolvedValue([
+      {
+        id: 'u-virtual',
+        displayName: 'Дядя Витя',
+        gender: 'm',
+        createdAt: '2026-10-01T10:00:00.000Z',
+      },
+    ])
+
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true })])
+
+    await wrapper.find('[data-test="virtual-edit"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-test="virtual-edit-name"]').setValue('Дядя Пётр')
+    await wrapper.find('[data-test="virtual-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateVirtual).toHaveBeenCalledWith('u-virtual', {
+      displayName: 'Дядя Пётр',
+      gender: 'm',
+    })
+    expect(wrapper.find('[data-test="virtual-edit-dialog"]').exists()).toBe(false)
+  })
+
+  it('удаление из списка объясняет, почему нельзя: он ещё участник', async () => {
+    signIn(ORGANIZER)
+    mocks.listMyVirtual.mockResolvedValue([
+      {
+        id: 'u-virtual',
+        displayName: 'Дядя Витя',
+        gender: 'm',
+        createdAt: '2026-10-01T10:00:00.000Z',
+      },
+    ])
+    mocks.removeVirtual.mockRejectedValue(
+      new ApiError(409, 'Сначала уберите его из состава похода'),
+    )
+
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true })])
+
+    await wrapper.find('[data-test="virtual-edit"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="virtual-delete"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="virtual-edit-dialog"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="virtual-edit-error"]').text()).toContain(
+      'Сначала уберите его из состава похода',
+    )
+  })
+
+  it('не организатор блока «Люди без аккаунта» не видит', async () => {
+    signIn(ME)
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true })])
+
+    expect(wrapper.find('[data-test="virtual-panel"]').exists()).toBe(false)
+    expect(mocks.listMyVirtual).not.toHaveBeenCalled()
   })
 })

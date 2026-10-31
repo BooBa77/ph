@@ -94,6 +94,7 @@ describe('GuestTripView', () => {
               { code: 'quartermaster', name: 'Завхоз' },
             ],
             isOrganizer: true,
+            isVirtual: false,
             createdAt: '2026-10-14T10:00:00.000Z',
             updatedAt: '2026-10-14T10:00:00.000Z',
           },

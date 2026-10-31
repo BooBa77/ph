@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => ({
   listTripGear: vi.fn(),
   listGear: vi.fn(),
   proposeTripGear: vi.fn(),
+  addManualTripGear: vi.fn(),
+  fetchGearTypes: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({ listParticipants: mocks.listParticipants }))
@@ -40,7 +42,10 @@ vi.mock('@/api/gear', () => ({
   listGear: mocks.listGear,
   listTripGear: mocks.listTripGear,
   proposeTripGear: mocks.proposeTripGear,
+  addManualTripGear: mocks.addManualTripGear,
 }))
+
+vi.mock('@/api/gearTypes', () => ({ fetchGearTypes: mocks.fetchGearTypes }))
 
 const ME = 'demo-me'
 const ANNA = 'demo-anna'
@@ -96,6 +101,7 @@ function participant(userId: string, displayName: string): TripParticipant {
     status: 'going',
     roles: [],
     isOrganizer: false,
+    isVirtual: false,
     createdAt: '2026-10-14T10:00:00.000Z',
     updatedAt: '2026-10-14T10:00:00.000Z',
   }
@@ -111,6 +117,7 @@ function tripGearItem(
     attributes: [],
     weightGrams: null,
     note: null,
+    isTripOnly: false,
     status: 'approved',
     assignedUserId: null,
     createdAt: '2026-10-29T10:00:00.000Z',
@@ -182,6 +189,9 @@ describe('секция «Костровое»', () => {
     mocks.listParticipants.mockResolvedValue([participant(ME, 'Олег'), participant(ANNA, 'Анна')])
     mocks.listTripGear.mockResolvedValue(tripGearList([]))
     mocks.listGear.mockResolvedValue(gearList([]))
+    mocks.fetchGearTypes.mockResolvedValue([
+      { id: 3, code: 'axe', name: 'Топор', sortOrder: 3, attributes: [] },
+    ])
   })
 
   it('оба плана — шесть кнопок в порядке заказчика: топор, пила, розжиг, таган, горелка, баллон', async () => {
@@ -585,5 +595,47 @@ describe('секция «Костровое»', () => {
 
     expect(wrapper.get('[data-test="route-cooking-error"]').text()).toBe('Снаряжение недоступно')
     expect(wrapper.find('[data-test="route-cooking-buttons"]').exists()).toBe(false)
+  })
+
+  /**
+   * «Указать вручную» (31.10.2026): топора в каталоге нет, а в поход он нужен.
+   * Кнопка задаёт тип, модалка спрашивает остальное, вещь попадает пилюлей
+   * в эту же секцию — и в каталог не уезжает, пока не попросили галочкой.
+   */
+  it('«Указать вручную» у кнопки добавляет одноразовую вещь в секцию', async () => {
+    mocks.addManualTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g-manual',
+        gearItemId: 'gi-manual',
+        typeCode: 'axe',
+        typeName: 'Топор',
+        title: 'Топор',
+        ownerUserId: ME,
+        isTripOnly: true,
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-cooking-add-axe"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-cooking-manual"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="manual-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addManualTripGear).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({
+        typeId: 3,
+        title: null,
+        ownerUserId: null,
+        addToCatalog: false,
+      }),
+    )
+    expect(pillTexts(wrapper)).toEqual(['Топор (Олег)'])
   })
 })

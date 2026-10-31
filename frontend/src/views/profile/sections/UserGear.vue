@@ -30,7 +30,7 @@ import {
   gearAttributesSummary,
   type GearAttributeDrafts,
 } from '@/utils/gearAttributes'
-import { formatWeight, formatWeightTotal } from '@/utils/gearWeight'
+import { formatWeight, formatWeightTotal, parseWeightGrams } from '@/utils/gearWeight'
 
 /**
  * «Снаряжение» — личный каталог предметов с весом.
@@ -219,19 +219,9 @@ async function loadTypes() {
 /**
  * Вес из поля: пусто — «не указан», мусор — `undefined` (и ошибка).
  *
- * Принимает и строку, и число: `v-model` на `<input type="number">`
- * во Vue 3 отдаёт **число**, а `<input>` через `:value` — строку. Проверка
- * одна, поэтому приводим к строке внутри, а не в двух местах снаружи.
+ * Само правило — в `utils/gearWeight.ts`: тот же вес спрашивает «Указать
+ * вручную» в походе, и две копии разбора разошлись бы на первой правке.
  */
-function parseWeight(value: string | number): number | null | undefined {
-  const text = String(value).trim()
-  if (text === '') return null
-
-  const grams = Number(text)
-  if (!Number.isInteger(grams) || grams <= 0) return undefined
-
-  return grams
-}
 
 async function add() {
   const title = newTitle.value.trim()
@@ -243,7 +233,7 @@ async function add() {
   }
   if (title.length === 0 || isAdding.value) return
 
-  const weightGrams = parseWeight(newWeight.value)
+  const weightGrams = parseWeightGrams(newWeight.value)
   if (weightGrams === undefined) {
     error.value = 'Вес — целое число граммов, больше нуля. Или оставьте поле пустым.'
     return
@@ -358,7 +348,7 @@ async function saveTitle(item: GearItem, event: Event) {
 
 async function saveWeight(item: GearItem, event: Event) {
   const input = event.target as HTMLInputElement
-  const weightGrams = parseWeight(input.value)
+  const weightGrams = parseWeightGrams(input.value)
 
   if (weightGrams === undefined) {
     input.value = item.weightGrams === null ? '' : String(item.weightGrams)

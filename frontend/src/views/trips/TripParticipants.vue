@@ -4,7 +4,9 @@ import { computed, onUnmounted, ref, watch } from 'vue'
 import { ApiError } from '@/api/errors'
 import {
   acceptRequest,
+  addVirtualParticipant,
   createRequest,
+  createVirtualParticipant,
   deleteRequest,
   fetchRoles,
   listParticipants,
@@ -13,7 +15,14 @@ import {
   setMyStatus,
   setParticipantRoles,
 } from '@/api/trips'
-import { searchUsers, type UserSearchResult } from '@/api/users'
+import {
+  listMyVirtual,
+  removeVirtual,
+  searchUsers,
+  updateVirtual,
+  type UserSearchResult,
+  type VirtualUser,
+} from '@/api/users'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useAuthStore } from '@/stores/auth'
 import TripChat from '@/views/trips/TripChat.vue'
@@ -26,6 +35,7 @@ import {
   type TripRequest,
   type TripRole,
 } from '@/types/trips'
+import type { Gender } from '@/api/types'
 
 /**
  * Вкладка «Участники»: состав, роли и тикеты — приглашения и заявки.
@@ -43,6 +53,18 @@ import {
  * это решает бэкенд, сюда приходит `canManageRoles`). Сами участники
  * ролями не управляют даже своими: роль — обязательство перед походом,
  * а не нашивка (решение заказчика 21.10.2026).
+ *
+ * **Люди без аккаунта (31.10.2026).** Организатор заводит человека, которого
+ * нет на сайте («Дядя Витя»): строка `users` без входа, статус сразу «идёт».
+ * Он живёт в походе как обычный участник — состав, палатки, трансфер,
+ * питание, — но помечен «без аккаунта», и роли ему фронт не предлагает:
+ * «по факту это только для информации, все действия совершает организатор».
+ *
+ * Заведённые им люди остаются в его личном списке (`GET /api/users/me/virtual`)
+ * и добавляются в следующий поход одним нажатием: строка одна на человека,
+ * поэтому переименование видно во всех походах сразу. Правка и удаление —
+ * здесь же, в блоке «Люди без аккаунта»; удалить из списка можно, только
+ * когда человек уже не участник (иначе бэкенд отвечает 409).
  *
  * Все действия перезагружают список целиком: состав и тикеты связаны
  * (приглашение сразу добавляет человека в состав), и собирать новое
@@ -175,6 +197,32 @@ async function load() {
   } finally {
     isLoading.value = false
   }
+
+  // Список людей без аккаунта — только организатору и отдельным запросом:
+  // без него вкладка работает как раньше, а его отсутствие не повод
+  // не показывать состав.
+  await loadVirtuals()
+}
+
+/**
+ * Мои люди без аккаунта — для быстрого добавления в этот поход.
+ *
+ * Ошибку здесь не показываем: это необязательная часть вкладки, и
+ * «не удалось загрузить список» на весь экран из-за неё было бы громче,
+ * чем нужно. Сказать словами важнее там, где действие не получилось.
+ */
+async function loadVirtuals() {
+  if (!isOrganizer.value) {
+    myVirtuals.value = []
+
+    return
+  }
+
+  try {
+    myVirtuals.value = await listMyVirtual()
+  } catch {
+    myVirtuals.value = []
+  }
 }
 
 watch(() => props.trip.id, load, { immediate: true })
@@ -207,6 +255,126 @@ const closeTicket = (userId: string) => act(userId, () => deleteRequest(props.tr
 const apply = () => act(auth.user?.id ?? null, () => createRequest(props.trip.id, { direction: 'apply' }))
 
 const remove = (userId: string) => act(userId, () => removeParticipant(props.trip.id, userId))
+
+// ─── Люди без аккаунта (31.10.2026) ───
+
+/**
+ * Список заведённых организатором людей — для быстрого добавления в поход.
+ * Строка одна на человека: переименование видно во всех походах.
+ */
+const myVirtuals = ref<VirtualUser[]>([])
+
+const virtualName = ref('')
+const virtualGender = ref<Gender>('m')
+const virtualError = ref<string | null>(null)
+const isCreatingVirtual = ref(false)
+
+/** Правка своего человека без аккаунта: имя и пол, больше у него ничего нет. */
+const editingVirtual = ref<VirtualUser | null>(null)
+const editVirtualName = ref('')
+const editVirtualGender = ref<Gender>('m')
+const editVirtualError = ref<string | null>(null)
+const isSavingVirtual = ref(false)
+
+/** Пол словами: «m» в интерфейсе читалось бы как системный код. */
+const GENDER_OPTIONS: { value: Gender; label: string }[] = [
+  { value: 'm', label: 'мужской' },
+  { value: 'f', label: 'женский' },
+]
+
+function isInTrip(userId: string): boolean {
+  return participants.value.some((person) => person.userId === userId)
+}
+
+/**
+ * Завести человека без аккаунта и сразу добавить в этот поход.
+ *
+ * Имя проверяем до запроса только на длину: остальные правила (буквы, цифры,
+ * дефис) всё равно решает сервер, и повторять регулярку здесь значило бы
+ * держать её в двух местах.
+ */
+async function createVirtual(): Promise<void> {
+  const name = virtualName.value.trim()
+
+  if (name.length < 2 || isCreatingVirtual.value) return
+
+  isCreatingVirtual.value = true
+  virtualError.value = null
+
+  try {
+    await createVirtualParticipant(props.trip.id, {
+      displayName: name,
+      gender: virtualGender.value,
+    })
+    virtualName.value = ''
+    await load()
+    emit('changed')
+  } catch (problem) {
+    virtualError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось добавить человека'
+  } finally {
+    isCreatingVirtual.value = false
+  }
+}
+
+/** Добавить своего человека в этот поход: он уже заведён в прошлом. */
+const addVirtual = (person: VirtualUser) =>
+  act(person.id, () => addVirtualParticipant(props.trip.id, person.id))
+
+function openVirtualEdit(person: VirtualUser): void {
+  editingVirtual.value = person
+  editVirtualName.value = person.displayName
+  editVirtualGender.value = person.gender
+  editVirtualError.value = null
+}
+
+/** Переименование и пол: строка одна на человека, правка видна везде. */
+async function saveVirtual(): Promise<void> {
+  const person = editingVirtual.value
+  const name = editVirtualName.value.trim()
+
+  if (person === null || name.length < 2 || isSavingVirtual.value) return
+
+  isSavingVirtual.value = true
+  editVirtualError.value = null
+
+  try {
+    await updateVirtual(person.id, { displayName: name, gender: editVirtualGender.value })
+    editingVirtual.value = null
+    await load()
+    emit('changed')
+  } catch (problem) {
+    editVirtualError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось сохранить'
+  } finally {
+    isSavingVirtual.value = false
+  }
+}
+
+/**
+ * Убрать из личного списка. Из походов человек при этом не исчезает:
+ * если он ещё участник, бэкенд отвечает 409 и объясняет словами.
+ */
+async function deleteVirtual(): Promise<void> {
+  const person = editingVirtual.value
+
+  if (person === null || isSavingVirtual.value) return
+
+  isSavingVirtual.value = true
+  editVirtualError.value = null
+
+  try {
+    await removeVirtual(person.id)
+    editingVirtual.value = null
+    await load()
+    emit('changed')
+  } catch (problem) {
+    editVirtualError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось убрать человека'
+  } finally {
+    isSavingVirtual.value = false
+  }
+}
 
 // ─── Приглашение: поиск человека по имени ───
 
@@ -443,6 +611,113 @@ function invite(person: UserSearchResult) {
         </p>
       </div>
 
+      <!--
+        Люди без аккаунта (31.10.2026): организатор заводит человека, которого
+        нет на сайте, и тот идёт в походе как обычный участник. Здесь же его
+        личный список — «в следующий поход одним нажатием» — и правка имени.
+      -->
+      <div
+        v-if="isOrganizer"
+        class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4"
+        data-test="virtual-panel"
+      >
+        <div class="flex flex-col gap-1">
+          <h3 class="text-sm text-muted">Люди без аккаунта</h3>
+          <p class="text-xs text-muted">
+            Человек, которого нет на сайте: идёт в походе как обычный участник, но войти
+            не может. Снаряжение ему добавляет организатор.
+          </p>
+        </div>
+
+        <form
+          class="flex flex-col gap-2 md:flex-row md:items-end"
+          data-test="virtual-form"
+          @submit.prevent="createVirtual"
+        >
+          <label class="flex flex-1 flex-col gap-1 text-xs text-muted">
+            Имя
+            <input
+              v-model="virtualName"
+              type="text"
+              maxlength="50"
+              placeholder="Дядя Витя"
+              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+              data-test="virtual-name"
+            />
+          </label>
+
+          <label class="flex flex-col gap-1 text-xs text-muted md:w-40">
+            Пол
+            <select
+              v-model="virtualGender"
+              class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+              data-test="virtual-gender"
+            >
+              <option v-for="option in GENDER_OPTIONS" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
+
+          <button
+            type="submit"
+            class="cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+            :disabled="isCreatingVirtual || virtualName.trim().length < 2"
+            data-test="virtual-create"
+          >
+            {{ isCreatingVirtual ? 'Добавляем…' : 'Добавить в поход' }}
+          </button>
+        </form>
+
+        <p v-if="virtualError" class="text-sm text-red-600" data-test="virtual-error">
+          {{ virtualError }}
+        </p>
+
+        <div v-if="myVirtuals.length > 0" class="flex flex-col gap-2" data-test="virtual-list">
+          <span class="text-xs text-muted">
+            Мои люди без аккаунта — в этот поход одним нажатием
+          </span>
+
+          <ul class="flex flex-col gap-1">
+            <li
+              v-for="person in myVirtuals"
+              :key="person.id"
+              class="flex flex-wrap items-center gap-2 text-sm"
+              data-test="virtual-person"
+            >
+              <span class="text-text">{{ person.displayName }}</span>
+              <span class="text-xs text-muted">
+                {{ person.gender === 'f' ? 'женщина' : 'мужчина' }}
+              </span>
+
+              <button
+                v-if="!isInTrip(person.id)"
+                type="button"
+                class="cursor-pointer rounded-xl border border-border bg-field px-2 py-1 text-xs text-text transition-colors hover:border-primary disabled:opacity-60"
+                :disabled="pendingUserId !== null"
+                data-test="virtual-add"
+                @click="addVirtual(person)"
+              >
+                В поход
+              </button>
+              <span v-else class="text-xs text-muted" data-test="virtual-in-trip">
+                уже в походе
+              </span>
+
+              <button
+                type="button"
+                class="cursor-pointer border-0 bg-transparent p-0 text-xs text-muted underline transition-colors hover:text-text disabled:opacity-60"
+                :disabled="pendingUserId !== null"
+                data-test="virtual-edit"
+                @click="openVirtualEdit(person)"
+              >
+                Править
+              </button>
+            </li>
+          </ul>
+        </div>
+      </div>
+
       <!-- Отправленное приглашение себе: приглашённый видит свои кнопки -->
       <div
         v-if="me && me.status === 'invited'"
@@ -498,6 +773,15 @@ function invite(person: UserSearchResult) {
                   >
                     {{ role.name }}
                   </span>
+
+                  <!-- Человек без аккаунта: войти не может, каталога нет -->
+                  <span
+                    v-if="person.isVirtual"
+                    class="rounded-full border border-dashed border-border px-2 py-0.5 text-xs text-muted"
+                    data-test="participant-virtual"
+                  >
+                    без аккаунта
+                  </span>
                 </span>
 
                 <span class="text-xs text-muted">
@@ -509,7 +793,7 @@ function invite(person: UserSearchResult) {
 
             <div class="flex flex-wrap items-center gap-2">
               <button
-                v-if="canManageRoles"
+                v-if="canManageRoles && !person.isVirtual"
                 type="button"
                 class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
                 :disabled="pendingUserId !== null"
@@ -592,6 +876,87 @@ function invite(person: UserSearchResult) {
           >
             {{ isSavingRoles ? 'Сохраняем…' : 'Сохранить' }}
           </button>
+        </div>
+      </div>
+    </div>
+
+    <!--
+      Правка человека без аккаунта: переименовать, поменять пол, убрать из
+      личного списка. Убрать из похода — это «Убрать» в составе, другое
+      действие: список людей живёт дольше одного похода.
+    -->
+    <div
+      v-if="editingVirtual"
+      class="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
+      data-test="virtual-edit-dialog"
+    >
+      <div class="flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+        <h3 class="text-base font-medium text-text">Человек без аккаунта</h3>
+
+        <label class="flex flex-col gap-1 text-xs text-muted">
+          Имя
+          <input
+            v-model="editVirtualName"
+            type="text"
+            maxlength="50"
+            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+            data-test="virtual-edit-name"
+          />
+        </label>
+
+        <label class="flex flex-col gap-1 text-xs text-muted">
+          Пол
+          <select
+            v-model="editVirtualGender"
+            class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+            data-test="virtual-edit-gender"
+          >
+            <option v-for="option in GENDER_OPTIONS" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+        </label>
+
+        <p class="text-xs text-muted">
+          Переименование видно во всех походах: это одна и та же запись,
+          а не копия имени в каждом походе.
+        </p>
+
+        <p v-if="editVirtualError" class="text-sm text-red-600" data-test="virtual-edit-error">
+          {{ editVirtualError }}
+        </p>
+
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <button
+            type="button"
+            class="cursor-pointer border-0 bg-transparent p-0 text-sm text-red-600 underline transition-opacity hover:opacity-80 disabled:opacity-50"
+            :disabled="isSavingVirtual"
+            data-test="virtual-delete"
+            @click="deleteVirtual"
+          >
+            Убрать из списка
+          </button>
+
+          <span class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-text"
+              :disabled="isSavingVirtual"
+              data-test="virtual-edit-cancel"
+              @click="editingVirtual = null"
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+              :disabled="isSavingVirtual || editVirtualName.trim().length < 2"
+              data-test="virtual-edit-save"
+              @click="saveVirtual"
+            >
+              {{ isSavingVirtual ? 'Сохраняем…' : 'Сохранить' }}
+            </button>
+          </span>
         </div>
       </div>
     </div>
