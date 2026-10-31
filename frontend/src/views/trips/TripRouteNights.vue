@@ -583,11 +583,18 @@ const stoveHint = computed(() => {
           data-test="route-night"
         >
           <!--
-            Заголовок и место — одной строкой: «где спим» относится ко всей
-            ночи и спрашивается раньше варианта. Самого поля нет у «В пути»
-            и «Идём всю ночь» (30.10.2026): без стоянки района не бывает.
+            Заголовок и место: «где спим» относится ко всей ночи и спрашивается
+            раньше варианта. Самого поля нет у «В пути» и «Идём всю ночь»
+            (30.10.2026): без стоянки района не бывает.
+
+            На телефоне они в столбик (снимок 360, 31.10.2026): в одну строку
+            полю оставалась треть карточки, а район ночёвки — до 120 знаков.
+            С `md` снова в строке, как и было задумано.
           -->
-          <div class="flex items-center gap-2" data-test="route-night-head">
+          <div
+            class="flex flex-col gap-2 md:flex-row md:items-center"
+            data-test="route-night-head"
+          >
             <h3 class="shrink-0 text-sm font-medium text-text" data-test="route-night-title">
               Ночь {{ row.position }}
               <span v-if="dateLabel(row)" class="text-muted"> · {{ dateLabel(row) }}</span>
@@ -595,7 +602,7 @@ const stoveHint = computed(() => {
 
             <label
               v-if="needsPlace(row)"
-              class="flex min-w-0 flex-1 items-center justify-end gap-2 text-sm text-muted"
+              class="flex min-w-0 items-center gap-2 text-sm text-muted md:flex-1 md:justify-end"
             >
               Место
               <input
