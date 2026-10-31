@@ -892,6 +892,152 @@ export interface TransferLegInput {
   note?: string | null
 }
 
+// ───────────────────────────── ночёвки похода ─────────────────────────────
+
+/**
+ * Как ночуем — словарь вкладки «Ночёвки» (`route`).
+ *
+ * Порядок ровно тот, в котором заказчик перечислил варианты, «в пути» —
+ * в конце (29.10.2026). Подписи — его слова: «изба», а не «зимовьё».
+ *
+ * Списки совпадают с `NIGHT_KINDS` бэкенда (`trip-route.types.ts`): код
+ * варианта — контракт базы (CHECK), поэтому новый вариант появляется здесь
+ * и в миграции, а не «договоримся на словах».
+ */
+export const NIGHT_KINDS = ['tent', 'hotel', 'hut', 'car', 'allnight', 'transit'] as const
+export type NightKind = (typeof NIGHT_KINDS)[number]
+
+export const NIGHT_KIND_LABELS: Record<NightKind, string> = {
+  tent: 'Палатка',
+  hotel: 'Гостиница',
+  hut: 'Изба',
+  car: 'Машина',
+  allnight: 'Идём всю ночь',
+  transit: 'В пути',
+}
+
+/** Способ готовки в эту ночь: `null` — не готовим или вопрос не задан. */
+export const COOKING_KINDS = ['fire', 'stove', 'both'] as const
+export type CookingKind = (typeof COOKING_KINDS)[number]
+
+export const COOKING_KIND_LABELS: Record<CookingKind, string> = {
+  fire: 'Костёр',
+  stove: 'Горелка',
+  both: 'Костёр+Горелка',
+}
+
+/**
+ * Готовку спрашиваем только там, где готовятся ужин и завтрак (заказчик
+ * 29.10.2026: «Готовка у „Изба“, „Машина“, „Палатка“. В гостишках обычно
+ * есть кухня»). Список «кому нужно», а не «кому нет»: новая баня или кафе
+ * попадут в него осознанно.
+ */
+export const COOKING_NIGHT_KINDS: readonly NightKind[] = ['tent', 'hut', 'car']
+
+/**
+ * Место ночёвки есть у всех вариантов с ночлегом. У «в пути» и «идём всю
+ * ночь» места нет — там не останавливаются (заказчик 30.10.2026).
+ */
+export const PLACE_NIGHT_KINDS: readonly NightKind[] = ['tent', 'hotel', 'hut', 'car']
+
+/**
+ * Варианты без ночлега: их нельзя ставить в одну ночь с другими. Смешать
+ * «идём всю ночь» и «палатку» — ответить на вопрос ночи дважды.
+ */
+export const SOLO_NIGHT_KINDS: readonly NightKind[] = ['allnight', 'transit']
+
+/**
+ * Статус «кто где живёт».
+ *
+ * `accepted` — человек живёт в этой палатке, `requested` — попросился
+ * и ждёт хозяина: в чужую палатку не садятся молча.
+ */
+export const ROUTE_LODGER_STATUSES = ['requested', 'accepted'] as const
+export type RouteLodgerStatus = (typeof ROUTE_LODGER_STATUSES)[number]
+
+export const ROUTE_LODGER_STATUS_LABELS: Record<RouteLodgerStatus, string> = {
+  requested: 'Просится',
+  accepted: 'Живёт',
+}
+
+/** Кого можно распределять: участник, который идёт. */
+export interface RouteTraveler {
+  userId: string
+  displayName: string
+}
+
+/**
+ * Кто где живёт — **одно место на весь поход** (решение заказчика 31.10.2026).
+ *
+ * Ночей здесь нет намеренно: человек не переезжает каждую ночь, и таблица
+ * ночёвок показывает это же место в каждой ночи.
+ */
+export interface RouteLodger extends RouteTraveler {
+  tentGearId: string
+  status: RouteLodgerStatus
+}
+
+/** Вариант одной ночи: палатка / гостиница / изба / машина / всю ночь / в пути. */
+export interface RouteOption {
+  id: string
+  kind: NightKind
+  /** Палатка из снаряжения похода — только у «Палатки». */
+  tentGearId: string | null
+  /** Подпись палатки: название вещи. */
+  tentTitle: string | null
+  /** Карточка своего ТС из «Трансфера» — только у «Машины». */
+  carLegId: string | null
+  /** Подпись машины: «Иркутск → Ольхон». */
+  carTitle: string | null
+  cooking: CookingKind | null
+}
+
+/** Ночь похода: номер, район и варианты. */
+export interface RouteNight {
+  id: string
+  position: number
+  /** Дата ночи `ГГГГ-ММ-ДД`; `null` — дат у похода нет. */
+  date: string | null
+  /** Район ночёвки; `null` — не записали. */
+  place: string | null
+  options: RouteOption[]
+}
+
+/** Вкладка «Ночёвки» целиком (`GET /api/trips/:id/route`). */
+export interface TripRoute {
+  /** Может ли смотрящий править таблицу — считает бэкенд. */
+  canEdit: boolean
+  nights: RouteNight[]
+  lodgers: RouteLodger[]
+  travelers: RouteTraveler[]
+}
+
+/** Вариант в запросе: ссылки вместо id строк. */
+export interface RouteOptionInput {
+  kind: NightKind
+  tentGearId?: string | null
+  carLegId?: string | null
+  cooking?: CookingKind | null
+}
+
+/**
+ * Ночь в запросе: опознаётся по номеру, а не по id.
+ *
+ * Таблица правится целиком, поэтому клиент присылает «ночь 1, ночь 2, …»,
+ * а сервер заменяет набор в одной транзакции.
+ */
+export interface RouteNightInput {
+  position: number
+  date?: string | null
+  place?: string | null
+  options: RouteOptionInput[]
+}
+
+/** Вся таблица ночёвок: экран правится целиком. */
+export interface SaveRouteNightsInput {
+  nights: RouteNightInput[]
+}
+
 /**
  * Типы личной техники — раздел «Моя техника» в «Снаряжении».
  *

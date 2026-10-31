@@ -1,4 +1,5 @@
 import { createPinia, setActivePinia } from 'pinia'
+import { defineComponent, h, ref } from 'vue'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,33 +7,50 @@ import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 import type { User } from '@/api/types'
 import type { GearItem, GearItemAttribute, TripGearItem } from '@/types/gear'
-import type { ParticipantStatus, Trip, TripParticipant } from '@/types/trips'
+import type {
+  ParticipantStatus,
+  RouteLodger,
+  RouteTraveler,
+  Trip,
+  TripParticipant,
+  TripRoute,
+} from '@/types/trips'
 import TripRouteTents from '@/views/trips/TripRouteTents.vue'
 
 /**
  * Секция «Палатки» (29.10.2026) — распределение участников по палаткам.
  *
- * Механика взята у «Трансфера» и проверяется теми же словами: плашка,
- * владелец, люди внутри, «попроситься», «принять», «уйти». Отличия, ради
- * которых тест и нужен:
+ * **С 31.10.2026 «кто где живёт» — на сервере.** Раньше `TentMember` жил
+ * в памяти компонента; теперь источник — ответ вкладки (`lodgers`), а посадка,
+ * принятие заявки и освобождение места — ручки
+ * `PUT/POST/DELETE /route/lodgers/:userId`.
+ *
+ * Поэтому спека держит **маленький фейк сервера**: он применяет те же правила
+ * (себя в свою палатку или тому, кто ведёт вкладку, — сразу живёт; в чужую —
+ * заявкой; убрать может каждый своё) и отвечает вкладкой целиком. Тесты
+ * читают экран после ответа, как читал бы его человек.
+ *
+ * Что именно проверяется:
  *
  * - **вместимость не блокирует**: палатка на троих спокойно принимает
  *   четвёртого — «производитель рекомендует, а живут +1»;
  * - **заголовок плашки** — «{хозяин} {seats}-х местная {вес}гр.», и число
- *   мест берётся **из значения характеристики `seats`** (30.10.2026),
- *   а не из диалога и не из слова «мест» в названии;
+ *   мест берётся **из значения характеристики `seats`** (30.10.2026);
  * - **тип вместо слова в названии**: палатки — вещи типа `tent`, тенты —
  *   `shelter`; «Добавить тент» уходит на сервер, как и палатка;
  * - **распределяем только «идёт»**: «пока не решил», «приглашён» и «не идёт»
  *   места в палатке не занимают;
- * - **палатки — из снаряжения похода**, «не берём» на экране нет.
+ * - **взял свою палатку — сразу живёшь в ней**: это одно действие с сервером,
+ *   а не два разных («палатка в походе» и «место в ней»).
  *
- * Данные запросов заглушены: людей и палатки экран читает из существующих
- * ручек (`participants`, `trips/:id/gear`), а кто где живёт — пока в памяти.
+ * Снаряжение похода секции отдаёт родитель (`TripRouteNights.vue`) — здесь
+ * это пропс: второй такой же запрос из секции был бы лишним.
  */
 const mocks = vi.hoisted(() => ({
   listParticipants: vi.fn(),
-  listTripGear: vi.fn(),
+  lodgeRoute: vi.fn(),
+  acceptRouteLodger: vi.fn(),
+  releaseRouteLodger: vi.fn(),
   listGear: vi.fn(),
   proposeTripGear: vi.fn(),
   removeTripGear: vi.fn(),
@@ -40,11 +58,15 @@ const mocks = vi.hoisted(() => ({
   fetchGearTypes: vi.fn(),
 }))
 
-vi.mock('@/api/trips', () => ({ listParticipants: mocks.listParticipants }))
+vi.mock('@/api/trips', () => ({
+  listParticipants: mocks.listParticipants,
+  lodgeRoute: mocks.lodgeRoute,
+  acceptRouteLodger: mocks.acceptRouteLodger,
+  releaseRouteLodger: mocks.releaseRouteLodger,
+}))
 
 vi.mock('@/api/gear', () => ({
   listGear: mocks.listGear,
-  listTripGear: mocks.listTripGear,
   proposeTripGear: mocks.proposeTripGear,
   removeTripGear: mocks.removeTripGear,
   addManualTripGear: mocks.addManualTripGear,
@@ -60,6 +82,53 @@ const OLGA = 'demo-olga'
 
 const ME_NAME = 'Олег'
 const ANNA_NAME = 'Анна'
+
+/**
+ * Фейк сервера: снаряжение похода, распределение и права.
+ *
+ * Мутируется ручками ниже так же, как настоящий: `PUT` перезаписывает строку
+ * человеку (у него одно место на поход), `POST .../accept` меняет статус,
+ * `DELETE` убирает строку.
+ */
+const server = {
+  gear: [] as TripGearItem[],
+  lodgers: [] as RouteLodger[],
+  travelers: [] as RouteTraveler[],
+  canEdit: true,
+}
+
+/** Ответ «вкладки целиком» — ровно те поля, которые читает «Палатки». */
+function payload(): TripRoute {
+  return {
+    canEdit: server.canEdit,
+    nights: [],
+    lodgers: server.lodgers.map((lodger) => ({ ...lodger })),
+    travelers: server.travelers.map((traveler) => ({ ...traveler })),
+  }
+}
+
+function travelerName(userId: string): string {
+  return (
+    server.travelers.find((traveler) => traveler.userId === userId)?.displayName ?? 'Участник'
+  )
+}
+
+/**
+ * Посадить человека — по правилу бэкенда: в свою палатку сразу живёт,
+ * в чужую — заявкой (если не ведёт вкладку).
+ */
+function lodge(userId: string, tentGearId: string): void {
+  const tent = server.gear.find((item) => item.id === tentGearId)
+  const accepted = server.canEdit || tent?.ownerUserId === userId
+  const row: RouteLodger = {
+    userId,
+    displayName: travelerName(userId),
+    tentGearId,
+    status: accepted ? 'accepted' : 'requested',
+  }
+
+  server.lodgers = [...server.lodgers.filter((lodger) => lodger.userId !== userId), row]
+}
 
 function makeUser(): User {
   return {
@@ -178,6 +247,11 @@ function annaTent(): TripGearItem {
   })
 }
 
+/** Анна уже живёт в своей палатке — так распределение выглядит на экране. */
+function annaLodger(): RouteLodger {
+  return { userId: ANNA, displayName: ANNA_NAME, tentGearId: 'g1', status: 'accepted' }
+}
+
 function gearList(items: GearItem[]): {
   items: GearItem[]
   totalWeightGrams: number
@@ -210,11 +284,77 @@ function personalGear(
   }
 }
 
-async function mounted(trip: Trip = makeTrip()): Promise<ReturnType<typeof mount>> {
-  const wrapper = mount(TripRouteTents, { props: { trip } })
+interface MountOptions {
+  trip?: Trip
+  /** Снаряжение похода: то, что родитель уже загрузил. */
+  gear?: TripGearItem[]
+  /** Ошибка загрузки снаряжения: секция объясняет пустоту, а не молчит. */
+  gearError?: string | null
+  lodgers?: RouteLodger[]
+  /** Право на вкладку: чужие места правят только ведущие вкладку. */
+  canEdit?: boolean
+}
+
+/**
+ * Смонтировать секцию так, как её монтирует родитель.
+ *
+ * Обёртка держит `gear` и `lodgers` в своём состоянии и обновляет их
+ * по событиям `gear` и `route`: без этого ответ сервера не доехал бы
+ * до пропсов, и экран показывал бы прежнее распределение.
+ */
+async function mounted(options: MountOptions = {}): Promise<ReturnType<typeof mount>> {
+  const trip = options.trip ?? makeTrip()
+
+  server.gear = options.gear ?? [annaTent()]
+  server.lodgers = options.lodgers ?? [annaLodger()]
+  server.canEdit = options.canEdit ?? true
+
+  const gear = ref<TripGearItem[]>(server.gear)
+  const lodgers = ref<RouteLodger[]>(server.lodgers)
+
+  const Parent = defineComponent({
+    setup() {
+      return () =>
+        h(TripRouteTents, {
+          trip,
+          gear: gear.value,
+          gearError: options.gearError ?? null,
+          lodgers: lodgers.value,
+          travelers: server.travelers,
+          canEdit: server.canEdit,
+          onGear: (items: TripGearItem[]) => {
+            gear.value = items
+            server.gear = items
+          },
+          onRoute: (route: TripRoute) => {
+            lodgers.value = route.lodgers
+          },
+        })
+    },
+  })
+
+  const wrapper = mount(Parent)
   await flushPromises()
 
   return wrapper
+}
+
+/** Состав похода — он же «кого можно посадить»: только идущие. */
+function setPeople(people: TripParticipant[] = makePeople()): void {
+  mocks.listParticipants.mockResolvedValue(people)
+  server.travelers = people
+    .filter((person) => person.status === 'going')
+    .map((person) => ({ userId: person.userId, displayName: person.displayName }))
+}
+
+/** Подписи всех плашек по порядку: удобно и читаемо в проверках. */
+function tentTitles(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text())
+}
+
+/** Подписи «кто живёт» всех плашек по порядку. */
+function tentSummaries(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper.findAll('[data-test="route-tent-summary"]').map((node) => node.text())
 }
 
 describe('секция «Палатки»', () => {
@@ -225,12 +365,7 @@ describe('секция «Палатки»', () => {
     setActivePinia(createPinia())
     useAuthStore().setAuth(makeUser(), 'token')
 
-    mocks.listParticipants.mockResolvedValue(makePeople())
-    mocks.listTripGear.mockResolvedValue({
-      items: [annaTent()],
-      totalWeightGrams: 0,
-      itemsWithoutWeight: 0,
-    })
+    setPeople()
     mocks.listGear.mockResolvedValue(gearList([]))
     mocks.removeTripGear.mockResolvedValue(undefined)
     // Типы контекста «Палаток»: палатка (с обязательной вместимостью) и тент.
@@ -256,11 +391,32 @@ describe('секция «Палатки»', () => {
       },
       { id: 2, code: 'shelter', name: 'Тент', sortOrder: 2, attributes: [] },
     ])
+
+    // Фейк сервера: каждая ручка меняет распределение и отвечает вкладкой.
+    mocks.lodgeRoute.mockImplementation(
+      async (_tripId: string, userId: string, tentGearId: string) => {
+        lodge(userId, tentGearId)
+
+        return payload()
+      },
+    )
+    mocks.acceptRouteLodger.mockImplementation(async (_tripId: string, userId: string) => {
+      server.lodgers = server.lodgers.map((lodger) =>
+        lodger.userId === userId ? { ...lodger, status: 'accepted' } : lodger,
+      )
+
+      return payload()
+    })
+    mocks.releaseRouteLodger.mockImplementation(async (_tripId: string, userId: string) => {
+      server.lodgers = server.lodgers.filter((lodger) => lodger.userId !== userId)
+
+      return payload()
+    })
   })
 
   it('палатка — только тип «палатка» и только «берём»', async () => {
-    mocks.listTripGear.mockResolvedValue({
-      items: [
+    const wrapper = await mounted({
+      gear: [
         annaTent(),
         tripGearItem({
           id: 'g2',
@@ -280,57 +436,54 @@ describe('секция «Палатки»', () => {
           ownerUserId: ME,
         }),
       ],
-      totalWeightGrams: 0,
-      itemsWithoutWeight: 0,
     })
 
-    const wrapper = await mounted()
-
-    expect(
-      wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text()),
-    ).toEqual(['Анна 3-х местная 2400 гр.'])
+    expect(tentTitles(wrapper)).toEqual(['Анна 3-х местная 2400 гр.'])
   })
 
   it('без веса в заголовке нет «гр.»: «Анна 3-х местная»', async () => {
-    mocks.listTripGear.mockResolvedValue({
-      items: [{ ...annaTent(), weightGrams: null }],
-      totalWeightGrams: 0,
-      itemsWithoutWeight: 1,
-    })
-
-    const wrapper = await mounted()
+    const wrapper = await mounted({ gear: [{ ...annaTent(), weightGrams: null }] })
 
     expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe('Анна 3-х местная')
   })
 
-  it('заголовок плашки — «{хозяин} {seats}-х местная {вес}гр.», владелец уже живёт в ней', async () => {
+  it('заголовок плашки — «{хозяин} {seats}-х местная {вес}гр.»', async () => {
     const wrapper = await mounted()
 
     expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe(
       'Анна 3-х местная 2400 гр.',
     )
+  })
+
+  it('кто живёт — из ответа сервера, а заявки отдельно от жильцов', async () => {
+    const wrapper = await mounted({
+      lodgers: [
+        annaLodger(),
+        { userId: ME, displayName: ME_NAME, tentGearId: 'g1', status: 'requested' },
+      ],
+    })
+
+    // Заявка места не занимает: в пилюлях только те, кто живёт.
     expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живёт 1 (Анна)')
+    expect(wrapper.get('[data-test="route-tent-requests"]').text()).toContain('Олег')
   })
 
   it('вместимость не заполнена — не выдумываем: «Анна 2400 гр.» и никакой пометки', async () => {
-    mocks.listParticipants.mockResolvedValue([
+    setPeople([
       ...makePeople(),
       participant('demo-vasya', 'Вася'),
       participant('demo-katya', 'Катя'),
     ])
-    mocks.listTripGear.mockResolvedValue({
-      items: [{ ...annaTent(), attributes: [] }],
-      totalWeightGrams: 0,
-      itemsWithoutWeight: 0,
-    })
 
-    const wrapper = await mounted()
+    const wrapper = await mounted({ gear: [{ ...annaTent(), attributes: [] }] })
 
     expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe('Анна 2400 гр.')
 
     // Вместимости нет — «сверх вместимости» сказать нечего, и не говорим.
     await wrapper.get('[data-test="route-tent-add-member"]').setValue('demo-vasya')
+    await flushPromises()
     await wrapper.get('[data-test="route-tent-add-member"]').setValue('demo-katya')
+    await flushPromises()
 
     expect(wrapper.find('[data-test="route-tent-over"]').exists()).toBe(false)
   })
@@ -362,7 +515,10 @@ describe('секция «Палатки»', () => {
     expect(wrapper.find('[data-test="route-awning-dialog"]').exists()).toBe(true)
     // В списке только тенты: тип решает, а не слово в названии.
     expect(
-      wrapper.get('[data-test="route-awning-gear"]').findAll('option').map((node) => node.text()),
+      wrapper
+        .get('[data-test="route-awning-gear"]')
+        .findAll('option')
+        .map((node) => node.text()),
     ).toEqual(['выберите…', 'Тент 3×4'])
 
     await wrapper.get('[data-test="route-awning-gear"]').setValue('60')
@@ -372,13 +528,13 @@ describe('секция «Палатки»', () => {
     expect(mocks.proposeTripGear).toHaveBeenCalledWith('1', '60')
     expect(wrapper.find('[data-test="route-awning-dialog"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="route-awning"] span').text()).toBe('Тент - 3000 гр. (Олег)')
-    // Тент — вещь похода, а не строка на экране: плашки палаток он не создаёт.
+    // Тент — вещь похода, а не строка на экране: плашек палаток он не создаёт.
     expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(1)
   })
 
   it('тент приходит и при загрузке: вещь типа shelter из снаряжения похода', async () => {
-    mocks.listTripGear.mockResolvedValue({
-      items: [
+    const wrapper = await mounted({
+      gear: [
         annaTent(),
         tripGearItem({
           id: 'g60',
@@ -390,11 +546,7 @@ describe('секция «Палатки»', () => {
           weightGrams: 3000,
         }),
       ],
-      totalWeightGrams: 0,
-      itemsWithoutWeight: 0,
     })
-
-    const wrapper = await mounted()
 
     expect(wrapper.get('[data-test="route-awning"] span').text()).toBe('Тент - 3000 гр. (Олег)')
     expect(wrapper.findAll('[data-test="route-tent"]')).toHaveLength(1)
@@ -428,24 +580,31 @@ describe('секция «Палатки»', () => {
 
     expect(wrapper.get('[data-test="route-tent-awning"]').classes()).toContain('bg-field')
 
-    // Организатор (Олег) взял себя в палатку Анны — место есть, кнопка белая.
+    // Занял место в палатке Анны — место есть, кнопка белая.
     await wrapper.get('[data-test="route-tent-add-member"]').setValue(ME)
+    await flushPromises()
 
     expect(wrapper.get('[data-test="route-tent-add"]').classes()).toContain('bg-field')
   })
 
-  it('«Попроситься» — белая, а не акцентная', async () => {
-    const wrapper = await mounted(makeTrip({ organizerUserId: ANNA }))
+  it('«Попроситься» — белая и зовёт ручку посадки', async () => {
+    const wrapper = await mounted({ canEdit: false })
 
     const join = wrapper.get('[data-test="route-tent-join"]')
     expect(join.text()).toBe('Попроситься')
     expect(join.classes()).toContain('bg-field')
     expect(join.classes()).not.toContain('bg-primary')
+
+    await join.trigger('click')
+    await flushPromises()
+
+    expect(mocks.lodgeRoute).toHaveBeenCalledWith('1', ME, 'g1')
   })
 
   it('владелец убирает свою палатку крестиком: настоящий DELETE', async () => {
-    mocks.listTripGear.mockResolvedValue({
-      items: [
+    const wrapper = await mounted({
+      trip: makeTrip({ organizerUserId: ANNA }),
+      gear: [
         tripGearItem({
           id: 'g9',
           gearItemId: '19',
@@ -455,11 +614,8 @@ describe('секция «Палатки»', () => {
           ownerUserId: ME,
         }),
       ],
-      totalWeightGrams: 0,
-      itemsWithoutWeight: 0,
+      lodgers: [],
     })
-
-    const wrapper = await mounted(makeTrip({ organizerUserId: ANNA }))
 
     await wrapper.get('[data-test="route-tent-remove-g9"]').trigger('click')
     await flushPromises()
@@ -497,7 +653,7 @@ describe('секция «Палатки»', () => {
   })
 
   it('постороннему участнику крестика палатки нет', async () => {
-    const wrapper = await mounted(makeTrip({ organizerUserId: ANNA }))
+    const wrapper = await mounted({ canEdit: false })
 
     expect(wrapper.find('[data-test="route-tent-remove-g1"]').exists()).toBe(false)
   })
@@ -526,12 +682,14 @@ describe('секция «Палатки»', () => {
   it('владелец зовёт человека, и селект возвращается в пустое состояние', async () => {
     // Ещё один идущий: с одним селект после добавления исчез бы, и «сброс»
     // было бы не на чем проверить.
-    mocks.listParticipants.mockResolvedValue([...makePeople(), participant('demo-vasya', 'Вася')])
+    setPeople([...makePeople(), participant('demo-vasya', 'Вася')])
 
     const wrapper = await mounted()
 
     await wrapper.get('[data-test="route-tent-add-member"]').setValue(ME)
+    await flushPromises()
 
+    expect(mocks.lodgeRoute).toHaveBeenCalledWith('1', ME, 'g1')
     expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живут 2 (Анна, Олег)')
     expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Вася')
 
@@ -548,23 +706,27 @@ describe('секция «Палатки»', () => {
     const wrapper = await mounted()
 
     await wrapper.get('[data-test="route-tent-add-member"]').setValue(ME)
+    await flushPromises()
 
     // У Анны крестика нет: палатка уходит из похода вместе с ней.
     expect(wrapper.find(`[data-test="route-tent-leave-${ANNA}"]`).exists()).toBe(false)
 
     await wrapper.get(`[data-test="route-tent-leave-${ME}"]`).trigger('click')
+    await flushPromises()
 
+    expect(mocks.releaseRouteLodger).toHaveBeenCalledWith('1', ME)
     expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живёт 1 (Анна)')
     expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
   })
 
   it('в чужую палатку просятся, а не входят сразу; заявку можно отменить', async () => {
-    // Организатор — Анна: Олег обычный участник и прав на её палатку не имеет.
-    const wrapper = await mounted(makeTrip({ organizerUserId: ANNA }))
+    // Олег не ведёт вкладку и палатка не его: место только заявкой.
+    const wrapper = await mounted({ canEdit: false })
 
     expect(wrapper.get('[data-test="route-tent-join"]').text()).toBe('Попроситься')
 
     await wrapper.get('[data-test="route-tent-join"]').trigger('click')
+    await flushPromises()
 
     const requests = wrapper.get('[data-test="route-tent-requests"]')
     expect(requests.text()).toContain('Олег')
@@ -574,34 +736,47 @@ describe('секция «Палатки»', () => {
     expect(wrapper.find('[data-test="route-tent-add-member"]').exists()).toBe(false)
 
     await wrapper.get(`[data-test="route-tent-leave-${ME}"]`).trigger('click')
+    await flushPromises()
 
+    expect(mocks.releaseRouteLodger).toHaveBeenCalledWith('1', ME)
     expect(wrapper.find('[data-test="route-tent-requests"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="route-tent-join"]').exists()).toBe(true)
   })
 
   it('заявку принимают те, кто правит палатку', async () => {
-    const wrapper = await mounted()
+    const wrapper = await mounted({
+      lodgers: [
+        annaLodger(),
+        { userId: ME, displayName: ME_NAME, tentGearId: 'g1', status: 'requested' },
+      ],
+    })
 
-    await wrapper.get('[data-test="route-tent-join"]').trigger('click')
     await wrapper.get(`[data-test="route-tent-accept-${ME}"]`).trigger('click')
+    await flushPromises()
 
+    expect(mocks.acceptRouteLodger).toHaveBeenCalledWith('1', ME)
     expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живут 2 (Анна, Олег)')
     expect(wrapper.find('[data-test="route-tent-requests"]').exists()).toBe(false)
     expect(wrapper.find(`[data-test="route-tent-leave-${ME}"]`).exists()).toBe(true)
   })
 
   it('заявку можно отклонить — человек возвращается в «не распределены»', async () => {
-    const wrapper = await mounted()
+    const wrapper = await mounted({
+      lodgers: [
+        annaLodger(),
+        { userId: ME, displayName: ME_NAME, tentGearId: 'g1', status: 'requested' },
+      ],
+    })
 
-    await wrapper.get('[data-test="route-tent-join"]').trigger('click')
     await wrapper.get(`[data-test="route-tent-reject-${ME}"]`).trigger('click')
+    await flushPromises()
 
     expect(wrapper.find('[data-test="route-tent-requests"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
   })
 
   it('вместимость не блокирует: 3-х местная принимает четвёртого', async () => {
-    mocks.listParticipants.mockResolvedValue([
+    setPeople([
       ...makePeople(),
       participant('demo-vasya', 'Вася'),
       participant('demo-katya', 'Катя'),
@@ -609,11 +784,13 @@ describe('секция «Палатки»', () => {
     ])
 
     const wrapper = await mounted()
-    const select = wrapper.get('[data-test="route-tent-add-member"]')
 
-    await select.setValue('demo-vasya')
+    await wrapper.get('[data-test="route-tent-add-member"]').setValue('demo-vasya')
+    await flushPromises()
     await wrapper.get('[data-test="route-tent-add-member"]').setValue('demo-katya')
+    await flushPromises()
     await wrapper.get('[data-test="route-tent-add-member"]').setValue('demo-lena')
+    await flushPromises()
 
     expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe(
       'живут 4 (Анна, Вася, Катя, Лена)',
@@ -623,22 +800,16 @@ describe('секция «Палатки»', () => {
   })
 
   it('пусто: палаток нет — подсказка и кнопка «Добавить свою палатку»', async () => {
-    mocks.listTripGear.mockResolvedValue({
-      items: [],
-      totalWeightGrams: 0,
-      itemsWithoutWeight: 0,
-    })
-
-    const wrapper = await mounted()
+    const wrapper = await mounted({ gear: [], lodgers: [] })
 
     expect(wrapper.get('[data-test="route-tents-empty"]').text()).toContain(
       'Пока никто не взял палатку',
     )
     expect(wrapper.find('[data-test="route-tent-add"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
+    expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
   })
 
-  it('своя палатка: вместимость — значение seats, диалог её не спрашивает', async () => {
+  it('своя палатка: вместимость — значение seats, и человек сразу живёт в ней', async () => {
     mocks.listGear.mockResolvedValue(
       gearList([
         personalGear('20', 'Палатка на пятерых', 'tent', 5),
@@ -675,7 +846,7 @@ describe('секция «Палатки»', () => {
     await wrapper.get('[data-test="route-tent-add"]').trigger('click')
     await flushPromises()
 
-    // Поля вместимости в диалоге больше нет: это характеристика вещи.
+    // Поля вместимости в диалоге нет: это характеристика вещи.
     expect(wrapper.find('[data-test="route-tent-capacity"]').exists()).toBe(false)
 
     await wrapper.get('[data-test="route-tent-gear"]').setValue('20')
@@ -684,9 +855,11 @@ describe('секция «Палатки»', () => {
 
     expect(mocks.proposeTripGear).toHaveBeenCalledWith('1', '20')
     expect(wrapper.find('[data-test="route-tent-dialog"]').exists()).toBe(false)
-    expect(
-      wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text()),
-    ).toContain('Олег 5-местная 1000 гр.')
+    expect(tentTitles(wrapper)).toContain('Олег 5-местная 1000 гр.')
+
+    // Палатку берут, чтобы в ней спать: место занимает та же цепочка действий.
+    expect(mocks.lodgeRoute).toHaveBeenCalledWith('1', ME, 'g20')
+    expect(tentSummaries(wrapper)).toContain('живёт 1 (Олег)')
 
     // Вторая палатка — на одного и без веса: «одноместная», а не «1-х
     // местная», и без «гр.», которого не из чего взять.
@@ -697,9 +870,7 @@ describe('секция «Палатки»', () => {
     await wrapper.get('[data-test="route-tent-save"]').trigger('click')
     await flushPromises()
 
-    expect(
-      wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text()),
-    ).toContain('Олег одноместная')
+    expect(tentTitles(wrapper)).toContain('Олег одноместная')
   })
 
   it('своя палатка без вместимости: подсказка в диалоге, заголовок без числа', async () => {
@@ -730,9 +901,7 @@ describe('секция «Палатки»', () => {
     await wrapper.get('[data-test="route-tent-save"]').trigger('click')
     await flushPromises()
 
-    expect(
-      wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text()),
-    ).toContain('Олег 1800 гр.')
+    expect(tentTitles(wrapper)).toEqual(['Анна 3-х местная 2400 гр.', 'Олег 1800 гр.'])
   })
 
   it('в списке нет палаток, которые уже взяли в поход', async () => {
@@ -767,16 +936,11 @@ describe('секция «Палатки»', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="route-tent-dialog"]').exists()).toBe(true)
-    expect(wrapper.get('[data-test="route-tent-error"]').text()).toBe(
-      'Эта палатка уже в походе',
-    )
+    expect(wrapper.get('[data-test="route-tent-error"]').text()).toBe('Эта палатка уже в походе')
   })
 
   it('снаряжение не загрузилось — сообщение, а не пустая зелёная секция', async () => {
-    mocks.listTripGear.mockRejectedValue(new ApiError(500, 'Снаряжение недоступно'))
-
-    const wrapper = mount(TripRouteTents, { props: { trip: makeTrip() } })
-    await flushPromises()
+    const wrapper = await mounted({ gear: [], gearError: 'Снаряжение недоступно' })
 
     expect(wrapper.get('[data-test="route-tents-error"]').text()).toBe('Снаряжение недоступно')
     expect(wrapper.find('[data-test="route-tent-add"]').exists()).toBe(false)
@@ -817,9 +981,7 @@ describe('секция «Палатки»', () => {
       '1',
       expect.objectContaining({ typeId: 1, addToCatalog: false }),
     )
-    expect(
-      wrapper.findAll('[data-test="route-tent-title"]').map((node) => node.text()),
-    ).toContain('Олег 2-х местная 2400 гр.')
+    expect(tentTitles(wrapper)).toContain('Олег 2-х местная 2400 гр.')
   })
 
   /**
@@ -849,14 +1011,9 @@ describe('секция «Палатки»', () => {
     await wrapper.get('[data-test="manual-save"]').trigger('click')
     await flushPromises()
 
-    expect(mocks.addManualTripGear).toHaveBeenCalledWith(
-      '1',
-      expect.objectContaining({ typeId: 2 }),
-    )
+    expect(mocks.addManualTripGear).toHaveBeenCalledWith('1', expect.objectContaining({ typeId: 2 }))
     // В тексте пилюли есть и крестик — проверяем подпись, а не весь узел.
-    const awningTexts = wrapper
-      .findAll('[data-test="route-awning"]')
-      .map((node) => node.text())
+    const awningTexts = wrapper.findAll('[data-test="route-awning"]').map((node) => node.text())
 
     expect(awningTexts.some((text) => text.startsWith('Тент (Олег)'))).toBe(true)
   })

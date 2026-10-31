@@ -8,6 +8,7 @@ import type {
   ParticipantDecision,
   ParticipantStatus,
   RoleOption,
+  RouteNightInput,
   Trip,
   TripChat,
   TripListQuery,
@@ -19,6 +20,7 @@ import type {
   TripMealPlan,
   TripParticipant,
   TripRequest,
+  TripRoute,
   TripTabPermission,
   TripTransfer,
   TransferLegInput,
@@ -766,6 +768,81 @@ export async function removeTransferPassenger(
   userId: string,
 ): Promise<TripTransfer> {
   return apiFetch<TripTransfer>(`${legPath(tripId, legId)}/passengers/${userId}`, {
+    method: 'DELETE',
+  })
+}
+
+// ───────────────────────────── ночёвки похода ─────────────────────────────
+
+/**
+ * Все ручки «Ночёвок» возвращают вкладку целиком — тот же контракт, что
+ * у «Трансфера»: на экране ночи, варианты и кто где живёт, а это числа
+ * от трёх таблиц. Собрать их из частичного ответа значит однажды показать
+ * «3 из 5» там, где «4 из 5».
+ */
+
+/** Общий путь вкладки: `/trips/:id/route`. */
+function routePath(tripId: string): string {
+  return `/trips/${tripId}/route`
+}
+
+/** GET /api/trips/:id/route — вкладка «Ночёвки» целиком. Видят участники. */
+export async function fetchTripRoute(tripId: string): Promise<TripRoute> {
+  return apiFetch<TripRoute>(routePath(tripId))
+}
+
+/**
+ * PUT /api/trips/:id/route/nights — сохранить таблицу ночей целиком.
+ *
+ * Уходит не «изменённая ночь», а все ночи по номерам: правила сервер
+ * проверяет на ночи целиком (место привязано к набору вариантов, «идём всю
+ * ночь» не смешивается с палаткой), а клиенту не нужно помнить, что удалять.
+ * Распределение людей правку переживает: оно висит на палатках.
+ */
+export async function saveRouteNights(
+  tripId: string,
+  nights: RouteNightInput[],
+): Promise<TripRoute> {
+  return apiFetch<TripRoute>(`${routePath(tripId)}/nights`, {
+    method: 'PUT',
+    body: JSON.stringify({ nights }),
+  })
+}
+
+/**
+ * PUT /api/trips/:id/route/lodgers/:userId — посадить человека в палатку.
+ *
+ * Заявку или сразу место решает сервер: себя в свою палатку или тому, кто
+ * ведёт вкладку, — сразу жить; себя в чужую — заявкой хозяину. Фронт не
+ * угадывает, иначе на экране «живёт» появилось бы без согласия хозяина.
+ */
+export async function lodgeRoute(
+  tripId: string,
+  userId: string,
+  tentGearId: string,
+): Promise<TripRoute> {
+  return apiFetch<TripRoute>(`${routePath(tripId)}/lodgers/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ tentGearId }),
+  })
+}
+
+/** POST .../lodgers/:userId/accept — принять заявку в палатку. */
+export async function acceptRouteLodger(
+  tripId: string,
+  userId: string,
+): Promise<TripRoute> {
+  return apiFetch<TripRoute>(`${routePath(tripId)}/lodgers/${userId}/accept`, {
+    method: 'POST',
+  })
+}
+
+/** DELETE .../lodgers/:userId — освободить место. Повтор ничего не ломает. */
+export async function releaseRouteLodger(
+  tripId: string,
+  userId: string,
+): Promise<TripRoute> {
+  return apiFetch<TripRoute>(`${routePath(tripId)}/lodgers/${userId}`, {
     method: 'DELETE',
   })
 }

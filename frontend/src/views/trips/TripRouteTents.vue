@@ -1,72 +1,86 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
-import { listGear, listTripGear, proposeTripGear, removeTripGear } from '@/api/gear'
+import { listGear, proposeTripGear, removeTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
-import { listParticipants } from '@/api/trips'
+import {
+  acceptRouteLodger,
+  listParticipants,
+  lodgeRoute,
+  releaseRouteLodger,
+} from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
 import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
 import { GEAR_TYPE_CODES, TENT_TYPE_CODES } from '@/types/gear'
 import type { GearItem, GearItemAttribute, TripGearItem } from '@/types/gear'
-import type { Trip, TripParticipant } from '@/types/trips'
+import type {
+  RouteLodger,
+  RouteLodgerStatus,
+  RouteTraveler,
+  Trip,
+  TripParticipant,
+  TripRoute,
+} from '@/types/trips'
 import { weightInGrams } from '@/utils/gearWeight'
 
 /**
  * «Палатки» — распределение участников по палаткам (29.10.2026).
  *
  * Механика — как в «Трансфере» (заказчик: «смотри как пример на Трансфер»),
- * потому что задача та же: плашка-карточка, владелец, люди внутри, «проситься»
- * и «уйти». Отличие одно: **распределение по палаткам действует на все
- * ночёвки сразу** — палатка у человека одна на поход, и делить её по ночам
- * не нужно.
+ * потому что задача та же: плашка-карточка, владелец, люди внутри,
+ * «попроситься» и «уйти». Отличие одно: **распределение по палаткам
+ * действует на все ночёвки сразу** — палатка у человека одна на поход.
  *
- * **Типы вместо слов в названии (30.10.2026, Stage B, часть 2).** Секция
- * собрана из `TENT_TYPE_CODES`: `tent` — палатка, `shelter` — тент. Раньше
- * вид и тент угадывались по словам в названии, потому что типов в базе
- * не было; теперь оба типа есть в справочнике, и вещь приходит с `typeCode`.
+ * **Кто где живёт — на сервере** (31.10.2026). Раньше `TentMember` жил
+ * в памяти компонента и пропадал при перезагрузке. Теперь источник — ответ
+ * вкладки (`lodgers`, одна строка на человека на весь поход), а посадка,
+ * принятие заявки и освобождение места — ручки `PUT/POST/DELETE
+ * /route/lodgers/:userId`. Каждая отвечает вкладкой целиком, поэтому секция
+ * не собирает состояние по кускам: получила ответ — отдала его родителю
+ * (`emit('route')`), и «Палатки» перерисовались.
+ *
+ * **Снаряжение похода грузит родитель** (`TripRouteNights.vue`) и отдаёт
+ * сюда готовым списком: таблице ночёвок палатки нужны для выпадающего
+ * списка варианта «Палатка», и второй такой же запрос был бы лишним.
+ * Добавили или убрали вещь — секция отдаёт новый список наверх (`emit('gear')`).
+ *
+ * **Типы вместо слов в названии** (30.10.2026, Stage B, часть 2). Секция
+ * собрана из `TENT_TYPE_CODES`: `tent` — палатка, `shelter` — тент.
+ * Раньше вид и тент угадывались по словам в названии, потому что типов
+ * в базе не было; теперь оба типа есть в справочнике, и вещь приходит
+ * с `typeCode`.
  *
  * - **палатка** (`tent`) — плашка с людьми и распределением;
  * - **тент** (`shelter`) — пилюля «Тент - 3000 гр. (Олег)», в распределении
  *   его нет: под тентом никто не ночует;
  * - **вместимость — значение характеристики `seats`** типа `tent`, а не
- *   число из диалога: заказчик решил 30.10.2026, что вместимость это
- *   характеристика вещи (`NEXT.md` §3, вопрос 10), и слово «мест» в названии
- *   для неё больше не нужно. Не заполнена — плашка честно подписывается
- *   хозяином и весом, без выдуманного «3-х местная».
+ *   число из диалога. Не заполнена — плашка честно подписывается хозяином
+ *   и весом, без выдуманного «3-х местная».
  * - **добавить свою** — та же ручка, что «взять палатку в поход» на вкладке
  *   «Снаряжение» (`POST /api/trips/:id/gear`), поэтому палатка не исчезает
- *   при перезагрузке и её видит вся группа. Так же добавляется и тент:
- *   с 30.10.2026 это настоящий тип, а не строка на экране.
- * - **кто в какой палатке живёт — в памяти компонента** и никуда не уходит:
- *   таблицы распределения ещё нет, это следующий шаг (NEXT.md §2–§3).
+ *   при перезагрузке и её видит вся группа. Взяв палатку, человек сразу
+ *   занимает в ней место: палатку берут, чтобы в ней спать.
  *
  * **Вместимость никого не останавливает.** Заказчик: «она идёт только для
  * информирования, нельзя блокировать добавление участников в заполненную
  * палатку. Производитель рекомендуют количество, но в реальности обычно
- * живут +1 человек». Поэтому здесь нет «мест нет», как у рейса: есть строка
- * «живут 2 (Пётр, Анна)» и тихая пометка «сверх вместимости», когда народу
- * больше паспортного.
+ * живут +1 человек». Поэтому здесь нет «мест нет»: есть строка
+ * «живут 2 (Пётр, Анна)» и тихая пометка «сверх вместимости».
  *
  * **Заголовок плашки** — «{хозяин} {seats}-х местная {вес}гр.», например
  * «Анна 3-х местная 2400 гр.». Веса нет — нет и «гр.»; вместимости нет —
  * нет и числа.
  *
- * **Крестики — настоящий `DELETE`** (31.10.2026). Раньше у владельца
- * крестик убирал палатку из секции, а у организатора только **предлагал**
- * убрать: подпись зачёркивалась, а убирал владелец. Ручки удаления вещи
- * из похода не было, и предложение жило в памяти. Теперь ручка есть —
- * `DELETE /api/trips/:id/gear/:gearId`, — и крестик зовёт её у всех, кому
- * он виден: у владельца и организатора. Права проверяет сервер: чужую
- * вещь убирает владелец или тот, кто ведёт снаряжение похода.
+ * **Права.** Правят распределение хозяин палатки и тот, кто ведёт вкладку
+ * (`canEdit` из ответа сервера, а не догадка фронта). Но **попроситься
+ * и уйти может любой идущий**: это его собственное место, и сервер такое
+ * разрешает. Себя в чужую палатку — заявкой (`requested`), принимает
+ * хозяин; себя в свою или тому, кто ведёт вкладку, — сразу живёт.
  *
- * **Цвет кнопок — ответ на «мне это ещё нужно?»** (29.10.2026): «Добавить
- * свою палатку» цветная, пока смотрящий не распределён, «Добавить тент» —
- * пока тента в секции нет. «Попроситься» наоборот белая: это просьба,
- * а не главное действие.
- *
- * Права: владелец правит свою палатку, организатор — любую. Матрицу ролей
- * фронт не повторяет — здесь она и не нужна, потому что серверного ответа
- * по ночёвкам ещё нет.
+ * **Крестики — настоящий `DELETE`** (31.10.2026): ручка
+ * `DELETE /api/trips/:id/gear/:gearId` убирает вещь из похода у владельца
+ * и у организатора. Права проверяет сервер, ошибка (403) показывается
+ * отдельной строкой и не прячет секцию.
  *
  * **«Указать вручную» (31.10.2026).** Последний пункт в диалогах палатки
  * и тента открывает `TripGearManualModal`: вещи в каталоге нет, а в поход
@@ -76,20 +90,37 @@ import { weightInGrams } from '@/utils/gearWeight'
  * Хозяин выбирается лишь организатором и только когда в походе есть люди
  * без аккаунта — вещь «для Дяди Вити» заводят именно так.
  */
-const props = defineProps<{ trip: Trip }>()
+const props = defineProps<{
+  trip: Trip
+  /** Снаряжение похода: палатки и тенты. Грузит родитель, чтобы не дважды. */
+  gear: TripGearItem[]
+  /** Ошибка загрузки снаряжения: секция объясняет пустоту, а не молчит. */
+  gearError: string | null
+  /** Кто где живёт — из ответа сервера, одно место на весь поход. */
+  lodgers: RouteLodger[]
+  /** Кого можно посадить: участники, которые идут. */
+  travelers: RouteTraveler[]
+  /** Правит ли смотрящий вкладку: от этого зависят чужие места. */
+  canEdit: boolean
+}>()
+
+const emit = defineEmits<{
+  /** Вкладка целиком после посадки: родитель берёт её как есть. */
+  route: [TripRoute]
+  /** Снаряжение похода изменилось: добавили или убрали вещь. */
+  gear: [TripGearItem[]]
+}>()
 
 const auth = useAuthStore()
 
 /** Код характеристики вместимости у типа `tent` (сид и справочник админа). */
 const SEATS_ATTRIBUTE = 'seats'
 
-type TentPersonStatus = 'accepted' | 'requested'
-
 /** Человек в палатке: живёт или ещё просится. */
-interface TentMember {
+interface TentPerson {
   userId: string
   displayName: string
-  status: TentPersonStatus
+  status: RouteLodgerStatus
 }
 
 /**
@@ -107,14 +138,10 @@ interface TentCard {
   capacity: number | null
   /** Вес вещи из каталога: его показываем в заголовке, если он известен. */
   weightGrams: number | null
-  members: TentMember[]
 }
 
 /**
  * Тент в секции «Палатки» — вещь типа `shelter` из снаряжения похода.
- *
- * С 30.10.2026 тент — настоящий тип, поэтому и пилюля настоящая: вещь
- * уходит в поход той же ручкой, что палатка, и её видит вся группа.
  * В распределении тента нет: под ним никто не ночует, спальных мест он
  * не держит.
  */
@@ -133,15 +160,11 @@ interface AwningPill {
 
 const meId = computed(() => auth.user?.id ?? '')
 
-/** Состав похода целиком: имена нужны и для палаток, и для «не распределены». */
+/** Состав похода целиком: имена нужны и для палаток, и для людей без аккаунта. */
 const people = ref<TripParticipant[]>([])
-const gear = ref<TripGearItem[]>([])
 
 const isLoading = ref(true)
 const error = ref<string | null>(null)
-
-const tents = ref<TentCard[]>([])
-const awnings = ref<AwningPill[]>([])
 
 /**
  * Вместимость вещи: значение характеристики `seats`.
@@ -163,34 +186,71 @@ function seatsOf(item: { attributes?: GearItemAttribute[] }): number | null {
   return null
 }
 
-/** Кого распределяем: только «идёт». */
-const goingPeople = computed(() => people.value.filter((person) => person.status === 'going'))
+function nameOf(userId: string): string {
+  return people.value.find((person) => person.userId === userId)?.displayName ?? 'Участник'
+}
 
 function isMine(person: { userId: string }): boolean {
   return meId.value !== '' && person.userId === meId.value
+}
+
+/**
+ * Плашки палаток — из снаряжения похода: только тип `tent` и только
+ * «берём». «Не берём» (`declined`) в распределении не участвует.
+ */
+const tents = computed<TentCard[]>(() =>
+  props.gear
+    .filter((item) => item.typeCode === GEAR_TYPE_CODES.tent && item.status !== 'declined')
+    .map((item) => ({
+      tripGearId: item.id,
+      ownerUserId: item.ownerUserId,
+      ownerName: nameOf(item.ownerUserId),
+      capacity: seatsOf(item),
+      weightGrams: item.weightGrams,
+    })),
+)
+
+/** Тенты — из тех же вещей похода: тип `shelter`, «не берём» не показываем. */
+const awnings = computed<AwningPill[]>(() =>
+  props.gear
+    .filter((item) => item.typeCode === GEAR_TYPE_CODES.shelter && item.status !== 'declined')
+    .map((item) => ({
+      tripGearId: item.id,
+      gearItemId: item.gearItemId,
+      typeName: item.typeName,
+      title: item.title,
+      weightGrams: item.weightGrams,
+      ownerUserId: item.ownerUserId,
+      ownerName: nameOf(item.ownerUserId),
+    })),
+)
+
+/** Может ли смотрящий править эту палатку: своя или право вкладки. */
+function canManage(tent: TentCard): boolean {
+  return isMine({ userId: tent.ownerUserId }) || props.canEdit
 }
 
 function isMyTent(tent: TentCard): boolean {
   return isMine({ userId: tent.ownerUserId })
 }
 
-/**
- * Правит ли смотрящий палатку: своя — всегда, чужая — только организатору.
- * Роли вкладки здесь ни при чём: серверного ответа по ночёвкам ещё нет.
- */
-function canManage(tent: TentCard): boolean {
-  return isMyTent(tent) || (meId.value !== '' && props.trip.organizerUserId === meId.value)
+/** Кто живёт в палатке — строки `lodgers`, а не память компонента. */
+function lodgersOf(tent: TentCard): RouteLodger[] {
+  return props.lodgers.filter((lodger) => lodger.tentGearId === tent.tripGearId)
 }
 
-function nameOf(userId: string): string {
-  return people.value.find((person) => person.userId === userId)?.displayName ?? 'Участник'
+function acceptedOf(tent: TentCard): TentPerson[] {
+  return lodgersOf(tent).filter((lodger) => lodger.status === 'accepted')
+}
+
+function requestedOf(tent: TentCard): TentPerson[] {
+  return lodgersOf(tent).filter((lodger) => lodger.status === 'requested')
 }
 
 /**
  * Заголовок плашки — формат заказчика 29.10.2026:
  * **«{хозяин} {основная характеристика} {вес}гр.»** — «Анна 3-х местная
- * 2400 гр.». Вместимость берётся из значения `seats`, вес — из каталога;
- * чего нет, того в заголовке нет: «Анна 2400 гр.» честнее, чем
+ * 2400 гр.». Чего нет, того в заголовке нет: «Анна 2400 гр.» честнее, чем
  * «Анна 3-х местная» у палатки без заполненной вместимости.
  */
 function capacityText(capacity: number): string {
@@ -223,42 +283,36 @@ function membersText(tent: TentCard): string {
   return `${verb} ${sleeping.length} (${names})`
 }
 
-function acceptedOf(tent: TentCard): TentMember[] {
-  return tent.members.filter((person) => person.status === 'accepted')
-}
-
-function requestedOf(tent: TentCard): TentMember[] {
-  return tent.members.filter((person) => person.status === 'requested')
-}
-
 /** Пометка «народу больше, чем паспортных мест»: не запрет, а информация. */
 function isOverCapacity(tent: TentCard): boolean {
   return tent.capacity !== null && acceptedOf(tent).length > tent.capacity
 }
 
 /** Кого ещё можно позвать в эту палатку: идущих и не занятых в ней. */
-function outsiders(tent: TentCard): TripParticipant[] {
-  const inside = new Set(tent.members.map((person) => person.userId))
+function outsiders(tent: TentCard): RouteTraveler[] {
+  const inside = new Set(lodgersOf(tent).map((lodger) => lodger.userId))
 
-  return goingPeople.value.filter((person) => !inside.has(person.userId))
+  return props.travelers.filter((person) => !inside.has(person.userId))
 }
 
 /**
  * Что будет, если смотрящий попросится.
  *
  * Палатка — чужое личное имущество, поэтому место в ней не занимают сами:
- * человек **просится** (`requested`), а решает хозяин — ровно как заявка
- * на чужое ТС в «Трансфере». Уже внутри — `null`, кнопки нет.
- *
- * Организатор не исключение: он может позвать себя селектом «взять
- * в палатку» — это прямое добавление, другое действие с другим правом.
+ * человек **просится** (`requested`), а решает хозяин. В свою палатку
+ * и тому, кто ведёт вкладку, сервер место даёт сразу — и подпись кнопки
+ * честно говорит «Занять место». Уже внутри — `null`, кнопки нет.
  */
-function joinStatus(tent: TentCard): 'requested' | null {
+function joinStatus(tent: TentCard): RouteLodgerStatus | null {
   if (meId.value === '') return null
-  if (!goingPeople.value.some((person) => person.userId === meId.value)) return null
-  if (tent.members.some((person) => person.userId === meId.value)) return null
+  if (!props.travelers.some((person) => person.userId === meId.value)) return null
+  if (lodgersOf(tent).some((lodger) => lodger.userId === meId.value)) return null
 
-  return 'requested'
+  return isMyTent(tent) || props.canEdit ? 'accepted' : 'requested'
+}
+
+function joinLabel(tent: TentCard): string {
+  return joinStatus(tent) === 'accepted' ? 'Занять место' : 'Попроситься'
 }
 
 /**
@@ -266,13 +320,9 @@ function joinStatus(tent: TentCard): 'requested' | null {
  * на экране, и предлагать его второй раз не нужно.
  */
 const unassigned = computed(() => {
-  const busy = new Set<string>()
+  const busy = new Set(props.lodgers.map((lodger) => lodger.userId))
 
-  for (const tent of tents.value) {
-    for (const person of tent.members) busy.add(person.userId)
-  }
-
-  return goingPeople.value.filter((person) => !busy.has(person.userId))
+  return props.travelers.filter((person) => !busy.has(person.userId))
 })
 
 /**
@@ -280,89 +330,28 @@ const unassigned = computed(() => {
  * цветная, пока человек ни в одной палатке, и белая, когда место уже есть:
  * цвет кнопки и есть ответ на вопрос «мне это ещё нужно?».
  */
-const amUnassigned = computed(() =>
-  unassigned.value.some((person) => person.userId === meId.value),
-)
+const amUnassigned = computed(() => unassigned.value.some((person) => person.userId === meId.value))
 
 const hasAwning = computed(() => awnings.value.length > 0)
 
 // ───────────────────────────── загрузка ─────────────────────────────
 
 /**
- * Плашки пересобираются из снаряжения, но живые (уже расставленные люди)
- * переживают перезагрузку: распределение в памяти, и терять его на каждом
- * обновлении списка палаток нельзя.
+ * Секция догружает только состав похода: имена хозяев, людей без аккаунта
+ * для формы «указать вручную» и проверку «идёт ли смотрящий».
+ *
+ * Снаряжение приходит пропсом: его уже загрузил родитель для выпадающего
+ * списка «Палатка» в таблице ночёвок.
  */
-function syncTents(items: TripGearItem[]): void {
-  const cards = items.filter(
-    (item) => item.typeCode === GEAR_TYPE_CODES.tent && item.status !== 'declined',
-  )
-  const known = new Map(tents.value.map((tent) => [tent.tripGearId, tent]))
-
-  tents.value = cards.map((item) => {
-    const existing = known.get(item.id)
-    if (existing !== undefined) return existing
-
-    const ownerName = nameOf(item.ownerUserId)
-
-    return {
-      tripGearId: item.id,
-      ownerUserId: item.ownerUserId,
-      ownerName,
-      capacity: seatsOf(item),
-      weightGrams: item.weightGrams,
-      /**
-       * Владелец живёт в своей палатке, пока не сказал иначе: он её и несёт.
-       * Если владельца нет среди идущих (уже не идёт), палатка остаётся
-       * пустой — расставлять в неё людей будет организатор.
-       */
-      members: goingPeople.value.some((person) => person.userId === item.ownerUserId)
-        ? [{ userId: item.ownerUserId, displayName: ownerName, status: 'accepted' }]
-        : [],
-    }
-  })
-}
-
-/** Тенты — из тех же вещей похода: тип `shelter`, «не берём» не показываем. */
-function syncAwnings(items: TripGearItem[]): void {
-  const pills = items.filter(
-    (item) => item.typeCode === GEAR_TYPE_CODES.shelter && item.status !== 'declined',
-  )
-  const known = new Map(awnings.value.map((awning) => [awning.tripGearId, awning]))
-
-  awnings.value = pills.map((item) => {
-    const existing = known.get(item.id)
-    if (existing !== undefined) return existing
-
-    return {
-      tripGearId: item.id,
-      gearItemId: item.gearItemId,
-      typeName: item.typeName,
-      title: item.title,
-      weightGrams: item.weightGrams,
-      ownerUserId: item.ownerUserId,
-      ownerName: nameOf(item.ownerUserId),
-    }
-  })
-}
-
 async function load(): Promise<void> {
   isLoading.value = true
   error.value = null
 
   try {
-    const [members, list] = await Promise.all([
-      listParticipants(props.trip.id),
-      listTripGear(props.trip.id),
-    ])
-
-    people.value = members
-    gear.value = list.items
-    syncTents(list.items)
-    syncAwnings(list.items)
+    people.value = await listParticipants(props.trip.id)
   } catch (problem) {
     error.value =
-      problem instanceof ApiError ? problem.message : 'Не удалось загрузить палатки'
+      problem instanceof ApiError ? problem.message : 'Не удалось загрузить распределение'
   } finally {
     isLoading.value = false
   }
@@ -370,11 +359,38 @@ async function load(): Promise<void> {
 
 watch(() => props.trip.id, load, { immediate: true })
 
-// ───────────────────────────── действия ─────────────────────────────
+/** Ошибка снаряжения приходит сверху: показываем её вместо пустого списка. */
+const shownError = computed(() => props.gearError ?? error.value)
+
+// ───────────────────────────── посадка ─────────────────────────────
+
+/** Идёт ли запрос распределения: кнопки не должны звать его дважды. */
+const isLodging = ref(false)
+const lodgingError = ref<string | null>(null)
+
+/**
+ * Общий путь всех посадок: ручка отвечает вкладкой целиком, поэтому
+ * результат уходит родителю одним событием, а не правится здесь по кускам.
+ */
+async function applyLodging(action: () => Promise<TripRoute>): Promise<void> {
+  if (isLodging.value) return
+
+  isLodging.value = true
+  lodgingError.value = null
+
+  try {
+    emit('route', await action())
+  } catch (problem) {
+    lodgingError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось изменить распределение'
+  } finally {
+    isLodging.value = false
+  }
+}
 
 /**
  * Взять человека в палатку. Селект сбрасывается на пустой пункт — как
- * «взять на борт» в «Трансфере»: действие одно, а не «выбранное состояние».
+ * «взять на борт» в «Трансфере»: действие одно, а не выбранное состояние.
  */
 function addMember(tent: TentCard, event: Event): void {
   const select = event.target as HTMLSelectElement
@@ -384,38 +400,35 @@ function addMember(tent: TentCard, event: Event): void {
 
   if (userId === '') return
 
-  const person = goingPeople.value.find((candidate) => candidate.userId === userId)
-  if (person === undefined) return
+  void applyLodging(() => lodgeRoute(props.trip.id, userId, tent.tripGearId))
+}
 
-  tent.members = [
-    ...tent.members,
-    { userId: person.userId, displayName: person.displayName, status: 'accepted' },
-  ]
+/** Попроситься или занять место: заявку или сразу место решает сервер. */
+function join(tent: TentCard): void {
+  if (joinStatus(tent) === null) return
+
+  void applyLodging(() => lodgeRoute(props.trip.id, meId.value, tent.tripGearId))
 }
 
 /** Выйти из палатки или отменить свою заявку: одно действие «убрать себя». */
-function removeMember(tent: TentCard, person: TentMember): void {
-  tent.members = tent.members.filter((member) => member.userId !== person.userId)
-}
-
-function join(tent: TentCard): void {
-  const status = joinStatus(tent)
-  if (status === null) return
-
-  const me = goingPeople.value.find((person) => person.userId === meId.value)
-  if (me === undefined) return
-
-  tent.members = [
-    ...tent.members,
-    { userId: me.userId, displayName: me.displayName, status },
-  ]
+function leave(person: TentPerson): void {
+  void applyLodging(() => releaseRouteLodger(props.trip.id, person.userId))
 }
 
 /** Владелец принимает заявку: человек переходит из «просятся» в жильцы. */
-function acceptRequest(tent: TentCard, person: TentMember): void {
-  tent.members = tent.members.map((member) =>
-    member.userId === person.userId ? { ...member, status: 'accepted' } : member,
-  )
+function acceptRequest(person: TentPerson): void {
+  void applyLodging(() => acceptRouteLodger(props.trip.id, person.userId))
+}
+
+/**
+ * Убирать человека из палатки может он сам, хозяин палатки и тот, кто ведёт
+ * вкладку. Хозяина из его собственной палатки не убираем: палатка уходит
+ * из похода вместе с ним.
+ */
+function canRemoveMember(tent: TentCard, person: TentPerson): boolean {
+  if (person.userId === tent.ownerUserId) return false
+
+  return isMine(person) || canManage(tent)
 }
 
 // ───────────────────────────── крестик палатки ─────────────────────────────
@@ -449,7 +462,10 @@ async function removeTripItem(tripGearId: string): Promise<boolean> {
 
   try {
     await removeTripGear(props.trip.id, tripGearId)
-    gear.value = gear.value.filter((row) => row.id !== tripGearId)
+    emit(
+      'gear',
+      props.gear.filter((row) => row.id !== tripGearId),
+    )
 
     return true
   } catch (problem) {
@@ -469,12 +485,10 @@ async function removeTripItem(tripGearId: string): Promise<boolean> {
  *
  * Раньше действие жило в памяти, а организатор мог только предложить
  * убрать — ручки удаления не было. Теперь `DELETE` настоящий, и после
- * перезагрузки палатка не возвращается.
+ * перезагрузки палатка не возвращается. Места в ней уходят каскадом.
  */
 async function removeTent(tent: TentCard): Promise<void> {
-  if (!(await removeTripItem(tent.tripGearId))) return
-
-  tents.value = tents.value.filter((card) => card.tripGearId !== tent.tripGearId)
+  await removeTripItem(tent.tripGearId)
 }
 
 function removeTentHint(): string {
@@ -500,7 +514,7 @@ async function openAwningDialog(): Promise<void> {
 
   try {
     const list = await listGear()
-    const taken = new Set(gear.value.map((item) => item.gearItemId))
+    const taken = new Set(props.gear.map((item) => item.gearItemId))
 
     myAwnings.value = list.items.filter(
       (item) => item.typeCode === GEAR_TYPE_CODES.shelter && !taken.has(item.id),
@@ -526,19 +540,7 @@ async function saveAwning(): Promise<void> {
   try {
     const item = await proposeTripGear(props.trip.id, draftAwningId.value)
 
-    gear.value = [...gear.value, item]
-    awnings.value = [
-      ...awnings.value,
-      {
-        tripGearId: item.id,
-        gearItemId: item.gearItemId,
-        typeName: item.typeName,
-        title: item.title,
-        weightGrams: item.weightGrams,
-        ownerUserId: item.ownerUserId,
-        ownerName: auth.user?.displayName ?? nameOf(item.ownerUserId),
-      },
-    ]
+    emit('gear', [...props.gear, item])
     isAwningDialogOpen.value = false
   } catch (problem) {
     // Ошибка — в модалке, а не строкой под затемнением (правило «Трансфера»).
@@ -565,18 +567,11 @@ function awningText(awning: AwningPill): string {
 }
 
 function canManageAwning(awning: AwningPill): boolean {
-  return (
-    awning.ownerUserId === meId.value ||
-    (meId.value !== '' && props.trip.organizerUserId === meId.value)
-  )
+  return isMine({ userId: awning.ownerUserId }) || props.canEdit
 }
 
 async function removeAwning(awning: AwningPill): Promise<void> {
-  if (!(await removeTripItem(awning.tripGearId))) return
-
-  awnings.value = awnings.value.filter(
-    (row) => row.tripGearId !== awning.tripGearId,
-  )
+  await removeTripItem(awning.tripGearId)
 }
 
 // ───────────────────────────── своя палатка ─────────────────────────────
@@ -607,7 +602,7 @@ async function openDialog(): Promise<void> {
 
   try {
     const list = await listGear()
-    const inTrip = new Set(gear.value.map((item) => item.gearItemId))
+    const inTrip = new Set(props.gear.map((item) => item.gearItemId))
 
     myTents.value = list.items.filter(
       (item) => item.typeCode === GEAR_TYPE_CODES.tent && !inTrip.has(item.id),
@@ -620,6 +615,25 @@ async function openDialog(): Promise<void> {
   }
 }
 
+/**
+ * Взяли свою палатку в поход — и сразу живём в ней: палатку берут, чтобы
+ * в ней спать, а не чтобы она стояла в списке. Место занимает сервер, и
+ * заявки тут быть не может: палатка своя. Человек, который не идёт, места
+ * не получает — сервер такое отбивает, поэтому и не просим.
+ */
+async function placeOwnerInTent(tripGearId: string): Promise<void> {
+  if (!props.travelers.some((person) => person.userId === meId.value)) return
+
+  try {
+    emit('route', await lodgeRoute(props.trip.id, meId.value, tripGearId))
+  } catch (problem) {
+    lodgingError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Палатка добавлена, но место в ней занять не удалось'
+  }
+}
+
 async function saveTent(): Promise<void> {
   if (isSaving.value || draftGearItemId.value === '') return
 
@@ -629,26 +643,9 @@ async function saveTent(): Promise<void> {
   try {
     const item = await proposeTripGear(props.trip.id, draftGearItemId.value)
 
-    const me = goingPeople.value.find((person) => person.userId === meId.value)
-
-    tents.value = [
-      ...tents.value,
-      {
-        tripGearId: item.id,
-        ownerUserId: item.ownerUserId,
-        // Имя — из профиля смотрящего: его палатка, и он подписан на плашке.
-        ownerName: auth.user?.displayName ?? nameOf(item.ownerUserId),
-        capacity: seatsOf(item),
-        weightGrams: item.weightGrams,
-        members:
-          me === undefined
-            ? []
-            : [{ userId: me.userId, displayName: me.displayName, status: 'accepted' }],
-      },
-    ]
-
-    gear.value = [...gear.value, item]
+    emit('gear', [...props.gear, item])
     isDialogOpen.value = false
+    await placeOwnerInTent(item.id)
   } catch (problem) {
     // Ошибка — в модалке, а не строкой под затемнением (правило «Трансфера»).
     dialogError.value =
@@ -702,9 +699,7 @@ function openManual(typeCode: string): void {
  * секцию она попадёт, решает её тип, а не диалог, из которого её открыли.
  */
 function onManualCreated(item: TripGearItem): void {
-  gear.value = [...gear.value, item]
-  syncTents(gear.value)
-  syncAwnings(gear.value)
+  emit('gear', [...props.gear, item])
   isManualOpen.value = false
 }
 </script>
@@ -719,8 +714,8 @@ function onManualCreated(item: TripGearItem): void {
       Загружаем палатки…
     </p>
 
-    <p v-else-if="error" class="text-sm text-muted" data-test="route-tents-error">
-      {{ error }}
+    <p v-else-if="shownError" class="text-sm text-muted" data-test="route-tents-error">
+      {{ shownError }}
     </p>
 
     <template v-else>
@@ -730,6 +725,18 @@ function onManualCreated(item: TripGearItem): void {
         data-test="route-tents-remove-error"
       >
         {{ removalError }}
+      </p>
+
+      <!--
+        Ошибка посадки — отдельной строкой, как у удаления: упавшая заявка
+        не должна прятать палатки, человеку нужно видеть и текст, и состав.
+      -->
+      <p
+        v-if="lodgingError"
+        class="text-sm text-red-600"
+        data-test="route-tents-lodging-error"
+      >
+        {{ lodgingError }}
       </p>
 
       <p v-if="tents.length === 0" class="text-sm text-muted" data-test="route-tents-empty">
@@ -800,11 +807,12 @@ function onManualCreated(item: TripGearItem): void {
 
             <!-- Владельца из его палатки не убрать: палатка уходит вместе с ним. -->
             <button
-              v-if="(isMine(person) || canManage(tent)) && person.userId !== tent.ownerUserId"
+              v-if="canRemoveMember(tent, person)"
               type="button"
-              class="cursor-pointer border-0 bg-transparent p-0 text-amber-700 transition-colors hover:text-amber-900"
+              :disabled="isLodging"
+              class="cursor-pointer border-0 bg-transparent p-0 text-amber-700 transition-colors hover:text-amber-900 disabled:opacity-40"
               :data-test="`route-tent-leave-${person.userId}`"
-              @click="removeMember(tent, person)"
+              @click="leave(person)"
             >
               ×
             </button>
@@ -829,17 +837,19 @@ function onManualCreated(item: TripGearItem): void {
             <template v-if="canManage(tent)">
               <button
                 type="button"
-                class="cursor-pointer rounded-lg border border-primary bg-primary px-2 py-1 text-xs text-white transition-opacity hover:opacity-90"
+                :disabled="isLodging"
+                class="cursor-pointer rounded-lg border border-primary bg-primary px-2 py-1 text-xs text-white transition-opacity hover:opacity-90 disabled:opacity-40"
                 :data-test="`route-tent-accept-${person.userId}`"
-                @click="acceptRequest(tent, person)"
+                @click="acceptRequest(person)"
               >
                 Принять
               </button>
               <button
                 type="button"
-                class="cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-xs text-text transition-colors hover:border-primary"
+                :disabled="isLodging"
+                class="cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-xs text-text transition-colors hover:border-primary disabled:opacity-40"
                 :data-test="`route-tent-reject-${person.userId}`"
-                @click="removeMember(tent, person)"
+                @click="leave(person)"
               >
                 Отклонить
               </button>
@@ -849,9 +859,10 @@ function onManualCreated(item: TripGearItem): void {
             <button
               v-else-if="isMine(person)"
               type="button"
-              class="cursor-pointer border-0 bg-transparent p-0 text-xs text-muted underline transition-colors hover:text-text"
+              :disabled="isLodging"
+              class="cursor-pointer border-0 bg-transparent p-0 text-xs text-muted underline transition-colors hover:text-text disabled:opacity-40"
               :data-test="`route-tent-leave-${person.userId}`"
-              @click="removeMember(tent, person)"
+              @click="leave(person)"
             >
               Отменить заявку
             </button>
@@ -864,15 +875,19 @@ function onManualCreated(item: TripGearItem): void {
             секции, а просьба, и цветная кнопка рядом с «взять в палатку»
             перетягивала внимание на себя. Цветная — только там, где
             человеку действительно есть что предложить.
+
+            Подпись честная: в свою палатку и тому, кто ведёт вкладку,
+            сервер даёт место сразу, поэтому «Занять место», а не «Попроситься».
           -->
           <button
             v-if="joinStatus(tent) !== null"
             type="button"
-            class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-emerald-600"
+            :disabled="isLodging"
+            class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-emerald-600 disabled:cursor-not-allowed disabled:opacity-40"
             data-test="route-tent-join"
             @click="join(tent)"
           >
-            Попроситься
+            {{ joinLabel(tent) }}
           </button>
 
           <span
@@ -889,7 +904,8 @@ function onManualCreated(item: TripGearItem): void {
           -->
           <select
             v-if="canManage(tent) && outsiders(tent).length > 0"
-            class="w-full rounded-xl border border-border bg-field px-2 py-1 text-base text-text transition-colors focus:border-primary focus:outline-none md:w-auto md:text-sm"
+            :disabled="isLodging"
+            class="w-full rounded-xl border border-border bg-field px-2 py-1 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 md:w-auto md:text-sm"
             data-test="route-tent-add-member"
             @change="addMember(tent, $event)"
           >
