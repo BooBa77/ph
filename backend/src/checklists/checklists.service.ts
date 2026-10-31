@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DataSource, EntityManager, In, Not } from 'typeorm';
 
+import { GearItem } from '../gear/entities/gear-item.entity';
 import { TripParticipant } from '../trips/entities/trip-participant.entity';
 import { TripsService } from '../trips/trips.service';
 import {
@@ -51,7 +52,17 @@ import { Checklist } from './entities/checklist.entity';
  * При создании списка в походе можно передать `fromTemplateId`: пункты
  * **копируются** в новую строку. Правка шаблона после этого поход
  * не трогает — иначе список снаряжения прошедшего похода менялся бы
- * задним числом.
+ * задним числом. Ссылка на вещь каталога копируется вместе с пунктом:
+ * походу нужен именно экземпляр, а не его название.
+ *
+ * ## Пункт — текст или вещь
+ *
+ * Пункт бывает свободным текстом и ссылкой на конкретную вещь личного
+ * каталога (`gearItemId`, 31.10.2026). Привязать можно **только свою**
+ * вещь и только не одноразовую: чужой id — 404, как и везде в проекте.
+ * У пункта-ссылки `title` — снимок названия вещи; удаление вещи превращает
+ * ссылку в текст имени типа, и это делает триггер базы (см. миграцию
+ * `ChecklistGearRefs`), а не сервис: вещь уходит и каскадом тоже.
  *
  * ## Чего здесь нет
  *
@@ -140,7 +151,14 @@ export class ChecklistsService {
 
   // ───────────────────────── пункты ─────────────────────────
 
-  /** Добавить пункт. */
+  /**
+   * Добавить пункт: свободный текст или конкретную вещь каталога.
+   *
+   * Ровно одно из двух обязано быть: прислали `gearItemId` — текст берётся
+   * из вещи (у ссылки нет отдельного имени), прислали только `title` —
+   * это обычный текстовый пункт. Оба пусты — 400 с подсказкой, потому что
+   * «пункт без текста» нечем показать в списке.
+   */
   async addItem(
     userId: string,
     checklistId: number,
@@ -150,15 +168,23 @@ export class ChecklistsService {
     const checklist = await this.findChecklist(manager, checklistId);
     await this.assertCanEdit(manager, checklist, userId);
 
-    const title = dto.title.trim();
+    const gear =
+      dto.gearItemId !== undefined
+        ? await this.findOwnedGear(manager, userId, dto.gearItemId)
+        : null;
+
+    const title = (gear ? gear.title : (dto.title ?? '')).trim();
     if (title.length === 0) {
-      throw new BadRequestException('У пункта должен быть текст');
+      throw new BadRequestException(
+        'Пункт — свободный текст или вещь из снаряжения',
+      );
     }
 
     const saved = await manager.save(
       manager.create(ChecklistItem, {
         checklistId: checklist.id,
         title,
+        gearItemId: gear?.id ?? null,
         isDone: false,
         doneByUserId: null,
         doneAt: null,
@@ -166,17 +192,21 @@ export class ChecklistsService {
       }),
     );
 
-    return ChecklistItemDto.from(saved);
+    return ChecklistItemDto.from(await this.findItem(manager, saved.id));
   }
 
   /**
-   * Отметка и/или правка текста.
+   * Отметка, правка текста и привязка вещи.
    *
-   * Два поля — два права. В общем списке похода отметку ставит любой
+   * Три поля — три права. В общем списке похода отметку ставит любой
    * участник («Ваня взял газ» — это факт, а не административное решение),
-   * а переименовать пункт может только организатор. Прислали оба поля —
-   * проверяются оба права: частично применить запрос было бы нельзя,
-   * иначе ответ соврал бы о том, что сохранилось.
+   * а переименовать пункт и сменить вещь может только организатор.
+   * Прислали несколько полей — проверяются все права: частично применить
+   * запрос было бы нельзя, иначе ответ соврал бы о том, что сохранилось.
+   *
+   * `gearItemId: null` — отвязать вещь, оставив пункт текстом с текущим
+   * названием. `gearItemId: 5` — привязать другую свою вещь: текст снова
+   * берётся из неё, а присланный `title` игнорируется.
    */
   async updateItem(
     userId: string,
@@ -185,26 +215,36 @@ export class ChecklistsService {
   ): Promise<ChecklistItemDto> {
     const manager = this.dataSource.manager;
 
-    const item = await manager.findOne(ChecklistItem, {
-      where: { id: String(itemId) },
-    });
-    if (!item) throw new NotFoundException('Пункт не найден');
-
+    const item = await this.findItem(manager, itemId);
     const checklist = await this.findChecklist(manager, Number(item.checklistId));
 
-    if (dto.title !== undefined) {
+    if (dto.title !== undefined || dto.gearItemId !== undefined) {
       await this.assertCanEdit(manager, checklist, userId);
     }
     if (dto.isDone !== undefined) {
       await this.assertCanTick(manager, checklist, userId);
     }
 
-    if (dto.title !== undefined) {
-      const title = dto.title.trim();
-      if (title.length === 0) {
-        throw new BadRequestException('У пункта должен быть текст');
+    if (dto.gearItemId !== undefined && dto.gearItemId !== null) {
+      const gear = await this.findOwnedGear(manager, userId, dto.gearItemId);
+      // Связь и колонку — вместе: `item` пришёл с загруженным `gearItem`
+      // прежней вещи, и при сохранении TypeORM взял бы её, а не колонку.
+      item.gearItemId = gear.id;
+      item.gearItem = gear;
+      item.title = gear.title;
+    } else {
+      if (dto.gearItemId === null) {
+        item.gearItemId = null;
+        item.gearItem = null;
       }
-      item.title = title;
+
+      if (dto.title !== undefined) {
+        const title = dto.title.trim();
+        if (title.length === 0) {
+          throw new BadRequestException('У пункта должен быть текст');
+        }
+        item.title = title;
+      }
     }
 
     if (dto.isDone !== undefined) {
@@ -215,17 +255,16 @@ export class ChecklistsService {
       item.doneAt = dto.isDone ? new Date() : null;
     }
 
-    return ChecklistItemDto.from(await manager.save(item));
+    const saved = await manager.save(item);
+
+    return ChecklistItemDto.from(await this.findItem(manager, saved.id));
   }
 
   /** Удалить пункт. */
   async deleteItem(userId: string, itemId: number): Promise<void> {
     const manager = this.dataSource.manager;
 
-    const item = await manager.findOne(ChecklistItem, {
-      where: { id: String(itemId) },
-    });
-    if (!item) throw new NotFoundException('Пункт не найден');
+    const item = await this.findItem(manager, itemId);
 
     const checklist = await this.findChecklist(manager, Number(item.checklistId));
     await this.assertCanEdit(manager, checklist, userId);
@@ -349,6 +388,10 @@ export class ChecklistsService {
           templateItems.map((item) => ({
             checklistId: checklist.id,
             title: item.title,
+            // Ссылка на вещь копируется вместе с пунктом: походу нужен
+            // экземпляр, а не его название. Вещь принадлежит тому же
+            // человеку — шаблон чужой скопировать нельзя.
+            gearItemId: item.gearItemId,
             isDone: false,
             createdByUserId: userId,
           })),
@@ -358,6 +401,7 @@ export class ChecklistsService {
       const items = await tx.find(ChecklistItem, {
         where: { checklistId: checklist.id },
         order: { id: 'ASC' },
+        relations: { gearItem: { gearType: true } },
       });
 
       return ChecklistDto.from(checklist, items);
@@ -377,6 +421,47 @@ export class ChecklistsService {
     if (!checklist) throw new NotFoundException('Чек-лист не найден');
 
     return checklist;
+  }
+
+  /**
+   * Пункт по id — с вещью и её типом.
+   *
+   * Связи читаются сразу: ответ всегда отдаёт `gear`, и `null` там значил бы
+   * «пункт без вещи», а не «поленились загрузить». Отдельный загрузчик
+   * после каждой записи — цена одного join-а против врущего ответа.
+   */
+  private async findItem(
+    manager: EntityManager,
+    id: string | number,
+  ): Promise<ChecklistItem> {
+    const item = await manager.findOne(ChecklistItem, {
+      where: { id: String(id) },
+      relations: { gearItem: { gearType: true } },
+    });
+    if (!item) throw new NotFoundException('Пункт не найден');
+
+    return item;
+  }
+
+  /**
+   * Вещь каталога, которую можно привязать к пункту.
+   *
+   * Только своя и только не одноразовая: одноразовая вещь похода живёт
+   * строкой `trip_gear` и каталогу не принадлежит, а чужая вещь — 404,
+   * как любой чужой предмет в проекте (перебирать id нечего).
+   */
+  private async findOwnedGear(
+    manager: EntityManager,
+    userId: string,
+    id: number,
+  ): Promise<GearItem> {
+    const gear = await manager.findOne(GearItem, {
+      where: { id: String(id), ownerUserId: userId, isTripOnly: false },
+      relations: { gearType: true },
+    });
+    if (!gear) throw new NotFoundException('Вещь не найдена');
+
+    return gear;
   }
 
   /** Шаблон этого человека. Чужой шаблон — тоже 404: его как бы нет. */
@@ -484,6 +569,9 @@ export class ChecklistsService {
     const items = await manager.find(ChecklistItem, {
       where: { checklistId: In(checklists.map((checklist) => checklist.id)) },
       order: { checklistId: 'ASC', id: 'ASC' },
+      // Вещь нужна каждой строке ответа: без связи `gear` всегда был бы
+      // `null`, и фронт показывал бы ссылку обычным текстом.
+      relations: { gearItem: { gearType: true } },
     });
 
     return checklists.map((checklist) =>

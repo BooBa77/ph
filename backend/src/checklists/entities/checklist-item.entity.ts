@@ -10,6 +10,7 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+import { GearItem } from '../../gear/entities/gear-item.entity';
 import { User } from '../../users/entities/user.entity';
 import { Checklist } from './checklist.entity';
 
@@ -24,9 +25,19 @@ import { Checklist } from './checklist.entity';
  * состояния.
  *
  * `title` — обычный текст, не markdown: пункт читают в списке с галочкой,
- * а не в тексте. Ссылки на объекты и участников тут не нужны; понадобятся
- * в снаряжении и раскладке — это будут свойства пункта, а не разметка
- * названия.
+ * а не в тексте.
+ *
+ * **Пункт бывает двух видов (31.10.2026).** Обычный текст — «спички»,
+ * «бинт» — и указание на конкретный экземпляр снаряжения: `gear_item_id`
+ * ссылается на вещь личного каталога. Ссылка не заменяет `title`, а
+ * дополняет его: `title` — снимок названия вещи на момент привязки, и
+ * благодаря ему пункт читается даже тогда, когда вещи уже нет.
+ *
+ * **Удалили вещь — пункт остался текстом типа.** Это делает триггер в базе
+ * (`trg_gear_items_unlink_checklists`), а не сервис: вещь уходит и ручкой
+ * каталога, и каскадом одноразовой вещи похода, а сервисная уборка прошла
+ * бы мимо каскадов. После удаления `gear_item_id` — NULL, `title` — имя
+ * типа («Палатка»), и пункт снова обычный текстовый.
  *
  * `created_by_user_id` есть по той же причине, что `done_by`: в общем
  * списке пункты добавляет организатор, в личном — сам человек, а
@@ -35,6 +46,7 @@ import { Checklist } from './checklist.entity';
  */
 @Entity('checklist_items')
 @Index('IDX_checklist_items_list', ['checklistId', 'id'])
+@Index('IDX_checklist_items_gear', ['gearItemId'])
 @Check('chk_checklist_items_title', `char_length(btrim("title")) > 0`)
 @Check(
   'chk_checklist_items_done',
@@ -58,6 +70,26 @@ export class ChecklistItem {
   /** Текст пункта: «Палатка на четыре человека». */
   @Column({ type: 'varchar', length: 200 })
   title: string;
+
+  /**
+   * Конкретный экземпляр снаряжения из личного каталога автора пункта.
+   *
+   * `NULL` — обычный текстовый пункт. Ссылка необязательна и не заменяет
+   * текст: `title` остаётся снимком названия (см. doc класса).
+   *
+   * `SET NULL` на удаление вещи — страховка уровня FK; настоящий сценарий
+   * («ссылка становится текстом типа») делает триггер, который успевает
+   * до каскада.
+   */
+  @Column({ name: 'gear_item_id', type: 'bigint', nullable: true })
+  gearItemId: string | null;
+
+  @ManyToOne(() => GearItem, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({
+    name: 'gear_item_id',
+    foreignKeyConstraintName: 'FK_checklist_items_gear_item',
+  })
+  gearItem: GearItem | null;
 
   @Column({ name: 'is_done', type: 'boolean', default: false })
   isDone: boolean;

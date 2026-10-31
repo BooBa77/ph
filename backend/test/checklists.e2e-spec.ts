@@ -39,6 +39,14 @@ describe('Чек-листы (e2e)', () => {
   let privateTripId: string;
   /** Отдельный поход для проверки копии шаблона: там свой общий список. */
   let copyTripId: string;
+  /** Поход для пунктов-ссылок: общий список, участник и своя вещь. */
+  let gearTripId: string;
+
+  /** Тип и полка для вещей проверки — свой код, без зависимости от сидов. */
+  let gearTypeId: number;
+  let gearGroupId: number;
+  /** Как называется тип: этим текстом пункт подписывается после удаления вещи. */
+  const gearTypeName = 'Рюкзак проверки чек-листа';
 
   let lastCode: string | null = null;
 
@@ -127,15 +135,47 @@ describe('Чек-листы (e2e)', () => {
       )
     )[0].id;
 
+    gearTripId = (
+      await dataSource.query(
+        `INSERT INTO trips (organizer_user_id, goal_object_id, route_text, visibility)
+         VALUES ($1, $2, '', 'private') RETURNING id`,
+        [organizerId, objectId],
+      )
+    )[0].id;
+
     // Организатор и участник в составе; посторонний — нет. В походах,
     // которые проверяют приватность, организатор тоже в составе: иначе
     // его собственный поход отвечал бы ему 404 и тест врал бы.
     await dataSource.query(
       `INSERT INTO trip_participants (trip_id, user_id, status)
        VALUES ($1, $2, 'going'), ($1, $3, 'going'),
-              ($4, $2, 'going'), ($5, $2, 'going')`,
-      [tripId, organizerId, memberId, privateTripId, copyTripId],
+              ($4, $2, 'going'), ($5, $2, 'going'), ($6, $2, 'going'),
+              ($6, $3, 'going')`,
+      [tripId, organizerId, memberId, privateTripId, copyTripId, gearTripId],
     );
+
+    // Тип и полка для пунктов-ссылок. Свои коды, а не сиды: спека не должна
+    // зависеть от того, прогнали ли на этой базе `seed:gear-types`.
+    await dataSource.query(
+      `INSERT INTO gear_types (code, name) VALUES ('e2e_checklist_pack', $1)
+       ON CONFLICT (code) DO NOTHING`,
+      [gearTypeName],
+    );
+    gearTypeId = (
+      await dataSource.query(
+        `SELECT id FROM gear_types WHERE code = 'e2e_checklist_pack'`,
+      )
+    )[0].id;
+
+    await dataSource.query(
+      `INSERT INTO gear_groups (code, name) VALUES ('e2e_checklist_group', 'Проверка чек-листов')
+       ON CONFLICT (code) DO NOTHING`,
+    );
+    gearGroupId = (
+      await dataSource.query(
+        `SELECT id FROM gear_groups WHERE code = 'e2e_checklist_group'`,
+      )
+    )[0].id;
   });
 
   afterAll(async () => {
@@ -146,9 +186,21 @@ describe('Чек-листы (e2e)', () => {
         'DELETE FROM checklists WHERE owner_user_id = ANY($1::uuid[])',
         [[organizerId, memberId, strangerId]],
       );
+      // Вещи проверки — до типов, полок и людей: все три ключа RESTRICT.
+      // Пункты-ссылки живых списков к этому моменту уже удалены.
+      await dataSource.query(
+        'DELETE FROM gear_items WHERE owner_user_id = ANY($1::uuid[])',
+        [[organizerId, memberId, strangerId]],
+      );
+      await dataSource.query(
+        `DELETE FROM gear_types WHERE code = 'e2e_checklist_pack'`,
+      );
+      await dataSource.query(
+        `DELETE FROM gear_groups WHERE code = 'e2e_checklist_group'`,
+      );
       await dataSource.query(
         'DELETE FROM trips WHERE id = ANY($1::bigint[])',
-        [[tripId, privateTripId, copyTripId]],
+        [[tripId, privateTripId, copyTripId, gearTripId]],
       );
       await dataSource.query('DELETE FROM objects WHERE id = $1', [objectId]);
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
@@ -179,6 +231,33 @@ describe('Чек-листы (e2e)', () => {
     expect(response.status).toBe(201);
 
     return response.body.id as string;
+  }
+
+  /**
+   * Вещь каталога для пункта-ссылки.
+   *
+   * Заводится напрямую в базе: проверяется не каталог (у него своя спека),
+   * а привязка пункта и удаление вещи. `owner` и `tripOnly` — то, что
+   * отличает запрещённые случаи от разрешённого.
+   */
+  async function makeGear(
+    title: string,
+    options: { owner?: string; tripOnly?: boolean } = {},
+  ): Promise<string> {
+    const rows = await dataSource.query(
+      `INSERT INTO gear_items
+         (owner_user_id, gear_type_id, group_id, title, weight_grams, is_trip_only)
+       VALUES ($1, $2, $3, $4, 2400, $5) RETURNING id`,
+      [
+        options.owner ?? organizerId,
+        gearTypeId,
+        gearGroupId,
+        title,
+        options.tripOnly ?? false,
+      ],
+    );
+
+    return rows[0].id as string;
   }
 
   describe('шаблоны', () => {
@@ -611,6 +690,175 @@ describe('Чек-листы (e2e)', () => {
         memberToken,
         { scope: 'personal', fromTemplateId: Number(template) },
       ).expect(404);
+    });
+  });
+
+  describe('пункт — ссылка на вещь снаряжения', () => {
+    it('ссылка создаётся без текста и берёт название вещи', async () => {
+      const gear = await makeGear('Палатка Анны');
+      const template = await createTemplate('Снаряжение, ссылки');
+
+      const added = await call(
+        'post',
+        `/api/checklists/${template}/items`,
+        organizerToken,
+        { gearItemId: Number(gear) },
+      );
+
+      expect(added.status).toBe(201);
+      expect(added.body.title).toBe('Палатка Анны');
+      expect(added.body.gear).toMatchObject({
+        id: gear,
+        title: 'Палатка Анны',
+        typeName: gearTypeName,
+        weightGrams: 2400,
+      });
+
+      // И в чтении списка ссылка на месте, а не только в ответе создания.
+      const list = await call(
+        'get',
+        `/api/checklists/${template}`,
+        organizerToken,
+      ).expect(200);
+      expect((list.body.items as Array<{ gear: { id: string } | null }>)[0]?.gear?.id).toBe(
+        gear,
+      );
+    });
+
+    it('ни текста, ни вещи — 400', async () => {
+      const template = await createTemplate();
+
+      await call('post', `/api/checklists/${template}/items`, organizerToken, {}).expect(
+        400,
+      );
+      await call('post', `/api/checklists/${template}/items`, organizerToken, {
+        title: '   ',
+      }).expect(400);
+    });
+
+    it('чужая, несуществующая и одноразовая вещь — 404', async () => {
+      const strangerGear = await makeGear('Чужой рюкзак', { owner: strangerId });
+      const tripOnly = await makeGear('Бензин для розжига', { tripOnly: true });
+      const template = await createTemplate();
+
+      await call('post', `/api/checklists/${template}/items`, organizerToken, {
+        gearItemId: Number(strangerGear),
+      }).expect(404);
+
+      await call('post', `/api/checklists/${template}/items`, organizerToken, {
+        gearItemId: 999999999,
+      }).expect(404);
+
+      await call('post', `/api/checklists/${template}/items`, organizerToken, {
+        gearItemId: Number(tripOnly),
+      }).expect(404);
+    });
+
+    it('ссылку можно заменить и отвязать, текст остаётся названием', async () => {
+      const first = await makeGear('Первый рюкзак');
+      const second = await makeGear('Второй рюкзак');
+      const template = await createTemplate();
+
+      const item = (
+        await call('post', `/api/checklists/${template}/items`, organizerToken, {
+          gearItemId: Number(first),
+        })
+      ).body.id as string;
+
+      const replaced = await call(
+        'patch',
+        `/api/checklists/items/${item}`,
+        organizerToken,
+        { gearItemId: Number(second) },
+      );
+      expect(replaced.status).toBe(200);
+      expect(replaced.body.gear.id).toBe(second);
+      expect(replaced.body.title).toBe('Второй рюкзак');
+
+      // `null` — отвязать: пункт остаётся текстом, а не исчезает.
+      const unlinked = await call(
+        'patch',
+        `/api/checklists/items/${item}`,
+        organizerToken,
+        { gearItemId: null },
+      );
+      expect(unlinked.body.gear).toBeNull();
+      expect(unlinked.body.title).toBe('Второй рюкзак');
+    });
+
+    it('удалили вещь — пункт остался текстом имени типа', async () => {
+      const gear = await makeGear('Рюкзак, который уйдёт');
+      const template = await createTemplate('Снаряжение, удаление');
+
+      const item = (
+        await call('post', `/api/checklists/${template}/items`, organizerToken, {
+          gearItemId: Number(gear),
+        })
+      ).body.id as string;
+
+      await call('delete', `/api/gear/${gear}`, organizerToken).expect(204);
+
+      const list = await call(
+        'get',
+        `/api/checklists/${template}`,
+        organizerToken,
+      ).expect(200);
+      const found = (list.body.items as Array<Record<string, unknown>>).find(
+        (row) => row.id === item,
+      ) as
+        | { title: string; gear: unknown }
+        | undefined;
+
+      expect(found).toBeDefined();
+      expect(found?.gear).toBeNull();
+      expect(found?.title).toBe(gearTypeName);
+    });
+
+    it('копия шаблона сохраняет ссылку на вещь', async () => {
+      const gear = await makeGear('Рюкзак в поход');
+      const template = await createTemplate('Ссылки в поход');
+      await call('post', `/api/checklists/${template}/items`, organizerToken, {
+        gearItemId: Number(gear),
+      }).expect(201);
+
+      const created = await call(
+        'post',
+        `/api/trips/${gearTripId}/checklists`,
+        organizerToken,
+        { scope: 'trip', fromTemplateId: Number(template) },
+      );
+
+      expect(created.status).toBe(201);
+      expect((created.body.items as unknown[]).length).toBe(1);
+      expect(created.body.items[0].gear.id).toBe(gear);
+      expect(created.body.items[0].title).toBe('Рюкзак в поход');
+    });
+
+    it('участник не меняет ссылку в общем списке — 403', async () => {
+      const view = await call(
+        'get',
+        `/api/trips/${gearTripId}/checklists`,
+        organizerToken,
+      ).expect(200);
+      const item = (view.body.shared.items as Array<{ id: string }>)[0];
+
+      const ownGear = await makeGear('Свой рюкзак участника', {
+        owner: memberId,
+      });
+
+      await call('patch', `/api/checklists/items/${item.id}`, memberToken, {
+        gearItemId: Number(ownGear),
+      }).expect(403);
+
+      // Отметка при этом разрешена: это другое поле и другое право.
+      const ticked = await call(
+        'patch',
+        `/api/checklists/items/${item.id}`,
+        memberToken,
+        { isDone: true },
+      );
+      expect(ticked.status).toBe(200);
+      expect(ticked.body.doneByUserId).toBe(memberId);
     });
   });
 

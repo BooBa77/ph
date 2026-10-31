@@ -1866,6 +1866,123 @@ await check(
   [tripId, routeNightId],
 );
 
+// ─── Чек-листы: пункт-ссылка на вещь (31.10.2026) ───
+/**
+ * Инварианты `checklist_items.gear_item_id`.
+ *
+ * Проверяется то, чего не видно в e2e: **форма схемы** (колонка, внешний
+ * ключ `SET NULL`, индекс под триггер и сам триггер) и **поведение удаления
+ * вещи** — пункт не исчезает, а становится текстом имени типа. Поведение
+ * проверяется прямо здесь, потому что триггер живёт в базе: подмени его
+ * сервисом — и каскадное удаление вещи похода снова оставит ссылку в никуда.
+ */
+const checklistGearShape = await client.query(
+  `SELECT
+     (SELECT is_nullable FROM information_schema.columns
+       WHERE table_name = 'checklist_items' AND column_name = 'gear_item_id') AS nullable,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_checklist_items_gear_item') AS delete_action,
+     (SELECT 1 FROM pg_indexes
+       WHERE indexname = 'IDX_checklist_items_gear') AS has_index,
+     (SELECT 1 FROM pg_trigger
+       WHERE tgname = 'trg_gear_items_unlink_checklists') AS has_trigger`,
+);
+
+const checklistGearShapeRow = checklistGearShape.rows[0];
+const checklistGearShapeOk =
+  checklistGearShapeRow.nullable === 'YES' &&
+  // «n» — ON DELETE SET NULL: страховка уровня FK, если триггер снимут.
+  checklistGearShapeRow.delete_action === 'n' &&
+  checklistGearShapeRow.has_index === 1 &&
+  checklistGearShapeRow.has_trigger === 1;
+
+if (!checklistGearShapeOk) failed += 1;
+rows.push([
+  checklistGearShapeOk ? 'ok' : 'НЕТ СХЕМЫ',
+  'чек-листы: пункт ссылается на вещь (колонка, SET NULL, индекс, триггер)',
+  checklistGearShapeOk
+    ? ''
+    : `nullable=${checklistGearShapeRow.nullable}, fk=${checklistGearShapeRow.delete_action}, index=${checklistGearShapeRow.has_index}, trigger=${checklistGearShapeRow.has_trigger}`,
+]);
+
+const checklistTypeId = (
+  await client.query(
+    `INSERT INTO gear_types (code, name)
+     VALUES ('check_checklist_type', 'Тип пункта проверки') RETURNING id`,
+  )
+).rows[0].id;
+
+const checklistGearItemId = (
+  await client.query(
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
+     VALUES ($1, $2, $3, 'Вещь пункта') RETURNING id`,
+    [user1, checklistTypeId, defaultGroupId],
+  )
+).rows[0].id;
+
+const checklistListId = (
+  await client.query(
+    `INSERT INTO checklists (scope, owner_user_id, title)
+     VALUES ('template', $1, 'Проверка ссылки') RETURNING id`,
+    [user1],
+  )
+).rows[0].id;
+
+const checklistItemId = (
+  await client.query(
+    `INSERT INTO checklist_items (checklist_id, title, gear_item_id)
+     VALUES ($1, 'Вещь пункта', $2) RETURNING id`,
+    [checklistListId, checklistGearItemId],
+  )
+).rows[0].id;
+
+await client.query(`DELETE FROM gear_items WHERE id = $1`, [checklistGearItemId]);
+
+const checklistUnlinked = (
+  await client.query(
+    `SELECT title, gear_item_id FROM checklist_items WHERE id = $1`,
+    [checklistItemId],
+  )
+).rows[0];
+
+const checklistUnlinkOk =
+  checklistUnlinked !== undefined &&
+  checklistUnlinked.gear_item_id === null &&
+  checklistUnlinked.title === 'Тип пункта проверки';
+
+if (!checklistUnlinkOk) failed += 1;
+rows.push([
+  checklistUnlinkOk ? 'ok' : 'ССЫЛКА ОСТАЛАСЬ',
+  'чек-листы: удалили вещь — пункт стал текстом имени типа',
+  checklistUnlinkOk
+    ? ''
+    : `title=${checklistUnlinked?.title ?? 'нет строки'}, gear=${checklistUnlinked?.gear_item_id ?? 'нет строки'}`,
+]);
+
+await check(
+  'чек-листы: пункт не ссылается на несуществующую вещь',
+  'fail',
+  `INSERT INTO checklist_items (checklist_id, title, gear_item_id)
+   VALUES ($1, 'Ссылка в никуда', 999999999)`,
+  [checklistListId],
+);
+
+await client.query(`DELETE FROM checklists WHERE id = $1`, [checklistListId]);
+
+const checklistItemsLeft = (
+  await client.query(
+    `SELECT count(*)::int AS count FROM checklist_items WHERE checklist_id = $1`,
+    [checklistListId],
+  )
+).rows[0].count;
+
+if (checklistItemsLeft !== 0) failed += 1;
+rows.push([
+  checklistItemsLeft === 0 ? 'ok' : 'ОСТАЛИСЬ ПУНКТЫ',
+  'чек-листы: удалили список — ушли его пункты (каскад)',
+  checklistItemsLeft === 0 ? '' : `осталось ${checklistItemsLeft}`,
+]);
+
 await client.query('ROLLBACK');
 await client.end();
 
