@@ -49,6 +49,7 @@ import { GearType } from './gear-type.entity';
  */
 @Entity('gear_items')
 @Index('IDX_gear_items_owner_type', ['ownerUserId', 'gearTypeId', 'id'])
+@Index('IDX_gear_items_owner_trip_only', ['ownerUserId', 'isTripOnly'])
 @Check(
   'chk_gear_items_weight',
   `"weight_grams" IS NULL OR "weight_grams" > 0`,
@@ -86,6 +87,28 @@ export class GearItem {
   /** Вес в граммах. `NULL` — не указан (и не считается). */
   @Column({ name: 'weight_grams', type: 'int', nullable: true })
   weightGrams: number | null;
+
+  /**
+   * Вещь заведена **в походе и вручную** (30.10.2026) — «бутылка бензина
+   * на розжиг», «кусок целлофана на тент». Живёт только в том походе, где
+   * её завели, и **личному каталогу не принадлежит**: `GET /api/gear` такие
+   * вещи не отдаёт ни владельцу, ни организатору, а в снаряжении похода
+   * они видны как обычная строка.
+   *
+   * Ссылки на поход здесь нет намеренно: вещь и так попадает в поход
+   * строкой `trip_gear`, и вторая ссылка на тот же поход разошлась бы
+   * с первой после любого переноса. Флаг говорит ровно одно — «каталогу
+   * не принадлежит».
+   *
+   * У виртуального участника каталога нет вовсе, поэтому его вещи
+   * **всегда** `true`, и флага «Регулярное» в форме для них нет.
+   *
+   * Одноразовую вещь убирает код: строка удаляется вместе со строкой
+   * `trip_gear` (каскад от участника или ручка удаления вещи из похода),
+   * иначе в базе копились бы невидимые никому вещи.
+   */
+  @Column({ name: 'is_trip_only', type: 'boolean', default: false })
+  isTripOnly: boolean;
 
   /** Комментарий: «проклеена, течёт по шву». */
   @Column({ type: 'varchar', length: 500, nullable: true })

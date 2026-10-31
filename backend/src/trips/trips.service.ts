@@ -11,7 +11,11 @@ import { DataSource, EntityManager, In, IsNull, Not, Repository } from 'typeorm'
 
 import { CalendarActivityGroup } from '../calendar/entities/activity-group.entity';
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
+import { GearItem } from '../gear/entities/gear-item.entity';
+import { TripGear } from '../gear/entities/trip-gear.entity';
 import { User } from '../users/entities/user.entity';
+import { UsersService } from '../users/users.service';
+import type { CreateVirtualUserDto } from '../users/dto/virtual-user.dto';
 import { CreateTripDto } from './dto/create-trip.dto';
 import {
   SendTripMessageDto,
@@ -132,6 +136,12 @@ export class TripsService {
     @InjectRepository(TripParticipant)
     private readonly participantsRepository: Repository<TripParticipant>,
     private readonly dataSource: DataSource,
+    /**
+     * Заведение человека без аккаунта живёт в `UsersService`: это строка
+     * `users`, и правило «`is_virtual` и создатель пишутся вместе» должно
+     * быть одно. Здесь — только состав похода.
+     */
+    private readonly users: UsersService,
   ) {}
 
   /**
@@ -1687,6 +1697,25 @@ export class TripsService {
         throw new NotFoundException('Такого участника в походе нет');
       }
 
+      // Одноразовые вещи ушедшего уносим вместе с ним: строку `trip_gear`
+      // убирает каскад от участника, а строку `gear_items` — нет, и она
+      // осталась бы в базе невидимой никому (каталог одноразовые не отдаёт).
+      // Берём только строки **этого** похода: у настоящего человека такие
+      // вещи могут быть заведены и в другом походе, и они там нужны.
+      //
+      // Запрос идёт **до** удаления участника: строки `trip_gear` исчезают
+      // каскадом вместе с ним, и после удаления искать было бы нечего.
+      const tripOnlyItems = await manager
+        .createQueryBuilder(TripGear, 'gear')
+        .innerJoin(GearItem, 'item', 'item.id = gear.gearItemId')
+        .select('item.id', 'id')
+        .where('gear.tripId = :tripId', { tripId: trip.id })
+        .andWhere('gear.ownerUserId = :ownerUserId', {
+          ownerUserId: targetUserId,
+        })
+        .andWhere('item.isTripOnly = true')
+        .getRawMany<{ id: string }>();
+
       await manager.delete(TripParticipant, {
         tripId: trip.id,
         userId: targetUserId,
@@ -1695,6 +1724,12 @@ export class TripsService {
         tripId: trip.id,
         userId: targetUserId,
       });
+
+      if (tripOnlyItems.length > 0) {
+        await manager.delete(GearItem, {
+          id: In(tripOnlyItems.map((row) => row.id)),
+        });
+      }
 
       // Из состава убрали — из рейсов тоже: за карточкой он больше не едет.
       await this.releaseTransfers(manager, trip.id, targetUserId);
@@ -1706,6 +1741,123 @@ export class TripsService {
         `${displayNameOf(participant.user)} больше не в составе`,
       );
     });
+  }
+
+  /**
+   * Завести человека без аккаунта и сразу добавить его в поход (30.10.2026).
+   *
+   * Заказчик: «организаторам доступно добавление виртуальных участников —
+   * людей, не пользователей нашего сайта, он сам управляет ими». Поэтому
+   * доступно **организатору** (та же проверка, что на правку состава)
+   * и сразу со статусом `going`: приглашать виртуального некуда — входа
+   * у него нет, и «приглашён» он не ответит никогда.
+   *
+   * Человек и участие создаются **одной транзакцией**: «завёл, но в состав
+   * не попал» — это строка `users`, которой никто не видит, а починить её
+   * нечем.
+   *
+   * Ролей у нового участника нет, но получить их он может: роли — про
+   * задачи, и запрещать «завхозу Дяде Вите» быть завхозом незачем
+   * (решение заказчика 31.10.2026: «может, но по факту это только для
+   * информации другим участникам, все действия совершает организатор»).
+   */
+  async createVirtualParticipant(
+    userId: string,
+    id: number,
+    dto: CreateVirtualUserDto,
+  ): Promise<TripParticipantDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const trip = await this.findOwnedTrip(manager, userId, id);
+      this.assertNotIdea(trip);
+
+      const user = await this.users.createVirtual(userId, dto, manager);
+
+      const participant = await manager.save(
+        manager.create(TripParticipant, {
+          tripId: trip.id,
+          userId: user.id,
+          status: 'going' as ParticipantStatus,
+        }),
+      );
+      participant.user = user;
+
+      await this.postSystemMessage(
+        manager,
+        trip.id,
+        'trip_members',
+        `${user.displayName} в составе — человек без аккаунта`,
+      );
+
+      return TripParticipantDto.from(participant, [], trip.organizerUserId);
+    });
+  }
+
+  /**
+   * Добавить в этот поход **своего** человека без аккаунта.
+   *
+   * «Своего» — заведённого этим организатором: чужой для него не существует
+   * (404, как чужой предмет каталога). Так работает обещанное заказчиком
+   * «быстрое добавление в следующий поход»: одна строка `users` на человека,
+   * и в новый поход он приходит той же строкой, а не копией.
+   *
+   * Уже в составе — 409, а не молчаливое «ну и хорошо»: повторное нажатие
+   * не должно выглядеть как добавление.
+   */
+  async addVirtualParticipant(
+    userId: string,
+    id: number,
+    targetUserId: string,
+  ): Promise<TripParticipantDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const trip = await this.findOwnedTrip(manager, userId, id);
+      this.assertNotIdea(trip);
+
+      const user = await this.users.findOwnedVirtual(
+        userId,
+        targetUserId,
+        manager,
+      );
+
+      const existing = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: user.id },
+      });
+      if (existing) {
+        throw new ConflictException(
+          'Этот человек уже в составе похода',
+        );
+      }
+
+      const participant = await manager.save(
+        manager.create(TripParticipant, {
+          tripId: trip.id,
+          userId: user.id,
+          status: 'going' as ParticipantStatus,
+        }),
+      );
+      participant.user = user;
+
+      await this.postSystemMessage(
+        manager,
+        trip.id,
+        'trip_members',
+        `${user.displayName} в составе — человек без аккаунта`,
+      );
+
+      return TripParticipantDto.from(participant, [], trip.organizerUserId);
+    });
+  }
+
+  /**
+   * У мечты состава нет: у неё даже гостевой чат один. Виртуальный
+   * участник — часть подготовки, а подготовка начинается с настоящего
+   * похода (та же граница, что у вкладок).
+   */
+  private assertNotIdea(trip: Trip): void {
+    if (trip.status === 'idea') {
+      throw new BadRequestException(
+        'У мечты нет состава: человека без аккаунта заводят в настоящем походе',
+      );
+    }
   }
 
   /**
@@ -1795,6 +1947,15 @@ export class TripsService {
         });
         if (!invited) {
           throw new BadRequestException('Пользователь не найден');
+        }
+        // Человека без аккаунта не приглашают: приглашение ему некуда
+        // приходит, а в составе он и так — сразу и со статусом `going`.
+        // Без этой проверки организатор мог бы прислать id виртуального
+        // руками и получить участника, который «приглашён» навсегда.
+        if (invited.isVirtual) {
+          throw new BadRequestException(
+            'Человека без аккаунта не приглашают: его добавляют в состав сразу — «Добавить человека без аккаунта»',
+          );
         }
 
         await this.assertFreeOfTicketAndParticipation(

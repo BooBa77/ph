@@ -1,5 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsInt, IsOptional, IsUUID, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsObject,
+  IsOptional,
+  IsString,
+  IsUUID,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 import { TRIP_GEAR_STATUSES, type TripGearStatus } from '../trip-gear.types';
 import type { TripGear } from '../entities/trip-gear.entity';
@@ -11,6 +21,11 @@ import { GearItemAttributeDto } from './gear.dto';
  * Название, вид и вес приходят из каталога владельца: строка похода —
  * это ссылка на предмет (`gear_items`), а не копия. Поэтому одно и то же
  * поле веса правится в профиле и сразу видно в походе.
+ *
+ * **Одноразовая вещь** (30.10.2026) — исключение только в одном: её
+ * `gear_items` заведена в походе и каталогу не принадлежит
+ * (`isTripOnly: true`). Название, вес и характеристики у неё свои,
+ * в походной строке это обычная вещь.
  *
  * **Тип и его значения (Stage B, 30.10.2026).** Экранам «Ночёвок» нужен
  * не вид старого каталога, а **код типа**: «Палатки» собираются по `tent`
@@ -68,6 +83,21 @@ export class TripGearItemDto {
   })
   note: string | null;
 
+  /**
+   * Вещь заведена **в походе и вручную** (30.10.2026) — «бутылка бензина
+   * на розжиг». В личном каталоге владельца её нет: `GET /api/gear`
+   * одноразовые вещи не отдаёт.
+   *
+   * Фронту флаг нужен, чтобы не предлагать «правку в каталоге»: строки
+   * в каталоге нет, и запрос по её id ответит 404. В «Палатках»
+   * и «Костровом» разницы нет — там это обычная строка снаряжения.
+   */
+  @ApiProperty({
+    description: 'Вещь заведена вручную и в каталог не входит',
+    example: false,
+  })
+  isTripOnly: boolean;
+
   @ApiProperty({
     description: 'Статус: предложена, берём или не берём',
     enum: TRIP_GEAR_STATUSES,
@@ -112,6 +142,7 @@ export class TripGearItemDto {
       attributes: values.map((value) => GearItemAttributeDto.from(value)),
       weightGrams: row.gearItem.weightGrams,
       note: row.gearItem.note,
+      isTripOnly: row.gearItem.isTripOnly,
       status: row.status,
       ownerUserId: row.ownerUserId,
       assignedUserId: row.assignedUserId,
@@ -194,4 +225,90 @@ export class UpdateTripGearDto {
   @IsOptional()
   @IsUUID('4', { message: 'Назначенному нужен корректный UUID пользователя' })
   assignedUserId?: string | null;
+}
+
+/**
+ * Тело `POST /api/trips/:id/gear/manual` — добавить вещь в поход вручную.
+ *
+ * Второй путь заполнения снаряжения (30.10.2026), дословно от заказчика:
+ * «При добавлении снаряги нужен пункт „Указать вручную“. Для модалки
+ * с вводом характеристик и выбором хозяина, доступно только
+ * организаторам». И уточнение: участникам нужна возможность добавить
+ * в поход что-то одноразовое — «бутылку бензина на розжиг, кусок
+ * целлофана на тент».
+ *
+ * Поэтому хозяина в теле **может не быть**: обычный участник добавляет
+ * вещь себе (`ownerUserId` отсутствует). Организатор указывает хозяина —
+ * но только виртуального участника этого похода: другому настоящему
+ * человеку вещь не добавляют (решение заказчика 31.10.2026), каждый
+ * добавляет своё сам.
+ *
+ * `addToCatalog` — флаг «Добавить в список снаряжения для регулярного
+ * использования». Он есть **только у настоящего хозяина**: у виртуального
+ * каталога нет, и `true` при нём — 400. Без флага вещь одноразовая
+ * (`is_trip_only`) и каталогу не принадлежит.
+ *
+ * `title` необязателен: пусто — строку подписывает имя типа («Топор»).
+ * `weightGrams` — граммы; `attributes` — та же карта «код характеристики →
+ * значение», что у каталога (`gear-attribute-values.ts`), включая запятую
+ * в числах и обязательные значения.
+ */
+export class AddManualTripGearDto {
+  @ApiProperty({ description: 'Id типа снаряжения', example: 1 })
+  @IsInt({ message: 'Тип снаряжения должен быть указан числом' })
+  @Min(1, { message: 'Некорректный тип снаряжения' })
+  typeId: number;
+
+  @ApiProperty({
+    description: 'Значения характеристик: { код: значение }',
+    example: { seats: 3 },
+    required: false,
+  })
+  @IsOptional()
+  @IsObject({ message: 'Значения характеристик — объект «код: значение»' })
+  attributes?: Record<string, unknown>;
+
+  @ApiProperty({
+    description: 'Название. Пусто — берём имя типа',
+    example: 'Бутылка бензина',
+    maxLength: 120,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString({ message: 'Название должно быть строкой' })
+  @MaxLength(120, { message: 'Название не должно превышать 120 символов' })
+  title?: string | null;
+
+  @ApiProperty({
+    description: 'Вес в граммах. Не указан — не считается',
+    example: 800,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Вес должен быть целым числом граммов' })
+  @Min(1, { message: 'Вес должен быть больше нуля' })
+  weightGrams?: number | null;
+
+  @ApiProperty({
+    description:
+      'Хозяин: не указан — я сам. Организатор может указать человека без аккаунта',
+    example: '1f0f5a52-6a55-4f4e-9f56-2f4b0b3f5a11',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Хозяину нужен корректный UUID пользователя' })
+  ownerUserId?: string | null;
+
+  @ApiProperty({
+    description:
+      'Добавить в каталог хозяина для регулярного использования. Только при настоящем хозяине',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг «в каталог» должен быть true или false' })
+  addToCatalog?: boolean;
 }

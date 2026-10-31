@@ -92,6 +92,21 @@ export class TripParticipantDto {
   })
   isOrganizer: boolean;
 
+  /**
+   * Человек без аккаунта — его завёл организатор, войти он не может
+   * (30.10.2026).
+   *
+   * Фронту флаг нужен в двух местах: пометка «без аккаунта» в составе
+   * и **выбор хозяина** при ручном добавлении снаряжения — там список
+   * «я + виртуальные похода», и настоящего участника в нём нет (решение
+   * заказчика: другой настоящий участник добавляет вещь себе сам).
+   */
+  @ApiProperty({
+    description: 'Человек без аккаунта: заведён организатором, войти не может',
+    example: false,
+  })
+  isVirtual: boolean;
+
   @ApiProperty({ description: 'Когда человек попал в состав' })
   createdAt: string;
 
@@ -121,6 +136,7 @@ export class TripParticipantDto {
       eatsSeparately: participant.eatsSeparately,
       roles,
       isOrganizer: participant.userId === organizerUserId,
+      isVirtual: participant.user?.isVirtual ?? false,
       createdAt: participant.createdAt.toISOString(),
       updatedAt: participant.updatedAt.toISOString(),
     };

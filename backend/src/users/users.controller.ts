@@ -3,6 +3,8 @@ import {
   Controller,
   Delete,
   Get,
+  HttpCode,
+  HttpStatus,
   NotFoundException,
   Param,
   ParseUUIDPipe,
@@ -15,6 +17,7 @@ import {
 import {
   ApiBody,
   ApiConsumes,
+  ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
@@ -34,6 +37,11 @@ import {
   UserSearchQueryDto,
   UserSearchResultDto,
 } from './dto/user-search.dto';
+import {
+  UpdateVirtualUserDto,
+  VirtualUserDto,
+  VirtualUserListDto,
+} from './dto/virtual-user.dto';
 import { MAX_UPLOAD_BYTES } from '../config/uploads.config';
 
 /**
@@ -136,7 +144,9 @@ export class UsersController {
    * Роут объявлен **после** `me` и `me/avatar`: `me` — литеральный путь,
    * и если поставить `:id` выше, «me» попал бы в `ParseUUIDPipe` и вернул
    * бы 400 вместо профиля. Удалённый (soft delete) человек — 404:
-   * о нём нечего рассказывать.
+   * о нём нечего рассказывать. **Человек без аккаунта — тоже 404**
+   * (30.10.2026): у него нет профиля, он живёт только в походе, и страница
+   * «Контакты» про него ничего не знает — ровно как про удалённого.
    */
   @Get(':id')
   @ApiOperation({ summary: 'Публичный профиль человека' })
@@ -146,7 +156,7 @@ export class UsersController {
     @Param('id', ParseUUIDPipe) id: string,
   ): Promise<UserPublicProfileDto> {
     const user = await this.usersService.findById(id);
-    if (!user || user.deletedAt !== null) {
+    if (!user || user.deletedAt !== null || user.isVirtual) {
       throw new NotFoundException('Пользователь не найден');
     }
 
@@ -194,5 +204,61 @@ export class UsersController {
   ): Promise<UserResponseDto> {
     const user = await this.avatarService.reset(authUser.id);
     return UserResponseDto.from(user);
+  }
+
+  // ─────────────────── люди без аккаунта (30.10.2026) ───────────────────
+
+  /**
+   * Мои люди без аккаунта — для «быстрого добавления» в следующий поход.
+   *
+   * Список личный: у каждого организатора свой, и чужой не виден.
+   * Заводит их `POST /api/trips/:id/participants/virtual` — человек
+   * без аккаунта появляется вместе с походом, а не сам по себе.
+   */
+  @Get('me/virtual')
+  @ApiOperation({ summary: 'Мои люди без аккаунта' })
+  @ApiOkResponse({ type: VirtualUserListDto })
+  async listVirtual(
+    @CurrentUser() authUser: AuthUser,
+  ): Promise<VirtualUserListDto> {
+    return { users: await this.usersService.listVirtual(authUser.id) };
+  }
+
+  /**
+   * Переименовать или поменять пол. Только своего: чужой — 404.
+   *
+   * Пол нужен распределению веса рюкзака (доля женщины 0,8), поэтому
+   * правится отдельным полем, а не спрашивается один раз при создании.
+   */
+  @Patch('me/virtual/:userId')
+  @ApiOperation({ summary: 'Изменить человека без аккаунта' })
+  @ApiOkResponse({ type: VirtualUserDto })
+  async updateVirtual(
+    @CurrentUser() authUser: AuthUser,
+    @Param('userId', ParseUUIDPipe) userId: string,
+    @Body() dto: UpdateVirtualUserDto,
+  ): Promise<VirtualUserDto> {
+    const user = await this.usersService.updateVirtual(
+      authUser.id,
+      userId,
+      dto,
+    );
+
+    return VirtualUserDto.from(user);
+  }
+
+  /**
+   * Убрать из личного списка. Мягко (`deleted_at`), 409 если он ещё
+   * участвует в походе: сначала убирают из состава.
+   */
+  @Delete('me/virtual/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Убрать человека без аккаунта из списка' })
+  @ApiNoContentResponse({ description: 'Человек убран из списка' })
+  async removeVirtual(
+    @CurrentUser() authUser: AuthUser,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ): Promise<void> {
+    return this.usersService.removeVirtual(authUser.id, userId);
   }
 }

@@ -1189,6 +1189,179 @@ rows.push([
 await client.query(`DELETE FROM gear_items WHERE id = $1`, [modelItemId]);
 await client.query(`DELETE FROM gear_types WHERE id = $1`, [itemTypeId]);
 
+// ─── Люди без аккаунта и одноразовое снаряжение (31.10.2026) ───
+/**
+ * Инварианты виртуальных участников (`users.is_virtual`,
+ * `users.virtual_owner_user_id`) и одноразовых вещей
+ * (`gear_items.is_trip_only`) — задание `docs/ph/virtual-participants.md`.
+ *
+ * Проверяется то, что нельзя доказать обычным тестом поведения: правило
+ * «одно без другого нельзя» живёт в CHECK, «создателя не теряем» —
+ * во внешнем ключе, а частичный индекс «мои виртуальные» — в базе. Если
+ * из базы убрать CHECK, тесты API останутся зелёными, а данные поедут:
+ * именно так однажды и пропустил мусор CHECK спортивного вида с NULL.
+ *
+ * «Виртуальный не может войти» проверяется здесь буквально: у него нет
+ * строки в `auth_identities`, и API не заводит её ни одной ручкой. Это
+ * не схема, а связка двух таблиц, поэтому проверка стоит рядом.
+ */
+const usersShape = await client.query(
+  `SELECT column_name, is_nullable, column_default
+     FROM information_schema.columns
+    WHERE table_name = 'users'
+      AND column_name IN ('is_virtual', 'virtual_owner_user_id')
+    ORDER BY column_name`,
+);
+const usersShapeByName = new Map(
+  usersShape.rows.map((row) => [row.column_name, row]),
+);
+const virtualShapeOk =
+  usersShape.rows.length === 2 &&
+  usersShapeByName.get('is_virtual')?.is_nullable === 'NO' &&
+  (usersShapeByName.get('is_virtual')?.column_default ?? '').includes('false') &&
+  usersShapeByName.get('virtual_owner_user_id')?.is_nullable === 'YES';
+if (!virtualShapeOk) failed += 1;
+rows.push([
+  virtualShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
+  'виртуальный: is_virtual (NOT NULL, default false) и создатель (nullable)',
+  `колонки: ${usersShape.rows
+    .map((row) => `${row.column_name}(${row.is_nullable})`)
+    .join(', ') || 'нет'}`,
+]);
+
+const tripOnlyShape = await client.query(
+  `SELECT is_nullable, column_default
+     FROM information_schema.columns
+    WHERE table_name = 'gear_items' AND column_name = 'is_trip_only'`,
+);
+const tripOnlyShapeOk =
+  tripOnlyShape.rowCount === 1 &&
+  tripOnlyShape.rows[0].is_nullable === 'NO' &&
+  (tripOnlyShape.rows[0].column_default ?? '').includes('false');
+if (!tripOnlyShapeOk) failed += 1;
+rows.push([
+  tripOnlyShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
+  'вещь: is_trip_only (NOT NULL, default false)',
+  tripOnlyShape.rowCount === 0 ? 'колонки нет' : '',
+]);
+
+const virtualIndexName = 'IDX_users_virtual_owner';
+const virtualIndex = await client.query(
+  `SELECT indexdef FROM pg_indexes WHERE indexname = $1`,
+  [virtualIndexName],
+);
+const virtualIndexDef = virtualIndex.rows[0]?.indexdef ?? '';
+const virtualIndexOk =
+  virtualIndex.rowCount === 1 &&
+  virtualIndexDef.includes('virtual_owner_user_id') &&
+  /WHERE/i.test(virtualIndexDef);
+if (!virtualIndexOk) failed += 1;
+rows.push([
+  virtualIndexOk ? 'ok' : 'НЕТ ИНДЕКСА',
+  'виртуальный: «мои люди без аккаунта» — частичный индекс',
+  virtualIndexDef,
+]);
+
+const tripOnlyIndexName = 'IDX_gear_items_owner_trip_only';
+const tripOnlyIndex = await client.query(
+  `SELECT indexdef FROM pg_indexes WHERE indexname = $1`,
+  [tripOnlyIndexName],
+);
+const tripOnlyIndexOk =
+  tripOnlyIndex.rowCount === 1 &&
+  (tripOnlyIndex.rows[0]?.indexdef ?? '').includes('is_trip_only');
+if (!tripOnlyIndexOk) failed += 1;
+rows.push([
+  tripOnlyIndexOk ? 'ok' : 'НЕТ ИНДЕКСА',
+  'вещь: каталог и одноразовые читаются разными запросами',
+  tripOnlyIndex.rows[0]?.indexdef ?? '',
+]);
+
+const virtualOwnerId = (
+  await client.query(
+    `INSERT INTO users (display_name) VALUES ('Проверочный организатор')
+     RETURNING id`,
+  )
+).rows[0].id;
+
+const virtualUserId = (
+  await client.query(
+    `INSERT INTO users (display_name, is_virtual, virtual_owner_user_id)
+     VALUES ('Дядя Витя', true, $1) RETURNING id`,
+    [virtualOwnerId],
+  )
+).rows[0].id;
+
+await check(
+  'виртуальный: без создателя не создаётся (CHECK)',
+  'fail',
+  `INSERT INTO users (display_name, is_virtual) VALUES ('Без создателя', true)`,
+);
+
+await check(
+  'виртуальный: создатель без флага не создаётся (CHECK)',
+  'fail',
+  `INSERT INTO users (display_name, virtual_owner_user_id)
+   VALUES ('Флаг забыли', $1)`,
+  [virtualOwnerId],
+);
+
+await check(
+  'виртуальный: несуществующий создатель запрещён (внешний ключ)',
+  'fail',
+  `INSERT INTO users (display_name, is_virtual, virtual_owner_user_id)
+   VALUES ('Чужой создатель', true, '00000000-0000-0000-0000-000000000000')`,
+);
+
+await check(
+  'виртуальный: создатель с виртуальными не удаляется (RESTRICT)',
+  'fail',
+  `DELETE FROM users WHERE id = $1`,
+  [virtualOwnerId],
+);
+
+const virtualIdentity = await client.query(
+  `SELECT count(*)::int AS count FROM auth_identities WHERE user_id = $1`,
+  [virtualUserId],
+);
+const virtualIdentityOk = virtualIdentity.rows[0].count === 0;
+if (!virtualIdentityOk) failed += 1;
+rows.push([
+  virtualIdentityOk ? 'ok' : 'МОЖЕТ ВОЙТИ',
+  'виртуальный: без входа — строки в auth_identities нет',
+  '',
+]);
+
+const manualTypeId = (
+  await client.query(
+    `INSERT INTO gear_types (code, name)
+     VALUES ('e2e_check_manual_type', 'Проверочный тип вручную')
+     RETURNING id`,
+  )
+).rows[0].id;
+
+const defaultTripOnly = await client.query(
+  `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+   VALUES ($1, $2, 'Обычная вещь каталога')
+   RETURNING is_trip_only`,
+  [user2, manualTypeId],
+);
+const defaultTripOnlyOk = defaultTripOnly.rows[0].is_trip_only === false;
+if (!defaultTripOnlyOk) failed += 1;
+rows.push([
+  defaultTripOnlyOk ? 'ok' : 'СТАРАЯ СХЕМА',
+  'вещь: без флага вещь принадлежит каталогу (default false)',
+  '',
+]);
+
+await check(
+  'вещь: одноразовую вещь может держать человек без аккаунта',
+  'ok',
+  `INSERT INTO gear_items (owner_user_id, gear_type_id, title, is_trip_only)
+   VALUES ($1, $2, 'Бутылка бензина', true)`,
+  [virtualUserId, manualTypeId],
+);
+
 await client.query('ROLLBACK');
 await client.end();
 

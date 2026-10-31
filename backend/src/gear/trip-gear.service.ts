@@ -8,9 +8,12 @@ import {
 import { DataSource, EntityManager } from 'typeorm';
 
 import { TripParticipant } from '../trips/entities/trip-participant.entity';
+import { Trip } from '../trips/entities/trip.entity';
 import type { TripTab } from '../trips/trip-tabs';
 import { TripsService } from '../trips/trips.service';
+import { User } from '../users/entities/user.entity';
 import {
+  AddManualTripGearDto,
   ProposeTripGearDto,
   TripGearItemDto,
   TripGearListDto,
@@ -18,6 +21,7 @@ import {
 } from './dto/trip-gear.dto';
 import { GearItem } from './entities/gear-item.entity';
 import { TripGear } from './entities/trip-gear.entity';
+import { GearService } from './gear.service';
 
 /** Вкладка, право на правку которой открывает «Берём / Не берём». */
 const GEAR_TAB: TripTab = 'gear';
@@ -31,6 +35,8 @@ const GEAR_TAB: TripTab = 'gear';
  * |---|---|
  * | видеть список | участник похода |
  * | предложить предмет из своего каталога | участник похода |
+ * | добавить вещь вручную (себе) | участник похода |
+ * | добавить вещь вручную виртуальному хозяину | организатор похода |
  * | «Берём / Не берём» | право на вкладку «Снаряжение» (завхоз, организатор…) |
  * | назначить несущего (перетащить) | **любой участник** |
  * | убрать вещь | владелец вещи или тот, кто ведёт снаряжение |
@@ -59,6 +65,13 @@ export class TripGearService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
+    /**
+     * Каталог вещей — общий путь заведения (`GearService.createItem`):
+     * тип, характеристики и обязательные значения у каталога и у «вручную»
+     * одни и те же. Вторая копия этих правил означала бы, что однажды
+     * одноразовая вещь заведётся без обязательного значения.
+     */
+    private readonly gear: GearService,
   ) {}
 
   /** Весь список вещей похода и вес утверждённых. Видят участники. */
@@ -168,6 +181,88 @@ export class TripGearService {
   }
 
   /**
+   * Добавить вещь в поход вручную — второй путь заполнения снаряжения
+   * (30.10.2026).
+   *
+   * Три случая, и все они — одна ручка:
+   *
+   * | хозяин | что получается |
+   * |---|---|
+   * | я сам, без `addToCatalog` | одноразовая вещь похода: «бутылка бензина на розжиг» |
+   * | я сам, `addToCatalog: true` | вещь в моём каталоге + строка в походе |
+   * | виртуальный участник (организатор) | одноразовая вещь: каталога у него нет |
+   *
+   * **Флаг «Регулярное» есть только у настоящего хозяина** — у человека
+   * без аккаунта каталога нет вовсе, и `addToCatalog: true` при нём это
+   * ошибка клиента (400), а не молчаливая одноразовая вещь.
+   *
+   * **Другому настоящему участнику вещь не добавляют** (решение заказчика
+   * 31.10.2026): каждый добавляет своё сам, иначе чужой каталог заполнялся
+   * бы за его спиной. Поэтому `ownerUserId` настоящего пользователя,
+   * который не я, — 403.
+   *
+   * Статус новой строки — `proposed`, как у предложенной из каталога:
+   * «берём» решает тот, кто ведёт снаряжение, а ручное добавление — это
+   * предложение, а не решение.
+   */
+  async addManual(
+    userId: string,
+    tripId: number,
+    dto: AddManualTripGearDto,
+  ): Promise<TripGearItemDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+
+    const owner = await this.resolveManualOwner(
+      manager,
+      trip,
+      userId,
+      dto.ownerUserId,
+    );
+    const addToCatalog = dto.addToCatalog === true;
+
+    if (addToCatalog && owner.isVirtual) {
+      throw new BadRequestException(
+        'У человека без аккаунта нет каталога: «в список для регулярного использования» — только для настоящего владельца',
+      );
+    }
+
+    const row = await this.dataSource.transaction(async (tx) => {
+      const item = await this.gear.createItem(tx, owner.userId, {
+        typeId: dto.typeId,
+        attributes: dto.attributes,
+        title: dto.title ?? null,
+        weightGrams: dto.weightGrams ?? null,
+        tripOnly: owner.isVirtual || !addToCatalog,
+      });
+
+      const ownerParticipant = await tx.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: owner.userId },
+      });
+
+      // Несущий по умолчанию — владелец, но только если он **идёт**:
+      // вещь человека «пока не решил» не числится в чьём-то рюкзаке
+      // (то же правило, что у `propose`).
+      const saved = await tx.save(
+        tx.create(TripGear, {
+          tripId: trip.id,
+          gearItemId: item.id,
+          ownerUserId: owner.userId,
+          assignedUserId:
+            ownerParticipant?.status === 'going' ? owner.userId : null,
+          status: 'proposed',
+        }),
+      );
+      saved.gearItem = item;
+
+      return saved;
+    });
+
+    return TripGearItemDto.from(row);
+  }
+
+  /**
    * Убрать вещь из похода.
    *
    * Свою — владелец (передумал брать), чужую — тот, кто ведёт снаряжение
@@ -184,6 +279,7 @@ export class TripGearService {
 
     const row = await manager.findOne(TripGear, {
       where: { id: String(id), tripId: trip.id },
+      relations: { gearItem: true },
     });
     if (!row) throw new NotFoundException('Вещь в снаряжении похода не найдена');
 
@@ -195,10 +291,74 @@ export class TripGearService {
       }
     }
 
-    await manager.delete(TripGear, { id: row.id });
+    await this.dataSource.transaction(async (tx) => {
+      await tx.delete(TripGear, { id: row.id });
+
+      // Одноразовая вещь уходит вместе со строкой похода: каталогу она
+      // не принадлежит, и, оставшись, висела бы в базе невидимой никому
+      // (каталог одноразовые не отдаёт). Вещь из каталога не трогаем —
+      // из похода уходит только решение её взять.
+      if (row.gearItem.isTripOnly) {
+        await tx.delete(GearItem, { id: row.gearItemId });
+      }
+    });
   }
 
   // ───────────────────────── внутреннее ─────────────────────────
+
+  /**
+   * Кому добавляем вещь «вручную».
+   *
+   * Три исхода:
+   *
+   * - хозяина в теле нет или это я — я сам (`isVirtual: false`);
+   * - хозяин — человек без аккаунта из **этого** похода — только
+   *   организатору: «виртуальные участники… он сам управляет ими»;
+   * - хозяин — настоящий пользователь, который не я, — 403: вещь другому
+   *   участнику не добавляют, каждый добавляет своё сам (заказчик
+   *   31.10.2026).
+   *
+   * Проверки идут в этом порядке намеренно: «это чужой настоящий человек»
+   * важнее «он не в походе», иначе организатор получил бы 400 про состав
+   * вместо прямого «так нельзя». Несуществующий id — 404: перебирать
+   * пользователей через эту ручку нечего.
+   */
+  private async resolveManualOwner(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+    ownerUserId: string | null | undefined,
+  ): Promise<{ userId: string; isVirtual: boolean }> {
+    if (!ownerUserId || ownerUserId === userId) {
+      return { userId, isVirtual: false };
+    }
+
+    const owner = await manager.findOne(User, { where: { id: ownerUserId } });
+    if (!owner || owner.deletedAt !== null) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    if (!owner.isVirtual) {
+      throw new ForbiddenException(
+        'Другому участнику вещь не добавляют: каждый добавляет своё снаряжение сам',
+      );
+    }
+
+    if (trip.organizerUserId !== userId) {
+      throw new ForbiddenException(
+        'За человека без аккаунта вещь добавляет организатор похода',
+      );
+    }
+
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId: trip.id, userId: owner.id },
+    });
+    if (!participant || participant.status === 'declined') {
+      throw new BadRequestException('Хозяин вещи — не участник этого похода');
+    }
+
+    return { userId: owner.id, isVirtual: true };
+  }
 
   /**
    * Участник похода — или 403.

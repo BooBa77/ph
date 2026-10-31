@@ -5,6 +5,9 @@ import {
   CreateDateColumn,
   UpdateDateColumn,
   Check,
+  Index,
+  JoinColumn,
+  ManyToOne,
   OneToOne,
 } from 'typeorm';
 
@@ -25,6 +28,14 @@ import type { UserGender } from '../gender.types';
   `"calendar_mode" IN ('cycle', 'free', 'study', 'parental', 'retired')`,
 )
 @Check('chk_users_gender', `"gender" IN ('m', 'f')`)
+@Check(
+  'chk_users_virtual_owner',
+  `"is_virtual" = ("virtual_owner_user_id" IS NOT NULL)`,
+)
+/** «Мои виртуальные»: частичный индекс — настоящих людей в нём нет. */
+@Index('IDX_users_virtual_owner', ['virtualOwnerUserId'], {
+  where: '"is_virtual"',
+})
 export class User {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -107,6 +118,44 @@ export class User {
     eager: true,
   })
   sportExperience: SportExperience | null;
+
+  /**
+   * Виртуальный участник — человек без аккаунта (30.10.2026).
+   *
+   * Организатор заводит «Дядю Витю» прямо в походе: имя и пол, без входа
+   * на сайт. Войти он не может не из-за флага, а потому что логин живёт
+   * в `auth_identities`, и у виртуального её нет; флаг лишь отделяет его
+   * от настоящих людей в поиске, публичном профиле и интерфейсе.
+   *
+   * Строка `users` — **одна на человека, а не на поход**: добавленный
+   * в следующий поход «Дядя Витя» — та же строка, и переименование видно
+   * везде. Одноразовое снаряжение от этого не страдает: оно живёт
+   * в `gear_items` с флагом `is_trip_only`.
+   *
+   * Правило «одно без другого нельзя» — в базе
+   * (`chk_users_virtual_owner`): виртуальный без создателя не нашёлся бы
+   * в списке «мои люди без аккаунта», а создатель у настоящего пользователя
+   * означал бы, что кто-то управляет чужим профилем.
+   */
+  @Column({ name: 'is_virtual', type: 'boolean', default: false })
+  isVirtual: boolean;
+
+  /**
+   * Кто завёл виртуального. По нему строится личный список «мои люди
+   * без аккаунта» для быстрого добавления в следующий поход.
+   *
+   * `RESTRICT`: пользователи удаляются мягко (`deleted_at`), но правило
+   * в базе должно запрещать потерять виртуальных молча.
+   */
+  @Column({ name: 'virtual_owner_user_id', type: 'uuid', nullable: true })
+  virtualOwnerUserId: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'RESTRICT', nullable: true })
+  @JoinColumn({
+    name: 'virtual_owner_user_id',
+    foreignKeyConstraintName: 'FK_users_virtual_owner',
+  })
+  virtualOwner: User | null;
 
   /**
    * Soft delete. NULL — активен. Дата — удалён (не показывается в поиске,

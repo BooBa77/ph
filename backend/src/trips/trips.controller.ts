@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Patch,
   Post,
   Put,
@@ -53,6 +54,7 @@ import {
 } from './dto/trip-access.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
 import { TripsService } from './trips.service';
+import { CreateVirtualUserDto } from '../users/dto/virtual-user.dto';
 
 /**
  * Походы.
@@ -283,6 +285,43 @@ export class TripsController {
     @Param('userId') targetUserId: string,
   ): Promise<void> {
     return this.tripsService.removeParticipant(authUser.id, id, targetUserId);
+  }
+
+  /**
+   * Завести человека без аккаунта и сразу добавить в поход (30.10.2026).
+   *
+   * Только организатор: «виртуальные участники — людей, не пользователей
+   * нашего сайта, он сам управляет ими». Статус — сразу `going`:
+   * приглашать некуда, входа у человека нет.
+   */
+  @Post(':id/participants/virtual')
+  @ApiOperation({ summary: 'Добавить человека без аккаунта' })
+  @ApiCreatedResponse({ type: TripParticipantDto })
+  async createVirtualParticipant(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateVirtualUserDto,
+  ): Promise<TripParticipantDto> {
+    return this.tripsService.createVirtualParticipant(authUser.id, id, dto);
+  }
+
+  /**
+   * Добавить в поход уже заведённого человека без аккаунта — своего.
+   * Чужой не существует (404), уже в составе — 409.
+   */
+  @Post(':id/participants/virtual/:userId')
+  @ApiOperation({ summary: 'Добавить в поход своего человека без аккаунта' })
+  @ApiCreatedResponse({ type: TripParticipantDto })
+  async addVirtualParticipant(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('userId', ParseUUIDPipe) targetUserId: string,
+  ): Promise<TripParticipantDto> {
+    return this.tripsService.addVirtualParticipant(
+      authUser.id,
+      id,
+      targetUserId,
+    );
   }
 
   // ─────────────────────── приглашения и заявки ───────────────────────

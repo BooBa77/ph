@@ -1,11 +1,27 @@
-import { Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, EntityManager, Repository } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  IsNull,
+  Repository,
+} from 'typeorm';
 import { User } from './entities/user.entity';
 import { SportExperience } from './entities/sport-experience.entity';
 import { DisplayNameHistory } from './entities/display-name-history.entity';
+import { TripParticipant } from '../trips/entities/trip-participant.entity';
 import type { UserGender } from './gender.types';
 import type { SportExperienceData } from './sport-experience.types';
+import {
+  VirtualUserDto,
+  type CreateVirtualUserDto,
+  type UpdateVirtualUserDto,
+} from './dto/virtual-user.dto';
 
 /** Сколько людей отдавать в поиске: список выбора, а не справочник. */
 const SEARCH_LIMIT = 20;
@@ -84,6 +100,11 @@ export class UsersService {
    * Себя из выдачи убираем: пригласить себя в поход нельзя, и человек
    * в собственном списке выбора — это шум. Уже приглашённых отсеивает
    * интерфейс: он один знает, кого в этом походе ещё нет.
+   *
+   * **Люди без аккаунта не находятся** (30.10.2026): их заводит организатор
+   * для своего похода, и «позвать» такого человека через поиск нельзя —
+   * приглашение ему всё равно некуда приходит. Отсекаем здесь, а не в
+   * фильтре контроллера: поиск людей — одно правило и одно место.
    */
   async search(
     search: string | undefined,
@@ -97,6 +118,7 @@ export class UsersService {
     const qb = this.usersRepository
       .createQueryBuilder('user')
       .where('user.displayName ILIKE :search', { search: `%${escaped}%` })
+      .andWhere('user.is_virtual = false')
       .orderBy('user.displayName', 'ASC')
       .take(SEARCH_LIMIT);
 
@@ -148,6 +170,138 @@ export class UsersService {
   async clearDeletedAt(id: string, manager?: EntityManager): Promise<void> {
     const repo = manager ? manager.getRepository(User) : this.usersRepository;
     await repo.update({ id }, { deletedAt: null, updatedAt: new Date() });
+  }
+
+  // ─── люди без аккаунта (30.10.2026) ───
+
+  /**
+   * Мои люди без аккаунта — для «быстрого добавления» в следующий поход.
+   *
+   * Человек, которого убрали из личного списка (`deleted_at`), здесь
+   * не показывается. Удалённых физически виртуальных не бывает: строка
+   * `users` одна на человека, и походы ссылаются на неё.
+   */
+  async listVirtual(ownerUserId: string): Promise<VirtualUserDto[]> {
+    const users = await this.usersRepository.find({
+      where: {
+        isVirtual: true,
+        virtualOwnerUserId: ownerUserId,
+        deletedAt: IsNull(),
+      },
+      order: { displayName: 'ASC' },
+    });
+
+    return users.map((user) => VirtualUserDto.from(user));
+  }
+
+  /**
+   * Завести человека без аккаунта.
+   *
+   * `manager` — когда создание идёт вместе с добавлением в поход
+   * (`POST /api/trips/:id/participants/virtual`): «завёл, но в состав
+   * не попал» — это поломка данных, а не полшага.
+   *
+   * `is_virtual` и создатель пишутся вместе: правило базы
+   * (`chk_users_virtual_owner`) не даёт одного без другого, и обходить
+   * его из кода незачем.
+   */
+  async createVirtual(
+    ownerUserId: string,
+    dto: CreateVirtualUserDto,
+    manager?: EntityManager,
+  ): Promise<User> {
+    const repo = manager ? manager.getRepository(User) : this.usersRepository;
+    const displayName = dto.displayName.trim();
+    if (displayName.length === 0) {
+      throw new BadRequestException('У человека должно быть имя');
+    }
+
+    return repo.save(
+      repo.create({
+        displayName,
+        gender: dto.gender ?? 'm',
+        isVirtual: true,
+        virtualOwnerUserId: ownerUserId,
+      }),
+    );
+  }
+
+  /**
+   * Переименовать или поменять пол.
+   *
+   * История имён (`display_name_history`) для виртуальных не пишется:
+   * это аудит профиля человека, а здесь организатор правит свою запись.
+   * Переименование всё равно видно везде сразу — строка `users` одна,
+   * и походы ссылаются на неё, а не хранят копию имени.
+   */
+  async updateVirtual(
+    ownerUserId: string,
+    userId: string,
+    dto: UpdateVirtualUserDto,
+  ): Promise<User> {
+    const user = await this.findOwnedVirtual(ownerUserId, userId);
+
+    if (dto.displayName !== undefined) {
+      const displayName = dto.displayName.trim();
+      if (displayName.length === 0) {
+        throw new BadRequestException('У человека должно быть имя');
+      }
+      user.displayName = displayName;
+    }
+    if (dto.gender !== undefined) user.gender = dto.gender;
+
+    return this.usersRepository.save(user);
+  }
+
+  /**
+   * Убрать из личного списка — мягко (`deleted_at`), как удаляется обычный
+   * пользователь.
+   *
+   * Пока человек участвует хоть в одном походе, убрать его нельзя (409,
+   * как у вещи, которая уже едет в походе): пропал бы участник состава,
+   * и в палатках, трансфере и питании остались бы ссылки на него.
+   */
+  async removeVirtual(ownerUserId: string, userId: string): Promise<void> {
+    await this.findOwnedVirtual(ownerUserId, userId);
+
+    const trips = await this.dataSource.manager.count(TripParticipant, {
+      where: { userId },
+    });
+    if (trips > 0) {
+      throw new ConflictException(
+        'Человек без аккаунта ещё участвует в походе — сначала уберите его из состава',
+      );
+    }
+
+    await this.setDeletedAt(userId);
+  }
+
+  /**
+   * Мой виртуальный по id — или 404.
+   *
+   * 404, а не 403: чужой виртуальный для этого человека не существует,
+   * и перебирать id чужих людей без аккаунта нечего (та же логика, что
+   * у чужого снаряжения в каталоге). Публичный метод — им пользуется
+   * `TripsService`, когда добавляет существующего виртуального в поход.
+   */
+  async findOwnedVirtual(
+    ownerUserId: string,
+    userId: string,
+    manager?: EntityManager,
+  ): Promise<User> {
+    const repo = manager ? manager.getRepository(User) : this.usersRepository;
+    const user = await repo.findOne({
+      where: {
+        id: userId,
+        isVirtual: true,
+        virtualOwnerUserId: ownerUserId,
+        deletedAt: IsNull(),
+      },
+    });
+
+    if (!user) throw new NotFoundException('Человек без аккаунта не найден');
+
+    return user;
   }
 
   // ─── private ───

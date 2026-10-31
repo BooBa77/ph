@@ -21,6 +21,7 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
+  AddManualTripGearDto,
   ProposeTripGearDto,
   TripGearItemDto,
   TripGearListDto,
@@ -66,6 +67,28 @@ export class TripGearController {
     @Body() dto: ProposeTripGearDto,
   ): Promise<TripGearItemDto> {
     return this.tripGearService.propose(authUser.id, id, dto);
+  }
+
+  /**
+   * Добавить вещь в поход вручную — второй путь заполнения снаряжения
+   * (30.10.2026): тип, характеристики, название, вес, хозяин.
+   *
+   * Обычный участник добавляет себе одноразовую вещь («бутылка бензина
+   * на розжиг»): она живёт только в этом походе и в каталог не попадает.
+   * Флаг «в список для регулярного использования» заводит её ещё и в
+   * каталоге настоящего хозяина. Организатор может выбрать хозяином
+   * человека без аккаунта — у того каталога нет, поэтому вещь всегда
+   * одноразовая.
+   */
+  @Post(':id/gear/manual')
+  @ApiOperation({ summary: 'Добавить вещь в поход вручную' })
+  @ApiCreatedResponse({ type: TripGearItemDto })
+  async addManual(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AddManualTripGearDto,
+  ): Promise<TripGearItemDto> {
+    return this.tripGearService.addManual(authUser.id, id, dto);
   }
 
   /**

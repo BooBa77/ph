@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
+import { UsersModule } from '../users/users.module';
 import { Conversation } from './entities/conversation.entity';
 import { ConversationMember } from './entities/conversation-member.entity';
 import { GeoObject } from './entities/geo-object.entity';
@@ -52,6 +53,11 @@ import { ObjectsService } from './objects.service';
  * ровно тот случай, что `User` в `CalendarModule`: сущность принадлежит
  * другому домену, но проверка нужна здесь. Ходить за ней через
  * `CalendarService` незачем: справочник читается, а не меняется.
+ *
+ * `UsersModule` — ради людей без аккаунта (30.10.2026): создание строки
+ * `users` и правило «`is_virtual` и создатель пишутся вместе» живут
+ * в `UsersService`, а состав похода — здесь. Цикла нет: `UsersModule`
+ * про походы ничего не знает.
  */
 @Module({
   imports: [
@@ -83,6 +89,7 @@ import { ObjectsService } from './objects.service';
       MessageAction,
       CalendarActivityType,
     ]),
+    UsersModule,
   ],
   controllers: [
     TripsController,

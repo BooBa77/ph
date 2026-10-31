@@ -23,6 +23,24 @@ import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
 import { TripGear } from './entities/trip-gear.entity';
 
 /**
+ * Данные для заведения вещи — общие для каталога и для «вручную» в походе.
+ *
+ * Один путь на две ручки: `POST /api/gear` (каталог) и
+ * `POST /api/trips/:id/gear/manual` (одноразовая вещь похода, 30.10.2026).
+ * Разница только в `tripOnly` и в том, что у одноразовой вещи названия
+ * может не быть.
+ */
+export interface CreateItemData {
+  typeId: number;
+  attributes?: Record<string, unknown>;
+  /** `null`/пусто — подписать именем типа (только для одноразовой вещи). */
+  title?: string | null;
+  weightGrams?: number | null;
+  note?: string | null;
+  tripOnly: boolean;
+}
+
+/**
  * Личное снаряжение человека.
  *
  * Всё простое и потому опасное: «мой список» — это единственное правило
@@ -33,6 +51,12 @@ import { TripGear } from './entities/trip-gear.entity';
  * Вида старого каталога (`kind`) в контракте больше нет: экраны перешли
  * на коды типов, и прослойка «вид → тип» удалена. `typeId` обязателен
  * при создании и единственный способ сменить тип при правке.
+ *
+ * **Каталог — не все вещи владельца** (30.10.2026). Вещь, заведённая
+ * «вручную» в походе, живёт только там (`is_trip_only`), и каталог её
+ * **не отдаёт** — ни владельцу, ни организатору. Поэтому фильтр стоит
+ * в трёх местах: список, загрузка после правки и `findOwned` (чужой
+ * запрос по id одноразовой вещи — 404, как по чужой).
  *
  * Вес необязателен. `NULL` значит «не знаю», и такой предмет не попадает
  * в итог: считать его нулём — врать в сумме рюкзака, а отказываться
@@ -49,10 +73,10 @@ import { TripGear } from './entities/trip-gear.entity';
 export class GearService {
   constructor(private readonly dataSource: DataSource) {}
 
-  /** Мой список и итог по весу. */
+  /** Мой список и итог по весу. Одноразовые вещи похода сюда не входят. */
   async list(userId: string): Promise<GearListDto> {
     const items = await this.dataSource.manager.find(GearItem, {
-      where: { ownerUserId: userId },
+      where: { ownerUserId: userId, isTripOnly: false },
       relations: {
         gearType: true,
         attributes: { gearTypeAttribute: true },
@@ -73,45 +97,88 @@ export class GearService {
     return this.toList(items);
   }
 
-  /** Новый предмет. */
+  /** Новый предмет каталога. */
   async create(userId: string, dto: CreateGearItemDto): Promise<GearItemDto> {
     const title = dto.title.trim();
     if (title.length === 0) {
       throw new BadRequestException('У предмета должно быть название');
     }
 
-    const id = await this.dataSource.transaction(async (tx) => {
-      const type = await this.resolveType(tx, dto.typeId);
-      const attributes = await this.typeAttributes(tx, type.id);
-      const active = attributes.filter((attribute) => attribute.isActive);
+    const item = await this.dataSource.transaction((tx) =>
+      this.createItem(tx, userId, {
+        typeId: dto.typeId,
+        attributes: dto.attributes,
+        title,
+        weightGrams: dto.weightGrams ?? null,
+        note: dto.note ?? null,
+        tripOnly: false,
+      }),
+    );
 
-      const values = this.parseValues(active, dto.attributes ?? {});
-      // Обязательные характеристики спрашиваются у нового предмета всегда:
-      // тип приходит полем `typeId`, а вместе с ним приходит форма, которая
-      // знает набор полей и умеет их спрашивать. Форма, которая присылала
-      // только вид, ушла вместе с видом.
-      //
-      // Считаем **заполненные** характеристики, а не присланные ключи:
-      // форма нового каталога отправляет карту целиком, а пустые значения —
-      // `null`. Иначе `{ seats: null }` проходил бы проверку и вещь
-      // сохранялась бы без обязательного значения.
-      this.assertRequired(active, this.filledIds(values));
+    return GearItemDto.from(item);
+  }
 
-      const saved = await tx.save(
-        tx.create(GearItem, {
-          ownerUserId: userId,
-          gearTypeId: type.id,
-          title,
-          weightGrams: dto.weightGrams ?? null,
-          note: dto.note?.trim() || null,
-        }),
-      );
-      await this.writeValues(tx, saved.id, values);
+  /**
+   * Завести вещь — общим путём для каталога и для «вручную» в походе.
+   *
+   * Одна дверь на две ручки (`gear.service.create` и
+   * `trip-gear.service.addManual`): тип, характеристики, обязательные
+   * значения и запись значений — одни и те же правила. Вторая копия этой
+   * логики означала бы, что «вручную» однажды примет вещь без обязательного
+   * значения.
+   *
+   * **Название у одноразовой вещи необязательно.** В каталоге `title` —
+   * это название вещи, человек пишет его осознанно; в походе строку
+   * подписывает тип («Топор», «Палатка»), и требовать «название» у бутылки
+   * бензина незачем. Поэтому пустое имя заменяется именем типа — колонка
+   * `gear_items.title` остаётся `NOT NULL` и непустой (`chk_gear_items_title`).
+   * Каталог этот запасной путь не использует: там `title` проверяется
+   * до вызова и пустым не бывает.
+   *
+   * Возвращает вещь с типом и значениями: `TripGearItemDto` собирается
+   * из них, и второй запрос за тем же был бы лишним кругом до базы.
+   */
+  async createItem(
+    manager: EntityManager,
+    ownerUserId: string,
+    data: CreateItemData,
+  ): Promise<GearItem> {
+    const type = await this.resolveType(manager, data.typeId);
+    const attributes = await this.typeAttributes(manager, type.id);
+    const active = attributes.filter((attribute) => attribute.isActive);
 
-      return saved.id;
+    const values = this.parseValues(active, data.attributes ?? {});
+    // Обязательные характеристики спрашиваются у новой вещи всегда: тип
+    // пришёл полем `typeId`, а вместе с ним пришла форма, которая знает
+    // набор полей и умеет их спрашивать.
+    //
+    // Считаем **заполненные** характеристики, а не присланные ключи:
+    // форма отправляет карту целиком, а пустые значения — `null`.
+    this.assertRequired(active, this.filledIds(values));
+
+    const title = data.title?.trim() || type.name;
+
+    const saved = await manager.save(
+      manager.create(GearItem, {
+        ownerUserId,
+        gearTypeId: type.id,
+        title,
+        weightGrams: data.weightGrams ?? null,
+        note: data.note?.trim() || null,
+        isTripOnly: data.tripOnly,
+      }),
+    );
+    await this.writeValues(manager, saved.id, values);
+
+    const item = await manager.findOne(GearItem, {
+      where: { id: saved.id },
+      relations: { gearType: true, attributes: { gearTypeAttribute: true } },
     });
+    if (!item) throw new NotFoundException('Предмет не найден');
 
-    return this.loadItem(this.dataSource.manager, userId, id);
+    this.sortValues(item);
+
+    return item;
   }
 
   /**
@@ -440,14 +507,19 @@ export class GearService {
     });
   }
 
-  /** Мой предмет с типом и значениями — или 404: чужой не существует. */
+  /**
+   * Мой предмет каталога с типом и значениями — или 404.
+   *
+   * Одноразовая вещь похода здесь **не находится**: каталог её не отдаёт,
+   * а по id её можно было бы править и удалять в обход похода.
+   */
   private async loadItem(
     manager: EntityManager,
     userId: string,
     id: string,
   ): Promise<GearItemDto> {
     const item = await manager.findOne(GearItem, {
-      where: { id, ownerUserId: userId },
+      where: { id, ownerUserId: userId, isTripOnly: false },
       relations: { gearType: true, attributes: { gearTypeAttribute: true } },
     });
     if (!item) throw new NotFoundException('Предмет не найден');
@@ -457,14 +529,19 @@ export class GearService {
     return GearItemDto.from(item);
   }
 
-  /** Предмет без связей: нужен только id и запрет на удаление. */
+  /**
+   * Предмет каталога без связей: нужен только id и запрет на удаление.
+   *
+   * `isTripOnly: false` — то же правило, что в `loadItem`: одноразовая
+   * вещь похода живёт в походе, и каталог про неё ничего не знает.
+   */
   private async findOwned(
     manager: EntityManager,
     userId: string,
     id: number,
   ): Promise<GearItem> {
     const item = await manager.findOne(GearItem, {
-      where: { id: String(id), ownerUserId: userId },
+      where: { id: String(id), ownerUserId: userId, isTripOnly: false },
     });
     if (!item) throw new NotFoundException('Предмет не найден');
 
