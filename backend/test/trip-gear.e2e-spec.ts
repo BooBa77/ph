@@ -51,6 +51,8 @@ describe('Снаряжение похода (e2e)', () => {
   let tentId: string;
   let ropeId: string;
   let potId: string;
+  /** Вещь «незабинденного» типа для кнопки «Добавить ещё» (01.11.2026). */
+  let extraId: string;
 
   /**
    * Типы заводим свои: спека про снаряжение похода, а не про справочник,
@@ -216,6 +218,11 @@ describe('Снаряжение похода (e2e)', () => {
       title: 'Котелок 5 л',
       weightGrams: 900,
     });
+    extraId = await addGear(organizerToken, {
+      typeId: plainTypeId,
+      title: 'Лодка надувная',
+      weightGrams: 12000,
+    });
   });
 
   afterAll(async () => {
@@ -264,10 +271,17 @@ describe('Снаряжение похода (e2e)', () => {
   }
 
   /** Предложить предмет в поход. */
-  function propose(token: string, gearItemId: string) {
-    return call('post', `/api/trips/${tripId}/gear`, token, {
+  function propose(
+    token: string,
+    gearItemId: string,
+    routeSection?: string,
+  ) {
+    const body: Record<string, unknown> = {
       gearItemId: Number(gearItemId),
-    });
+    };
+    if (routeSection !== undefined) body.routeSection = routeSection;
+
+    return call('post', `/api/trips/${tripId}/gear`, token, body);
   }
 
   it('по умолчанию список пуст и итог нулевой', async () => {
@@ -331,6 +345,35 @@ describe('Снаряжение похода (e2e)', () => {
     expect(response.body.items).toHaveLength(1);
     expect(response.body.totalWeightGrams).toBe(0);
     expect(response.body.itemsWithoutWeight).toBe(0);
+  });
+
+  /**
+   * «Добавить ещё» (01.11.2026): вещь запоминает секцию, где её добавили.
+   * Обычная вещь секции не имеет — её место показывает тип, и `null`
+   * в ответе это и значит.
+   */
+  it('«Добавить ещё» помнит секцию, обычная вещь — нет', async () => {
+    const withSection = await propose(organizerToken, extraId, 'tent').expect(201);
+    expect(withSection.body.routeSection).toBe('tent');
+
+    const plain = await call(
+      'get',
+      `/api/trips/${tripId}/gear`,
+      organizerToken,
+    ).expect(200);
+    const tent = (plain.body.items as Array<{ id: string; routeSection: unknown }>)
+      .find((item) => item.id === tentTripGearId);
+    expect(tent?.routeSection).toBeNull();
+
+    // Секция — словарь: «boat» в базе не появится.
+    await propose(organizerToken, tentId, 'boat').expect(400);
+
+    // За собой убираем: дальше спека считает вещи похода поштучно.
+    await call(
+      'delete',
+      `/api/trips/${tripId}/gear/${withSection.body.id}`,
+      organizerToken,
+    ).expect(204);
   });
 
   it('«берём / не берём» — не участнику, а тому, у кого вкладка', async () => {

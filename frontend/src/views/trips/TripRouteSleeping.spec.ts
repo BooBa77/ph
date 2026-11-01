@@ -1,7 +1,9 @@
+import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api/errors'
+import { useAuthStore } from '@/stores/auth'
 import type { GearItem } from '@/types/gear'
 import type { RouteSleeping, Trip, TripRoute } from '@/types/trips'
 import TripRouteSleeping from '@/views/trips/TripRouteSleeping.vue'
@@ -20,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   removeRouteSleeping: vi.fn(),
   listGear: vi.fn(),
   createGearItem: vi.fn(),
+  addManualTripGear: vi.fn(),
   fetchGearTypes: vi.fn(),
 }))
 
@@ -31,6 +34,7 @@ vi.mock('@/api/trips', () => ({
 vi.mock('@/api/gear', () => ({
   listGear: mocks.listGear,
   createGearItem: mocks.createGearItem,
+  addManualTripGear: mocks.addManualTripGear,
 }))
 
 vi.mock('@/api/gearTypes', () => ({
@@ -97,6 +101,22 @@ describe('личные вещи ночёвки', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    setActivePinia(createPinia())
+    useAuthStore().setAuth(
+      {
+        id: 'me',
+        displayName: 'Олег',
+        location: null,
+        avatarUrl: null,
+        gender: 'm',
+        isVegetarian: false,
+        allergies: null,
+        sportExperience: null,
+        isAdmin: false,
+      },
+      'token',
+    )
+
     mocks.fetchGearTypes.mockResolvedValue([
       { id: 21, code: 'sleeping_bag', name: 'Спальник', sortOrder: 0, attributes: [] },
       { id: 22, code: 'mat', name: 'Коврик', sortOrder: 0, attributes: [] },
@@ -281,5 +301,83 @@ describe('личные вещи ночёвки', () => {
     ])
 
     expect(wrapper.findAll('[data-test="route-sleeping-item"]')).toHaveLength(2)
+  })
+
+  // ───────────────────────────── «Добавить ещё» ─────────────────────────────
+
+  it('«Добавить ещё» — третья кнопка секции, всегда белая', () => {
+    const wrapper = mounted()
+
+    const button = wrapper.get('[data-test="route-sleeping-extra"]')
+
+    expect(button.text()).toBe('Добавить ещё')
+    expect(button.classes()).toContain('bg-field')
+    expect(button.classes()).not.toContain('bg-blue-600')
+  })
+
+  it('«Добавить ещё» предлагает весь каталог, а не только спальники и коврики', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([
+        gearItem({ id: '11', title: 'Спальник летний' }),
+        gearItem({ id: '13', typeCode: 'tent', typeName: 'Палатка', title: 'Палатка' }),
+        gearItem({ id: '14', typeCode: 'other', typeName: 'Прочее', title: 'Вкладыш в спальник' }),
+      ]),
+    )
+
+    const wrapper = mounted()
+    await wrapper.get('[data-test="route-sleeping-extra"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(true)
+
+    const items = wrapper
+      .findAll('[data-test^="route-extra-item-"]')
+      .map((node) => node.text())
+
+    // Спальник — первым: типы секции идут раньше остальных.
+    expect(items[0]).toContain('Спальник летний')
+    expect(items.some((text) => text.includes('Вкладыш в спальник'))).toBe(true)
+    expect(items.some((text) => text.includes('Палатка'))).toBe(true)
+  })
+
+  it('вещь из «Добавить ещё» уходит в личную секцию и вкладка приходит родителю', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([gearItem({ id: '14', typeCode: 'other', typeName: 'Прочее', title: 'Вкладыш' })]),
+    )
+
+    const wrapper = mounted()
+    await wrapper.get('[data-test="route-sleeping-extra"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-item-14"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addRouteSleeping).toHaveBeenCalledWith('1', '14')
+    expect(wrapper.emitted('route')).toHaveLength(1)
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(false)
+  })
+
+  it('«Указать вручную» из «Добавить ещё» заводит вещь в личном каталоге', async () => {
+    mocks.createGearItem.mockResolvedValue(gearItem({ id: '99', title: 'Грелка' }))
+
+    const wrapper = mounted()
+    await wrapper.get('[data-test="route-sleeping-extra"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-manual"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(true)
+    // Личный режим: тип можно взять любой, а не только спальник.
+    expect(
+      wrapper.get('[data-test="manual-type"]').findAll('option').map((node) => node.text()),
+    ).toEqual(['Спальник', 'Коврик'])
+
+    await wrapper.get('[data-test="manual-title"]').setValue('Грелка')
+    await wrapper.get('[data-test="manual-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createGearItem).toHaveBeenCalledWith(
+      expect.objectContaining({ typeId: 21, title: 'Грелка' }),
+    )
+    expect(mocks.addRouteSleeping).toHaveBeenCalledWith('1', '99')
   })
 })

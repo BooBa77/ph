@@ -27,7 +27,6 @@ import {
   COOKING_NIGHT_KINDS,
   PLACE_NIGHT_KINDS,
   ROUTE_TAB,
-  SLEEPING_TYPE_CODES,
   type RouteLodgerStatus,
 } from './trip-route.types';
 import { TripsService } from './trips.service';
@@ -134,12 +133,14 @@ export class TripRouteService {
   }
 
   /**
-   * Добавить себе спальник или коврик.
+   * Добавить себе вещь в ночёвку — спальник, коврик или что угодно личное.
    *
-   * Вещь — обязательно предмет **своего** каталога и обязательно типа
-   * «Спальник» или «Коврик»: секция личная, чужую вещь сюда не положить.
-   * Повторное добавление той же вещи ничего не ломает (`ON CONFLICT
-   * DO NOTHING`), а количество вещей не ограничено.
+   * Вещь — обязательно предмет **своего** каталога: секция личная, чужую
+   * вещь сюда не положить. С 01.11.2026 тип не ограничен: кнопка
+   * «Добавить ещё» берёт из каталога любую вещь — «вкладыш в спальник,
+   * грелка, губка для мытья посуды». Повторное добавление той же вещи
+   * ничего не ломает (`ON CONFLICT DO NOTHING`), количество вещей
+   * не ограничено.
    */
   async addSleeping(
     userId: string,
@@ -448,12 +449,17 @@ export class TripRouteService {
   }
 
   /**
-   * Личные спальники и коврики **смотрящего**.
+   * Личные вещи **смотрящего**.
    *
    * Не всей группы: секция личная, и заказчик отдельно сказал, что спальники
    * виртуальных участников организатору не показываются. Фильтр по
    * `is_virtual` — страховка: войти виртуальным нельзя, но если модель
    * когда-нибудь позволит, личное не должно утечь.
+   *
+   * **Типом не фильтруем** (01.11.2026): кнопка «Добавить ещё» в «Спальнике»
+   * берёт из личного каталога вещь любого типа — «вкладыш в спальник,
+   * грелка». Секция всё равно одна и личная, поэтому показывать нечего
+   * скрывать.
    */
   private async sleepingRows(
     manager: EntityManager,
@@ -473,39 +479,36 @@ export class TripRouteService {
         WHERE s.trip_id = $1
           AND s.user_id = $2
           AND u.is_virtual = false
-          AND gt.code = ANY($3::text[])
         ORDER BY s.id ASC`,
-      [tripId, userId, SLEEPING_TYPE_CODES],
+      [tripId, userId],
     )) as SleepingRow[];
   }
 
-  /** Вещь для ночёвки — своя и только спальник или коврик. */
+  /**
+   * Вещь для ночёвки — своя и из каталога.
+   *
+   * Ограничения по типу больше нет (01.11.2026): «Добавить ещё» берёт любую
+   * личную вещь. Остаются два правила: чужую вещь сюда не положить
+   * (каталог личный) и одноразовая вещь похода каталогу не принадлежит —
+   * её строка живёт в снаряжении похода, а не в ночёвке.
+   */
   private async assertSleepingItem(
     manager: EntityManager,
     userId: string,
     gearItemId: string,
   ): Promise<void> {
     const rows = (await manager.query(
-      `SELECT gt.code
+      `SELECT gi.id
          FROM gear_items gi
-         JOIN gear_types gt ON gt.id = gi.gear_type_id
         WHERE gi.id = $1::bigint
           AND gi.owner_user_id = $2
           AND gi.is_trip_only = false`,
       [gearItemId, userId],
-    )) as { code: string }[];
+    )) as { id: string }[];
 
-    const item = rows[0];
-
-    if (item === undefined) {
+    if (rows[0] === undefined) {
       throw new BadRequestException(
-        'Спальник и коврик — вещи из вашего каталога снаряжения',
-      );
-    }
-
-    if (!(SLEEPING_TYPE_CODES as readonly string[]).includes(item.code)) {
-      throw new BadRequestException(
-        'В ночёвку берут спальник или коврик — у этой вещи другой тип',
+        'В ночёвку берут вещь из вашего каталога снаряжения',
       );
     }
   }

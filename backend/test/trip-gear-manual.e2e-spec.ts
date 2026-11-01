@@ -247,6 +247,28 @@ describe('Снаряжение похода «вручную» (e2e)', () => {
     ).toContain(manualTripGearId);
   });
 
+  /**
+   * «Добавить ещё» (01.11.2026): ручная вещь тоже помнит секцию, где её
+   * добавили. Без пометки губка для посуды или лодка не показались бы
+   * ни в одной секции «Ночёвок».
+   */
+  it('ручная вещь помнит секцию «Добавить ещё»', async () => {
+    const response = await addManual(memberToken, {
+      typeId: plainTypeId,
+      title: 'Губка для мытья посуды',
+      weightGrams: 10,
+      routeSection: 'dishes',
+    }).expect(201);
+
+    expect(response.body.routeSection).toBe('dishes');
+
+    // Секция — словарь, а не свободный текст.
+    await addManual(memberToken, {
+      typeId: plainTypeId,
+      routeSection: 'boat',
+    }).expect(400);
+  });
+
   it('в личном каталоге её нет — ни у владельца, ни у организатора', async () => {
     for (const token of [memberToken, organizerToken]) {
       const catalog = await call('get', '/api/gear', token).expect(200);

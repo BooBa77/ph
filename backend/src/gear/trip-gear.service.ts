@@ -132,6 +132,9 @@ export class TripGearService {
         ownerUserId: userId,
         assignedUserId: participant.status === 'going' ? userId : null,
         status: 'proposed',
+        // Секцию пишет только «Добавить ещё»: обычная вещь показывается
+        // по типу, и пометка ей не нужна (01.11.2026).
+        routeSection: dto.routeSection ?? null,
       }),
     );
     saved.gearItem = item;
@@ -252,6 +255,7 @@ export class TripGearService {
           assignedUserId:
             ownerParticipant?.status === 'going' ? owner.userId : null,
           status: 'proposed',
+          routeSection: dto.routeSection ?? null,
         }),
       );
       saved.gearItem = item;

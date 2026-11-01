@@ -24,10 +24,14 @@ import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
  */
 const mocks = vi.hoisted(() => ({
   addManualTripGear: vi.fn(),
+  createGearItem: vi.fn(),
   fetchGearTypes: vi.fn(),
 }))
 
-vi.mock('@/api/gear', () => ({ addManualTripGear: mocks.addManualTripGear }))
+vi.mock('@/api/gear', () => ({
+  addManualTripGear: mocks.addManualTripGear,
+  createGearItem: mocks.createGearItem,
+}))
 vi.mock('@/api/gearTypes', () => ({ fetchGearTypes: mocks.fetchGearTypes }))
 
 const ME = 'demo-me'
@@ -111,6 +115,7 @@ function manualItem(overrides: Partial<TripGearItem> = {}): TripGearItem {
     note: null,
     isTripOnly: true,
     status: 'proposed',
+    routeSection: null,
     ownerUserId: ME,
     assignedUserId: null,
     createdAt: '2026-10-31T10:00:00.000Z',
@@ -123,6 +128,10 @@ interface Props {
   typeCodes: readonly string[]
   defaultTypeCode: string
   ownerOptions: readonly { userId: string; displayName: string }[]
+  /** Секция «Добавить ещё» (01.11.2026). */
+  routeSection?: 'tent' | 'dishes' | 'campfire' | 'stove'
+  /** `personal` — вещь в личный каталог, а не в снаряжение похода. */
+  mode?: 'trip' | 'personal'
 }
 
 async function open(overrides: Partial<Props> = {}): Promise<VueWrapper> {
@@ -289,5 +298,61 @@ describe('TripGearManualModal («указать вручную»)', () => {
       'Добавлять вещи другим участникам может только организатор',
     )
     expect(wrapper.emitted('created')).toBeUndefined()
+  })
+
+  it('пустой список типов — любой тип справочника: «Добавить ещё» не ограничивает', async () => {
+    const wrapper = await open({ typeCodes: [], defaultTypeCode: '' })
+
+    expect(
+      wrapper.findAll('[data-test="manual-type"] option').map((option) => option.text()),
+    ).toEqual(['Палатка', 'Тент', 'Топор'])
+  })
+
+  it('секцию «Добавить ещё» вещь запоминает: routeSection уходит в теле', async () => {
+    const wrapper = await open({ routeSection: 'dishes' })
+
+    await wrapper.find('[data-test="manual-seats"]').setValue('2')
+    await wrapper.find('[data-test="manual-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addManualTripGear).toHaveBeenCalledWith(
+      '7',
+      expect.objectContaining({ routeSection: 'dishes' }),
+    )
+  })
+
+  it('личный режим заводит предмет каталога, а не строку похода', async () => {
+    mocks.createGearItem.mockResolvedValue({
+      id: 'gi-1',
+      typeId: 1,
+      typeCode: 'tent',
+      typeName: 'Палатка',
+      groupId: 4,
+      groupCode: 'other',
+      groupName: 'Прочее',
+      sortOrder: 10,
+      title: 'Вкладыш',
+      weightGrams: 300,
+      note: null,
+      attributes: [],
+      createdAt: '2026-10-31T10:00:00.000Z',
+    })
+
+    const wrapper = await open({ mode: 'personal', typeCodes: [], defaultTypeCode: '' })
+
+    // Хозяина и флага каталога в личном режиме нет: каталог и есть результат.
+    expect(wrapper.find('[data-test="manual-owner-field"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="manual-catalog-field"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="manual-title"]').setValue('Вкладыш')
+    await wrapper.find('[data-test="manual-seats"]').setValue('2')
+    await wrapper.find('[data-test="manual-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addManualTripGear).not.toHaveBeenCalled()
+    expect(mocks.createGearItem).toHaveBeenCalledWith(
+      expect.objectContaining({ typeId: 1, title: 'Вкладыш' }),
+    )
+    expect(wrapper.emitted('created-personal')?.[0]?.[0]).toMatchObject({ id: 'gi-1' })
   })
 })

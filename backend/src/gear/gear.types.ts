@@ -65,7 +65,8 @@ export const GEAR_OPTIONS_MAX = 100;
  * „Палатки“ используем `tent` („палатка“) и `shelter` („тент“)». Значит,
  * экраны читают не слова в названии вещи и не вид старого каталога, а
  * **конкретный код типа** из справочника: «Палатки» — `tent` и `shelter`,
- * «Костровое» — топор, пила, розжиг, таган, горелка и баллон.
+ * «Готовка» — три группы: посуда (`kettle`, `ladle`, `knife`), костровое
+ * (`axe`, `saw`, `firestarter`, `tagan`) и горелки (`stove`, `gas`).
  *
  * Код живёт в `gear_types.code` и правится только архивом с новым кодом
  * (`PATCH` кода не принимает), поэтому константа и строка справочника
@@ -88,6 +89,9 @@ export const GEAR_TYPE_CODES = {
   tagan: 'tagan',
   stove: 'stove',
   gas: 'gas',
+  kettle: 'kettle',
+  ladle: 'ladle',
+  knife: 'knife',
 } as const;
 
 export type GearBoundType = (typeof GEAR_TYPE_CODES)[keyof typeof GEAR_TYPE_CODES];
@@ -110,6 +114,25 @@ export const CAMPFIRE_TYPE_CODES: readonly string[] = [
 export const STOVE_TYPE_CODES: readonly string[] = [
   GEAR_TYPE_CODES.stove,
   GEAR_TYPE_CODES.gas,
+];
+
+/**
+ * «Посуда» — третья группа «Готовки» (01.11.2026).
+ *
+ * Заказчик переделал секцию: «переименуй секцию „Костровое“ в „Готовка“ и
+ * расширяем её… три группы снаряжения „Посуда“, „Костровое“ и „Горелки“…
+ * в новой „Посуда“ — кнопки „Добавить котёл“, „Добавить половник“,
+ * „Добавить нож“, это всё забинденные типы снаряжения».
+ *
+ * Коды — те же забинденные типы, что у палатки и топора: на них опираются
+ * кнопки группы и фильтр выбора. Типы заводит миграция
+ * `1792277000000-RouteGearSections`, а не только сид: без строки
+ * в справочнике кнопке нечего предложить.
+ */
+export const DISHES_TYPE_CODES: readonly string[] = [
+  GEAR_TYPE_CODES.kettle,
+  GEAR_TYPE_CODES.ladle,
+  GEAR_TYPE_CODES.knife,
 ];
 
 /**

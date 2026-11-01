@@ -115,6 +115,7 @@ function tripGearItem(overrides: Partial<TripGearItem> = {}): TripGearItem {
     note: null,
     isTripOnly: false,
     status: 'approved',
+    routeSection: null,
     assignedUserId: null,
     ownerUserId: ANNA,
     createdAt: '2026-10-29T10:00:00.000Z',
@@ -317,7 +318,7 @@ describe('плашки ночёвок', () => {
     expect(cooking.value).toBe('')
   })
 
-  it('«Палатки», «Спальник» и «Костровое» скрыты, пока ничего не выбрано', async () => {
+  it('«Палатки», «Спальник» и «Готовка» скрыты, пока ничего не выбрано', async () => {
     const wrapper = await mounted(trip())
 
     expect(wrapper.find('[data-test="route-tents-section"]').exists()).toBe(false)
@@ -325,7 +326,7 @@ describe('плашки ночёвок', () => {
     expect(wrapper.find('[data-test="route-cooking-section"]').exists()).toBe(false)
   })
 
-  it('«Палатка» открывает зелёные «Палатки» и синий «Спальник», готовка — «Костровое»', async () => {
+  it('«Палатка» открывает зелёные «Палатки» и синий «Спальник», готовка — «Готовку»', async () => {
     const wrapper = await mounted(trip())
     const kind = wrapper.get('[data-test="route-night-kind"]')
 
@@ -337,9 +338,9 @@ describe('плашки ночёвок', () => {
     await wrapper.get('[data-test="route-night-cooking"]').setValue('stove')
     expect(wrapper.find('[data-test="route-cooking-section"]').exists()).toBe(true)
 
-    // Секции читаются сверху вниз: ночёвки, палатки, спальник, костровое.
+    // Секции читаются сверху вниз: ночёвки, палатки, спальник, готовка.
     const sections = wrapper.findAll('details').map((node) => node.get('summary').text())
-    expect(sections).toEqual(['Ночёвки', 'Палатки', 'Спальник', 'Костровое'])
+    expect(sections).toEqual(['Ночёвки', 'Палатки', 'Спальник', 'Готовка'])
   })
 
   it('без палатки зелёной секции нет, даже если готовка выбрана', async () => {
@@ -373,7 +374,7 @@ describe('плашки ночёвок', () => {
     expect(section.get('summary').classes()).toContain('text-blue-900')
   })
 
-  it('«Палатки» подписаны словами заказчика, а в «Костровом» лишнего текста нет', async () => {
+  it('«Палатки» подписаны словами заказчика, а в «Готовке» лишнего текста нет', async () => {
     const wrapper = await mounted(
       trip({
         startsAt: '2026-10-29T00:00:00.000Z',
@@ -389,6 +390,7 @@ describe('плашки ночёвок', () => {
       'Распределение участников по палаткам',
     )
 
+    // Заголовков секции внутри секции нет: только три группы.
     expect(wrapper.find('[data-test="route-cooking-title"]').exists()).toBe(false)
     expect(wrapper.text()).not.toContain('Костровое снаряжение')
     expect(wrapper.get('[data-test="route-cooking-add-axe"]').text()).toBe('Добавить топор')
@@ -405,6 +407,9 @@ describe('плашки ночёвок', () => {
 
     const buttons = wrapper.findAll('[data-test^="route-cooking-add-"]').map((node) => node.text())
     expect(buttons).toEqual([
+      'Добавить котёл',
+      'Добавить половник',
+      'Добавить нож',
       'Добавить топор',
       'Добавить пилу',
       'Добавить розжиг',
@@ -420,21 +425,31 @@ describe('плашки ночёвок', () => {
 
     expect(
       wrapper.findAll('[data-test^="route-cooking-add-"]').map((node) => node.text()),
-    ).toEqual(['Добавить горелку', 'Добавить газовый баллон'])
+    ).toEqual([
+      'Добавить котёл',
+      'Добавить половник',
+      'Добавить нож',
+      'Добавить горелку',
+      'Добавить газовый баллон',
+    ])
   })
 
-  it('«Костровое» — красная секция, подсказки отделены от вещей чертой', async () => {
+  it('«Готовка» — красная секция, а её группы разделены полосками', async () => {
     const wrapper = await mounted(trip())
     await wrapper.get('[data-test="route-night-kind"]').setValue('tent')
     await wrapper.get('[data-test="route-night-cooking"]').setValue('fire')
+    await flushPromises()
 
     const section = wrapper.get('[data-test="route-cooking-section"]')
     expect(section.classes()).toContain('bg-red-100')
     expect(section.classes()).not.toContain('bg-amber-100')
     expect(section.get('summary').classes()).toContain('text-red-900')
 
-    expect(wrapper.find('[data-test="route-cooking-hints"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="route-cooking-divider"]').exists()).toBe(true)
+    // Три группы на месте, полоски — между ними.
+    expect(wrapper.find('[data-test="route-cooking-group-dishes"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="route-cooking-group-campfire"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="route-cooking-group-stove"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="route-cooking-divider-campfire"]').exists()).toBe(true)
   })
 
   it('горелка считает только горелочные ночи: одна из двух — две готовки', async () => {
@@ -442,6 +457,7 @@ describe('плашки ночёвок', () => {
 
     await at(nightKinds(wrapper), 0).setValue('car')
     await wrapper.get('[data-test="route-night-cooking"]').setValue('stove')
+    await flushPromises()
 
     // Вторая ночь пустая — это «идём всю ночь», газа в ней нет.
     expect(wrapper.get('[data-test="route-stove-hint"]').text()).toBe(
@@ -469,6 +485,7 @@ describe('плашки ночёвок', () => {
 
     await at(nightKinds(wrapper), 0).setValue('tent')
     await wrapper.get('[data-test="route-night-cooking"]').setValue('both')
+    await flushPromises()
 
     expect(wrapper.find('[data-test="route-fire-hint"]').exists()).toBe(true)
     expect(wrapper.get('[data-test="route-stove-hint"]').text()).toBe(
@@ -486,6 +503,7 @@ describe('плашки ночёвок', () => {
 
     await at(nightKinds(oneNight), 0).setValue('tent')
     await oneNight.get('[data-test="route-night-cooking"]').setValue('stove')
+    await flushPromises()
     expect(oneNight.get('[data-test="route-stove-hint"]').text()).toBe(
       'Запланированы 2 готовки на горелках',
     )
@@ -500,6 +518,7 @@ describe('плашки ночёвок', () => {
 
     await at(nightKinds(sixNights), 0).setValue('tent')
     await sixNights.get('[data-test="route-night-cooking"]').setValue('stove')
+    await flushPromises()
     expect(sixNights.get('[data-test="route-stove-hint"]').text()).toBe(
       'Запланированы 2 готовки на горелках',
     )

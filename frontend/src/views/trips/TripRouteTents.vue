@@ -10,9 +10,15 @@ import {
   releaseRouteLodger,
 } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
+import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
 import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
 import { GEAR_TYPE_CODES, TENT_TYPE_CODES } from '@/types/gear'
-import type { GearItem, GearItemAttribute, TripGearItem } from '@/types/gear'
+import type {
+  GearItem,
+  GearItemAttribute,
+  TripGearItem,
+  TripGearRouteSection,
+} from '@/types/gear'
 import type {
   RouteLodger,
   RouteLodgerStatus,
@@ -85,10 +91,17 @@ import { weightInGrams } from '@/utils/gearWeight'
  * **«Указать вручную» (31.10.2026).** Последний пункт в диалогах палатки
  * и тента открывает `TripGearManualModal`: вещи в каталоге нет, а в поход
  * она нужна («кусок целлофана на тент»). Модалка одна на палатки, тент
- * и «Костровое», поэтому здесь только её вызов и приём результата: вещь
+ * и «Готовку», поэтому здесь только её вызов и приём результата: вещь
  * уходит в снаряжение похода, и секция пересобирается из общего списка.
  * Хозяин выбирается лишь организатором и только когда в походе есть люди
  * без аккаунта — вещь «для Дяди Вити» заводят именно так.
+ *
+ * **«Добавить ещё» (01.11.2026).** Слова заказчика: «выбор из личного
+ * снаряжения или добавка вручную незабинденного снаряжения… может хоть лодку
+ * выбрать. Кнопка всегда белая». Кнопка открывает общий
+ * `TripGearExtraPicker` с полкой «Кров» первой; вещь уходит в поход
+ * с пометкой секции `tent` и показывается пилюлей рядом с тентами — даже
+ * если её тип не палатка и не тент.
  */
 const props = defineProps<{
   trip: Trip
@@ -224,6 +237,30 @@ const awnings = computed<AwningPill[]>(() =>
       ownerName: nameOf(item.ownerUserId),
     })),
 )
+
+/**
+ * «Добавить ещё» в «Палатках» (01.11.2026): вещи, которые добавили сюда
+ * кнопкой, а не по типу. Заказчик: «может хоть лодку выбрать» — такая вещь
+ * не палатка и не тент, и без пометки секции её не показала бы ни одна
+ * секция «Ночёвок».
+ */
+const extras = computed<TripGearItem[]>(() =>
+  props.gear.filter(
+    (item) => item.routeSection === 'tent' && item.status !== 'declined',
+  ),
+)
+
+/** Пилюля добавочной вещи: «Лодка - 12 кг (Сергей)». */
+function extraText(item: TripGearItem): string {
+  const weight = weightInGrams(item.weightGrams)
+  const head = weight === null ? item.title : `${item.title} - ${weight}`
+
+  return `${head} (${nameOf(item.ownerUserId)})`
+}
+
+function canManageExtra(item: TripGearItem): boolean {
+  return isMine({ userId: item.ownerUserId }) || props.canEdit
+}
 
 /** Может ли смотрящий править эту палатку: своя или право вкладки. */
 function canManage(tent: TentCard): boolean {
@@ -662,6 +699,20 @@ const manualTypeCode = ref<string>(GEAR_TYPE_CODES.tent)
 const isManualOpen = ref(false)
 
 /**
+ * Открыли «Указать вручную» из «Добавить ещё»: тип любой, а вещь помечается
+ * секцией «Палатки» — иначе выбор «хоть лодки» не показался бы нигде.
+ */
+const isManualExtra = ref(false)
+
+const manualTypeCodes = computed<readonly string[]>(() =>
+  isManualExtra.value ? [] : TENT_TYPE_CODES,
+)
+
+const manualRouteSection = computed<TripGearRouteSection | undefined>(() =>
+  isManualExtra.value ? 'tent' : undefined,
+)
+
+/**
  * Комплект хозяев для вещи, заведённой вручную.
  *
  * Список есть только у организатора и только если в походе есть люди без
@@ -685,9 +736,17 @@ const manualOwnerOptions = computed(() => {
 })
 
 function openManual(typeCode: string): void {
+  isManualExtra.value = false
   manualTypeCode.value = typeCode
   isDialogOpen.value = false
   isAwningDialogOpen.value = false
+  isManualOpen.value = true
+}
+
+/** «Указать вручную» из «Добавить ещё»: тип выбирает сам человек. */
+function openExtraManual(): void {
+  isExtraOpen.value = false
+  isManualExtra.value = true
   isManualOpen.value = true
 }
 
@@ -697,10 +756,59 @@ function openManual(typeCode: string): void {
  * Пересборка идёт из общего списка, а не «дорисовкой» одной плашки: модалка
  * позволяет выбрать и палатку, и тент, и вещь кострового типа — в какую
  * секцию она попадёт, решает её тип, а не диалог, из которого её открыли.
+ * Исключение — «Добавить ещё»: там секция задана пометкой.
  */
 function onManualCreated(item: TripGearItem): void {
   emit('gear', [...props.gear, item])
   isManualOpen.value = false
+  isManualExtra.value = false
+}
+
+// ───────────────────────────── «добавить ещё» ─────────────────────────────
+
+const isExtraOpen = ref(false)
+const isExtraLoading = ref(false)
+const isExtraSaving = ref(false)
+const extraError = ref<string | null>(null)
+const extraCatalog = ref<GearItem[]>([])
+
+async function openExtra(): Promise<void> {
+  isExtraOpen.value = true
+  extraError.value = null
+  isExtraLoading.value = true
+
+  try {
+    extraCatalog.value = (await listGear()).items
+  } catch (problem) {
+    extraError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось загрузить снаряжение'
+  } finally {
+    isExtraLoading.value = false
+  }
+}
+
+/**
+ * Вещь из личного каталога — в снаряжение похода с пометкой секции
+ * «Палатки». Повторно ту же вещь не добавить: она уже в походе, и выбор
+ * её не предлагает.
+ */
+async function pickExtra(item: GearItem): Promise<void> {
+  if (isExtraSaving.value) return
+
+  isExtraSaving.value = true
+  extraError.value = null
+
+  try {
+    const added = await proposeTripGear(props.trip.id, item.id, 'tent')
+
+    emit('gear', [...props.gear, added])
+    isExtraOpen.value = false
+  } catch (problem) {
+    extraError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось добавить вещь'
+  } finally {
+    isExtraSaving.value = false
+  }
 }
 </script>
 
@@ -725,6 +833,14 @@ function onManualCreated(item: TripGearItem): void {
         data-test="route-tents-remove-error"
       >
         {{ removalError }}
+      </p>
+
+      <p
+        v-if="extraError"
+        class="text-sm text-red-600"
+        data-test="route-tents-extra-error"
+      >
+        {{ extraError }}
       </p>
 
       <!--
@@ -955,9 +1071,41 @@ function onManualCreated(item: TripGearItem): void {
         </span>
       </div>
 
+      <!--
+        Вещи «Добавить ещё»: лодка, вкладыш, что угодно — заказчик разрешил
+        «хоть лодку». Пометка секции и есть причина, по которой они стоят
+        здесь, а не в группе по типу.
+      -->
+      <div
+        v-if="extras.length > 0"
+        class="flex flex-wrap items-center gap-2"
+        data-test="route-tent-extras"
+      >
+        <span
+          v-for="extra in extras"
+          :key="extra.id"
+          class="flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-1 text-sm text-emerald-900"
+          :title="extra.title"
+          data-test="route-tent-extra-item"
+        >
+          <span>{{ extraText(extra) }}</span>
+
+          <button
+            v-if="canManageExtra(extra)"
+            type="button"
+            :disabled="removingGearId !== null"
+            class="cursor-pointer border-0 bg-transparent p-0 text-emerald-700 transition-colors hover:text-emerald-900 disabled:cursor-not-allowed disabled:opacity-40"
+            title="Убрать вещь из похода"
+            :data-test="`route-tent-extra-remove-${extra.id}`"
+            @click="removeTripItem(extra.id)"
+          >
+            ×
+          </button>
+        </span>
+      </div>
+
       <!-- Кто ещё нигде не живёт -->
-      <div v-if="unassigned.length > 0" class="flex flex-col gap-2">
-        <hr class="border-border" />
+      <div v-if="unassigned.length > 0" class="flex flex-col gap-2">        <hr class="border-border" />
 
         <div class="flex flex-wrap items-center gap-1" data-test="route-tents-unassigned">
           <span class="text-xs text-muted">Не распределены:</span>
@@ -1009,6 +1157,19 @@ function onManualCreated(item: TripGearItem): void {
           @click="openAwningDialog"
         >
           Добавить тент
+        </button>
+
+        <!--
+          «Добавить ещё» — всегда белая (слова заказчика): это не главное
+          действие секции, а дверь в каталог. Вещь запомнит секцию «Палатки».
+        -->
+        <button
+          type="button"
+          class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors hover:border-emerald-600"
+          data-test="route-tent-extra-add"
+          @click="openExtra"
+        >
+          Добавить ещё
         </button>
       </div>
 
@@ -1182,14 +1343,32 @@ function onManualCreated(item: TripGearItem): void {
       </div>
 
       <!--
+        «Добавить ещё»: весь личный каталог, полка «Кров» первой. Любая вещь —
+        заказчик разрешил «хоть лодку».
+      -->
+      <TripGearExtraPicker
+        v-if="isExtraOpen"
+        :items="extraCatalog"
+        :exclude-ids="gear.map((item) => item.gearItemId)"
+        :preferred-group-codes="['roof']"
+        :preferred-type-codes="TENT_TYPE_CODES"
+        :loading="isExtraLoading"
+        @pick="pickExtra"
+        @manual="openExtraManual"
+        @close="isExtraOpen = false"
+      />
+
+      <!--
         «Указать вручную» — одна модалка на палатки и тенты: тип выбирается
         из TENT_TYPE_CODES, поэтому вещь сама попадёт в свою секцию.
+        Из «Добавить ещё» — любой тип и пометка секции «Палатки».
       -->
       <TripGearManualModal
         v-if="isManualOpen"
         :trip-id="trip.id"
-        :type-codes="TENT_TYPE_CODES"
+        :type-codes="manualTypeCodes"
         :default-type-code="manualTypeCode"
+        :route-section="manualRouteSection"
         :owner-options="manualOwnerOptions"
         @created="onManualCreated"
         @close="isManualOpen = false"

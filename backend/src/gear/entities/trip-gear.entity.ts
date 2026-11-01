@@ -13,7 +13,12 @@ import {
 import { sqlValues } from '../../users/sport-experience.types';
 import { TripParticipant } from '../../trips/entities/trip-participant.entity';
 import { GearItem } from './gear-item.entity';
-import { TRIP_GEAR_STATUSES, type TripGearStatus } from '../trip-gear.types';
+import {
+  TRIP_GEAR_ROUTE_SECTIONS,
+  TRIP_GEAR_STATUSES,
+  type TripGearRouteSection,
+  type TripGearStatus,
+} from '../trip-gear.types';
 
 /**
  * Общественное снаряжение похода: «берём эту палатку, едет у Васи».
@@ -65,6 +70,11 @@ import { TRIP_GEAR_STATUSES, type TripGearStatus } from '../trip-gear.types';
 @Check(
   'chk_trip_gear_status',
   `"status" IN (${sqlValues(TRIP_GEAR_STATUSES)})`,
+)
+@Check(
+  'chk_trip_gear_route_section',
+  `"route_section" IS NULL
+   OR "route_section" IN (${sqlValues(TRIP_GEAR_ROUTE_SECTIONS)})`,
 )
 export class TripGear {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -125,6 +135,18 @@ export class TripGear {
   /** `proposed` | `approved` | `declined` — см. `trip-gear.types.ts`. */
   @Column({ type: 'varchar', length: 20, default: 'proposed' })
   status: TripGearStatus;
+
+  /**
+   * Секция «Ночёвок», где вещь добавили кнопкой «Добавить ещё» (01.11.2026).
+   *
+   * `NULL` — обычная вещь: её секция определяется типом (палатка — в
+   * «Палатках», топор — в «Костровом»). Значение есть только у вещи
+   * «незабинденного» типа: заказчик просил, чтобы она показывалась там,
+   * где её добавили, — иначе губка для посуды или лодка не появились бы
+   * ни в одной секции.
+   */
+  @Column({ name: 'route_section', type: 'varchar', length: 20, nullable: true })
+  routeSection: TripGearRouteSection | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

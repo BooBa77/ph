@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 
-import { addManualTripGear } from '@/api/gear'
+import { addManualTripGear, createGearItem } from '@/api/gear'
 import { fetchGearTypes } from '@/api/gearTypes'
 import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 import GearAttributeFields from '@/components/gear/GearAttributeFields.vue'
-import type { TripGearItem } from '@/types/gear'
+import type { GearItem, TripGearItem, TripGearRouteSection } from '@/types/gear'
 import type { GearType } from '@/types/gearTypes'
 import {
   buildGearAttributes,
@@ -23,10 +23,19 @@ import { parseWeightGrams } from '@/utils/gearWeight'
  * в поход что-то одноразовое, бутылку бензина на розжиг, кусок целлофана
  * на тент и т.п.».
  *
- * **Модалка одна на три секции** — «Палатки», «Тент» и «Костровое»: форма
- * одна и та же (тип, характеристики, название, вес, хозяин), разница только
- * в типах, из которых выбирают. Копия формы в каждой секции разошлась бы
- * на первой правке — ровно как это было с полями характеристик каталога.
+ * **Модалка одна на все секции** — «Палатки», «Готовку» (три группы)
+ * и «Спальник»: форма та же (тип, характеристики, название, вес, хозяин),
+ * разница только в типах, из которых выбирают. Копия формы в каждой секции
+ * разошлась бы на первой правке — ровно как это было с полями характеристик
+ * каталога.
+ *
+ * **Два режима (01.11.2026).** Обычный (`trip`) заводит строку снаряжения
+ * похода; `personal` заводит предмет личного каталога — так «Добавить ещё»
+ * в личной секции «Спальник» добавляет вкладыш или грелку, а не общую вещь
+ * похода. Третий пропс шага — `routeSection`: вещь, добавленная «Добавить
+ * ещё», показывается в той секции, где её добавили. Пустой `typeCodes`
+ * значит «любой тип справочника» — это тот же путь «Добавить ещё», где
+ * заказчик разрешил взять «хоть лодку».
  *
  * **Характеристики спрашивает тип, а не экран.** Набор полей приходит из
  * `GET /api/gear-types` — того же справочника, что у каталога в профиле, —
@@ -47,24 +56,44 @@ import { parseWeightGrams } from '@/utils/gearWeight'
 const props = withDefaults(
   defineProps<{
     tripId: string
-    /** Коды типов, из которых выбирают: контекст секции, открывшей модалку. */
+    /**
+     * Коды типов, из которых выбирают: контекст секции, открывшей модалку.
+     * Пусто — все типы справочника: так открывает «Добавить ещё», где можно
+     * взять «хоть лодку» (01.11.2026).
+     */
     typeCodes: readonly string[]
     /** Тип, выбранный при открытии: «Палатка» из «Палаток», «Топор» из кострового. */
     defaultTypeCode: string
+    /**
+     * Секция «Ночёвок» для кнопки «Добавить ещё» (01.11.2026): вещь
+     * «незабинденного» типа покажется там, где её добавили.
+     */
+    routeSection?: TripGearRouteSection
+    /**
+     * Куда заводим вещь. `trip` — строка снаряжения похода (обычный
+     * «Указать вручную»), `personal` — предмет личного каталога: так
+     * «Добавить ещё» в личной секции «Спальник» заводит вкладыш или грелку.
+     */
+    mode?: 'trip' | 'personal'
     /**
      * Кому можно отдать вещь. Пусто — выбор не показывается, хозяин «я».
      * Первым идёт смотрящий, дальше — люди без аккаунта этого похода.
      */
     ownerOptions?: readonly { userId: string; displayName: string }[]
   }>(),
-  { ownerOptions: () => [] },
+  { ownerOptions: () => [], mode: 'trip' },
 )
 
 const emit = defineEmits<{
   /** Вещь заведена: родитель кладёт её в список секции и закрывает модалку. */
   created: [item: TripGearItem]
+  /** Вещь заведена в личный каталог (`mode: 'personal'`). */
+  'created-personal': [item: GearItem]
   close: []
 }>()
+
+/** Личный режим: каталог, а не снаряжение похода. */
+const isPersonal = computed(() => props.mode === 'personal')
 
 const auth = useAuthStore()
 
@@ -100,9 +129,13 @@ const isSaving = ref(false)
 const error = ref<string | null>(null)
 
 /** Типы контекста: палатка и тент — в «Палатках», один тип — в костровом. */
-const availableTypes = computed<readonly GearType[]>(() =>
-  types.value.filter((type) => props.typeCodes.includes(type.code)),
-)
+const availableTypes = computed<readonly GearType[]>(() => {
+  // Пустой список — «любой тип»: кнопка «Добавить ещё» не ограничивает
+  // секцией, заказчик разрешил взять «хоть лодку» (01.11.2026).
+  if (props.typeCodes.length === 0) return types.value
+
+  return types.value.filter((type) => props.typeCodes.includes(type.code))
+})
 
 const selectedType = computed<GearType | null>(
   () => availableTypes.value.find((type) => type.id === typeId.value) ?? null,
@@ -150,6 +183,15 @@ async function save(): Promise<void> {
     return
   }
 
+  const titleText = title.value.trim()
+
+  // В личном каталоге название обязательно: это строка, по которой человек
+  // узнаёт вещь. У одноразовой вещи похода его заменяет имя типа.
+  if (isPersonal.value && titleText === '') {
+    error.value = 'Название вещи — как вы её узнаете, например «Вкладыш в спальник»'
+    return
+  }
+
   const weightGrams = parseWeightGrams(weight.value)
 
   if (weightGrams === undefined) {
@@ -168,16 +210,31 @@ async function save(): Promise<void> {
   error.value = null
 
   try {
+    // Личный режим заводит предмет каталога, а не строку похода: его
+    // положит в секцию родитель (в «Спальнике» — личной ручкой ночёвки).
+    if (isPersonal.value) {
+      const item = await createGearItem({
+        typeId: type.id,
+        attributes: built.attributes,
+        title: titleText,
+        weightGrams,
+      })
+
+      emit('created-personal', item)
+      return
+    }
+
     const item = await addManualTripGear(props.tripId, {
       typeId: type.id,
       attributes: built.attributes,
-      // `null` — «подпиши именем типа»: название у одноразовой вещи
+      // `null` — «подпиши именем типа»: у одноразовой вещи
       // необязательно, и пустая строка здесь была бы названием.
-      title: title.value.trim().length > 0 ? title.value.trim() : null,
+      title: titleText.length > 0 ? titleText : null,
       weightGrams,
       ownerUserId: hasOwnerChoice.value ? ownerUserId.value : null,
       // У виртуального каталога нет: бэкенд ответил бы 400.
       addToCatalog: canAddToCatalog.value && addToCatalog.value,
+      routeSection: props.routeSection,
     })
 
     emit('created', item)
@@ -201,7 +258,11 @@ async function save(): Promise<void> {
     >
       <div class="flex flex-col gap-1">
         <h3 class="text-base font-medium text-text">Указать вручную</h3>
-        <p class="text-xs text-muted">
+        <p v-if="isPersonal" class="text-xs text-muted">
+          Вещь в личный каталог: вкладыш в спальник, грелка. Она сразу попадёт
+          в секцию «Спальник» — и её будет видеть только её хозяин.
+        </p>
+        <p v-else class="text-xs text-muted">
           Вещь для этого похода: бутылка бензина на розжиг, кусок целлофана на тент.
           В личный каталог она попадает только по галочке ниже.
         </p>
@@ -250,7 +311,11 @@ async function save(): Promise<void> {
             v-model="title"
             type="text"
             maxlength="120"
-            placeholder="Пусто — подпишем именем типа"
+            :placeholder="
+              isPersonal
+                ? 'Например, вкладыш в спальник'
+                : 'Пусто — подпишем именем типа'
+            "
             class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
             data-test="manual-title"
           />
@@ -278,7 +343,7 @@ async function save(): Promise<void> {
           аккаунта: другому настоящему участнику вещь не добавляют.
         -->
         <label
-          v-if="hasOwnerChoice"
+          v-if="hasOwnerChoice && !isPersonal"
           class="flex flex-col gap-1 text-xs text-muted"
           data-test="manual-owner-field"
         >
@@ -299,7 +364,7 @@ async function save(): Promise<void> {
         </label>
 
         <label
-          v-if="canAddToCatalog"
+          v-if="canAddToCatalog && !isPersonal"
           class="flex items-start gap-2 text-sm text-text"
           data-test="manual-catalog-field"
         >
@@ -317,7 +382,7 @@ async function save(): Promise<void> {
           </span>
         </label>
 
-        <p v-else class="text-xs text-muted" data-test="manual-virtual-hint">
+        <p v-else-if="!isPersonal" class="text-xs text-muted" data-test="manual-virtual-hint">
           У человека без аккаунта каталога нет — вещь будет только в этом походе.
         </p>
 

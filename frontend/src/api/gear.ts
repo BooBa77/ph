@@ -7,6 +7,7 @@ import type {
   GearList,
   TripGearItem,
   TripGearList,
+  TripGearRouteSection,
 } from '@/types/gear'
 
 /**
@@ -134,10 +135,19 @@ export async function listTripGear(tripId: string): Promise<TripGearList> {
 export async function proposeTripGear(
   tripId: string,
   gearItemId: string,
+  routeSection?: TripGearRouteSection,
 ): Promise<TripGearItem> {
+  const body: { gearItemId: number; routeSection?: TripGearRouteSection } = {
+    gearItemId: Number(gearItemId),
+  }
+
+  // Секцию присылает только «Добавить ещё» (01.11.2026): обычная вещь
+  // показывается по типу, и пометка ей не нужна.
+  if (routeSection !== undefined) body.routeSection = routeSection
+
   return apiFetch<TripGearItem>(`/trips/${tripId}/gear`, {
     method: 'POST',
-    body: JSON.stringify({ gearItemId: Number(gearItemId) }),
+    body: JSON.stringify(body),
   })
 }
 
@@ -163,6 +173,8 @@ export interface AddManualTripGearRequest {
   weightGrams?: number | null
   ownerUserId?: string | null
   addToCatalog?: boolean
+  /** Секция «Добавить ещё»: где вещь покажет себя в «Ночёвках». */
+  routeSection?: TripGearRouteSection
 }
 
 /** POST /api/trips/:id/gear/manual — вещь «вручную» → строка похода. */

@@ -1618,6 +1618,44 @@ const routeTentGearId = (
   )
 ).rows[0].id;
 
+/**
+ * «Добавить ещё» (01.11.2026): у вещи снаряжения похода есть пометка
+ * секции, в которой её добавили. По типу такая вещь ни в одну секцию
+ * не попадает — «хоть лодку», — поэтому `route_section` и существует.
+ * Проверяется словарь в CHECK: мусор в колонке сломал бы фильтр секций
+ * молча, а e2e этого не увидит — API словарь тоже проверяет.
+ */
+const routeExtraTypeId = (
+  await client.query(
+    `INSERT INTO gear_types (code, name)
+     VALUES ('check_route_extra', 'Лодка проверки ночёвок') RETURNING id`,
+  )
+).rows[0].id;
+
+const routeExtraItemId = (
+  await client.query(
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
+     VALUES ($1, $2, $3, 'Лодка проверки') RETURNING id`,
+    [user1, routeExtraTypeId, defaultGroupId],
+  )
+).rows[0].id;
+
+await check(
+  'ночёвки: секция «Добавить ещё» — только из словаря',
+  'fail',
+  `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id, route_section)
+   VALUES ($1, $2, $3, 'boat')`,
+  [tripId, routeExtraItemId, user1],
+);
+
+await check(
+  'ночёвки: секция «Посуда» у вещи похода разрешена',
+  'ok',
+  `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id, route_section)
+   VALUES ($1, $2, $3, 'dishes')`,
+  [tripId, routeExtraItemId, user1],
+);
+
 // Ночь с одним вариантом: `kind` и `cooking` — её колонки.
 const routeNightId = (
   await client.query(

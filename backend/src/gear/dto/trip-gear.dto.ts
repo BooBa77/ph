@@ -11,7 +11,12 @@ import {
   Min,
 } from 'class-validator';
 
-import { TRIP_GEAR_STATUSES, type TripGearStatus } from '../trip-gear.types';
+import {
+  TRIP_GEAR_ROUTE_SECTIONS,
+  TRIP_GEAR_STATUSES,
+  type TripGearRouteSection,
+  type TripGearStatus,
+} from '../trip-gear.types';
 import type { TripGear } from '../entities/trip-gear.entity';
 import { GearItemAttributeDto } from './gear.dto';
 
@@ -105,6 +110,22 @@ export class TripGearItemDto {
   })
   status: TripGearStatus;
 
+  /**
+   * Секция «Ночёвок», куда вещь добавили кнопкой «Добавить ещё» (01.11.2026).
+   *
+   * `null` — обычная вещь, её секция определяется типом. Значение — вещь
+   * «незабинденного» типа, и показывать её нужно там, где её добавили
+   * («хоть лодку»): заказчик попросил именно так.
+   */
+  @ApiProperty({
+    description:
+      'Секция «Ночёвок» для вещи, добавленной кнопкой «Добавить ещё». null — по типу',
+    enum: TRIP_GEAR_ROUTE_SECTIONS,
+    nullable: true,
+    example: null,
+  })
+  routeSection: TripGearRouteSection | null;
+
   @ApiProperty({
     description: 'Владелец предмета — участник похода',
     example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
@@ -144,6 +165,7 @@ export class TripGearItemDto {
       note: row.gearItem.note,
       isTripOnly: row.gearItem.isTripOnly,
       status: row.status,
+      routeSection: row.routeSection,
       ownerUserId: row.ownerUserId,
       assignedUserId: row.assignedUserId,
       createdAt: row.createdAt.toISOString(),
@@ -191,6 +213,22 @@ export class ProposeTripGearDto {
   @IsInt({ message: 'Предмет каталога должен быть указан числом' })
   @Min(1, { message: 'Некорректный предмет каталога' })
   gearItemId: number;
+
+  /**
+   * Секция «Ночёвок», где нажали «Добавить ещё» (01.11.2026). Не указана —
+   * обычная вещь: секция определяется её типом. С пометкой вещь показывается
+   * там, где её добавили, даже если её тип ни к какой секции не привязан.
+   */
+  @ApiProperty({
+    description: 'Секция «Ночёвок» для кнопки «Добавить ещё»',
+    enum: TRIP_GEAR_ROUTE_SECTIONS,
+    required: false,
+    nullable: true,
+    example: 'tent',
+  })
+  @IsOptional()
+  @IsIn(TRIP_GEAR_ROUTE_SECTIONS, { message: 'Недопустимая секция снаряжения' })
+  routeSection?: TripGearRouteSection | null;
 }
 
 /**
@@ -311,4 +349,19 @@ export class AddManualTripGearDto {
   @IsOptional()
   @IsBoolean({ message: 'Флаг «в каталог» должен быть true или false' })
   addToCatalog?: boolean;
+
+  /**
+   * Секция «Ночёвок», где нажали «Добавить ещё» (01.11.2026): вещь
+   * «незабинденного» типа показывается там, где её добавили.
+   */
+  @ApiProperty({
+    description: 'Секция «Ночёвок» для кнопки «Добавить ещё»',
+    enum: TRIP_GEAR_ROUTE_SECTIONS,
+    required: false,
+    nullable: true,
+    example: 'dishes',
+  })
+  @IsOptional()
+  @IsIn(TRIP_GEAR_ROUTE_SECTIONS, { message: 'Недопустимая секция снаряжения' })
+  routeSection?: TripGearRouteSection | null;
 }

@@ -439,7 +439,7 @@ function onGearChanged(items: TripGearItem[]): void {
 
 /**
  * Секции ниже живут по тому, что выбрано в таблице: «Палатки» — если хоть
- * в одной ночи палатка, «Костровое» — если хоть где-то способ готовки,
+ * в одной ночи палатка, «Готовка» — если хоть где-то способ готовки,
  * «Спальник» — если хоть одна ночь без гостиницы и дороги.
  */
 const hasTent = computed(() => rows.value.some((row) => row.kind === 'tent'))
@@ -666,7 +666,7 @@ const stoveHint = computed(() => {
 
       <!--
         «Спальник» — личная секция (01.11.2026): синяя, как «Палатки» зелёные,
-        а «Костровое» красное. Видна при палатке, избе и машине: в гостинице
+        а «Готовка» красная. Видна при палатке, избе и машине: в гостинице
         постель своя, а в дороге спать негде. У каждого участника своё
         содержимое, виртуальных здесь нет.
       -->
@@ -691,35 +691,21 @@ const stoveHint = computed(() => {
         class="flex flex-col gap-3 rounded-2xl border border-red-300 bg-red-100 p-3"
         data-test="route-cooking-section"
       >
-        <summary class="cursor-pointer select-none text-sm text-red-900">Костровое</summary>
+        <summary class="cursor-pointer select-none text-sm text-red-900">Готовка</summary>
 
         <!--
-          Подсказки по тому, что уже выбрано в ночёвках: костёр — повод взять
-          топор и пилу, горелка — газ. Число готовок на горелках — по
-          горелочным ночам × 2 (ужин и завтрак).
+          Три группы — «Посуда», «Костровое» и «Горелки» (01.11.2026): их
+          полоски, подписи и кнопки живут внутри секции. Подпись «Запланирован
+          костёр» стоит в шапке своей группы, отдельно от пилюль вещей:
+          заказчик просил «отлепить текст от снаряги». Число готовок
+          на горелках считает эта таблица и отдаёт готовой строкой.
         -->
-        <div class="flex flex-col gap-1" data-test="route-cooking-hints">
-          <p v-if="hasFire" class="text-sm text-text" data-test="route-fire-hint">
-            Запланирован костёр.
-          </p>
-
-          <p v-if="hasStove" class="text-sm text-text" data-test="route-stove-hint">
-            {{ stoveHint }}
-          </p>
-        </div>
-
-        <!--
-          Черта отделяет подсказки от вещей (29.10.2026): «Запланирован
-          костёр» и пилюля «Горелка - 130 гр. (Анна)» — разные слои.
-        -->
-        <hr class="border-red-300" data-test="route-cooking-divider" />
-
-        <!--
-          Кнопки «Добавить топор/пилу/розжиг/таган/горелку/баллон» и пилюли
-          предложенного: участники предлагают своё снаряжение нужного типа.
-          Кнопки видны по плану ночёвок, поэтому секция получает fire и stove.
-        -->
-        <TripRouteCooking :trip="trip" :fire="hasFire" :stove="hasStove" />
+        <TripRouteCooking
+          :trip="trip"
+          :fire="hasFire"
+          :stove="hasStove"
+          :stove-hint="stoveHint"
+        />
       </details>
     </template>
   </section>

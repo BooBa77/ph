@@ -10,22 +10,28 @@ import type { Trip, TripParticipant } from '@/types/trips'
 import TripRouteCooking from '@/views/trips/TripRouteCooking.vue'
 
 /**
- * Секция «Костровое» (29.10.2026) — снаряжение для готовки.
+ * Секция «Готовка» — три группы снаряжения (01.11.2026).
  *
- * Тест держит то, что заказчик продиктовал словами и что дешевле проверить
- * здесь, чем снимком:
+ * До шага это была секция «Костровое» с одним списком и шестью кнопками.
+ * Заказчик переделал её целиком:
  *
- * - **кнопки по плану ночёвок** (разбор 29.10.2026): топор, пила, розжиг
- *   и таган видны при запланированном костре, горелка и баллон — при горелке;
- * - **цвет кнопки — состояние секции**: цветная, пока вещи этого типа нет,
- *   белая, когда она уже предложена;
- * - **пилюля «{тип} - {вес}гр ({хозяин})»** — «Горелка - 130 гр. (Анна)»,
- *   как продиктовал заказчик, и с крестиком;
- * - **крестик по правам**: владелец убирает вещь из секции, организатор
- *   только предлагает убрать (зачёркнутая пилюля), остальным крестика нет;
- * - **тип решает всё, а не слово в названии** (30.10.2026): вещь попадает
- *   в секцию по `typeCode` из справочника, поэтому «Топор» с типом «прочее»
- *   сюда не попадёт, а «Пилка» с типом `saw` попадёт и подпишется «Пила».
+ * > «Переименуй секцию „Костровое“ в „Готовка“… три группы снаряжения
+ * > „Посуда“, „Костровое“ и „Горелки“, раздели их полосками и в каждой
+ * > группе свои кнопки и свой список. В новой „Посуда“ — кнопки „Добавить
+ * > котёл“, „Добавить половник“, „Добавить нож“».
+ *
+ * Тест держит то, что дешевле проверить здесь, чем снимком:
+ *
+ * - **три группы в порядке слов заказчика**, разделённые полосками, и у
+ *   каждой свой заголовок, свой список и свой ряд кнопок;
+ * - **кнопки по плану ночёвок**: костровые — при костре, горелки — при
+ *   горелке, посуда — всегда (она нужна при любой готовке);
+ * - **цвет кнопки — состояние группы**: цветная, пока вещи этого типа нет;
+ * - **пилюля «{тип} - {вес} гр. ({хозяин})»** и крестик по правам;
+ * - **«Добавить ещё»** — у каждой группы, всегда белая, открывает весь
+ *   личный каталог (полки группы первыми) и помнит секцию вещи;
+ * - **«Указать вручную»** — и из кнопки типа, и из «Добавить ещё»
+ *   (там тип любой, а секция — группы).
  */
 const mocks = vi.hoisted(() => ({
   listParticipants: vi.fn(),
@@ -121,6 +127,7 @@ function tripGearItem(
     note: null,
     isTripOnly: false,
     status: 'approved',
+    routeSection: null,
     assignedUserId: null,
     createdAt: '2026-10-29T10:00:00.000Z',
     ...overrides,
@@ -184,7 +191,13 @@ function pillTexts(wrapper: ReturnType<typeof mount>): string[] {
     .map((node) => node.get('span').text())
 }
 
-describe('секция «Костровое»', () => {
+function groupTitles(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper
+    .findAll('[data-test^="route-cooking-title-"]')
+    .map((node) => node.text())
+}
+
+describe('секция «Готовка»', () => {
   enableAutoUnmount(afterEach)
 
   beforeEach(() => {
@@ -198,13 +211,35 @@ describe('секция «Костровое»', () => {
     mocks.removeTripGear.mockResolvedValue(undefined)
     mocks.fetchGearTypes.mockResolvedValue([
       { id: 3, code: 'axe', name: 'Топор', sortOrder: 3, attributes: [] },
+      { id: 9, code: 'kettle', name: 'Котёл', sortOrder: 9, attributes: [] },
     ])
   })
 
-  it('оба плана — шесть кнопок в порядке заказчика: топор, пила, розжиг, таган, горелка, баллон', async () => {
+  it('три группы в порядке заказчика: посуда, костровое, горелки', async () => {
+    const wrapper = await mounted()
+
+    expect(groupTitles(wrapper)).toEqual(['Посуда', 'Костровое', 'Горелки'])
+    expect(wrapper.find('[data-test="route-cooking-group-dishes"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="route-cooking-group-campfire"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="route-cooking-group-stove"]').exists()).toBe(true)
+  })
+
+  it('группы разделены полосками', async () => {
+    const wrapper = await mounted()
+
+    // Между первой и второй, между второй и третьей — и только там.
+    expect(wrapper.find('[data-test="route-cooking-divider-dishes"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="route-cooking-divider-campfire"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="route-cooking-divider-stove"]').exists()).toBe(true)
+  })
+
+  it('оба плана — кнопки всех групп в порядке заказчика, плюс «Добавить ещё» у каждой', async () => {
     const wrapper = await mounted()
 
     expect(addButtonTexts(wrapper)).toEqual([
+      'Добавить котёл',
+      'Добавить половник',
+      'Добавить нож',
       'Добавить топор',
       'Добавить пилу',
       'Добавить розжиг',
@@ -212,12 +247,17 @@ describe('секция «Костровое»', () => {
       'Добавить горелку',
       'Добавить газовый баллон',
     ])
+
+    expect(wrapper.findAll('[data-test^="route-cooking-extra-"]')).toHaveLength(3)
   })
 
-  it('запланирован только костёр — только костровые кнопки', async () => {
+  it('запланирован только костёр — газовые кнопки скрыты, посуда остаётся', async () => {
     const wrapper = await mounted({ fire: true, stove: false })
 
     expect(addButtonTexts(wrapper)).toEqual([
+      'Добавить котёл',
+      'Добавить половник',
+      'Добавить нож',
       'Добавить топор',
       'Добавить пилу',
       'Добавить розжиг',
@@ -225,26 +265,57 @@ describe('секция «Костровое»', () => {
     ])
   })
 
-  it('запланирована только горелка — только газовые кнопки', async () => {
+  it('запланирована только горелка — костровые кнопки скрыты, посуда остаётся', async () => {
     const wrapper = await mounted({ fire: false, stove: true })
 
-    expect(addButtonTexts(wrapper)).toEqual(['Добавить горелку', 'Добавить газовый баллон'])
+    expect(addButtonTexts(wrapper)).toEqual([
+      'Добавить котёл',
+      'Добавить половник',
+      'Добавить нож',
+      'Добавить горелку',
+      'Добавить газовый баллон',
+    ])
   })
 
-  it('пусто: подсказка «Пока никто не взял костровое снаряжение»', async () => {
+  it('подсказка о плане стоит в шапке своей группы, отдельно от вещей', async () => {
     const wrapper = await mounted()
 
-    expect(wrapper.get('[data-test="route-cooking-empty"]').text()).toBe(
-      'Пока никто не взял костровое снаряжение.',
-    )
-    expect(wrapper.find('[data-test="route-cooking-items"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="route-fire-hint"]').text()).toBe('Запланирован костёр.')
+    // Подсказка — не пилюля и не кнопка: она в шапке группы.
+    expect(
+      wrapper.get('[data-test="route-cooking-group-campfire"]').get('[data-test="route-fire-hint"]'),
+    ).toBeTruthy()
   })
 
-  it('предложенное — пилюлей «тип - вес (хозяин)»', async () => {
+  it('пусто: у каждой группы своя подсказка', async () => {
+    const wrapper = await mounted()
+
+    expect(wrapper.get('[data-test="route-cooking-empty-dishes"]').text()).toBe('Пока пусто.')
+    expect(wrapper.get('[data-test="route-cooking-empty-campfire"]').text()).toBe('Пока пусто.')
+    expect(wrapper.find('[data-test="route-cooking-items-campfire"]').exists()).toBe(false)
+  })
+
+  it('вещь попадает в свою группу по типу', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
         tripGearItem({
           id: 'g1',
+          typeCode: 'kettle',
+          typeName: 'Котёл',
+          title: 'Котёл 5 л',
+          ownerUserId: ANNA,
+          weightGrams: 900,
+        }),
+        tripGearItem({
+          id: 'g2',
+          typeCode: 'axe',
+          typeName: 'Топор',
+          title: 'Топор Fiskars X7',
+          ownerUserId: ME,
+          weightGrams: 900,
+        }),
+        tripGearItem({
+          id: 'g3',
           typeCode: 'stove',
           typeName: 'Горелка',
           title: 'Горелка BRS-3000',
@@ -256,32 +327,30 @@ describe('секция «Костровое»', () => {
 
     const wrapper = await mounted()
 
-    expect(pillTexts(wrapper)).toEqual(['Горелка - 130 гр. (Анна)'])
-    expect(wrapper.find('[data-test="route-cooking-empty"]').exists()).toBe(false)
+    expect(
+      wrapper.findAll('[data-test="route-cooking-item"]').map((node) => node.get('span').text()),
+    ).toEqual(['Котёл - 900 гр. (Анна)', 'Топор - 900 гр. (Олег)', 'Горелка - 130 гр. (Анна)'])
+
+    expect(wrapper.get('[data-test="route-cooking-items-dishes"]').text()).toContain('Котёл')
+    expect(wrapper.get('[data-test="route-cooking-items-campfire"]').text()).toContain('Топор')
+    expect(wrapper.get('[data-test="route-cooking-items-stove"]').text()).toContain('Горелка')
   })
 
-  it('пилюли идут по порядку кнопок, а не по порядку из снаряжения', async () => {
+  it('пилюли идут по порядку кнопок внутри группы', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
         tripGearItem({
           id: 'g1',
-          typeCode: 'stove',
-          typeName: 'Горелка',
-          title: 'Горелка BRS-3000',
+          typeCode: 'gas',
+          typeName: 'Газовый баллон',
+          title: 'Баллон',
           ownerUserId: ANNA,
         }),
         tripGearItem({
           id: 'g2',
-          typeCode: 'axe',
-          typeName: 'Топор',
-          title: 'Топор Fiskars X7',
-          ownerUserId: ME,
-        }),
-        tripGearItem({
-          id: 'g3',
-          typeCode: 'firestarter',
-          typeName: 'Розжиг',
-          title: 'Розжиг гелевый',
+          typeCode: 'stove',
+          typeName: 'Горелка',
+          title: 'Горелка',
           ownerUserId: ANNA,
         }),
       ]),
@@ -289,14 +358,14 @@ describe('секция «Костровое»', () => {
 
     const wrapper = await mounted()
 
-    expect(pillTexts(wrapper)).toEqual(['Топор (Олег)', 'Розжиг (Анна)', 'Горелка (Анна)'])
+    expect(
+      wrapper.findAll('[data-test="route-cooking-item"]').map((node) => node.get('span').text()),
+    ).toEqual(['Горелка (Анна)', 'Газовый баллон (Анна)'])
   })
 
-  it('тип решает, а не слово в названии: «Топор» с чужим типом в секцию не попадает', async () => {
+  it('тип решает, а не слово в названии', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
-        // Название говорит «топор», но тип — «прочее»: раньше такая вещь
-        // попадала в «Костровое» по слову, теперь не попадает.
         tripGearItem({
           id: 'g1',
           typeCode: 'other',
@@ -304,7 +373,6 @@ describe('секция «Костровое»', () => {
           title: 'Топор, который на самом деле не топор',
           ownerUserId: ME,
         }),
-        // И наоборот: слово в названии не совпадает, тип — свой.
         tripGearItem({
           id: 'g2',
           typeCode: 'saw',
@@ -320,7 +388,7 @@ describe('секция «Костровое»', () => {
     expect(pillTexts(wrapper)).toEqual(['Пила (Анна)'])
   })
 
-  it('палатки и спальники в костровое не попадают, «не берём» — тоже', async () => {
+  it('палатки и спальники в готовку не попадают, «не берём» — тоже', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
         tripGearItem({
@@ -350,8 +418,8 @@ describe('секция «Костровое»', () => {
 
     const wrapper = await mounted()
 
-    expect(wrapper.find('[data-test="route-cooking-items"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="route-cooking-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="route-cooking-items-stove"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="route-cooking-empty-stove"]').exists()).toBe(true)
   })
 
   it('кнопка цветная, пока вещи этого типа нет, и белая, когда она есть', async () => {
@@ -378,7 +446,6 @@ describe('секция «Костровое»', () => {
       gearList([
         gearItem({ id: '40', typeCode: 'axe', typeName: 'Топор', title: 'Топор Fiskars X7' }),
         gearItem({ id: '41', typeCode: 'stove', typeName: 'Горелка', title: 'Горелка BRS-3000' }),
-        // Название «Топор», а тип другой — в списке ему не место.
         gearItem({ id: '42', typeCode: 'other', typeName: 'Прочее', title: 'Топор-сувенир' }),
       ]),
     )
@@ -393,23 +460,6 @@ describe('секция «Костровое»', () => {
     expect(
       wrapper.get('[data-test="route-cooking-gear"]').findAll('option').map((node) => node.text()),
     ).toEqual(['выберите…', 'Топор Fiskars X7'])
-  })
-
-  it('вес в списке выбора виден: «Пила · 240 гр.»', async () => {
-    mocks.listGear.mockResolvedValue(
-      gearList([
-        gearItem({ id: '50', typeCode: 'saw', typeName: 'Пила', title: 'Пила', weightGrams: 240 }),
-      ]),
-    )
-
-    const wrapper = await mounted()
-
-    await wrapper.get('[data-test="route-cooking-add-saw"]').trigger('click')
-    await flushPromises()
-
-    expect(
-      wrapper.get('[data-test="route-cooking-gear"]').findAll('option').map((node) => node.text()),
-    ).toEqual(['выберите…', 'Пила · 240 гр.'])
   })
 
   it('предложение уходит на сервер, вещь появляется пилюлей и кнопка белеет', async () => {
@@ -445,6 +495,7 @@ describe('секция «Костровое»', () => {
     await wrapper.get('[data-test="route-cooking-save"]').trigger('click')
     await flushPromises()
 
+    // Обычная кнопка секцию не присылает: место вещи определяет её тип.
     expect(mocks.proposeTripGear).toHaveBeenCalledWith('1', '40')
     expect(wrapper.find('[data-test="route-cooking-dialog"]').exists()).toBe(false)
     expect(pillTexts(wrapper)).toEqual(['Топор - 900 гр. (Олег)'])
@@ -454,12 +505,7 @@ describe('секция «Костровое»', () => {
   it('уже предложенную вещь второй раз не предлагают', async () => {
     mocks.listGear.mockResolvedValue(
       gearList([
-        gearItem({
-          id: '40',
-          typeCode: 'axe',
-          typeName: 'Топор',
-          title: 'Топор, который уже в походе',
-        }),
+        gearItem({ id: '40', typeCode: 'axe', typeName: 'Топор', title: 'Топор, который уже в походе' }),
         gearItem({ id: '41', typeCode: 'saw', typeName: 'Пила', title: 'Пила' }),
       ]),
     )
@@ -541,8 +587,8 @@ describe('секция «Костровое»', () => {
     await flushPromises()
 
     expect(mocks.removeTripGear).toHaveBeenCalledWith('1', 'g1')
-    expect(wrapper.find('[data-test="route-cooking-items"]').exists()).toBe(false)
-    expect(wrapper.get('[data-test="route-cooking-empty"]').text()).toContain('Пока никто не взял')
+    expect(wrapper.find('[data-test="route-cooking-items-campfire"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="route-cooking-empty-campfire"]').text()).toBe('Пока пусто.')
   })
 
   it('организатор убирает чужую вещь тем же DELETE', async () => {
@@ -565,7 +611,7 @@ describe('секция «Костровое»', () => {
     await flushPromises()
 
     expect(mocks.removeTripGear).toHaveBeenCalledWith('1', 'g1')
-    expect(wrapper.find('[data-test="route-cooking-items"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="route-cooking-items-stove"]').exists()).toBe(false)
   })
 
   it('сервер отказал в удалении — текст ошибки, вещь на месте', async () => {
@@ -623,14 +669,9 @@ describe('секция «Костровое»', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="route-cooking-error"]').text()).toBe('Снаряжение недоступно')
-    expect(wrapper.find('[data-test="route-cooking-buttons"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="route-cooking-buttons-dishes"]').exists()).toBe(false)
   })
 
-  /**
-   * «Указать вручную» (31.10.2026): топора в каталоге нет, а в поход он нужен.
-   * Кнопка задаёт тип, модалка спрашивает остальное, вещь попадает пилюлей
-   * в эту же секцию — и в каталог не уезжает, пока не попросили галочкой.
-   */
   it('«Указать вручную» у кнопки добавляет одноразовую вещь в секцию', async () => {
     mocks.addManualTripGear.mockResolvedValue(
       tripGearItem({
@@ -666,5 +707,163 @@ describe('секция «Костровое»', () => {
       }),
     )
     expect(pillTexts(wrapper)).toEqual(['Топор (Олег)'])
+  })
+
+  // ───────────────────────────── «Добавить ещё» ─────────────────────────────
+
+  it('«Добавить ещё» есть в каждой группе и всегда белая', async () => {
+    const wrapper = await mounted()
+
+    for (const code of ['dishes', 'campfire', 'stove']) {
+      const button = wrapper.get(`[data-test="route-cooking-extra-${code}"]`)
+
+      expect(button.text()).toBe('Добавить ещё')
+      expect(button.classes()).toContain('bg-field')
+      expect(button.classes()).not.toContain('bg-red-600')
+    }
+  })
+
+  it('«Добавить ещё» открывает весь каталог: полки группы первыми, можно взять что угодно', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([
+        gearItem({ id: '60', groupCode: 'other', groupName: 'Прочее', typeCode: 'other', typeName: 'Прочее', title: 'Лодка надувная' }),
+        gearItem({ id: '61', groupCode: 'kitchen', groupName: 'Кухня', typeCode: 'kettle', typeName: 'Котёл', title: 'Котёл 5 л' }),
+      ]),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-cooking-extra-dishes"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(true)
+
+    // «Кухня» — полка группы «Посуда» — идёт первой, «Прочее» после неё.
+    const groupNames = wrapper
+      .findAll('[data-test^="route-extra-group-"]')
+      .map((node) => node.get('span').text())
+
+    expect(groupNames).toEqual(['Кухня', 'Прочее'])
+  })
+
+  it('вещь из «Добавить ещё» уходит на сервер с пометкой секции и появляется пилюлей', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([
+        gearItem({
+          id: '60',
+          typeCode: 'other',
+          typeName: 'Прочее',
+          title: 'Губка для мытья посуды',
+          weightGrams: 20,
+        }),
+      ]),
+    )
+    mocks.proposeTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g60',
+        gearItemId: '60',
+        typeCode: 'other',
+        typeName: 'Прочее',
+        title: 'Губка для мытья посуды',
+        ownerUserId: ME,
+        weightGrams: 20,
+        routeSection: 'dishes',
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-cooking-extra-dishes"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-item-60"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.proposeTripGear).toHaveBeenCalledWith('1', '60', 'dishes')
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(false)
+
+    // Пилюля подписана названием, а не типом: тип у такой вещи общий.
+    expect(pillTexts(wrapper)).toEqual(['Губка для мытья посуды - 20 гр. (Олег)'])
+    expect(wrapper.get('[data-test="route-cooking-items-dishes"]').text()).toContain('Губка')
+  })
+
+  it('вещь с пометкой секции показывает только эта группа, даже если её тип чужой', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList([
+        tripGearItem({
+          id: 'g1',
+          typeCode: 'axe',
+          typeName: 'Топор',
+          title: 'Топор, который положили в горелки',
+          ownerUserId: ME,
+          routeSection: 'stove',
+        }),
+      ]),
+    )
+
+    const wrapper = await mounted()
+
+    expect(wrapper.find('[data-test="route-cooking-items-campfire"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="route-cooking-items-stove"]').text()).toContain(
+      'Топор, который положили в горелки',
+    )
+    // Кнопка «Добавить топор» остаётся цветной: в «Костровом» топора нет.
+    expect(wrapper.get('[data-test="route-cooking-add-axe"]').classes()).toContain('bg-red-600')
+  })
+
+  it('«Указать вручную» из «Добавить ещё»: любой тип и пометка группы', async () => {
+    mocks.addManualTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g-manual',
+        gearItemId: 'gi-manual',
+        typeCode: 'kettle',
+        typeName: 'Котёл',
+        title: 'Котёл походный',
+        ownerUserId: ME,
+        isTripOnly: true,
+        routeSection: 'dishes',
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-cooking-extra-dishes"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-manual"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(true)
+
+    // Тип не задан кнопкой: справочник целиком, а не один тип.
+    expect(wrapper.get('[data-test="manual-type"]').findAll('option').map((node) => node.text())).toEqual([
+      'Топор',
+      'Котёл',
+    ])
+
+    await wrapper.get('[data-test="manual-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addManualTripGear).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({ typeId: 3, routeSection: 'dishes' }),
+    )
+    expect(pillTexts(wrapper)).toEqual(['Котёл походный (Олег)'])
+  })
+
+  it('ошибка «Добавить ещё» видна строкой, вещи в секции нет', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([gearItem({ id: '60', typeCode: 'other', typeName: 'Прочее', title: 'Лодка' })]),
+    )
+    mocks.proposeTripGear.mockRejectedValue(new ApiError(409, 'Этот предмет уже предложен в походе'))
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-cooking-extra-campfire"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-item-60"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="route-cooking-extra-error"]').text()).toContain(
+      'уже предложен в походе',
+    )
   })
 })

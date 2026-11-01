@@ -8,7 +8,9 @@ import {
 import { createGearItem, listGear } from '@/api/gear'
 import { fetchGearTypes } from '@/api/gearTypes'
 import { ApiError } from '@/api/errors'
-import { GEAR_TYPE_CODES } from '@/types/gear'
+import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
+import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
+import { GEAR_TYPE_CODES, SLEEPING_TYPE_CODES } from '@/types/gear'
 import type { GearItem } from '@/types/gear'
 import type { Trip, TripRoute, RouteSleeping } from '@/types/trips'
 import { parseWeightGrams, weightInGrams } from '@/utils/gearWeight'
@@ -219,6 +221,76 @@ async function createAndAdd(): Promise<void> {
   }
 }
 
+// ───────────────────────────── «добавить ещё» ─────────────────────────────
+
+/**
+ * «Добавить ещё» в личной секции (01.11.2026): слова заказчика — «вкладыш
+ * в спальник, грелка». Берём из каталога любую свою вещь: тип больше
+ * не ограничен, и сервер такой выбор принимает. Всё остаётся личным:
+ * `trip_route_sleeping` отдаётся только своему хозяину.
+ */
+const isExtraOpen = ref(false)
+const isExtraLoading = ref(false)
+const isExtraSaving = ref(false)
+const extraError = ref<string | null>(null)
+const extraCatalog = ref<GearItem[]>([])
+
+async function openExtra(): Promise<void> {
+  isExtraOpen.value = true
+  extraError.value = null
+  isExtraLoading.value = true
+
+  try {
+    extraCatalog.value = (await listGear()).items
+  } catch (problem) {
+    extraError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось загрузить снаряжение'
+  } finally {
+    isExtraLoading.value = false
+  }
+}
+
+/** Вещь из каталога — в личную секцию: ответ ручки — вкладка целиком. */
+async function pickExtra(item: GearItem): Promise<void> {
+  if (isExtraSaving.value) return
+
+  isExtraSaving.value = true
+  extraError.value = null
+
+  try {
+    emit('route', await addRouteSleeping(props.trip.id, item.id))
+    isExtraOpen.value = false
+  } catch (problem) {
+    extraError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось добавить вещь'
+  } finally {
+    isExtraSaving.value = false
+  }
+}
+
+/** Вещи нет в каталоге — заводим её в личном каталоге и сразу в ночёвку. */
+const isManualExtraOpen = ref(false)
+
+function openManualExtra(): void {
+  isExtraOpen.value = false
+  isManualExtraOpen.value = true
+}
+
+async function onManualExtraCreated(item: GearItem): Promise<void> {
+  isManualExtraOpen.value = false
+  isExtraSaving.value = true
+  extraError.value = null
+
+  try {
+    emit('route', await addRouteSleeping(props.trip.id, item.id))
+  } catch (problem) {
+    extraError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось добавить вещь'
+  } finally {
+    isExtraSaving.value = false
+  }
+}
+
 // ───────────────────────────── удаление ─────────────────────────────
 
 async function remove(row: RouteSleeping): Promise<void> {
@@ -246,6 +318,10 @@ async function remove(row: RouteSleeping): Promise<void> {
       data-test="route-sleeping-remove-error"
     >
       {{ removalError }}
+    </p>
+
+    <p v-if="extraError" class="text-sm text-red-600" data-test="route-sleeping-extra-error">
+      {{ extraError }}
     </p>
 
     <!--
@@ -294,7 +370,46 @@ async function remove(row: RouteSleeping): Promise<void> {
       >
         {{ type.button }}
       </button>
+
+      <!--
+        «Добавить ещё» — всегда белая (слова заказчика): вкладыш в спальник,
+        грелка, любая своя вещь. Секция личная, поэтому и добавка личная.
+      -->
+      <button
+        type="button"
+        class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-blue-600"
+        data-test="route-sleeping-extra"
+        @click="openExtra"
+      >
+        Добавить ещё
+      </button>
     </div>
+
+    <!-- «Добавить ещё»: весь личный каталог, спальники и коврики первыми -->
+    <TripGearExtraPicker
+      v-if="isExtraOpen"
+      :items="extraCatalog"
+      :exclude-ids="sleeping.map((row) => row.gearItemId)"
+      :preferred-type-codes="SLEEPING_TYPE_CODES"
+      :loading="isExtraLoading"
+      @pick="pickExtra"
+      @manual="openManualExtra"
+      @close="isExtraOpen = false"
+    />
+
+    <!--
+      Ручная вещь для «Спальника» заводится в личном каталоге: секция личная,
+      и вещь должна остаться у хозяина, а не уехать в снаряжение похода.
+    -->
+    <TripGearManualModal
+      v-if="isManualExtraOpen"
+      :trip-id="trip.id"
+      :type-codes="[]"
+      default-type-code=""
+      mode="personal"
+      @created-personal="onManualExtraCreated"
+      @close="isManualExtraOpen = false"
+    />
 
     <!--
       Диалог: своя вещь нужного типа из каталога или новая. Ошибка — в самом

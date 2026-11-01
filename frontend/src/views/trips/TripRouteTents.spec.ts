@@ -228,6 +228,7 @@ function tripGearItem(
     note: null,
     isTripOnly: false,
     status: 'approved',
+    routeSection: null,
     assignedUserId: null,
     createdAt: '2026-10-29T10:00:00.000Z',
     ...overrides,
@@ -1017,5 +1018,141 @@ describe('секция «Палатки»', () => {
     const awningTexts = wrapper.findAll('[data-test="route-awning"]').map((node) => node.text())
 
     expect(awningTexts.some((text) => text.startsWith('Тент (Олег)'))).toBe(true)
+  })
+
+  // ───────────────────────────── «Добавить ещё» ─────────────────────────────
+
+  it('«Добавить ещё» — белая кнопка секции', async () => {
+    const wrapper = await mounted()
+
+    const button = wrapper.get('[data-test="route-tent-extra-add"]')
+
+    expect(button.text()).toBe('Добавить ещё')
+    expect(button.classes()).toContain('bg-field')
+    expect(button.classes()).not.toContain('bg-emerald-600')
+  })
+
+  it('«Добавить ещё» открывает каталог, где «Кров» идёт первым, а взять можно кого угодно', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([
+        {
+          ...personalGear('20', 'Лодка надувная', 'other'),
+          groupCode: 'other',
+          groupName: 'Прочее',
+        },
+        {
+          ...personalGear('21', 'Палатка Анны', 'tent', 3),
+          groupCode: 'roof',
+          groupName: 'Кров',
+        },
+      ]),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-tent-extra-add"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(true)
+
+    const groups = wrapper
+      .findAll('[data-test^="route-extra-group-"]')
+      .map((node) => node.get('span').text())
+
+    expect(groups).toEqual(['Кров', 'Прочее'])
+  })
+
+  it('вещь из «Добавить ещё» уходит в поход с пометкой «Палатки» и показывается пилюлей', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([personalGear('20', 'Лодка надувная', 'other')]),
+    )
+    mocks.proposeTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g-extra',
+        gearItemId: '20',
+        typeCode: 'other',
+        typeName: 'Прочее',
+        title: 'Лодка надувная',
+        ownerUserId: ME,
+        weightGrams: 12000,
+        routeSection: 'tent',
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-tent-extra-add"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-item-20"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.proposeTripGear).toHaveBeenCalledWith('1', '20', 'tent')
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="route-tent-extras"]').text()).toContain(
+      'Лодка надувная - 12000 гр. (Олег)',
+    )
+  })
+
+  it('вещь с пометкой «Палатки» показывается здесь, даже если её тип не палатка', async () => {
+    const wrapper = await mounted({
+      gear: [
+        tripGearItem({
+          id: 'g1',
+          gearItemId: '10',
+          typeCode: 'tent',
+          typeName: 'Палатка',
+          title: 'Палатка на четверых',
+          ownerUserId: ANNA,
+          attributes: [attribute('seats', 'Вместимость', 3)],
+        }),
+        tripGearItem({
+          id: 'g-extra',
+          gearItemId: '20',
+          typeCode: 'other',
+          typeName: 'Прочее',
+          title: 'Лодка надувная',
+          ownerUserId: ME,
+          routeSection: 'tent',
+        }),
+      ],
+    })
+
+    expect(wrapper.get('[data-test="route-tent-extras"]').text()).toContain('Лодка надувная')
+    // Палатка осталась плашкой распределения: пометка вещи этим не мешает.
+    expect(tentTitles(wrapper)).toEqual(['Анна 3-х местная'])
+  })
+
+  it('«Указать вручную» из «Добавить ещё»: любой тип и пометка «Палатки»', async () => {
+    mocks.addManualTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g-manual',
+        gearItemId: 'gi-manual',
+        typeCode: 'other',
+        typeName: 'Прочее',
+        title: 'Лодка',
+        ownerUserId: ME,
+        isTripOnly: true,
+        routeSection: 'tent',
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-tent-extra-add"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-manual"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(true)
+
+    // Тип по умолчанию — палатка: у неё обязательна вместимость.
+    await wrapper.get('[data-test="manual-seats"]').setValue('2')
+    await wrapper.get('[data-test="manual-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addManualTripGear).toHaveBeenCalledWith(
+      '1',
+      expect.objectContaining({ routeSection: 'tent' }),
+    )
   })
 })
