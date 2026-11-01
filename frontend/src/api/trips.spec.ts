@@ -3,10 +3,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   acceptRouteLodger,
+  addRouteSleeping,
   buildTripListQuery,
   fetchTripRoute,
   lodgeRoute,
   releaseRouteLodger,
+  removeRouteSleeping,
   saveRouteNights,
 } from '@/api/trips'
 import type { RouteNightInput, TripRoute } from '@/types/trips'
@@ -62,7 +64,13 @@ describe('buildTripListQuery', () => {
  * и путь живут в строке. Все ручки обязаны возвращать вкладку целиком,
  * поэтому проверяется и разворот ответа, а не только адрес.
  */
-const ROUTE: TripRoute = { canEdit: true, nights: [], lodgers: [], travelers: [] }
+const ROUTE: TripRoute = {
+  canEdit: true,
+  nights: [],
+  sleeping: [],
+  lodgers: [],
+  travelers: [],
+}
 
 interface RouteCall {
   url: string
@@ -115,7 +123,7 @@ describe('api/trips — ночёвки похода', () => {
     const { calls, bodyOf } = mockRouteFetch()
 
     const nights: RouteNightInput[] = [
-      { position: 1, date: '2026-10-29', place: 'Слюдянка', options: [{ kind: 'hut' }] },
+      { position: 1, date: '2026-10-29', place: 'Слюдянка', kind: 'hut', cooking: 'fire' },
     ]
 
     await expect(saveRouteNights('1', nights)).resolves.toEqual(ROUTE)
@@ -123,6 +131,25 @@ describe('api/trips — ночёвки похода', () => {
     expect(calls[0]!.url).toBe('/api/trips/1/route/nights')
     expect(calls[0]!.init.method).toBe('PUT')
     expect(bodyOf(0)).toEqual({ nights })
+  })
+
+  it('спальник добавляется POST-ом с вещью каталога', async () => {
+    const { calls, bodyOf } = mockRouteFetch()
+
+    await expect(addRouteSleeping('1', '17')).resolves.toEqual(ROUTE)
+
+    expect(calls[0]!.url).toBe('/api/trips/1/route/sleeping')
+    expect(calls[0]!.init.method).toBe('POST')
+    expect(bodyOf(0)).toEqual({ gearItemId: '17' })
+  })
+
+  it('удаление спальника — DELETE .../sleeping/:id, ответ — вкладка', async () => {
+    const { calls } = mockRouteFetch()
+
+    await expect(removeRouteSleeping('1', '4')).resolves.toEqual(ROUTE)
+
+    expect(calls[0]!.url).toBe('/api/trips/1/route/sleeping/4')
+    expect(calls[0]!.init.method).toBe('DELETE')
   })
 
   it('посадка в палатку — PUT /lodgers/:userId с палаткой', async () => {

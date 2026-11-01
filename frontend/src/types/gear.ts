@@ -32,6 +32,8 @@ export const GEAR_TYPE_CODES = {
   tagan: 'tagan',
   stove: 'stove',
   gas: 'gas',
+  sleeping_bag: 'sleeping_bag',
+  mat: 'mat',
 } as const
 
 /** «Палатки»: палатка и тент — оба дают место для ночлега. */
@@ -52,6 +54,17 @@ export const CAMPFIRE_TYPE_CODES: readonly string[] = [
 export const STOVE_TYPE_CODES: readonly string[] = [
   GEAR_TYPE_CODES.stove,
   GEAR_TYPE_CODES.gas,
+]
+
+/**
+ * Личные вещи ночёвки: спальник и коврик (01.11.2026).
+ *
+ * Секция «Спальник» спрашивает каталог этими кодами: в пилюлю идёт название
+ * вещи, а в диалоге предлагаются только вещи этих типов.
+ */
+export const SLEEPING_TYPE_CODES: readonly string[] = [
+  GEAR_TYPE_CODES.sleeping_bag,
+  GEAR_TYPE_CODES.mat,
 ]
 
 /**

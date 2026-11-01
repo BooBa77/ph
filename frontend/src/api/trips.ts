@@ -795,8 +795,9 @@ export async function fetchTripRoute(tripId: string): Promise<TripRoute> {
  * PUT /api/trips/:id/route/nights — сохранить таблицу ночей целиком.
  *
  * Уходит не «изменённая ночь», а все ночи по номерам: правила сервер
- * проверяет на ночи целиком (место привязано к набору вариантов, «идём всю
- * ночь» не смешивается с палаткой), а клиенту не нужно помнить, что удалять.
+ * проверяет на ночи целиком, а клиенту не нужно помнить, что удалять.
+ * Экран применяет правку на лету (01.11.2026), поэтому этот запрос
+ * вызывается на каждое изменение, а не кнопкой «Сохранить».
  * Распределение людей правку переживает: оно висит на палатках.
  */
 export async function saveRouteNights(
@@ -806,6 +807,32 @@ export async function saveRouteNights(
   return apiFetch<TripRoute>(`${routePath(tripId)}/nights`, {
     method: 'PUT',
     body: JSON.stringify({ nights }),
+  })
+}
+
+/**
+ * POST /api/trips/:id/route/sleeping — добавить себе спальник или коврик.
+ *
+ * Личная секция (01.11.2026): вещь берётся из своего каталога и только
+ * типов «Спальник» или «Коврик». Ответ — вкладка целиком.
+ */
+export async function addRouteSleeping(
+  tripId: string,
+  gearItemId: string,
+): Promise<TripRoute> {
+  return apiFetch<TripRoute>(`${routePath(tripId)}/sleeping`, {
+    method: 'POST',
+    body: JSON.stringify({ gearItemId }),
+  })
+}
+
+/** DELETE .../route/sleeping/:sleepingId — убрать свою вещь из ночёвки. */
+export async function removeRouteSleeping(
+  tripId: string,
+  sleepingId: string,
+): Promise<TripRoute> {
+  return apiFetch<TripRoute>(`${routePath(tripId)}/sleeping/${sleepingId}`, {
+    method: 'DELETE',
   })
 }
 

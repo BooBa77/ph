@@ -1,46 +1,54 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import { listTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
-import { fetchTripRoute, fetchTripTransfer, saveRouteNights } from '@/api/trips'
-import { GEAR_TYPE_CODES } from '@/types/gear'
+import { fetchTripRoute, saveRouteNights } from '@/api/trips'
 import type { TripGearItem } from '@/types/gear'
 import type {
   CookingKind,
   NightKind,
-  RouteNight,
   RouteNightInput,
-  RouteOptionInput,
   Trip,
   TripRoute,
-  TripTransferLeg,
 } from '@/types/trips'
 import {
   COOKING_KIND_LABELS,
   COOKING_NIGHT_KINDS,
   NIGHT_KIND_LABELS,
   PLACE_NIGHT_KINDS,
-  SOLO_NIGHT_KINDS,
+  SLEEPING_NIGHT_KINDS,
 } from '@/types/trips'
 import { shortDate } from '@/utils/calendar'
 import TripRouteCooking from '@/views/trips/TripRouteCooking.vue'
+import TripRouteSleeping from '@/views/trips/TripRouteSleeping.vue'
 import TripRouteTents from '@/views/trips/TripRouteTents.vue'
 
 /**
- * Таблица ночёвок — на ручках бэкенда (31.10.2026).
+ * Таблица ночёвок — **один вариант на ночь и сохранение на лету**
+ * (01.11.2026).
  *
- * Экран был макетом: выбор варианта, готовки и места жил в памяти компонента
- * и после перезагрузки исчезал. Теперь данные приходят из `GET /route`,
- * а правка уходит таблицей целиком через `PUT /route/nights`.
+ * Заказчик прошёл по живому экрану и отменил три вещи прежнего шага:
  *
- * **Почему кнопка «Сохранить», а не сохранение на каждое изменение.**
- * Половина состояний сетки — промежуточные и недопустимые: выбрали «Палатку»,
- * а палатку из снаряжения ещё не выбрали; поставили в ночь «идём всю ночь»
- * рядом с гостиницей. Сервер такое отбивает 400-м, и автосохранение
- * превратило бы набор ночей в поток ошибок. Поэтому таблица собирается
- * черновиком и уходит одной транзакцией, а кнопка активна только когда
- * черновик разошёлся с сохранённым.
+ * 1. **Комбинированные ночи.** «Сколько не объяснял, ты всё равно по своему
+ *    сделал… Меняем! На одну ночь один вариант ночёвки». Строк-вариантов
+ *    больше нет: у ночи один `select` «Где ночуем», а «Ещё вариант»
+ *    и крестики строк удалены.
+ * 2. **Выбор палатки в ночи.** «В секции Ночёвки уходит выбор палатки,
+ *    распределение по палаткам действует на весь поход». Палатка живёт
+ *    в секции «Палатки» и одна на поход; ночь её больше не спрашивает.
+ *    Машины с «Трансфером» тоже не связаны — решение заказчика.
+ * 3. **Кнопки «Сохранить» и «Отменить».** «Не нужно, применяй на лету».
+ *    Каждое изменение уходит тем же `PUT /route/nights`, черновика
+ *    и подписи «Есть несохранённые изменения» нет. Текст «Место»
+ *    сохраняется с задержкой, чтобы не отправлять запрос на каждую букву;
+ *    выпадающие списки — сразу.
+ *
+ * **Почему сохранение целиком не мешает «на лету».** Ручка принимает все
+ * ночи по номерам, поэтому экран собирает таблицу из `rows` при каждом
+ * изменении. Промежуточных недопустимых состояний больше нет: палатку
+ * выбирать не нужно, машина ссылкой не является, а место и готовка просто
+ * прячутся у вариантов, которым они не положены.
  *
  * **Что на плашке** (слова заказчика 29.10.2026, в силе):
  * - «Ночь 1 · 29 октября» — номер обычным текстом, дата серым после
@@ -55,19 +63,9 @@ import TripRouteTents from '@/views/trips/TripRouteTents.vue'
  * - «идём всю ночь», «в пути» и «гостиница» готовку не спрашивают,
  *   палатка, изба и машина — спрашивают: костёр, горелка или оба.
  *
- * **Вариантов в ночи несколько** (комбинированная ночь: часть группы
- * в палатке, часть в гостинице). Поэтому каждая ночь — список строк
- * «вариант», и «Ещё вариант» добавляет строку. Правила сервера помогают
- * не делать ошибок: «идём всю ночь» и «в пути» вытесняют остальные строки,
- * готовка и место сбрасываются, когда вариант перестал их спрашивать.
- *
- * **Палатка и машина — ссылки, а не текст:** палатка выбирается из
- * снаряжения похода (тип `tent`), машина — из карточек своего ТС
- * в «Трансфере». Текст «палатка Васи» разошёлся бы с палаткой Васи
- * в снаряжении, поэтому экран загружает оба списка рядом с вкладкой.
- *
  * **Права — из ответа сервера** (`canEdit`): правят таблицу те, у кого право
- * вкладки `route`. Остальные видят её, но поля заблокированы.
+ * вкладки `route`. Остальные видят её, но поля заблокированы. Личные
+ * спальники при этом правит каждый сам — это не таблица вкладки.
  *
  * Ночи, которые ещё не записаны, показываются по датам похода — как раньше:
  * иначе у похода с датами вкладка выглядела бы пустой. Три ночи «для
@@ -79,44 +77,38 @@ const props = defineProps<{ trip: Trip }>()
 /** Вид ночёвки — словарь бэкенда (`NIGHT_KINDS`), здесь только для строк. */
 type Kind = NightKind
 
-/** Вариант ночи в черновике: все поля строками, чтобы жить с `v-model`. */
-interface OptionDraft {
-  kind: Kind | ''
-  /** Палатка из снаряжения похода: пустая строка — не выбрали. */
-  tentGearId: string
-  /** Карточка своего ТС из «Трансфера». */
-  carLegId: string
-  cooking: CookingKind | ''
-}
-
-/** Ночь в черновике: то, что видит и правит человек до «Сохранить». */
+/** Ночь в памяти экрана: все поля строками, чтобы жить с `v-model`. */
 interface NightDraft {
   position: number
   /** Дата `ГГГГ-ММ-ДД`; `null` — дат у похода нет. */
   date: string | null
   /** Район ночёвки словами. */
   place: string
-  options: OptionDraft[]
+  /** Один вариант ночи; пустая строка — не выбрали. */
+  kind: Kind | ''
+  cooking: CookingKind | ''
 }
 
 /** Сколько ночей показывать, когда дат похода нет вовсе. */
 const DEMO_NIGHTS = 3
 
+/**
+ * Задержка сохранения текста. Выпадающие списки уходят сразу: человек
+ * закончил выбор, ждать нечего. Текст — через полсекунды, иначе «Ольхон»
+ * отправило бы шесть запросов подряд.
+ */
+const TEXT_SAVE_DELAY_MS = 500
+
 const plan = ref<TripRoute | null>(null)
 
-/** Снаряжение похода: варианту «Палатка» нужно выбрать вещь. */
+/** Снаряжение похода: секция «Палатки» берёт из него плашки палаток. */
 const gear = ref<TripGearItem[]>([])
-/** Своё ТС из «Трансфера»: варианту «Машина» нужна карточка. */
-const cars = ref<TripTransferLeg[]>([])
-
 const isLoading = ref(true)
 const error = ref<string | null>(null)
 const gearError = ref<string | null>(null)
-const carsError = ref<string | null>(null)
 
 const isSaving = ref(false)
 const saveError = ref<string | null>(null)
-const justSaved = ref(false)
 
 const rows = ref<NightDraft[]>([])
 
@@ -187,33 +179,10 @@ const planned = computed<{
   }
 })
 
-/** Пустая строка варианта: пункт «не выбрали» и заготовка нового варианта. */
-function emptyOption(): OptionDraft {
-  return { kind: '', tentGearId: '', carLegId: '', cooking: '' }
-}
-
-/**
- * Варианты ночи в черновике. У записанной ночи без вариантов (это «идём всю
- * ночь») на экране всё равно одна пустая строка: иначе ночь выглядела бы
- * сломанной, и выбрать в ней было бы нечего.
- */
-function optionDrafts(night: RouteNight): OptionDraft[] {
-  if (night.options.length === 0) return [emptyOption()]
-
-  return night.options.map((option) => ({
-    kind: option.kind,
-    tentGearId: option.tentGearId ?? '',
-    carLegId: option.carLegId ?? '',
-    cooking: option.cooking ?? '',
-  }))
-}
-
 /**
  * Черновик из ответа сервера. Пустая таблица — не «нет ночей», а «ещё
  * не записаны»: показываем ночи по датам и подпись «для примера», если
- * дат нет. Одна и та же функция собирает и загруженный черновик, и точку
- * сравнения для «есть несохранённые изменения» — иначе кнопка «Сохранить»
- * горела бы сразу после загрузки.
+ * дат нет.
  */
 function draftsOf(value: TripRoute): { rows: NightDraft[]; note: string | null } {
   if (value.nights.length > 0) {
@@ -222,7 +191,8 @@ function draftsOf(value: TripRoute): { rows: NightDraft[]; note: string | null }
         position: night.position,
         date: night.date,
         place: night.place ?? '',
-        options: optionDrafts(night),
+        kind: night.kind ?? '',
+        cooking: night.cooking ?? '',
       })),
       note: null,
     }
@@ -233,25 +203,15 @@ function draftsOf(value: TripRoute): { rows: NightDraft[]; note: string | null }
       position: night.position,
       date: night.date,
       place: '',
-      options: [emptyOption()],
+      kind: '',
+      cooking: '',
     })),
     note: planned.value.note,
   }
 }
 
-const savedRows = computed<NightDraft[]>(() =>
-  plan.value === null ? [] : draftsOf(plan.value).rows,
-)
-
 /** Подпись «три ночи для примера» — только пока таблица пуста. */
 const note = computed(() => (plan.value === null ? null : draftsOf(plan.value).note))
-
-/** Разошёлся ли черновик с сохранённым: от этого зависит кнопка «Сохранить». */
-const dirty = computed(() => JSON.stringify(rows.value) !== JSON.stringify(savedRows.value))
-
-watch(dirty, (value) => {
-  if (value) justSaved.value = false
-})
 
 /** Подпись даты на плашке: «29 октября»; дат нет — подписи нет. */
 function dateLabel(row: NightDraft): string | null {
@@ -259,20 +219,6 @@ function dateLabel(row: NightDraft): string | null {
 
   return shortDate(new Date(`${row.date}T00:00:00`))
 }
-
-// ───────────────────────────── правильные списки ─────────────────────────────
-
-/** Палатки похода: только тип `tent` и только «берём». */
-const tentChoices = computed(() =>
-  gear.value
-    .filter((item) => item.typeCode === GEAR_TYPE_CODES.tent && item.status !== 'declined')
-    .map((item) => ({ id: item.id, title: item.title })),
-)
-
-/** Машины — только своё ТС: автобус и поезд ночлегом не считаются. */
-const carChoices = computed(() =>
-  cars.value.map((leg) => ({ id: leg.id, title: `${leg.fromPlace} → ${leg.toPlace}` })),
-)
 
 // ───────────────────────────── правила плашки ─────────────────────────────
 
@@ -293,14 +239,8 @@ function needsCooking(kind: Kind | ''): boolean {
  * (заказчик 30.10.2026). Пустое поле считается как ночной переход, поэтому
  * место в нём тоже не спрашивается: пока варианта нет, района тоже нет.
  */
-function needsPlace(row: NightDraft): boolean {
-  return row.options.some(
-    (option) => option.kind !== '' && PLACE_NIGHT_KINDS.includes(option.kind),
-  )
-}
-
-function isSolo(kind: Kind | ''): boolean {
-  return kind !== '' && SOLO_NIGHT_KINDS.includes(kind)
+function needsPlace(kind: Kind | ''): boolean {
+  return kind !== '' && PLACE_NIGHT_KINDS.includes(kind)
 }
 
 /** Что считается костром и что горелкой: «оба» — это и то и другое сразу. */
@@ -310,35 +250,6 @@ function isFireCooking(cooking: CookingKind | ''): boolean {
 
 function isStoveCooking(cooking: CookingKind | ''): boolean {
   return cooking === 'stove' || cooking === 'both'
-}
-
-/**
- * Сменили вариант строки — подчищаем то, что новый вариант не спрашивает.
- * Без сброса значения остались бы в памяти и вернулись при возврате
- * к палатке, хотя человек их не подтверждал.
- *
- * «Идём всю ночь» и «в пути» вытесняют остальные строки ночи: смешать их
- * с палаткой значит ответить на вопрос ночи дважды, и сервер такое отбивает.
- */
-function onKindChange(row: NightDraft, option: OptionDraft): void {
-  if (!needsCooking(option.kind)) option.cooking = ''
-  if (option.kind !== 'tent') option.tentGearId = ''
-  if (option.kind !== 'car') option.carLegId = ''
-
-  if (isSolo(option.kind)) row.options = [option]
-  if (!needsPlace(row)) row.place = ''
-}
-
-function addOption(row: NightDraft): void {
-  row.options = [...row.options, emptyOption()]
-}
-
-/** Убрать строку варианта: последнюю не убираем — пустая строка и есть «нет». */
-function removeOption(row: NightDraft, index: number): void {
-  if (row.options.length <= 1) return
-
-  row.options = row.options.filter((_, position) => position !== index)
-  if (!needsPlace(row)) row.place = ''
 }
 
 // ───────────────────────────── загрузка ─────────────────────────────
@@ -354,28 +265,23 @@ async function load(): Promise<void> {
   isLoading.value = true
   error.value = null
   saveError.value = null
-  justSaved.value = false
 
   try {
-    const [route, list, transfer] = await Promise.all([
+    const [route, list] = await Promise.all([
       fetchTripRoute(props.trip.id),
       /**
-       * Снаряжение и «Трансфер» нужны только выпадающим спискам палатки
-       * и машины. Их падение не должно закрывать таблицу: ночи читаются
-       * и без них, а человек увидит объяснение, почему список пуст.
+       * Снаряжение похода нужно секции «Палатки» (её плашки — вещи похода).
+       * Его падение таблицу не закрывает: ночи читаются и без него,
+       * а человек увидит объяснение, почему список пуст.
        */
       listTripGear(props.trip.id).catch(() => null),
-      fetchTripTransfer(props.trip.id).catch(() => null),
     ])
 
     if (current !== requestId) return
 
     plan.value = route
     gear.value = list?.items ?? []
-    cars.value = (transfer?.legs ?? []).filter((leg) => leg.isOwnVehicle)
     gearError.value = list === null ? 'Снаряжение похода не загрузилось' : null
-    carsError.value =
-      transfer === null ? '«Трансфер» не загрузился — машину выбрать не из чего' : null
     rows.value = draftsOf(route).rows
   } catch (problem) {
     if (current !== requestId) return
@@ -399,89 +305,132 @@ watch(planned, () => {
   }
 })
 
-// ───────────────────────────── сохранение ─────────────────────────────
+// ───────────────────────────── сохранение на лету ─────────────────────────────
 
-/** Ночь из черновика в тело запроса: пустые строки не уходят. */
+/** Таймер задержки текста: одно поле — один запрос после паузы. */
+let saveTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Идёт ли запрос и не попросили ли сохранить ещё раз во время него. */
+let isFlushing = false
+let isPending = false
+
+/** Ночь из памяти в тело запроса: пустые строки не уходят. */
 function payloadOf(row: NightDraft): RouteNightInput {
-  const options = row.options
-    .filter((option) => option.kind !== '')
-    .map((option): RouteOptionInput => {
-      const input: RouteOptionInput = { kind: option.kind as Kind }
-
-      if (option.kind === 'tent') {
-        input.tentGearId = option.tentGearId === '' ? null : option.tentGearId
-      }
-      if (option.kind === 'car') {
-        input.carLegId = option.carLegId === '' ? null : option.carLegId
-      }
-      if (needsCooking(option.kind)) {
-        input.cooking = option.cooking === '' ? null : option.cooking
-      }
-
-      return input
-    })
-
   const place = row.place.trim()
 
   return {
     position: row.position,
     date: row.date,
     place: place === '' ? null : place,
-    options,
+    kind: row.kind === '' ? null : row.kind,
+    cooking: needsCooking(row.kind) && row.cooking !== '' ? row.cooking : null,
   }
 }
 
 /**
- * Сохранить таблицу целиком. Ответ — вкладка вместе с `lodgers`, поэтому
- * «кто где живёт» на экране не приходится переживать отдельно.
+ * Попросить сохранить. Задержка только у текста; у списков — сразу.
  *
- * Ошибка сервера показывается текстом, а черновик остаётся: сервер отвечает
- * 400 с человеческим текстом («У „Палатки“ выберите палатку из снаряжения
- * похода»), и терять из-за этого набор ночей нельзя.
+ * Повторный вызов во время запроса не теряется: `isPending` заставляет
+ * `flush` отправить ещё один запрос после текущего. Иначе правка, сделанная
+ * пока летел предыдущий `PUT`, осталась бы только на экране.
  */
-async function save(): Promise<void> {
-  if (!canEdit.value || isSaving.value || !dirty.value) return
+function queueSave(delayMs = 0): void {
+  if (!canEdit.value) return
 
+  if (saveTimer !== null) clearTimeout(saveTimer)
+
+  saveTimer = setTimeout(() => {
+    saveTimer = null
+    void flush()
+  }, delayMs)
+}
+
+async function flush(): Promise<void> {
+  if (!canEdit.value) return
+
+  if (isFlushing) {
+    isPending = true
+    return
+  }
+
+  isFlushing = true
   isSaving.value = true
-  saveError.value = null
 
   try {
-    const updated = await saveRouteNights(
-      props.trip.id,
-      rows.value.map((row) => payloadOf(row)),
-    )
+    do {
+      isPending = false
 
-    plan.value = updated
-    rows.value = draftsOf(updated).rows
-    justSaved.value = true
+      const updated = await saveRouteNights(
+        props.trip.id,
+        rows.value.map((row) => payloadOf(row)),
+      )
+
+      /**
+       * Ответ сервера обновляет вкладку, но **не** перетирает `rows`:
+       * человек может продолжать печатать, пока летел запрос. Места
+       * жительства и личные вещи тоже не трогаем: пока летел `PUT` ночей,
+       * «Палатки» или «Спальник» могли ответить свежее, и старый ответ
+       * ночей не должен откатить их на экране.
+       */
+      plan.value = {
+        ...updated,
+        sleeping: plan.value?.sleeping ?? updated.sleeping,
+        lodgers: plan.value?.lodgers ?? updated.lodgers,
+        travelers: plan.value?.travelers ?? updated.travelers,
+      }
+      saveError.value = null
+    } while (isPending)
   } catch (problem) {
     saveError.value =
       problem instanceof ApiError ? problem.message : 'Не удалось сохранить ночёвки'
   } finally {
+    isFlushing = false
     isSaving.value = false
   }
 }
 
-/** Отменить несохранённое и вернуться к тому, что лежит на сервере. */
-function revert(): void {
-  if (plan.value === null) return
+/**
+ * Сменили вариант строки — подчищаем то, что новый вариант не спрашивает.
+ * Без сброса значения остались бы в памяти и вернулись при возврате
+ * к палатке, хотя человек их не подтверждал. Сервер такое отбивает 400-м,
+ * а с сохранением на лету это был бы поток ошибок.
+ */
+function onKindChange(row: NightDraft): void {
+  if (!needsCooking(row.kind)) row.cooking = ''
+  if (!needsPlace(row.kind)) row.place = ''
 
-  rows.value = draftsOf(plan.value).rows
-  saveError.value = null
+  queueSave()
 }
+
+/** Сменили готовку — уходит сразу: выбор закончен. */
+function onCookingChange(): void {
+  queueSave()
+}
+
+/** Текст «Место» — после паузы: запрос на каждую букву не нужен. */
+function onPlaceInput(): void {
+  queueSave(TEXT_SAVE_DELAY_MS)
+}
+
+onBeforeUnmount(() => {
+  if (saveTimer !== null) clearTimeout(saveTimer)
+})
 
 /**
- * «Палатки» ответили вкладкой целиком — забираем её как есть.
+ * «Палатки» или «Спальник» ответили вкладкой целиком — забираем её.
  *
- * Ночи, которые человек правит в черновике, не трогаем: посадка в палатку
- * не должна стирать несохранённые изменения в таблице. Ответ сервера
- * обновляет только точку сравнения.
+ * Ночи не трогаем: `rows` — источник правды экрана, а сохранение ночей
+ * может ещё лететь. Ответ дочерней секции обновляет места жительства
+ * и личные вещи, но не откатывает правку ночей.
  */
 function onRouteUpdated(updated: TripRoute): void {
-  plan.value = updated
+  plan.value = {
+    ...updated,
+    nights: plan.value?.nights ?? updated.nights,
+  }
 }
 
-/** «Палатки» добавили или убрали вещь — список палаток для выбора обновляем. */
+/** «Палатки» добавили или убрали вещь — список плашек обновляем. */
 function onGearChanged(items: TripGearItem[]): void {
   gear.value = items
 }
@@ -489,26 +438,28 @@ function onGearChanged(items: TripGearItem[]): void {
 // ───────────────────── подсказки «Кострового» ─────────────────────
 
 /**
- * Две следующие секции живут по тому, что выбрано в черновике: «Палатки» —
- * если хоть в одной ночи выбрана палатка, «Костровое» — если хоть где-то
- * выбран способ готовки. Пока ничего не выбрано, обеих секций нет: пустые
- * заготовки на экране только мешают.
+ * Секции ниже живут по тому, что выбрано в таблице: «Палатки» — если хоть
+ * в одной ночи палатка, «Костровое» — если хоть где-то способ готовки,
+ * «Спальник» — если хоть одна ночь без гостиницы и дороги.
  */
-const hasTent = computed(() =>
-  rows.value.some((row) => row.options.some((option) => option.kind === 'tent')),
-)
+const hasTent = computed(() => rows.value.some((row) => row.kind === 'tent'))
 
-const hasCooking = computed(() =>
-  rows.value.some((row) => row.options.some((option) => option.cooking !== '')),
-)
+const hasCooking = computed(() => rows.value.some((row) => row.cooking !== ''))
 
 /** Есть костёр хоть в одной ночи — повод взять топор, пилу и розжиг. */
-const hasFire = computed(() =>
-  rows.value.some((row) => row.options.some((option) => isFireCooking(option.cooking))),
-)
+const hasFire = computed(() => rows.value.some((row) => isFireCooking(row.cooking)))
 
-const hasStove = computed(() =>
-  rows.value.some((row) => row.options.some((option) => isStoveCooking(option.cooking))),
+const hasStove = computed(() => rows.value.some((row) => isStoveCooking(row.cooking)))
+
+/**
+ * Спальник и коврик нужны при палатке, избе и машине. Заказчик 01.11.2026:
+ * секция видна «при всех вариантах ночёвки кроме „Гостиница“, „Идём всю
+ * ночь“ и „В пути“».
+ */
+const sleepingVisible = computed(() =>
+  rows.value.some(
+    (row) => row.kind !== '' && SLEEPING_NIGHT_KINDS.includes(row.kind),
+  ),
 )
 
 /**
@@ -518,12 +469,7 @@ const hasStove = computed(() =>
  * готовок.
  */
 const stoveCookingCount = computed(
-  () =>
-    rows.value.reduce(
-      (total, row) =>
-        total + row.options.filter((option) => isStoveCooking(option.cooking)).length,
-      0,
-    ) * 2,
+  () => rows.value.filter((row) => isStoveCooking(row.cooking)).length * 2,
 )
 
 /**
@@ -601,7 +547,7 @@ const stoveHint = computed(() => {
             </h3>
 
             <label
-              v-if="needsPlace(row)"
+              v-if="needsPlace(row.kind)"
               class="flex min-w-0 items-center gap-2 text-sm text-muted md:flex-1 md:justify-end"
             >
               Место
@@ -613,28 +559,24 @@ const stoveHint = computed(() => {
                 class="min-w-0 flex-1 rounded-xl border border-border bg-field px-2 py-1 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 md:max-w-56 md:text-sm"
                 data-test="route-night-place"
                 aria-label="Место ночёвки"
+                @input="onPlaceInput"
               />
             </label>
           </div>
 
           <!--
-            Варианты ночи: комбинированная ночь — несколько строк. Первая
-            строка есть всегда, «Ещё вариант» добавляет следующую.
+            Один вариант ночи (01.11.2026). Раньше здесь был список строк
+            с кнопкой «Ещё вариант»: заказчик отменил комбинированные ночи.
           -->
-          <div
-            v-for="(option, index) in row.options"
-            :key="index"
-            class="flex flex-col gap-3 md:flex-row md:items-end"
-            data-test="route-night-option"
-          >
+          <div class="flex flex-col gap-3 md:flex-row md:items-end" data-test="route-night-option">
             <label class="flex flex-col gap-1 text-sm text-muted md:w-56">
               Где ночуем
               <select
-                v-model="option.kind"
+                v-model="row.kind"
                 :disabled="!canEdit"
                 class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 md:text-sm"
                 data-test="route-night-kind"
-                @change="onKindChange(row, option)"
+                @change="onKindChange(row)"
               >
                 <!--
                   Пустой пункт — пустой строкой: заказчик 29.10.2026: «давай
@@ -648,62 +590,19 @@ const stoveHint = computed(() => {
               </select>
             </label>
 
-            <!--
-              «Палатка» — ссылка на вещь из снаряжения похода, а не текст:
-              текст «палатка Васи» разошёлся бы с палаткой Васи в снаряжении.
-            -->
-            <label
-              v-if="option.kind === 'tent'"
-              class="flex flex-col gap-1 text-sm text-muted md:w-56"
-            >
-              Палатка
-              <select
-                v-model="option.tentGearId"
-                :disabled="!canEdit"
-                class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 md:text-sm"
-                data-test="route-night-tent"
-              >
-                <option value="">выберите…</option>
-                <option v-for="tent in tentChoices" :key="tent.id" :value="tent.id">
-                  {{ tent.title }}
-                </option>
-              </select>
-            </label>
-
-            <!--
-              «Машина» — карточка своего ТС из «Трансфера»: автобус и поезд
-              ночлегом не считаются, поэтому список короткий.
-            -->
-            <label
-              v-if="option.kind === 'car'"
-              class="flex flex-col gap-1 text-sm text-muted md:w-56"
-            >
-              Машина
-              <select
-                v-model="option.carLegId"
-                :disabled="!canEdit"
-                class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 md:text-sm"
-                data-test="route-night-car"
-              >
-                <option value="">выберите…</option>
-                <option v-for="car in carChoices" :key="car.id" :value="car.id">
-                  {{ car.title }}
-                </option>
-              </select>
-            </label>
-
             <!-- «Идём всю ночь», «в пути» и «гостиница» готовку не спрашивают. -->
             <label
-              v-if="needsCooking(option.kind)"
+              v-if="needsCooking(row.kind)"
               class="flex flex-col gap-1 text-sm text-muted md:w-44"
               data-test="route-night-cooking-field"
             >
               Готовка
               <select
-                v-model="option.cooking"
+                v-model="row.cooking"
                 :disabled="!canEdit"
                 class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 md:text-sm"
                 data-test="route-night-cooking"
+                @change="onCookingChange"
               >
                 <option value=""></option>
                 <option v-for="(label, kind) in COOKING_KIND_LABELS" :key="kind" :value="kind">
@@ -711,79 +610,20 @@ const stoveHint = computed(() => {
                 </option>
               </select>
             </label>
-
-            <!--
-              Крестик строки варианта: убрать одну часть комбинированной ночи.
-              У единственной строки его нет — там пустой вариант в списке.
-            -->
-            <button
-              v-if="canEdit && row.options.length > 1"
-              type="button"
-              class="cursor-pointer self-start rounded-xl border border-border bg-field px-2 py-1 text-sm text-muted transition-colors hover:border-red-600 hover:text-red-700 md:self-end"
-              title="Убрать вариант"
-              data-test="route-night-option-remove"
-              @click="removeOption(row, index)"
-            >
-              ×
-            </button>
           </div>
-
-          <!--
-            Комбинированная ночь: часть группы в палатке, часть в гостинице.
-            Кнопка есть только у тех, кто правит таблицу.
-          -->
-          <button
-            v-if="canEdit"
-            type="button"
-            class="cursor-pointer self-start border-0 bg-transparent p-0 text-sm text-primary underline transition-opacity hover:opacity-80"
-            data-test="route-night-add-option"
-            @click="addOption(row)"
-          >
-            Ещё вариант
-          </button>
         </article>
 
         <!--
-          Сохранение таблицы целиком. Кнопка активна только когда черновик
-          разошёлся с сохранённым: «Сохранить» впустую — ложное действие.
+          Сохранение на лету: кнопок и подписи «есть несохранённые изменения»
+          больше нет (01.11.2026). Внизу — только «Сохраняем…», чтобы человек
+          видел, что правка ушла, и текст ошибки, если сервер её не принял.
         -->
         <div class="flex flex-wrap items-center gap-2" data-test="route-nights-actions">
-          <template v-if="canEdit">
-            <button
-              type="button"
-              class="cursor-pointer rounded-xl border px-3 py-1.5 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-60"
-              :class="
-                dirty
-                  ? 'border-primary bg-primary text-white hover:opacity-90'
-                  : 'border-border bg-field text-text'
-              "
-              :disabled="!dirty || isSaving"
-              data-test="route-nights-save"
-              @click="save"
-            >
-              {{ isSaving ? 'Сохраняем…' : 'Сохранить' }}
-            </button>
+          <span v-if="isSaving" class="text-xs text-muted" data-test="route-nights-saving">
+            Сохраняем…
+          </span>
 
-            <button
-              v-if="dirty"
-              type="button"
-              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-60"
-              :disabled="isSaving"
-              data-test="route-nights-revert"
-              @click="revert"
-            >
-              Отменить
-            </button>
-
-            <span v-if="dirty" class="text-xs text-muted" data-test="route-nights-dirty">
-              Есть несохранённые изменения
-            </span>
-            <span v-else-if="justSaved" class="text-xs text-muted" data-test="route-nights-saved">
-              Сохранено
-            </span>
-          </template>
-
-          <span v-else class="text-xs text-muted" data-test="route-nights-readonly">
+          <span v-else-if="!canEdit" class="text-xs text-muted" data-test="route-nights-readonly">
             Ночёвки правит тот, кто ведёт вкладку.
           </span>
         </div>
@@ -792,16 +632,8 @@ const stoveHint = computed(() => {
           {{ saveError }}
         </p>
 
-        <!--
-          Снаряжение нужно выпадающему списку палатки, «Трансфер» — списку
-          машины. Их падение таблицу не закрывает, но объяснить его надо:
-          пустой список палаток иначе выглядел бы как «палаток нет».
-        -->
         <p v-if="gearError" class="text-xs text-muted" data-test="route-nights-gear-error">
-          {{ gearError }} — палатку выбрать не из чего.
-        </p>
-        <p v-if="carsError" class="text-xs text-muted" data-test="route-nights-cars-error">
-          {{ carsError }}.
+          {{ gearError }} — плашки палаток могут быть неполными.
         </p>
       </details>
 
@@ -829,6 +661,27 @@ const stoveHint = computed(() => {
           :can-edit="canEdit"
           @route="onRouteUpdated"
           @gear="onGearChanged"
+        />
+      </details>
+
+      <!--
+        «Спальник» — личная секция (01.11.2026): синяя, как «Палатки» зелёные,
+        а «Костровое» красное. Видна при палатке, избе и машине: в гостинице
+        постель своя, а в дороге спать негде. У каждого участника своё
+        содержимое, виртуальных здесь нет.
+      -->
+      <details
+        v-if="sleepingVisible"
+        open
+        class="flex flex-col gap-3 rounded-2xl border border-blue-300 bg-blue-100 p-3"
+        data-test="route-sleeping-section"
+      >
+        <summary class="cursor-pointer select-none text-sm text-blue-900">Спальник</summary>
+
+        <TripRouteSleeping
+          :trip="trip"
+          :sleeping="plan?.sleeping ?? []"
+          @route="onRouteUpdated"
         />
       </details>
 

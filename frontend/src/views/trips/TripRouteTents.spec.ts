@@ -102,6 +102,7 @@ function payload(): TripRoute {
   return {
     canEdit: server.canEdit,
     nights: [],
+    sleeping: [],
     lodgers: server.lodgers.map((lodger) => ({ ...lodger })),
     travelers: server.travelers.map((traveler) => ({ ...traveler })),
   }

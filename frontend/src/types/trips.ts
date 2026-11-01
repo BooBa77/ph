@@ -941,10 +941,12 @@ export const COOKING_NIGHT_KINDS: readonly NightKind[] = ['tent', 'hut', 'car']
 export const PLACE_NIGHT_KINDS: readonly NightKind[] = ['tent', 'hotel', 'hut', 'car']
 
 /**
- * Варианты без ночлега: их нельзя ставить в одну ночь с другими. Смешать
- * «идём всю ночь» и «палатку» — ответить на вопрос ночи дважды.
+ * Ночёвка, при которой человеку нужны спальник и коврик: палатка, изба,
+ * машина. Заказчик 01.11.2026: секция видна «при всех вариантах ночёвки
+ * кроме „Гостиница“, „Идём всю ночь“ и „В пути“» — в гостинице постель
+ * своя, а в дороге спать негде.
  */
-export const SOLO_NIGHT_KINDS: readonly NightKind[] = ['allnight', 'transit']
+export const SLEEPING_NIGHT_KINDS: readonly NightKind[] = ['tent', 'hut', 'car']
 
 /**
  * Статус «кто где живёт».
@@ -977,22 +979,34 @@ export interface RouteLodger extends RouteTraveler {
   status: RouteLodgerStatus
 }
 
-/** Вариант одной ночи: палатка / гостиница / изба / машина / всю ночь / в пути. */
-export interface RouteOption {
+/**
+ * Личная вещь ночёвки — спальник или коврик **смотрящего** (01.11.2026).
+ *
+ * Секция личная: `GET /route` отдаёт только свои строки, у каждого
+ * участника своё содержимое. Вещь — предмет личного каталога, поэтому
+ * название и вес приходят из него, а не копией в походе.
+ */
+export interface RouteSleeping {
   id: string
-  kind: NightKind
-  /** Палатка из снаряжения похода — только у «Палатки». */
-  tentGearId: string | null
-  /** Подпись палатки: название вещи. */
-  tentTitle: string | null
-  /** Карточка своего ТС из «Трансфера» — только у «Машины». */
-  carLegId: string | null
-  /** Подпись машины: «Иркутск → Ольхон». */
-  carTitle: string | null
-  cooking: CookingKind | null
+  /** Предмет личного каталога снаряжения. */
+  gearItemId: string
+  /** Код типа: `sleeping_bag` или `mat`. */
+  typeCode: string
+  /** Название вещи — то, по чему владелец её узнаёт. */
+  title: string
+  /** Вес в граммах; `null` — не указан. */
+  weightGrams: number | null
 }
 
-/** Ночь похода: номер, район и варианты. */
+/**
+ * Ночь похода: номер, район, дата и **один вариант** (01.11.2026).
+ *
+ * До этого шага варианты были списком и комбинировались; заказчик отменил
+ * это: «На одну ночь один вариант ночёвки». `kind = null` — вариант
+ * не выбрали, на экране это «идём всю ночь». Ссылок на палатку и машину
+ * больше нет: распределение по палаткам действует на весь поход, а машины
+ * с «Трансфером» не связаны.
+ */
 export interface RouteNight {
   id: string
   position: number
@@ -1000,7 +1014,10 @@ export interface RouteNight {
   date: string | null
   /** Район ночёвки; `null` — не записали. */
   place: string | null
-  options: RouteOption[]
+  /** Как ночуем; `null` — не выбрали. */
+  kind: NightKind | null
+  /** Способ готовки; `null` — не готовим или вопрос не задан. */
+  cooking: CookingKind | null
 }
 
 /** Вкладка «Ночёвки» целиком (`GET /api/trips/:id/route`). */
@@ -1008,16 +1025,10 @@ export interface TripRoute {
   /** Может ли смотрящий править таблицу — считает бэкенд. */
   canEdit: boolean
   nights: RouteNight[]
+  /** Личные вещи смотрящего: спальники и коврики. */
+  sleeping: RouteSleeping[]
   lodgers: RouteLodger[]
   travelers: RouteTraveler[]
-}
-
-/** Вариант в запросе: ссылки вместо id строк. */
-export interface RouteOptionInput {
-  kind: NightKind
-  tentGearId?: string | null
-  carLegId?: string | null
-  cooking?: CookingKind | null
 }
 
 /**
@@ -1030,7 +1041,8 @@ export interface RouteNightInput {
   position: number
   date?: string | null
   place?: string | null
-  options: RouteOptionInput[]
+  kind?: NightKind | null
+  cooking?: CookingKind | null
 }
 
 /** Вся таблица ночёвок: экран правится целиком. */
