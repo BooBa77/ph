@@ -1527,29 +1527,29 @@ await check(
   [virtualUserId, manualTypeId, defaultGroupId],
 );
 
-// ─── Таблица ночёвок: ночи, варианты и кто где живёт (31.10.2026) ───
+// ─── Таблица ночёвок: ночи, кто где живёт и личные вещи (01.11.2026) ───
 /**
- * Инварианты «Ночёвок» (`docs/ph/NEXT.md` §3, решения 31.10.2026): ночь,
- * варианты ночи и место жительства.
+ * Инварианты «Ночёвок» (решения 31.10.2026 и 01.11.2026): ночь с одним
+ * вариантом, место жительства на весь поход и личные спальники.
  *
- * Проверяется то, чего не видно из API: правило «ссылка есть ровно у того
- * варианта, которому она нужна» живёт в CHECK, «одно место на поход» —
- * в уникальном ключе, «палатка из чужого похода не приедет» — в составном
- * внешнем ключе, уборка — в каскадах. Тесты API останутся зелёными, если
- * из базы убрать CHECK, — а данные поедут. Ровно так уже случалось
- * с видом снаряжения.
+ * Проверяется то, чего не видно из API: «у ночи один вариант» — это колонка
+ * `kind`, а таблицы вариантов больше нет; «место — только у ночи с ночёвкой»
+ * и «готовка — только у палатки, избы и машины» живут в CHECK; «одно место
+ * на поход» — в уникальном ключе; личная вещь — в каскадах. Тесты API
+ * останутся зелёными, если из базы убрать CHECK, — а данные поедут. Ровно
+ * так уже случалось с видом снаряжения.
  */
 const routeShape = await client.query(
   `SELECT table_name
      FROM information_schema.tables
-    WHERE table_name IN ('trip_route_nights', 'trip_route_options',
-                         'trip_route_lodgers')`,
+    WHERE table_name IN ('trip_route_nights', 'trip_route_lodgers',
+                         'trip_route_sleeping')`,
 );
 const routeShapeOk = routeShape.rowCount === 3;
 if (!routeShapeOk) failed += 1;
 rows.push([
   routeShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
-  'ночёвки: таблицы ночей, вариантов и мест жительства',
+  'ночёвки: таблицы ночей, мест жительства и личных вещей',
   routeShape.rows.map((row) => row.table_name).join(', ') || 'таблиц нет',
 ]);
 
@@ -1605,7 +1605,7 @@ const routeTentItemId = (
 const routeAxeItemId = (
   await client.query(
     `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-     VALUES ($1, $2, $3, 'Топор проверки') RETURNING id`,
+     VALUES ($1, $2, $3, 'Спальник проверки') RETURNING id`,
     [user1, routeAxeTypeId, defaultGroupId],
   )
 ).rows[0].id;
@@ -1618,33 +1618,15 @@ const routeTentGearId = (
   )
 ).rows[0].id;
 
-await client.query(
-  `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id, status)
-   VALUES ($1, $2, $3, 'approved')`,
-  [tripId, routeAxeItemId, user1],
-);
-
-await client.query(
-  `INSERT INTO trip_transfer_legs
-     (trip_id, direction, departs_at, from_place, to_place, mode,
-      is_own_vehicle, owner_user_id, seats)
-   VALUES ($1, 'there', now(), 'Иркутск', 'Ольхон', 'car', true, $2, 4)`,
-  [tripId, user1],
-);
-
+// Ночь с одним вариантом: `kind` и `cooking` — её колонки.
 const routeNightId = (
   await client.query(
-    `INSERT INTO trip_route_nights (trip_id, position, place)
-     VALUES ($1, 1, 'Ольхон, у скалы') RETURNING id`,
+    `INSERT INTO trip_route_nights
+       (trip_id, position, place, kind, cooking)
+     VALUES ($1, 1, 'Ольхон, у скалы', 'tent', 'fire') RETURNING id`,
     [tripId],
   )
 ).rows[0].id;
-
-await client.query(
-  `INSERT INTO trip_route_options (trip_id, night_id, kind, tent_gear_id, cooking)
-   VALUES ($1, $2, 'tent', $3, 'fire')`,
-  [tripId, routeNightId, routeTentGearId],
-);
 
 await check(
   'ночёвки: номер ночи начинается с 1',
@@ -1663,103 +1645,49 @@ await check(
 await check(
   'ночёвки: место — не длиннее 120 знаков',
   'fail',
-  `INSERT INTO trip_route_nights (trip_id, position, place)
-   VALUES ($1, 9, repeat('я', 121))`,
+  `INSERT INTO trip_route_nights (trip_id, position, place, kind)
+   VALUES ($1, 9, repeat('я', 121), 'hotel')`,
   [tripId],
 );
 
 await check(
-  'ночёвки: «палатка» без палатки запрещена',
+  'ночёвки: место без ночлега запрещено (kind пустой)',
   'fail',
-  `INSERT INTO trip_route_options (trip_id, night_id, kind)
-   VALUES ($1, $2, 'tent')`,
-  [tripId, routeNightId],
+  `INSERT INTO trip_route_nights (trip_id, position, place)
+   VALUES ($1, 8, 'Байкал')`,
+  [tripId],
 );
 
 await check(
-  'ночёвки: «гостиница» со ссылкой на палатку запрещена',
+  'ночёвки: место у «в пути» запрещено',
   'fail',
-  `INSERT INTO trip_route_options (trip_id, night_id, kind, tent_gear_id)
-   VALUES ($1, $2, 'hotel', $3)`,
-  [tripId, routeNightId, routeTentGearId],
-);
-
-await check(
-  'ночёвки: «машина» без карточки ТС запрещена',
-  'fail',
-  `INSERT INTO trip_route_options (trip_id, night_id, kind)
-   VALUES ($1, $2, 'car')`,
-  [tripId, routeNightId],
-);
-
-await check(
-  'ночёвки: готовка у гостиницы запрещена',
-  'fail',
-  `INSERT INTO trip_route_options (trip_id, night_id, kind, cooking)
-   VALUES ($1, $2, 'hotel', 'fire')`,
-  [tripId, routeNightId],
+  `INSERT INTO trip_route_nights (trip_id, position, place, kind)
+   VALUES ($1, 7, 'Байкал', 'transit')`,
+  [tripId],
 );
 
 await check(
   'ночёвки: вид ночи — только из словаря',
   'fail',
-  `INSERT INTO trip_route_options (trip_id, night_id, kind)
-   VALUES ($1, $2, 'spaceship')`,
-  [tripId, routeNightId],
+  `INSERT INTO trip_route_nights (trip_id, position, kind)
+   VALUES ($1, 6, 'spaceship')`,
+  [tripId],
 );
 
 await check(
-  'ночёвки: одна палатка в ночи — одна строка',
+  'ночёвки: готовка у гостиницы запрещена',
   'fail',
-  `INSERT INTO trip_route_options (trip_id, night_id, kind, tent_gear_id)
-   VALUES ($1, $2, 'tent', $3)`,
-  [tripId, routeNightId, routeTentGearId],
+  `INSERT INTO trip_route_nights (trip_id, position, kind, cooking)
+   VALUES ($1, 5, 'hotel', 'fire')`,
+  [tripId],
 );
 
 await check(
   'ночёвки: готовка у избы разрешена',
   'ok',
-  `INSERT INTO trip_route_options (trip_id, night_id, kind, cooking)
-   VALUES ($1, $2, 'hut', 'both')`,
-  [tripId, routeNightId],
-);
-
-/**
- * Палатка того же каталога, но взятого в другой поход: составной ключ
- * `(trip_id, tent_gear_id)` не пускает её в эту ночь. Одного внешнего
- * ключа по `tent_gear_id` мало — он бы пропустил чужую строку.
- */
-const routeOtherTripId = (
-  await client.query(
-    `INSERT INTO trips (organizer_user_id, goal_object_id)
-     SELECT $1, goal_object_id FROM trips WHERE id = $2 RETURNING id`,
-    [user1, tripId],
-  )
-).rows[0].id;
-
-// В чужом походе нужен свой участник: `trip_gear.owner_user_id` ссылается
-// на состав именно этого похода.
-await client.query(
-  `INSERT INTO trip_participants (trip_id, user_id, status)
-   VALUES ($1, $2, 'going')
-   ON CONFLICT (trip_id, user_id) DO NOTHING`,
-  [routeOtherTripId, user1],
-);
-
-const routeForeignGearId = (
-  await client.query(
-    `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id, status)
-     VALUES ($1, $2, $3, 'approved') RETURNING id`,
-    [routeOtherTripId, routeTentItemId, user1],
-  )
-).rows[0].id;
-
-await check(
-  'ночёвки: палатка из чужого похода не принимается (составной ключ)',
-  'fail',
-  `INSERT INTO trip_route_options (trip_id, night_id, kind, tent_gear_id)
-   VALUES ($1, $2, 'tent', $3)`,
-  [tripId, routeNightId, routeForeignGearId],
+  `INSERT INTO trip_route_nights (trip_id, position, kind, cooking)
+   VALUES ($1, 4, 'hut', 'both')`,
+  [tripId],
 );
 
 await client.query(
@@ -1792,55 +1720,61 @@ await check(
   [tripId, routeTentGearId],
 );
 
-await client.query(
-  `INSERT INTO trip_route_lodgers (trip_id, user_id, tent_gear_id)
+// Личная вещь: своя вещь каталога, повторно — нельзя.
+await check(
+  'ночёвки: личный спальник — участник и вещь каталога',
+  'ok',
+  `INSERT INTO trip_route_sleeping (trip_id, user_id, gear_item_id)
    VALUES ($1, $2, $3)`,
-  [tripId, user2, routeTentGearId],
+  [tripId, user1, routeAxeItemId],
 );
 
-// Убрали ночь — ушли её варианты.
-const routeExtraNightId = (
-  await client.query(
-    `INSERT INTO trip_route_nights (trip_id, position)
-     VALUES ($1, 2) RETURNING id`,
-    [tripId],
-  )
-).rows[0].id;
-
-await client.query(
-  `INSERT INTO trip_route_options (trip_id, night_id, kind)
-   VALUES ($1, $2, 'allnight')`,
-  [tripId, routeExtraNightId],
+await check(
+  'ночёвки: одну и ту же вещь дважды не добавить',
+  'fail',
+  `INSERT INTO trip_route_sleeping (trip_id, user_id, gear_item_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, user1, routeAxeItemId],
 );
-await client.query(`DELETE FROM trip_route_nights WHERE id = $1`, [
-  routeExtraNightId,
-]);
 
-const routeOptionsLeft = (
+await check(
+  'ночёвки: спальник не ссылается на несуществующую вещь',
+  'fail',
+  `INSERT INTO trip_route_sleeping (trip_id, user_id, gear_item_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, user1, '999999999'],
+);
+
+await check(
+  'ночёвки: спальник бывает только у участника похода',
+  'fail',
+  `INSERT INTO trip_route_sleeping (trip_id, user_id, gear_item_id)
+   VALUES ($1, '00000000-0000-0000-0000-000000000000', $2)`,
+  [tripId, routeAxeItemId],
+);
+
+// Убрали вещь каталога — ушла и её строка в ночёвке.
+await client.query(`DELETE FROM gear_items WHERE id = $1`, [routeAxeItemId]);
+
+const routeSleepingLeft = (
   await client.query(
-    `SELECT count(*)::int AS count FROM trip_route_options
-      WHERE night_id = $1`,
-    [routeExtraNightId],
+    `SELECT count(*)::int AS count FROM trip_route_sleeping
+      WHERE gear_item_id = $1`,
+    [routeAxeItemId],
   )
 ).rows[0].count;
 
-if (routeOptionsLeft !== 0) failed += 1;
+if (routeSleepingLeft !== 0) failed += 1;
 rows.push([
-  routeOptionsLeft === 0 ? 'ok' : 'ОСТАЛИСЬ ВАРИАНТЫ',
-  'ночёвки: убрали ночь — ушли её варианты (каскад)',
-  routeOptionsLeft === 0 ? '' : `осталось ${routeOptionsLeft}`,
+  routeSleepingLeft === 0 ? 'ok' : 'ОСТАЛИСЬ СТРОКИ',
+  'ночёвки: убрали вещь из каталога — ушёл её спальник (каскад)',
+  routeSleepingLeft === 0 ? '' : `осталось ${routeSleepingLeft}`,
 ]);
 
-// Убрали палатку из похода — ушёл вариант ночи и место живущего.
+// Убрали палатку из похода — ушло место живущего, а ночь осталась:
+// ночь больше не ссылается на палатку.
 await client.query(`DELETE FROM trip_gear WHERE id = $1`, [routeTentGearId]);
 
-const routeTentOptionsLeft = (
-  await client.query(
-    `SELECT count(*)::int AS count FROM trip_route_options
-      WHERE tent_gear_id = $1`,
-    [routeTentGearId],
-  )
-).rows[0].count;
 const routeLodgersLeft = (
   await client.query(
     `SELECT count(*)::int AS count FROM trip_route_lodgers
@@ -1848,23 +1782,22 @@ const routeLodgersLeft = (
     [routeTentGearId],
   )
 ).rows[0].count;
-const routeGearCascadeOk = routeTentOptionsLeft === 0 && routeLodgersLeft === 0;
-if (!routeGearCascadeOk) failed += 1;
-rows.push([
-  routeGearCascadeOk ? 'ok' : 'ОСТАЛИСЬ СТРОКИ',
-  'ночёвки: убрали палатку из похода — ушёл вариант и место живущего',
-  routeGearCascadeOk
-    ? ''
-    : `вариантов ${routeTentOptionsLeft}, мест ${routeLodgersLeft}`,
-]);
+const routeNightLeft = (
+  await client.query(
+    `SELECT count(*)::int AS count FROM trip_route_nights
+      WHERE id = $1 AND kind = 'tent'`,
+    [routeNightId],
+  )
+).rows[0].count;
 
-await check(
-  'ночёвки: вариант машины ссылается на карточку из этого похода',
-  'fail',
-  `INSERT INTO trip_route_options (trip_id, night_id, kind, car_leg_id)
-   VALUES ($1, $2, 'car', 999999999)`,
-  [tripId, routeNightId],
-);
+if (routeLodgersLeft !== 0 || routeNightLeft !== 1) failed += 1;
+rows.push([
+  routeLodgersLeft === 0 && routeNightLeft === 1 ? 'ok' : 'НЕ ТАК',
+  'ночёвки: убрали палатку — ушло место живущего, а ночь осталась',
+  routeLodgersLeft === 0 && routeNightLeft === 1
+    ? ''
+    : `мест ${routeLodgersLeft}, ночь ${routeNightLeft}`,
+]);
 
 // ─── Чек-листы: пункт-ссылка на вещь (31.10.2026) ───
 /**

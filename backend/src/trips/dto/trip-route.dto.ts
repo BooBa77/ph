@@ -16,7 +16,6 @@ import {
 
 import {
   COOKING_KINDS,
-  MAX_NIGHT_OPTIONS,
   MAX_ROUTE_NIGHTS,
   NIGHT_KINDS,
   PLACE_MAX_LENGTH,
@@ -30,7 +29,7 @@ import {
  * Ответы и тела запросов вкладки «Ночёвки».
  *
  * **Все ручки вкладки возвращают её состояние целиком** (`TripRouteDto`) —
- * тот же контракт, что у «Трансфера»: на экране ночи, варианты и кто где
+ * тот же контракт, что у «Трансфера»: на экране ночи, личные вещи и кто где
  * живёт, и собрать их из частичного ответа значит однажды показать неправду.
  *
  * **Ночь приходит без id и опознаётся по `position`.** Таблица правится
@@ -38,6 +37,9 @@ import {
  * «ночь 1, ночь 2, …», а сервер заменяет набор в одной транзакции. Id
  * в ответе остаются для чтения, но присылать их обратно не нужно — иначе
  * клиент должен был бы помнить, что удалять, а что править.
+ *
+ * **У ночи один вариант** (01.11.2026): `kind` и `cooking` — поля самой
+ * ночи, а не список. `kind = null` — вариант не выбрали.
  *
  * Id — строками, как везде в проекте, где ключ `bigint`.
  */
@@ -76,56 +78,41 @@ export class RouteLodgerDto {
   status: RouteLodgerStatus;
 }
 
-/** Вариант одной ночи: палатка / гостиница / изба / машина / всю ночь / в пути. */
-export class RouteOptionDto {
-  @ApiProperty({ description: 'Id варианта', example: '4' })
+/**
+ * Личная вещь ночёвки — только для смотрящего (01.11.2026).
+ *
+ * Спальник и коврик личные: `GET /route` отдаёт строки **только того, кто
+ * спросил**. Виртуальных участников здесь быть не может по построению —
+ * у них нет входа, а их вещи организатору не показываются.
+ */
+export class RouteSleepingDto {
+  @ApiProperty({ description: 'Id строки', example: '4' })
   id: string;
 
   @ApiProperty({
-    description: 'Как ночуем',
-    enum: NIGHT_KINDS,
-    example: 'tent',
+    description: 'Предмет личного каталога',
+    example: '17',
   })
-  kind: NightKind;
+  gearItemId: string;
 
   @ApiProperty({
-    description: 'Палатка из снаряжения похода (только у «Палатки»)',
-    nullable: true,
-    example: '12',
+    description: 'Код типа: спальник или коврик',
+    example: 'sleeping_bag',
   })
-  tentGearId: string | null;
+  typeCode: string;
+
+  @ApiProperty({ description: 'Название вещи', example: 'Спальник зимний' })
+  title: string;
 
   @ApiProperty({
-    description: 'Подпись палатки: имя хозяина и название вещи',
+    description: 'Вес в граммах; null — не указан',
     nullable: true,
-    example: 'Палатка Анны',
+    example: 900,
   })
-  tentTitle: string | null;
-
-  @ApiProperty({
-    description: 'Карточка своего ТС (только у «Машины»)',
-    nullable: true,
-    example: '7',
-  })
-  carLegId: string | null;
-
-  @ApiProperty({
-    description: 'Подпись машины: откуда и куда',
-    nullable: true,
-    example: 'Иркутск → Ольхон',
-  })
-  carTitle: string | null;
-
-  @ApiProperty({
-    description: 'Способ готовки: костёр, горелка или оба',
-    enum: COOKING_KINDS,
-    nullable: true,
-    example: 'fire',
-  })
-  cooking: CookingKind | null;
+  weightGrams: number | null;
 }
 
-/** Ночь похода: номер, район и список вариантов. */
+/** Ночь похода: номер, район, дата и один вариант. */
 export class RouteNightDto {
   @ApiProperty({ description: 'Id ночи', example: '3' })
   id: string;
@@ -148,10 +135,20 @@ export class RouteNightDto {
   place: string | null;
 
   @ApiProperty({
-    description: 'Варианты ночи: комбинированная ночь — несколько',
-    type: [RouteOptionDto],
+    description: 'Как ночуем; null — не выбрали',
+    enum: NIGHT_KINDS,
+    nullable: true,
+    example: 'tent',
   })
-  options: RouteOptionDto[];
+  kind: NightKind | null;
+
+  @ApiProperty({
+    description: 'Способ готовки: костёр, горелка или оба',
+    enum: COOKING_KINDS,
+    nullable: true,
+    example: 'fire',
+  })
+  cooking: CookingKind | null;
 }
 
 /** Вкладка «Ночёвки» целиком. */
@@ -161,6 +158,12 @@ export class TripRouteDto {
 
   @ApiProperty({ description: 'Ночи похода по порядку', type: [RouteNightDto] })
   nights: RouteNightDto[];
+
+  @ApiProperty({
+    description: 'Личные вещи смотрящего: спальники и коврики',
+    type: [RouteSleepingDto],
+  })
+  sleeping: RouteSleepingDto[];
 
   @ApiProperty({
     description: 'Кто где живёт — одно место на весь поход',
@@ -173,43 +176,6 @@ export class TripRouteDto {
     type: [RouteTravelerDto],
   })
   travelers: RouteTravelerDto[];
-}
-
-/** Вариант в запросе: ссылки вместо id строк. */
-export class RouteOptionInputDto {
-  @ApiProperty({ description: 'Как ночуем', enum: NIGHT_KINDS })
-  @IsIn(NIGHT_KINDS, { message: 'Так ночевать нельзя — выберите вариант' })
-  kind: NightKind;
-
-  @ApiProperty({
-    description: 'Палатка из снаряжения похода',
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsString()
-  @Matches(/^\d{1,19}$/, { message: 'Палатка — id строкой из снаряжения' })
-  tentGearId?: string | null;
-
-  @ApiProperty({
-    description: 'Карточка своего ТС из «Трансфера»',
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsString()
-  @Matches(/^\d{1,19}$/, { message: 'Машина — id строкой из «Трансфера»' })
-  carLegId?: string | null;
-
-  @ApiProperty({
-    description: 'Способ готовки',
-    enum: COOKING_KINDS,
-    required: false,
-    nullable: true,
-  })
-  @IsOptional()
-  @IsIn(COOKING_KINDS, { message: 'Готовка — костёр, горелка или оба' })
-  cooking?: CookingKind | null;
 }
 
 /** Ночь в запросе: опознаётся по номеру, а не по id. */
@@ -240,14 +206,24 @@ export class RouteNightInputDto {
   place?: string | null;
 
   @ApiProperty({
-    description: 'Варианты ночи',
-    type: [RouteOptionInputDto],
+    description: 'Как ночуем; не задано — «идём всю ночь»',
+    enum: NIGHT_KINDS,
+    required: false,
+    nullable: true,
   })
-  @IsArray({ message: 'Варианты ночи — список' })
-  @ArrayMaxSize(MAX_NIGHT_OPTIONS, { message: 'Слишком много вариантов в ночи' })
-  @ValidateNested({ each: true })
-  @Type(() => RouteOptionInputDto)
-  options: RouteOptionInputDto[];
+  @IsOptional()
+  @IsIn(NIGHT_KINDS, { message: 'Так ночевать нельзя — выберите вариант' })
+  kind?: NightKind | null;
+
+  @ApiProperty({
+    description: 'Способ готовки',
+    enum: COOKING_KINDS,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsIn(COOKING_KINDS, { message: 'Готовка — костёр, горелка или оба' })
+  cooking?: CookingKind | null;
 }
 
 /** Вся таблица ночёвок: экран правится целиком. */
@@ -272,4 +248,15 @@ export class LodgeRouteDto {
   @IsString()
   @Matches(/^\d{1,19}$/, { message: 'Палатка — id строкой из снаряжения' })
   tentGearId: string;
+}
+
+/** Добавить личную вещь в ночёвку: спальник или коврик из каталога. */
+export class AddSleepingDto {
+  @ApiProperty({
+    description: 'Предмет личного каталога типа «Спальник» или «Коврик»',
+    example: '17',
+  })
+  @IsString()
+  @Matches(/^\d{1,19}$/, { message: 'Вещь — id строкой из снаряжения' })
+  gearItemId: string;
 }

@@ -4,15 +4,16 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager, In } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 
 import { GEAR_TYPE_CODES } from '../gear/gear.types';
 import {
+  AddSleepingDto,
   LodgeRouteDto,
   RouteLodgerDto,
   RouteNightDto,
   RouteNightInputDto,
-  RouteOptionDto,
+  RouteSleepingDto,
   RouteTravelerDto,
   SaveRouteNightsDto,
   TripRouteDto,
@@ -20,15 +21,13 @@ import {
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteLodger } from './entities/trip-route-lodger.entity';
 import { TripRouteNight } from './entities/trip-route-night.entity';
-import { TripRouteOption } from './entities/trip-route-option.entity';
-import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
+import { TripRouteSleeping } from './entities/trip-route-sleeping.entity';
 import { Trip } from './entities/trip.entity';
 import {
   COOKING_NIGHT_KINDS,
   PLACE_NIGHT_KINDS,
   ROUTE_TAB,
-  SOLO_NIGHT_KINDS,
-  type NightKind,
+  SLEEPING_TYPE_CODES,
   type RouteLodgerStatus,
 } from './trip-route.types';
 import { TripsService } from './trips.service';
@@ -42,23 +41,42 @@ interface TentRow {
   code: string;
 }
 
+/** Строка личной вещи ночёвки: хватает названия, типа и веса. */
+interface SleepingRow {
+  id: string;
+  gear_item_id: string;
+  type_code: string;
+  title: string;
+  weight_grams: number | null;
+}
+
 /**
- * Вкладка «Ночёвки»: таблица ночей, варианты и кто где живёт.
+ * Вкладка «Ночёвки»: таблица ночей, личные спальники и кто где живёт.
  *
  * **Правится целиком.** Экран — сетка ночей; правка по одной строке
- * заставляла бы клиента помнить id и порядок, а половина правил (место
- * привязано к набору вариантов ночи, дубли запрещены) проверяется только
- * на ночи целиком. Поэтому `PUT` присылает все ночи, сервис заменяет
- * набор в одной транзакции и отвечает вкладкой.
+ * заставляла бы клиента помнить id и порядок. Поэтому `PUT` присылает все
+ * ночи, сервис заменяет набор в одной транзакции и отвечает вкладкой.
+ * Экран применяет правку на лету (01.11.2026): кнопок «Сохранить» больше
+ * нет, каждое изменение уходит этим же `PUT`.
+ *
+ * **У ночи один вариант** (01.11.2026). Заказчик отменил комбинированные
+ * ночи: «На одну ночь один вариант ночёвки». `kind` и `cooking` — поля
+ * ночи, ссылок на палатку и машину нет: распределение по палаткам действует
+ * на весь поход, а машины с «Трансфером» не связаны.
  *
  * **Кто где живёт — одно место на весь поход** (ответ заказчика 31.10.2026):
  * отдельные ручки посадки в палатку, а не «люди в варианте ночи». Человек
  * живёт в палатке всю дорогу, и ночная таблица лишь показывает это по каждой
  * ночи.
  *
+ * **Спальник и коврик — личные** (01.11.2026). `GET /route` отдаёт строки
+ * только смотрящему: чужих вещей не видит никто, включая организатора.
+ * Виртуальные участники сюда не попадают — они для общественного снаряжения.
+ *
  * **Права.** Видят участники похода (403 остальным — как «Трансфер»),
- * правят те, у кого право вкладки `route` (`canEditTab`), а палатку,
- * как и рейс в «Трансфере», дополнительно правит её хозяин.
+ * правят ночи те, у кого право вкладки `route` (`canEditTab`), а палатку,
+ * как и рейс в «Трансфере», дополнительно правит её хозяин. Личные вещи
+ * правит каждый сам — право вкладки для них не нужно.
  */
 @Injectable()
 export class TripRouteService {
@@ -77,7 +95,7 @@ export class TripRouteService {
   }
 
   /**
-   * Сохранить таблицу ночёвок целиком: ночи, место, даты и варианты.
+   * Сохранить таблицу ночёвок целиком: ночи, место, даты и вариант.
    *
    * Распределение людей не трогается: оно живёт отдельно и на весь поход
    * (`trip_route_lodgers`), поэтому «переставил ночи» не сбрасывает,
@@ -94,35 +112,80 @@ export class TripRouteService {
     await this.assertCanEdit(trip, userId);
 
     await this.dataSource.transaction(async (trx) => {
-      await this.assertNights(trx, trip, dto.nights);
+      this.assertNights(dto.nights);
 
-      // Замена набора: каскад уносит варианты, а распределение людей
-      // висит на палатках, а не на ночах, и переживает правку спокойно.
+      // Замена набора: распределение людей висит на палатках, а не на
+      // ночах, и переживает правку спокойно.
       await trx.delete(TripRouteNight, { tripId: trip.id });
 
       for (const night of dto.nights) {
-        const place = this.placeOf(night);
-        const saved = await trx.save(TripRouteNight, {
+        await trx.insert(TripRouteNight, {
           tripId: trip.id,
           position: night.position,
-          place,
+          place: this.placeOf(night),
           nightDate: night.date ?? null,
+          kind: night.kind ?? null,
+          cooking: night.cooking ?? null,
         });
-
-        if (night.options.length === 0) continue;
-
-        await trx.insert(
-          TripRouteOption,
-          night.options.map((option) => ({
-            tripId: trip.id,
-            nightId: saved.id,
-            kind: option.kind,
-            tentGearId: option.kind === 'tent' ? option.tentGearId! : null,
-            carLegId: option.kind === 'car' ? option.carLegId! : null,
-            cooking: option.cooking ?? null,
-          })),
-        );
       }
+    });
+
+    return this.buildPlan(manager, trip, userId);
+  }
+
+  /**
+   * Добавить себе спальник или коврик.
+   *
+   * Вещь — обязательно предмет **своего** каталога и обязательно типа
+   * «Спальник» или «Коврик»: секция личная, чужую вещь сюда не положить.
+   * Повторное добавление той же вещи ничего не ломает (`ON CONFLICT
+   * DO NOTHING`), а количество вещей не ограничено.
+   */
+  async addSleeping(
+    userId: string,
+    tripId: number,
+    dto: AddSleepingDto,
+  ): Promise<TripRouteDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+    await this.assertSleepingItem(manager, userId, dto.gearItemId);
+
+    await manager
+      .createQueryBuilder()
+      .insert()
+      .into(TripRouteSleeping)
+      .values({
+        tripId: trip.id,
+        userId,
+        gearItemId: dto.gearItemId,
+      })
+      .orIgnore()
+      .execute();
+
+    return this.buildPlan(manager, trip, userId);
+  }
+
+  /**
+   * Убрать свою вещь из ночёвки.
+   *
+   * Удаление идёт по `(id, trip, user)`: чужую строку им не убрать, и это
+   * не ошибка — повторное удаление тоже возвращает вкладку, как освобождение
+   * места в палатке.
+   */
+  async removeSleeping(
+    userId: string,
+    tripId: number,
+    sleepingId: string,
+  ): Promise<TripRouteDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+
+    await manager.delete(TripRouteSleeping, {
+      id: sleepingId,
+      tripId: trip.id,
+      userId,
     });
 
     return this.buildPlan(manager, trip, userId);
@@ -265,21 +328,18 @@ export class TripRouteService {
     return this.buildPlan(manager, trip, userId);
   }
 
-  /** Собрать вкладку: ночи, варианты, места жительства и кого можно сажать. */
+  /** Собрать вкладку: ночи, личные вещи, места жительства и кого можно сажать. */
   private async buildPlan(
     manager: EntityManager,
     trip: Trip,
     userId: string,
   ): Promise<TripRouteDto> {
-    const [nights, options, lodgers, members, canEdit] = await Promise.all([
+    const [nights, sleeping, lodgers, members, canEdit] = await Promise.all([
       manager.find(TripRouteNight, {
         where: { tripId: trip.id },
         order: { position: 'ASC', id: 'ASC' },
       }),
-      manager.find(TripRouteOption, {
-        where: { tripId: trip.id },
-        order: { id: 'ASC' },
-      }),
+      this.sleepingRows(manager, trip.id, userId),
       manager.find(TripRouteLodger, {
         where: { tripId: trip.id },
         relations: { member: { user: true } },
@@ -292,58 +352,24 @@ export class TripRouteService {
       this.trips.canEditTab(userId, trip, ROUTE_TAB),
     ]);
 
-    const tents = await this.tentRows(
-      manager,
-      trip.id,
-      options
-        .map((option) => option.tentGearId)
-        .filter((id): id is string => id !== null),
-    );
-    const tentLabels = new Map(tents.map((row) => [row.id, row.title]));
-
-    const carIds = options
-      .map((option) => option.carLegId)
-      .filter((id): id is string => id !== null);
-    const cars =
-      carIds.length === 0
-        ? []
-        : await manager.find(TripTransferLeg, {
-            where: { tripId: trip.id, id: In(carIds) },
-          });
-    const carLabels = new Map(
-      cars.map((leg) => [leg.id, `${leg.fromPlace} → ${leg.toPlace}`]),
-    );
-
-    const optionsByNight = new Map<string, TripRouteOption[]>();
-    for (const option of options) {
-      const list = optionsByNight.get(option.nightId) ?? [];
-      list.push(option);
-      optionsByNight.set(option.nightId, list);
-    }
-
     const nightDtos = nights.map(
       (night): RouteNightDto => ({
         id: night.id,
         position: night.position,
         date: night.nightDate,
         place: night.place,
-        options: (optionsByNight.get(night.id) ?? []).map(
-          (option): RouteOptionDto => ({
-            id: option.id,
-            kind: option.kind,
-            tentGearId: option.tentGearId,
-            tentTitle:
-              option.tentGearId === null
-                ? null
-                : (tentLabels.get(option.tentGearId) ?? null),
-            carLegId: option.carLegId,
-            carTitle:
-              option.carLegId === null
-                ? null
-                : (carLabels.get(option.carLegId) ?? null),
-            cooking: option.cooking,
-          }),
-        ),
+        kind: night.kind,
+        cooking: night.cooking,
+      }),
+    );
+
+    const sleepingDtos = sleeping.map(
+      (row): RouteSleepingDto => ({
+        id: row.id,
+        gearItemId: row.gear_item_id,
+        typeCode: row.type_code,
+        title: row.title,
+        weightGrams: row.weight_grams,
       }),
     );
 
@@ -367,15 +393,17 @@ export class TripRouteService {
         left.displayName.localeCompare(right.displayName, 'ru'),
       );
 
-    return { canEdit, nights: nightDtos, lodgers: lodgerDtos, travelers };
+    return {
+      canEdit,
+      nights: nightDtos,
+      sleeping: sleepingDtos,
+      lodgers: lodgerDtos,
+      travelers,
+    };
   }
 
-  /** Ночи: номера и правила ночи целиком. */
-  private async assertNights(
-    manager: EntityManager,
-    trip: Trip,
-    nights: RouteNightInputDto[],
-  ): Promise<void> {
+  /** Ночи: номера и правила одной ночи. */
+  private assertNights(nights: RouteNightInputDto[]): void {
     const positions = new Set<number>();
 
     for (const night of nights) {
@@ -384,91 +412,101 @@ export class TripRouteService {
       }
 
       positions.add(night.position);
-
-      await this.assertNight(manager, trip, night);
+      this.assertNight(night);
     }
   }
 
   /**
-   * Правила одной ночи: что с чем сочетается и куда ссылаются варианты.
+   * Правила одной ночи: что с чем сочетается.
    *
-   * Пустой список вариантов — законное состояние: «ещё не выбрали»,
-   * на экране это считается «идём всю ночь». Места у такой ночи быть
-   * не может: некуда.
+   * У ночи один вариант (01.11.2026), поэтому смешивать больше нечего.
+   * Пустой вариант — законное состояние: «ещё не выбрали», на экране это
+   * считается «идём всю ночь», места у такой ночи быть не может.
    */
-  private async assertNight(
-    manager: EntityManager,
-    trip: Trip,
-    night: RouteNightInputDto,
-  ): Promise<void> {
-    const kinds = night.options.map((option) => option.kind);
-    const solo = kinds.filter((kind) =>
-      SOLO_NIGHT_KINDS.includes(kind as NightKind),
-    );
-
-    if (solo.length > 0 && kinds.length > 1) {
-      throw new BadRequestException(
-        '«Идём всю ночь» и «в пути» не смешиваются с другими вариантами',
-      );
-    }
-
-    const shared = kinds.filter((kind) => kind === 'hotel' || kind === 'hut');
-
-    if (new Set(shared).size !== shared.length) {
-      throw new BadRequestException(
-        '«Гостиница» или «изба» — по одной строке в ночи',
-      );
-    }
-
+  private assertNight(night: RouteNightInputDto): void {
+    const kind = night.kind ?? null;
     const place = this.placeOf(night);
-    const needsPlace = kinds.some((kind) =>
-      PLACE_NIGHT_KINDS.includes(kind as NightKind),
-    );
 
-    if (place !== null && !needsPlace) {
+    if (
+      place !== null &&
+      (kind === null || !PLACE_NIGHT_KINDS.includes(kind))
+    ) {
       throw new BadRequestException(
         'Место — только у ночи с ночлегом: выберите вариант или уберите район',
       );
     }
 
-    const tentIds = night.options
-      .map((option) => option.tentGearId)
-      .filter((id): id is string => id !== null && id !== undefined);
+    if (
+      night.cooking !== null &&
+      night.cooking !== undefined &&
+      (kind === null || !COOKING_NIGHT_KINDS.includes(kind))
+    ) {
+      throw new BadRequestException(
+        'Готовка — только у палатки, избы и машины',
+      );
+    }
+  }
 
-    if (new Set(tentIds).size !== tentIds.length) {
-      throw new BadRequestException('Одна палатка в ночи — одна строка');
+  /**
+   * Личные спальники и коврики **смотрящего**.
+   *
+   * Не всей группы: секция личная, и заказчик отдельно сказал, что спальники
+   * виртуальных участников организатору не показываются. Фильтр по
+   * `is_virtual` — страховка: войти виртуальным нельзя, но если модель
+   * когда-нибудь позволит, личное не должно утечь.
+   */
+  private async sleepingRows(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+  ): Promise<SleepingRow[]> {
+    return (await manager.query(
+      `SELECT s.id::text AS id,
+              s.gear_item_id::text AS gear_item_id,
+              gt.code AS type_code,
+              gi.title,
+              gi.weight_grams
+         FROM trip_route_sleeping s
+         JOIN gear_items gi ON gi.id = s.gear_item_id
+         JOIN gear_types gt ON gt.id = gi.gear_type_id
+         JOIN users u ON u.id = s.user_id
+        WHERE s.trip_id = $1
+          AND s.user_id = $2
+          AND u.is_virtual = false
+          AND gt.code = ANY($3::text[])
+        ORDER BY s.id ASC`,
+      [tripId, userId, SLEEPING_TYPE_CODES],
+    )) as SleepingRow[];
+  }
+
+  /** Вещь для ночёвки — своя и только спальник или коврик. */
+  private async assertSleepingItem(
+    manager: EntityManager,
+    userId: string,
+    gearItemId: string,
+  ): Promise<void> {
+    const rows = (await manager.query(
+      `SELECT gt.code
+         FROM gear_items gi
+         JOIN gear_types gt ON gt.id = gi.gear_type_id
+        WHERE gi.id = $1::bigint
+          AND gi.owner_user_id = $2
+          AND gi.is_trip_only = false`,
+      [gearItemId, userId],
+    )) as { code: string }[];
+
+    const item = rows[0];
+
+    if (item === undefined) {
+      throw new BadRequestException(
+        'Спальник и коврик — вещи из вашего каталога снаряжения',
+      );
     }
 
-    for (const option of night.options) {
-      if (option.kind === 'tent') {
-        if (!option.tentGearId) {
-          throw new BadRequestException(
-            'У «Палатки» выберите палатку из снаряжения похода',
-          );
-        }
-
-        await this.tentOf(manager, trip.id, option.tentGearId);
-      }
-
-      if (option.kind === 'car') {
-        if (!option.carLegId) {
-          throw new BadRequestException(
-            'У «Машины» выберите своё ТС из «Трансфера»',
-          );
-        }
-
-        await this.carOf(manager, trip.id, option.carLegId);
-      }
-
-      if (
-        option.cooking !== null &&
-        option.cooking !== undefined &&
-        !COOKING_NIGHT_KINDS.includes(option.kind)
-      ) {
-        throw new BadRequestException(
-          'Готовка — только у палатки, избы и машины',
-        );
-      }
+    if (!(SLEEPING_TYPE_CODES as readonly string[]).includes(item.code)) {
+      throw new BadRequestException(
+        'В ночёвку берут спальник или коврик — у этой вещи другой тип',
+      );
     }
   }
 
@@ -502,36 +540,11 @@ export class TripRouteService {
     return tent;
   }
 
-  /** Своё ТС из «Трансфера» — или 400. Общественный рейс машиной не бывает. */
-  private async carOf(
-    manager: EntityManager,
-    tripId: string,
-    carLegId: string,
-  ): Promise<TripTransferLeg> {
-    const leg = await manager.findOne(TripTransferLeg, {
-      where: { tripId, id: carLegId },
-    });
-
-    if (leg === null) {
-      throw new BadRequestException(
-        'Машина не из «Трансфера» этого похода — заведите её в «Трансфере»',
-      );
-    }
-
-    if (!leg.isOwnVehicle) {
-      throw new BadRequestException(
-        'Машина — только своё ТС из «Трансфера»: автобус и поезд ночлегом не считаются',
-      );
-    }
-
-    return leg;
-  }
-
   /**
    * Палатки похода одним запросом: название вещи, тип и хозяин.
    *
    * Через `trip_gear → gear_items → gear_types` — иначе тип пришлось бы
-   * спрашивать по одной вещи, а ночь может ссылаться на несколько палаток.
+   * спрашивать по одной вещи, а мест жительства в походе несколько.
    */
   private async tentRows(
     manager: EntityManager,

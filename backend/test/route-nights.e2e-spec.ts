@@ -11,30 +11,32 @@ import { SmtpService } from './../src/email/services/smtp.service';
 import type { TripRouteDto } from './../src/trips/dto/trip-route.dto';
 
 /**
- * «Ночёвки» похода (e2e) — 31.10.2026.
+ * «Ночёвки» похода (e2e) — 31.10.2026, переписано 01.11.2026.
  *
  * Проверяем решения заказчика и правила модели:
  *
  * 1. **Таблица правится целиком.** `PUT .../route/nights` присылает все ночи
- *    по номерам, ответ — вкладка; старые варианты заменяются, а не копятся.
- * 2. **Место — одно на ночь** и только у ночи с ночлегом: у «в пути»
- *    и «идём всю ночь» района нет.
- * 3. **Варианты не смешиваются с ночным переходом**, «гостиница» и «изба» —
- *    по одной строке, одна палатка в ночи — одна строка.
- * 4. **«Палатка» и «машина» — ссылки:** палатка только из снаряжения этого
- *    похода и только типа `tent`; машина — только своё ТС из «Трансфера».
- * 5. **Готовка** — только у палатки, избы и машины.
- * 6. **Кто где живёт — одно место на весь поход** (ответ 31.10.2026):
+ *    по номерам, ответ — вкладка; старые ночи заменяются, а не копятся.
+ * 2. **У ночи один вариант** (01.11.2026): `kind` — поле ночи. Ссылок
+ *    на палатку и машину в ночи нет: распределение по палаткам действует
+ *    на весь поход, а машины с «Трансфером» не связаны.
+ * 3. **Место — одно на ночь** и только у ночи с ночлегом: у «в пути»
+ *    и «идём всю ночь» района нет. **Готовка** — только у палатки, избы
+ *    и машины.
+ * 4. **Кто где живёт — одно место на весь поход** (ответ 31.10.2026):
  *    у человека одна строка, «переезд» — правка её же, а пересохранение
  *    ночей распределение не сбрасывает.
- * 7. **Заявка и согласие:** в чужую палатку — заявкой, принимает хозяин
+ * 5. **Заявка и согласие:** в чужую палатку — заявкой, принимает хозяин
  *    палатки или тот, кто ведёт вкладку.
- * 8. **Права:** видят участники (403 посторонним), правят те, у кого право
- *    вкладки `route`.
- * 9. **Видимость вкладки:** записанные ночи держат её открытой, пустая
+ * 6. **Спальник и коврик — личные** (01.11.2026): каждый видит и правит
+ *    только свои вещи, тип вещи — «Спальник» или «Коврик», количество
+ *    не ограничено, виртуальные участники сюда не попадают.
+ * 7. **Права:** видят участники (403 посторонним), правят ночи те, у кого
+ *    право вкладки `route`.
+ * 8. **Видимость вкладки:** записанные ночи держат её открытой, пустая
  *    таблица у короткого прогноза — закрывает.
- * 10. **Уборка каскадом:** палатку убрали из похода — ушёл вариант ночи
- *     и место живущего в ней.
+ * 9. **Уборка каскадом:** палатку убрали из похода — ушло место живущего.
+ *    Ночь при этом остаётся: она больше не ссылается на палатку.
  *
  * Поход, состав, снаряжение и карточки «Трансфера» тест заводит напрямую
  * в базе: ручки снаряжения и трансфера проверены своими спеками.
@@ -59,17 +61,23 @@ describe('Ночёвки похода (e2e)', () => {
   let objectId: string;
   let tripId: string;
 
-  /** Снаряжение: палатка Анны, палатка Петра и топор (не палатка). */
+  /** Снаряжение похода: палатка Анны и палатка Петра. */
   let annaTentId: string;
   let petrTentId: string;
-  let axeGearId: string;
 
-  /** «Трансфер»: своя машина и автобус — машиной ночует только своя. */
-  let ownCarId: string;
-  let busId: string;
+  /** Личный каталог: спальник и коврик Анны, спальник Петра, палатка. */
+  let annaBagId: string;
+  let annaMatId: string;
+  let petrBagId: string;
+  let annaTentItemId: string;
+
+  /** Человек без аккаунта: его спальник организатору не показывается. */
+  let virtualId: string;
+  let virtualBagId: string;
 
   let tentTypeId: number;
-  let axeTypeId: number;
+  let bagTypeId: number;
+  let matTypeId: number;
   let groupId: number;
 
   const routeRoleCode = `routeE2e${Date.now()}`;
@@ -136,8 +144,23 @@ describe('Ночёвки похода (e2e)', () => {
       .send({ nights });
   }
 
-  function night(position: number, options: unknown[], place?: string) {
-    return { position, date: '2026-11-07', ...(place ? { place } : {}), options };
+  /**
+   * Ночь в запросе: у ночи один вариант (01.11.2026), поэтому `kind`
+   * и `cooking` — поля ночи, а не список.
+   */
+  function night(
+    position: number,
+    kind?: string | null,
+    place?: string,
+    cooking?: string,
+  ) {
+    return {
+      position,
+      date: '2026-11-07',
+      ...(place ? { place } : {}),
+      ...(kind ? { kind } : {}),
+      ...(cooking ? { cooking } : {}),
+    };
   }
 
   /** Тип по коду: контракт экранов задаёт код, а не имя. */
@@ -157,20 +180,31 @@ describe('Ночёвки похода (e2e)', () => {
     )[0].id as number;
   }
 
-  async function addGear(
+  /** Вещь каталога человека — без строки снаряжения похода. */
+  async function addCatalogGear(
     ownerId: string,
     typeId: number,
     title: string,
     weightGrams: number,
   ): Promise<string> {
-    const itemId = (
+    return (
       await dataSource.query(
         `INSERT INTO gear_items
            (owner_user_id, gear_type_id, group_id, title, weight_grams)
          VALUES ($1, $2, $3, $4, $5) RETURNING id`,
         [ownerId, typeId, groupId, title, weightGrams],
       )
-    )[0].id;
+    )[0].id as string;
+  }
+
+  /** Вещь каталога и сразу в снаряжение похода — палатки для «Палоточных» тестов. */
+  async function addGear(
+    ownerId: string,
+    typeId: number,
+    title: string,
+    weightGrams: number,
+  ): Promise<string> {
+    const itemId = await addCatalogGear(ownerId, typeId, title, weightGrams);
 
     return (
       await dataSource.query(
@@ -178,7 +212,20 @@ describe('Ночёвки похода (e2e)', () => {
          VALUES ($1, $2, $3, 'approved') RETURNING id`,
         [tripId, itemId, ownerId],
       )
-    )[0].id;
+    )[0].id as string;
+  }
+
+  function addSleeping(token: string, gearItemId: string) {
+    return request(app.getHttpServer())
+      .post(`/api/trips/${tripId}/route/sleeping`)
+      .set('Authorization', `Bearer ${token}`)
+      .send({ gearItemId });
+  }
+
+  function removeSleeping(token: string, sleepingId: string) {
+    return request(app.getHttpServer())
+      .delete(`/api/trips/${tripId}/route/sleeping/${sleepingId}`)
+      .set('Authorization', `Bearer ${token}`);
   }
 
   beforeAll(async () => {
@@ -280,7 +327,7 @@ describe('Ночёвки похода (e2e)', () => {
       [tripId, moderatorId, roleId],
     );
 
-    // Снаряжение: полка, два типа и три вещи в походе.
+    // Снаряжение: полка, три типа и вещи.
     groupId = (
       await dataSource.query(
         `INSERT INTO gear_groups (code, name) VALUES ($1, 'Кров (тест)') RETURNING id`,
@@ -288,37 +335,47 @@ describe('Ночёвки похода (e2e)', () => {
       )
     )[0].id;
 
-    // Коды типов — контракт экранов: палатка ровно `tent`, топор — `axe`.
-    // Тип мог остаться от сида, поэтому сначала ищем, потом заводим.
+    // Коды типов — контракт экранов: палатка ровно `tent`, спальник —
+    // `sleeping_bag`, коврик — `mat`. Тип мог остаться от сида.
     tentTypeId = await typeIdOf('tent', 'Палатка');
-    axeTypeId = await typeIdOf('axe', 'Топор');
+    bagTypeId = await typeIdOf('sleeping_bag', 'Спальник');
+    matTypeId = await typeIdOf('mat', 'Коврик');
 
     annaTentId = await addGear(annaId, tentTypeId, 'Палатка Анны', 2400);
     petrTentId = await addGear(petrId, tentTypeId, 'Палатка Петра', 3100);
-    axeGearId = await addGear(petrId, axeTypeId, 'Топор Петра', 900);
 
-    // «Трансфер»: своё ТС организатора и автобус — ночуют только в своём.
-    ownCarId = (
+    annaBagId = await addCatalogGear(annaId, bagTypeId, 'Спальник Анны', 1200);
+    annaMatId = await addCatalogGear(annaId, matTypeId, 'Коврик Анны', 300);
+    petrBagId = await addCatalogGear(petrId, bagTypeId, 'Спальник Петра', 1500);
+    annaTentItemId = await addCatalogGear(
+      annaId,
+      tentTypeId,
+      'Палатка в каталоге',
+      2500,
+    );
+
+    // «Человек без аккаунта»: организатор завёл его в поход. Спальник
+    // такого человека — личное и организатору не показывается.
+    virtualId = (
       await dataSource.query(
-        `INSERT INTO trip_transfer_legs
-           (trip_id, direction, departs_at, from_place, to_place, mode,
-            is_own_vehicle, owner_user_id, seats)
-         VALUES ($1, 'there', now(), 'Иркутск', 'Ольхон', 'car', true, $2, 4)
-         RETURNING id`,
-        [tripId, organizerId],
+        `INSERT INTO users (display_name, is_virtual, virtual_owner_user_id)
+         VALUES ('Виртуальный Олег', true, $1) RETURNING id`,
+        [organizerId],
       )
     )[0].id;
 
-    busId = (
-      await dataSource.query(
-        `INSERT INTO trip_transfer_legs
-           (trip_id, direction, departs_at, from_place, to_place, mode,
-            is_own_vehicle, seats)
-         VALUES ($1, 'there', now(), 'Иркутск', 'Ольхон', 'bus', false, 40)
-         RETURNING id`,
-        [tripId],
-      )
-    )[0].id;
+    await dataSource.query(
+      `INSERT INTO trip_participants (trip_id, user_id, status)
+       VALUES ($1, $2, 'going')`,
+      [tripId, virtualId],
+    );
+
+    virtualBagId = await addCatalogGear(
+      virtualId,
+      bagTypeId,
+      'Спальник без аккаунта',
+      2000,
+    );
   });
 
   afterAll(async () => {
@@ -326,12 +383,13 @@ describe('Ночёвки похода (e2e)', () => {
       await dataSource.query('DELETE FROM trips WHERE id = $1', [tripId]);
       await dataSource.query(
         `DELETE FROM gear_items WHERE owner_user_id = ANY($1::uuid[])`,
-        [[organizerId, memberId, annaId, petrId, moderatorId]],
+        [[organizerId, memberId, annaId, petrId, moderatorId, virtualId]],
       );
-      // Типы `tent` и `axe` — канонические коды проекта: их не удаляем,
-      // вдруг они заведены сидом и нужны другим спекам.
+      // Типы `tent`, `sleeping_bag` и `mat` — канонические коды проекта:
+      // их не удаляем, вдруг они заведены сидом и нужны другим спекам.
       await dataSource.query('DELETE FROM gear_groups WHERE id = $1', [groupId]);
       await dataSource.query('DELETE FROM objects WHERE id = $1', [objectId]);
+      await dataSource.query('DELETE FROM users WHERE id = $1', [virtualId]);
       await dataSource.query('DELETE FROM roles WHERE code = $1', [
         routeRoleCode,
       ]);
@@ -345,6 +403,7 @@ describe('Ночёвки похода (e2e)', () => {
 
     expect(organizer.nights).toEqual([]);
     expect(organizer.lodgers).toEqual([]);
+    expect(organizer.sleeping).toEqual([]);
     expect(organizer.canEdit).toBe(true);
 
     const travelerIds = organizer.travelers.map((person) => person.userId);
@@ -361,13 +420,9 @@ describe('Ночёвки похода (e2e)', () => {
       .expect(403);
   });
 
-  it('ночь сохраняется целиком: номер, дата, место и палатка', async () => {
+  it('ночь сохраняется целиком: номер, дата, место, вариант и готовка', async () => {
     const body = await saveNights(organizerToken, [
-      night(
-        1,
-        [{ kind: 'tent', tentGearId: annaTentId, cooking: 'fire' }],
-        '  Ольхон, у скалы  ',
-      ),
+      night(1, 'tent', '  Ольхон, у скалы  ', 'fire'),
     ]);
 
     expect(body.nights).toHaveLength(1);
@@ -377,123 +432,64 @@ describe('Ночёвки похода (e2e)', () => {
     expect(saved.date).toBe('2026-11-07');
     // Место обрезается по краям.
     expect(saved.place).toBe('Ольхон, у скалы');
-    expect(saved.options).toHaveLength(1);
-    expect(saved.options[0].kind).toBe('tent');
-    expect(saved.options[0].tentGearId).toBe(annaTentId);
-    expect(saved.options[0].tentTitle).toBe('Палатка Анны');
-    expect(saved.options[0].cooking).toBe('fire');
+    expect(saved.kind).toBe('tent');
+    // Палатки в ночи больше нет — распределение живёт в «Палатках».
+    expect(saved).not.toHaveProperty('tentGearId');
+    expect(saved.cooking).toBe('fire');
   });
 
   it('таблица заменяется, а не копится', async () => {
     let body = await saveNights(organizerToken, [
-      night(1, [{ kind: 'tent', tentGearId: annaTentId }]),
-      night(2, [{ kind: 'hotel' }], 'Листвянка'),
+      night(1, 'tent'),
+      night(2, 'hotel', 'Листвянка'),
     ]);
 
     expect(body.nights.map((item) => item.position)).toEqual([1, 2]);
 
-    body = await saveNights(organizerToken, [night(1, [{ kind: 'transit' }])]);
+    body = await saveNights(organizerToken, [night(1, 'transit')]);
 
     expect(body.nights).toHaveLength(1);
-    expect(body.nights[0].options.map((option) => option.kind)).toEqual([
-      'transit',
-    ]);
+    expect(body.nights[0].kind).toBe('transit');
   });
 
   it('место без ночлега — 400: у «в пути» и «идём всю ночь» района нет', async () => {
     await saveNightsRaw(organizerToken, [
-      { position: 1, place: 'Байкал', options: [{ kind: 'transit' }] },
+      { position: 1, place: 'Байкал', kind: 'transit' },
     ]).expect(400);
 
     await saveNightsRaw(organizerToken, [
-      { position: 1, place: 'Байкал', options: [] },
+      { position: 1, place: 'Байкал' },
     ]).expect(400);
   });
 
-  it('ночной переход не смешивается с ночлегом', async () => {
+  it('вариант — только из словаря', async () => {
     await saveNightsRaw(organizerToken, [
-      {
-        position: 1,
-        options: [
-          { kind: 'allnight' },
-          { kind: 'tent', tentGearId: annaTentId },
-        ],
-      },
+      { position: 1, kind: 'spaceship' },
     ]).expect(400);
-  });
-
-  it('дубли внутри ночи: палатка, гостиница, изба', async () => {
-    const send = (options: unknown[]) =>
-      saveNightsRaw(organizerToken, [{ position: 1, options }]);
-
-    await send([
-      { kind: 'tent', tentGearId: annaTentId },
-      { kind: 'tent', tentGearId: annaTentId },
-    ]).expect(400);
-
-    await send([{ kind: 'hotel' }, { kind: 'hotel' }]).expect(400);
-    await send([{ kind: 'hut' }, { kind: 'hut' }]).expect(400);
-  });
-
-  it('палатка — только палатка из снаряжения этого похода', async () => {
-    // Топор ночлегом не бывает.
-    await saveNightsRaw(organizerToken, [
-      { position: 1, options: [{ kind: 'tent', tentGearId: axeGearId }] },
-    ]).expect(400);
-
-    // Палатка не из этого похода — тоже 400, а не «какая-то палатка».
-    await saveNightsRaw(organizerToken, [
-      { position: 1, options: [{ kind: 'tent', tentGearId: '999999' }] },
-    ]).expect(400);
-
-    // Без палатки вариант невозможен.
-    await saveNightsRaw(organizerToken, [
-      { position: 1, options: [{ kind: 'tent' }] },
-    ]).expect(400);
-  });
-
-  it('машина — только своё ТС из «Трансфера»', async () => {
-    await saveNightsRaw(organizerToken, [
-      { position: 1, options: [{ kind: 'car', carLegId: busId }] },
-    ]).expect(400);
-
-    await saveNightsRaw(organizerToken, [
-      { position: 1, options: [{ kind: 'car' }] },
-    ]).expect(400);
-
-    const body = await saveNights(organizerToken, [
-      night(1, [{ kind: 'car', carLegId: ownCarId }]),
-    ]);
-
-    expect(body.nights[0].options[0].carTitle).toBe('Иркутск → Ольхон');
   });
 
   it('готовка — только у палатки, избы и машины', async () => {
     await saveNightsRaw(organizerToken, [
-      { position: 1, options: [{ kind: 'hotel', cooking: 'fire' }] },
+      { position: 1, kind: 'hotel', cooking: 'fire' },
     ]).expect(400);
 
     await saveNightsRaw(organizerToken, [
-      { position: 1, options: [{ kind: 'transit', cooking: 'fire' }] },
+      { position: 1, kind: 'transit', cooking: 'fire' },
     ]).expect(400);
 
     // У избы готовка законна.
     const body = await saveNights(organizerToken, [
-      night(1, [{ kind: 'hut', cooking: 'both' }], 'Изба у реки'),
+      night(1, 'hut', 'Изба у реки', 'both'),
     ]);
 
-    expect(body.nights[0].options[0].cooking).toBe('both');
+    expect(body.nights[0].cooking).toBe('both');
   });
 
   it('правка таблицы — только с правом вкладки', async () => {
-    await saveNightsRaw(memberToken, [
-      { position: 1, options: [] },
-    ]).expect(403);
+    await saveNightsRaw(memberToken, [{ position: 1 }]).expect(403);
 
     // Роль с вкладкой `route` право даёт.
-    const body = await saveNights(moderatorToken, [
-      night(1, [{ kind: 'tent', tentGearId: petrTentId }]),
-    ]);
+    const body = await saveNights(moderatorToken, [night(1, 'tent')]);
 
     expect(body.nights).toHaveLength(1);
   });
@@ -541,7 +537,6 @@ describe('Ночёвки похода (e2e)', () => {
   });
 
   it('чужого в чужую палатку сажает только хозяин или ведущий вкладку', async () => {
-    // Не хозяин палатки и не ведущий вкладку — 403.
     await request(app.getHttpServer())
       .put(`/api/trips/${tripId}/route/lodgers/${petrId}`)
       .set('Authorization', `Bearer ${memberToken}`)
@@ -576,8 +571,8 @@ describe('Ночёвки похода (e2e)', () => {
 
   it('распределение переживает пересохранение ночей', async () => {
     const body = await saveNights(organizerToken, [
-      night(1, [{ kind: 'tent', tentGearId: annaTentId }]),
-      night(2, [{ kind: 'tent', tentGearId: petrTentId }]),
+      night(1, 'tent'),
+      night(2, 'tent'),
     ]);
 
     const ids = body.lodgers.map((person) => person.userId);
@@ -618,18 +613,100 @@ describe('Ночёвки похода (e2e)', () => {
       .expect(200);
   });
 
-  it('палатку убрали из похода — ушёл вариант и место живущего', async () => {
+  // ───────────────────── спальник и коврик (01.11.2026) ─────────────────────
+
+  it('спальник добавляется из своего каталога и виден только своему', async () => {
+    const body = await addSleeping(annaToken, annaBagId).expect(200);
+
+    const mine = (body.body as TripRouteDto).sleeping;
+    expect(mine).toHaveLength(1);
+    expect(mine[0].gearItemId).toBe(annaBagId);
+    expect(mine[0].typeCode).toBe('sleeping_bag');
+    expect(mine[0].title).toBe('Спальник Анны');
+    expect(mine[0].weightGrams).toBe(1200);
+
+    // Организатор чужих вещей не видит: секция личная.
+    const organizer = await plan(organizerToken);
+    expect(organizer.sleeping).toEqual([]);
+
+    // Петр тоже видит только своё — пока пустое.
+    expect((await plan(petrToken)).sleeping).toEqual([]);
+  });
+
+  it('коврик — такой же личный предмет, количество не ограничено', async () => {
+    const body = await addSleeping(annaToken, annaMatId).expect(200);
+
+    const mine = (body.body as TripRouteDto).sleeping;
+    expect(mine.map((row) => row.typeCode)).toEqual(['sleeping_bag', 'mat']);
+
+    // Повторное добавление той же вещи ничего не дублирует.
+    const again = await addSleeping(annaToken, annaBagId).expect(200);
+    expect((again.body as TripRouteDto).sleeping).toHaveLength(2);
+  });
+
+  it('чужая вещь и вещь не того типа — 400', async () => {
+    // Спальник Петра: своё только своему.
+    await addSleeping(annaToken, petrBagId).expect(400);
+
+    // Палатка — не спальник и не коврик.
+    await addSleeping(annaToken, annaTentItemId).expect(400);
+  });
+
+  it('спальник виртуального участника организатору не показывается', async () => {
+    await dataSource.query(
+      `INSERT INTO trip_route_sleeping (trip_id, user_id, gear_item_id)
+       VALUES ($1, $2, $3)`,
+      [tripId, virtualId, virtualBagId],
+    );
+
+    const organizer = await plan(organizerToken);
+    // Своих вещей у организатора нет, а спальник «Олега без аккаунта» —
+    // личное: в ответе его нет.
+    expect(organizer.sleeping).toEqual([]);
+    expect(organizer.sleeping.some((row) => row.gearItemId === virtualBagId)).toBe(
+      false,
+    );
+  });
+
+  it('удаление — только своё, повтор ничего не ломает', async () => {
+    const anna = await plan(annaToken);
+    const bag = anna.sleeping.find((row) => row.gearItemId === annaBagId);
+    expect(bag).toBeDefined();
+
+    // Петр не может убрать чужую строку: удаление идёт по своему user_id.
+    const foreign = await removeSleeping(petrToken, bag!.id).expect(200);
+    expect(
+      (foreign.body as TripRouteDto).sleeping.some((row) => row.id === bag!.id),
+    ).toBe(false);
+
+    const own = await removeSleeping(annaToken, bag!.id).expect(200);
+    expect(
+      (own.body as TripRouteDto).sleeping.some((row) => row.id === bag!.id),
+    ).toBe(false);
+
+    await removeSleeping(annaToken, bag!.id).expect(200);
+  });
+
+  it('посторонний в спальники не лезет — 403', async () => {
+    await request(app.getHttpServer())
+      .post(`/api/trips/${tripId}/route/sleeping`)
+      .set('Authorization', `Bearer ${strangerToken}`)
+      .send({ gearItemId: annaBagId })
+      .expect(403);
+  });
+
+  it('палатку убрали из похода — ушло место живущего, а ночь осталась', async () => {
     await dataSource.query('DELETE FROM trip_gear WHERE id = $1', [petrTentId]);
 
     const body = await plan(organizerToken);
-    const tentIds = body.nights.flatMap((item) =>
-      item.options.map((option) => option.tentGearId),
-    );
 
-    expect(tentIds).not.toContain(petrTentId);
     expect(
       body.lodgers.some((person) => person.tentGearId === petrTentId),
     ).toBe(false);
+
+    // Ночь больше не ссылается на палатку: она осталась, как и была.
+    expect(body.nights).toHaveLength(2);
+    expect(body.nights.every((item) => item.kind === 'tent')).toBe(true);
   });
 
   it('вкладка «Ночёвки» видна по записанным ночам и скрыта при пустой таблице', async () => {

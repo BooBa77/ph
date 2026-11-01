@@ -25,7 +25,7 @@ import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
 import { TripRouteLodger } from './entities/trip-route-lodger.entity';
 import { TripRouteNight } from './entities/trip-route-night.entity';
-import { TripRouteOption } from './entities/trip-route-option.entity';
+import { TripRouteSleeping } from './entities/trip-route-sleeping.entity';
 import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
 import { TripTransferPassenger } from './entities/trip-transfer-passenger.entity';
 import { TripType } from './entities/trip-type.entity';
@@ -82,7 +82,7 @@ import { ObjectsService } from './objects.service';
       TripMealDishExclusion,
       TripRouteElement,
       TripRouteNight,
-      TripRouteOption,
+      TripRouteSleeping,
       TripRouteLodger,
       TripTransferLeg,
       TripTransferPassenger,

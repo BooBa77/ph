@@ -16,6 +16,7 @@ import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
+  AddSleepingDto,
   LodgeRouteDto,
   SaveRouteNightsDto,
   TripRouteDto,
@@ -23,20 +24,24 @@ import {
 import { TripRouteService } from './trip-route.service';
 
 /**
- * «Ночёвки» похода: таблица ночей, варианты и кто где живёт.
+ * «Ночёвки» похода: таблица ночей, личные спальники и кто где живёт.
  *
  * **Таблица правится целиком** (`PUT .../route/nights`): экран — сетка
- * ночей, и половина правил проверяется только на ночи целиком (место есть
- * лишь у ночи с ночлегом, «идём всю ночь» не смешивается с палаткой, одна
- * палатка — одна строка). Клиент присылает номера ночей, а не id: помнить,
- * что удалять, а что править, он не должен.
+ * ночей, а правила проверяются на ночи целиком (место есть лишь у ночи
+ * с ночлегом, готовка — только у палатки, избы и машины). Клиент присылает
+ * номера ночей, а не id: помнить, что удалять, а что править, он не должен.
+ * С 01.11.2026 у ночи **один вариант**, и экран применяет правку на лету —
+ * каждая правка уходит этим же `PUT`.
  *
  * **Люди — отдельными ручками.** «Кто где живёт» — одно место на весь поход
  * (ответ заказчика 31.10.2026), поэтому посадка не привязана к ночи
  * и не сбрасывается, когда переставляют ночи.
  *
+ * **Спальник и коврик — личные ручки** (01.11.2026): добавить и убрать
+ * может только сам человек, и `GET /route` отдаёт только его строки.
+ *
  * **Все ручки отвечают вкладкой целиком** (`TripRouteDto`), включая
- * удаления: на экране ночи, варианты и занятые места — числа от трёх
+ * удаления: на экране ночи, личные вещи и занятые места — числа от трёх
  * таблиц, и собрать их из частичного ответа значит однажды показать
  * неправду. Поэтому у `PUT`, `POST` и `DELETE` стоит 200, а не 201/204.
  */
@@ -47,7 +52,7 @@ export class TripRouteController {
 
   /** Вкладка целиком. Видят участники похода. */
   @Get(':id/route')
-  @ApiOperation({ summary: 'Ночёвки похода: ночи, варианты и кто где живёт' })
+  @ApiOperation({ summary: 'Ночёвки похода: ночи, личные вещи и кто где живёт' })
   @ApiOkResponse({ type: TripRouteDto })
   async getPlan(
     @CurrentUser() authUser: AuthUser,
@@ -56,7 +61,7 @@ export class TripRouteController {
     return this.route.getPlan(authUser.id, id);
   }
 
-  /** Сохранить таблицу ночей: ночи, место, даты и варианты. */
+  /** Сохранить таблицу ночей: ночи, место, даты и вариант. */
   @Put(':id/route/nights')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Сохранить таблицу ночёвок' })
@@ -67,6 +72,32 @@ export class TripRouteController {
     @Body() dto: SaveRouteNightsDto,
   ): Promise<TripRouteDto> {
     return this.route.saveNights(authUser.id, id, dto);
+  }
+
+  /** Добавить себе спальник или коврик из личного каталога. */
+  @Post(':id/route/sleeping')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Добавить спальник или коврик в ночёвку' })
+  @ApiOkResponse({ type: TripRouteDto })
+  async addSleeping(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AddSleepingDto,
+  ): Promise<TripRouteDto> {
+    return this.route.addSleeping(authUser.id, id, dto);
+  }
+
+  /** Убрать свою вещь из ночёвки. Чужую строку этим путём не убрать. */
+  @Delete(':id/route/sleeping/:sleepingId')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Убрать спальник или коврик из ночёвки' })
+  @ApiOkResponse({ type: TripRouteDto })
+  async removeSleeping(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('sleepingId', ParseIntPipe) sleepingId: number,
+  ): Promise<TripRouteDto> {
+    return this.route.removeSleeping(authUser.id, id, String(sleepingId));
   }
 
   /** Посадить в палатку себя или другого: в чужую — заявкой. */
