@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, ref, watch, type ComponentPublicInstance } from 'vue'
 
 import {
   createGearItem,
@@ -33,7 +33,7 @@ import {
   gearAttributesSummary,
   type GearAttributeDrafts,
 } from '@/utils/gearAttributes'
-import { formatWeight, formatWeightTotal, parseWeightGrams } from '@/utils/gearWeight'
+import { formatWeight, parseWeightGrams } from '@/utils/gearWeight'
 
 /**
  * «Снаряжение» — личный каталог предметов с весом.
@@ -61,14 +61,24 @@ import { formatWeight, formatWeightTotal, parseWeightGrams } from '@/utils/gearW
  * Подсказки собираются из уже введённых значений (`<datalist>`), отдельного
  * справочника мест нет.
  *
- * **Фильтр — два поля, фильтруют сразу.** Наименование и местоположение:
- * пустое поле не фильтрует, регистр не важен.
+ * **Фильтр — отдельная секция «Поиск снаряжения» (03.11.2026).** Заказчик:
+ * «Оформи фильтр в секцию, подпись какую-то, хоть „Поиск снаряжения“».
+ * Два поля — наименование и местоположение: пустое поле не фильтрует, регистр
+ * не важен, фильтруют сразу.
+ *
+ * **Каждая вещь — отдельная белая плашка (03.11.2026).** Заказчик:
+ * «Давай каждую единицу в отдельную пилюлю и белый цвет». Строки больше
+ * не делятся линиями: у вещи своя карточка на белом, поэтому её видно
+ * целиком, а не как строку таблицы.
  *
  * **Группы сворачиваются** — как в «Питании»: у каждой секции своя кнопка,
  * а одна общая сворачивает все.
  *
- * **Вес правится на месте.** Самая частая правка — «взвесил позже»:
- * поэтому вес в строке — поле ввода, которое сохраняется по `change`.
+ * **Вес показывается один раз (03.11.2026).** Заказчик: «Два раза вес,
+ * зачем?» — поэтому в плашке одна подпись «2,6 кг», а граммы спрашиваются
+ * только в правке: по нажатию на вес поле раскрывается, по потере фокуса
+ * сохраняется. Группа в подписи вещи не повторяется: она и так стоит
+ * заголовком секции («Зачем в title повторять группу?»).
  *
  * **Характеристики правятся в раскрывающемся блоке под строкой** — их
  * бывает до четырёх, и держать это в строке рядом с названием и весом
@@ -130,19 +140,6 @@ const savingId = ref<string | null>(null)
 /** Что ждёт подтверждения удаления. */
 const confirmingItemId = ref<string | null>(null)
 const confirmingVehicleId = ref<string | null>(null)
-
-/**
- * Итог: сумма известных весов и число невзвешенных.
- *
- * Считаем здесь, а не берём из ответа, — иначе после каждой правки
- * пришлось бы перечитывать список ради суммы.
- */
-const totalWeightGrams = computed(() =>
-  items.value.reduce((sum, item) => sum + (item.weightGrams ?? 0), 0),
-)
-const itemsWithoutWeight = computed(
-  () => items.value.filter((item) => item.weightGrams === null).length,
-)
 
 // ───────────────────────────── фильтр ─────────────────────────────
 
@@ -489,9 +486,48 @@ async function saveTitle(item: GearItem, event: Event) {
   await save(item, { title })
 }
 
+/**
+ * Вес: в плашке одна подпись «2,6 кг», граммы — только в правке.
+ *
+ * Заказчик 03.11.2026: «Два раза вес, зачем?» — до этого рядом стояли поле
+ * с граммами и подпись словами. Теперь красивое значение показывается,
+ * а по нажатию раскрывается поле ввода: правка «взвесил позже» осталась
+ * на месте, но занимает строку, только пока её правят.
+ */
+const editingWeightId = ref<string | null>(null)
+const weightField = ref<HTMLInputElement | null>(null)
+
+/** Ссылка на поле веса: в `v-for` их был бы массив, а поле одно. */
+function setWeightField(el: Element | ComponentPublicInstance | null) {
+  weightField.value = el instanceof HTMLInputElement ? el : null
+}
+
+async function startWeightEdit(item: GearItem) {
+  error.value = null
+  editingWeightId.value = item.id
+
+  await nextTick()
+  weightField.value?.focus()
+  weightField.value?.select()
+}
+
+/** Уход из поля без правки: `change` не сработал — просто закрываем. */
+function closeWeightEdit() {
+  editingWeightId.value = null
+}
+
+/** `Escape` возвращает прежний вес: `change` при этом уже ничего не сохранит. */
+function cancelWeightEdit(item: GearItem, event: Event) {
+  const input = event.target as HTMLInputElement
+  input.value = item.weightGrams === null ? '' : String(item.weightGrams)
+  editingWeightId.value = null
+}
+
 async function saveWeight(item: GearItem, event: Event) {
   const input = event.target as HTMLInputElement
   const weightGrams = parseWeightGrams(input.value)
+
+  editingWeightId.value = null
 
   if (weightGrams === undefined) {
     input.value = item.weightGrams === null ? '' : String(item.weightGrams)
@@ -702,15 +738,11 @@ async function removeVehicleById(vehicle: Vehicle) {
     <h2 class="mb-2 text-xl font-semibold text-text">Снаряжение</h2>
 
     <p class="mb-3 text-sm text-muted">
-      Свой список предметов и их вес. Из него в походе собирается общественное снаряжение, а вес
-      рюкзака считается по этим числам — поэтому взвешенное лучше невзвешенного.
+      Твой список снаряжения. Используется при подготовке к походу, рекомендуем указать вес
+      предметов, так автоматически будет подсчитан и собранный рюкзак.
     </p>
 
     <p v-if="error" class="mb-3 text-sm text-red-600" data-test="gear-error">{{ error }}</p>
-
-    <p class="mb-4 text-sm font-medium text-text" data-test="gear-total">
-      {{ formatWeightTotal(totalWeightGrams, itemsWithoutWeight) }}
-    </p>
 
     <div class="mb-4 flex flex-wrap items-center gap-2">
       <button
@@ -869,44 +901,59 @@ async function removeVehicleById(vehicle: Vehicle) {
       </p>
 
       <template v-else>
-        <!-- Фильтр: оба поля фильтруют список сразу, без кнопки «найти» -->
-        <div
-          class="mb-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
-          data-test="gear-filter"
+        <!--
+          Фильтр — своя секция (03.11.2026): заказчик просил подпись,
+          чтобы два поля над списком не выглядели ещё одной формой.
+        -->
+        <section
+          class="mb-4 flex flex-col gap-2 rounded-2xl border border-border bg-surface p-3"
+          data-test="gear-search"
         >
-          <label class="flex flex-col gap-1">
-            <span class="text-xs text-muted">Наименование</span>
-            <input
-              v-model="filterTitle"
-              type="search"
-              placeholder="Палатка"
-              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-              data-test="gear-filter-title"
-            />
-          </label>
+          <div>
+            <h3 class="text-sm font-medium text-text">Поиск снаряжения</h3>
+            <p class="text-xs text-muted">
+              По названию и месту, где лежит. Фильтрует сразу, без кнопки «найти».
+            </p>
+          </div>
 
-          <label class="flex flex-col gap-1">
-            <span class="text-xs text-muted">Местоположение</span>
-            <input
-              v-model="filterLocation"
-              type="search"
-              list="gear-locations"
-              placeholder="Гараж"
-              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-              data-test="gear-filter-location"
-            />
-          </label>
-
-          <button
-            v-if="hasFilter"
-            type="button"
-            class="cursor-pointer rounded-xl border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-text"
-            data-test="gear-filter-reset"
-            @click="filterTitle = ''; filterLocation = ''"
+          <div
+            class="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+            data-test="gear-filter"
           >
-            Сбросить
-          </button>
-        </div>
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-muted">Наименование</span>
+              <input
+                v-model="filterTitle"
+                type="search"
+                placeholder="Палатка"
+                class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+                data-test="gear-filter-title"
+              />
+            </label>
+
+            <label class="flex flex-col gap-1">
+              <span class="text-xs text-muted">Местоположение</span>
+              <input
+                v-model="filterLocation"
+                type="search"
+                list="gear-locations"
+                placeholder="Гараж"
+                class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+                data-test="gear-filter-location"
+              />
+            </label>
+
+            <button
+              v-if="hasFilter"
+              type="button"
+              class="cursor-pointer rounded-xl border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-text"
+              data-test="gear-filter-reset"
+              @click="filterTitle = ''; filterLocation = ''"
+            >
+              Сбросить
+            </button>
+          </div>
+        </section>
 
         <p
           v-if="visibleGroups.length === 0"
@@ -945,7 +992,7 @@ async function removeVehicleById(vehicle: Vehicle) {
               <h3 class="text-sm font-medium text-text" data-test="gear-group-name">
                 {{ group.name }}
                 <span class="text-xs font-normal text-muted">
-                  · {{ group.items.length }}
+                  · {{ group.items.length }} ед.
                 </span>
               </h3>
 
@@ -960,67 +1007,62 @@ async function removeVehicleById(vehicle: Vehicle) {
               </button>
             </div>
 
-            <ul v-if="!isCollapsed(group.id)" class="flex flex-col">
+            <ul v-if="!isCollapsed(group.id)" class="flex flex-col gap-2">
               <li
                 v-for="item in group.items"
                 :key="item.id"
-                class="border-t border-border py-2"
+                class="rounded-2xl border border-border bg-white p-3"
                 data-test="gear-item"
               >
-                <div class="grid gap-2 sm:grid-cols-[1fr_6rem_10rem_1fr_auto] sm:items-center">
+                <div class="flex flex-wrap items-center gap-2">
                   <input
                     :value="item.title"
                     type="text"
                     maxlength="120"
                     :disabled="savingId === item.id"
-                    class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                    class="min-w-0 flex-1 basis-40 rounded-lg border border-transparent bg-transparent px-2 py-1 text-base font-medium text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
                     aria-label="Название предмета"
                     data-test="item-title"
                     @change="saveTitle(item, $event)"
                   />
 
-                  <div class="flex items-center gap-1">
+                  <!--
+                    Вес — одна подпись «2,6 кг» (03.11.2026). Раньше рядом
+                    с ней стояло поле с граммами, и вес было видно дважды.
+                    Граммы спрашиваются только по нажатию.
+                  -->
+                  <button
+                    v-if="editingWeightId !== item.id"
+                    type="button"
+                    class="shrink-0 cursor-pointer rounded-full border border-border bg-surface px-2 py-0.5 text-sm text-text transition-colors hover:border-primary"
+                    :title="item.weightGrams === null ? 'Указать вес' : 'Изменить вес'"
+                    data-test="item-weight-display"
+                    @click="startWeightEdit(item)"
+                  >
+                    {{ formatWeight(item.weightGrams) }}
+                  </button>
+
+                  <label v-else class="flex shrink-0 items-center gap-1">
                     <input
+                      :ref="setWeightField"
                       :value="item.weightGrams ?? ''"
                       type="number"
                       min="1"
                       step="1"
                       placeholder="—"
                       :disabled="savingId === item.id"
-                      class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-right text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                      class="w-20 rounded-lg border border-border bg-field px-2 py-0.5 text-right text-base text-text focus:border-primary focus:outline-none disabled:opacity-60"
                       aria-label="Вес в граммах"
                       data-test="item-weight"
                       @change="saveWeight(item, $event)"
+                      @blur="closeWeightEdit"
+                      @keydown.enter.prevent="saveWeight(item, $event)"
+                      @keydown.esc.prevent="cancelWeightEdit(item, $event)"
                     />
-                    <span class="shrink-0 text-xs text-muted">{{ formatWeight(item.weightGrams) }}</span>
-                  </div>
+                    <span class="text-xs text-muted">г</span>
+                  </label>
 
-                  <input
-                    :value="item.location ?? ''"
-                    type="text"
-                    maxlength="120"
-                    list="gear-locations"
-                    placeholder="где лежит"
-                    :disabled="savingId === item.id"
-                    class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
-                    aria-label="Местоположение"
-                    data-test="item-location"
-                    @change="saveLocation(item, $event)"
-                  />
-
-                  <input
-                    :value="item.note ?? ''"
-                    type="text"
-                    maxlength="500"
-                    placeholder="заметка"
-                    :disabled="savingId === item.id"
-                    class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-xs text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
-                    aria-label="Заметка"
-                    data-test="item-note"
-                    @change="saveNote(item, $event)"
-                  />
-
-                  <div class="flex flex-wrap items-center gap-2 justify-self-start">
+                  <div class="ml-auto flex flex-wrap items-center gap-2">
                     <!--
                       Личный порядок внутри полки — стрелками, а не перетаскиванием:
                       на телефоне стрелка работает так же, как мышью.
@@ -1082,15 +1124,42 @@ async function removeVehicleById(vehicle: Vehicle) {
                   </div>
                 </div>
 
+                <!-- Место и заметка: обычный текст, пока не нажали поле -->
+                <div class="mt-1 flex flex-wrap items-center gap-2 px-1">
+                  <input
+                    :value="item.location ?? ''"
+                    type="text"
+                    maxlength="120"
+                    list="gear-locations"
+                    placeholder="где лежит"
+                    :disabled="savingId === item.id"
+                    class="min-w-32 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-base text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                    aria-label="Местоположение"
+                    data-test="item-location"
+                    @change="saveLocation(item, $event)"
+                  />
+
+                  <input
+                    :value="item.note ?? ''"
+                    type="text"
+                    maxlength="500"
+                    placeholder="заметка"
+                    :disabled="savingId === item.id"
+                    class="min-w-32 flex-1 rounded-lg border border-transparent bg-transparent px-2 py-1 text-base text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                    aria-label="Заметка"
+                    data-test="item-note"
+                    @change="saveNote(item, $event)"
+                  />
+                </div>
+
                 <!-- Характеристики: тип, подпись словами и кнопка правки -->
-                <div class="mt-1 flex flex-wrap items-center justify-between gap-2 px-2">
+                <div class="mt-2 flex flex-wrap items-center justify-between gap-2 px-1">
                   <p class="text-xs text-muted" data-test="item-attributes-summary">
                     <span class="text-text" data-test="item-type-name">{{ item.typeName }}</span>
                     <template v-if="gearAttributesSummary(item)">
                       · {{ gearAttributesSummary(item) }}
                     </template>
                     <template v-else> · характеристики не заполнены</template>
-                    <span class="text-muted"> · {{ group.name }}</span>
                   </p>
 
                   <button

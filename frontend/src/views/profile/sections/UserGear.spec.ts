@@ -17,7 +17,12 @@ import UserGear from '@/views/profile/sections/UserGear.vue'
  *
  * - секции собираются по личным группам, **пустые группы и типы не видны**;
  * - группы сворачиваются по одной и все разом, как в «Питании»;
- * - фильтр по наименованию и местоположению работает сразу;
+ * - фильтр по наименованию и местоположению работает сразу и живёт
+ *   в секции «Поиск снаряжения»;
+ * - вещь — отдельная плашка, вес в ней показан один раз (правится по
+ *   нажатию), а группы в подписи вещи нет: она стоит заголовком секции
+ *   (заказчик 03.11.2026);
+ * - итога по всему каталогу больше нет: «Сколько снаряги дома хранится?»;
  * - вещь заводится без выбора группы — группа следует из типа;
  * - местоположение правится на месте и уходит `null`-ом, когда поле пустое;
  * - «Настройка группировки» открывается диалогом.
@@ -304,10 +309,10 @@ describe('UserGear', () => {
     const groups = wrapper.findAll('[data-test="gear-group"]')
     expect(groups).toHaveLength(2)
     expect(groups[0]?.text()).toContain('Кров')
+    expect(groups[0]?.text()).toContain('1 ед.')
     expect(groups[1]?.text()).toContain('Кухня')
     // «Костровое» пустое — секции нет вовсе.
     expect(wrapper.text()).not.toContain('Костровое')
-    expect(wrapper.find('[data-test="gear-total"]').text()).toBe('Всего: 3,9 кг')
   })
 
   it('порядок групп — из справочника, а не как пришли вещи', async () => {
@@ -333,19 +338,23 @@ describe('UserGear', () => {
     expect(wrapper.find('[data-test="gear-group-name"]').text()).toContain('Рыбалка')
   })
 
-  it('неизвестный вес не считается в итог, но виден в подписи', async () => {
+  it('вес без значения подписан прочерком, а не нулём', async () => {
     const wrapper = await mountSection([makeItem({ weightGrams: null, title: 'Котелок' })])
 
-    expect(wrapper.find('[data-test="gear-total"]').text()).toBe(
-      'Всего: 0 г · без веса: 1',
-    )
+    expect(wrapper.find('[data-test="item-weight-display"]').text()).toBe('—')
+  })
+
+  it('итога по всему каталогу больше нет', async () => {
+    const wrapper = await mountSection([makeItem(), makeGas()])
+
+    expect(wrapper.find('[data-test="gear-total"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Всего')
   })
 
   it('пустой список приглашает начать', async () => {
     const wrapper = await mountSection([])
 
     expect(wrapper.find('[data-test="gear-empty"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="gear-total"]').text()).toBe('Всего: 0 г')
   })
 
   // ───────────────────────────── сворачивание ─────────────────────────────
@@ -378,6 +387,16 @@ describe('UserGear', () => {
   })
 
   // ───────────────────────────── фильтр ─────────────────────────────
+
+  it('фильтр оформлен секцией с подписью «Поиск снаряжения»', async () => {
+    const wrapper = await mountSection([makeItem()])
+
+    const section = wrapper.find('[data-test="gear-search"]')
+    expect(section.exists()).toBe(true)
+    expect(section.text()).toContain('Поиск снаряжения')
+    expect(section.find('[data-test="gear-filter-title"]').exists()).toBe(true)
+    expect(section.find('[data-test="gear-filter-location"]').exists()).toBe(true)
+  })
 
   it('фильтрует по наименованию сразу', async () => {
     const wrapper = await mountSection([makeItem(), makeGas()])
@@ -573,20 +592,32 @@ describe('UserGear', () => {
 
   // ─────────────────────── правка на месте и значения ───────────────────────
 
-  it('вес правится на месте и сохраняется через PATCH', async () => {
+  it('вес показывается один раз и сохраняется через PATCH', async () => {
     const wrapper = await mountSection()
 
+    const shown = wrapper.find('[data-test="item-weight-display"]')
+    expect(shown.text()).toBe('2,4 кг')
+    expect(wrapper.find('[data-test="item-weight"]').exists()).toBe(false)
+
+    await shown.trigger('click')
+    await flushPromises()
+
     const weight = wrapper.find('[data-test="item-weight"]')
+    expect((weight.element as HTMLInputElement).value).toBe('2400')
+
     await weight.setValue('1800')
     await weight.trigger('change')
     await flushPromises()
 
     expect(mocked.updateGearItem).toHaveBeenCalledWith('gear-1', { weightGrams: 1800 })
-    expect(wrapper.find('[data-test="gear-total"]').text()).toBe('Всего: 1,8 кг')
+    expect(wrapper.find('[data-test="item-weight-display"]').text()).toBe('1,8 кг')
   })
 
   it('пустое поле веса стирает вес null-ом', async () => {
     const wrapper = await mountSection()
+
+    await wrapper.find('[data-test="item-weight-display"]').trigger('click')
+    await flushPromises()
 
     const weight = wrapper.find('[data-test="item-weight"]')
     await weight.setValue('')
@@ -594,7 +625,25 @@ describe('UserGear', () => {
     await flushPromises()
 
     expect(mocked.updateGearItem).toHaveBeenCalledWith('gear-1', { weightGrams: null })
-    expect(wrapper.find('[data-test="gear-total"]').text()).toContain('без веса: 1')
+    expect(wrapper.find('[data-test="item-weight-display"]').text()).toBe('—')
+  })
+
+  it('Escape в поле веса возвращает прежнее значение и не сохраняет', async () => {
+    const wrapper = await mountSection()
+
+    await wrapper.find('[data-test="item-weight-display"]').trigger('click')
+    await flushPromises()
+
+    // Набираем вес «как человек»: `setValue` в VTU сразу шлёт `change`,
+    // а здесь важно, что значение ещё не зафиксировано.
+    const weight = wrapper.find('[data-test="item-weight"]')
+    const input = weight.element as HTMLInputElement
+    input.value = '1800'
+    await weight.trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+
+    expect(mocked.updateGearItem).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="item-weight-display"]').text()).toBe('2,4 кг')
   })
 
   it('местоположение правится на месте, пустое — null', async () => {
@@ -626,12 +675,13 @@ describe('UserGear', () => {
     expect((title.element as HTMLInputElement).value).toBe('Палатка на четверых')
   })
 
-  it('характеристики видны под предметом словами', async () => {
+  it('характеристики видны под предметом словами, группа не повторяется', async () => {
     const wrapper = await mountSection()
 
-    expect(wrapper.find('[data-test="item-attributes-summary"]').text()).toContain(
-      'Палатка · Вместимость: 3 мест',
-    )
+    const summary = wrapper.find('[data-test="item-attributes-summary"]')
+    expect(summary.text()).toContain('Палатка · Вместимость: 3 мест')
+    // Группа уже стоит заголовком секции — в подписи вещи её не повторяем.
+    expect(summary.text()).not.toContain('Кров')
   })
 
   it('в правке нет выбора группы — группа объясняется словами', async () => {
