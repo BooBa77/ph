@@ -478,6 +478,26 @@ describe('UserGear', () => {
     expect(titles(wrapper)).toEqual(['Спальник'])
   })
 
+  it('выбранное место не теряется, если его переписали в другом регистре', async () => {
+    const wrapper = await mountSection([
+      makeItem({ location: 'Гараж' }),
+      makeGas({ location: 'Балкон' }),
+    ])
+
+    // Порядок мест по алфавиту: «Балкон», «Гараж».
+    await wrapper.get('[data-test="gear-filter-location-option-1"]').trigger('click')
+    expect(titles(wrapper)).toEqual(['Палатка на четверых'])
+
+    await wrapper.get('[data-test="item-location"]').setValue('гараж')
+    await flushPromises()
+
+    expect(titles(wrapper)).toEqual(['Палатка на четверых'])
+    expect(
+      wrapper.get('[data-test="gear-filter-location-option-1"]').attributes('aria-pressed'),
+    ).toBe('true')
+    expect(wrapper.get('[data-test="gear-filter-location-option-1"]').text()).toBe('гараж')
+  })
+
   it('пустой результат фильтра объясняется и сбрасывается', async () => {
     const wrapper = await mountSection([makeItem()])
 

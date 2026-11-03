@@ -212,15 +212,20 @@ function toggleLocation(place: string): void {
 }
 
 /**
- * Выбранного места больше нет — фильтр снимаем.
+ * Список мест изменился — приводим выбор к нему.
  *
  * Место могло исчезнуть после правки или удаления последней вещи: оставлять
  * фильтр, которого нет в списке, значило бы показывать пустоту без причины.
+ * Если место осталось, но записано в другом регистре, берём его написание
+ * из списка — иначе чип не подсветился бы.
  */
 watch(locationHints, (places) => {
-  if (filterLocation.value !== '' && !places.includes(filterLocation.value)) {
-    filterLocation.value = ''
-  }
+  if (filterLocation.value === '') return
+
+  const match = places.find(
+    (place) => place.toLowerCase() === filterLocation.value.toLowerCase(),
+  )
+  filterLocation.value = match ?? ''
 })
 
 // ─────────────────────── секции и порядок ───────────────────────
