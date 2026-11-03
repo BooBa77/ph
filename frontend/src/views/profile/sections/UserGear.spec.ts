@@ -413,9 +413,56 @@ describe('UserGear', () => {
       makeGas({ location: 'балкон' }),
     ])
 
-    await wrapper.find('[data-test="gear-filter-location"]').setValue('ГАРАЖ')
+    // Места из двух значений — готовые кнопки: «балкон» и «гараж» по алфавиту.
+    expect(
+      wrapper.findAll('[data-test^="gear-filter-location-option-"]').map((node) => node.text()),
+    ).toEqual(['балкон', 'гараж'])
+
+    await wrapper.get('[data-test="gear-filter-location-option-1"]').trigger('click')
 
     expect(titles(wrapper)).toEqual(['Палатка на четверых'])
+  })
+
+  it('повторное нажатие на место снимает фильтр, «Все места» тоже', async () => {
+    const wrapper = await mountSection([
+      makeItem({ location: 'гараж' }),
+      makeGas({ location: 'балкон' }),
+    ])
+
+    const garage = () => wrapper.get('[data-test="gear-filter-location-option-1"]')
+
+    await garage().trigger('click')
+    expect(titles(wrapper)).toEqual(['Палатка на четверых'])
+
+    await garage().trigger('click')
+    expect(titles(wrapper)).toHaveLength(2)
+
+    await wrapper.get('[data-test="gear-filter-location-option-1"]').trigger('click')
+    await wrapper.get('[data-test="gear-filter-location-all"]').trigger('click')
+    expect(titles(wrapper)).toHaveLength(2)
+  })
+
+  it('когда мест больше восьми — выпадающий список из тех же значений', async () => {
+    const many = Array.from({ length: 9 }, (_, index) =>
+      makeItem({ id: `gear-many-${index}`, title: `Вещь ${index}`, location: `Место ${index}` }),
+    )
+    const wrapper = await mountSection(many)
+
+    expect(wrapper.find('[data-test="gear-filter-location-chips"]').exists()).toBe(false)
+
+    const select = wrapper.get('[data-test="gear-filter-location-select"]')
+    expect(select.findAll('option')).toHaveLength(10)
+
+    await select.setValue('Место 4')
+
+    expect(titles(wrapper)).toEqual(['Вещь 4'])
+  })
+
+  it('без указанных мест фильтр объясняет, что выбирать не из чего', async () => {
+    const wrapper = await mountSection([makeItem()])
+
+    expect(wrapper.find('[data-test="gear-filter-location-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="gear-filter-location-select"]').exists()).toBe(false)
   })
 
   it('оба фильтра работают вместе', async () => {
@@ -426,7 +473,7 @@ describe('UserGear', () => {
     ])
 
     await wrapper.find('[data-test="gear-filter-title"]').setValue('спал')
-    await wrapper.find('[data-test="gear-filter-location"]').setValue('гараж')
+    await wrapper.find('[data-test="gear-filter-location-option-1"]').trigger('click')
 
     expect(titles(wrapper)).toEqual(['Спальник'])
   })

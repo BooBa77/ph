@@ -66,6 +66,14 @@ import { formatWeight, parseWeightGrams } from '@/utils/gearWeight'
  * Два поля — наименование и местоположение: пустое поле не фильтрует, регистр
  * не важен, фильтруют сразу.
  *
+ * **Местоположение в фильтре — из готовых значений (03.11.2026).** Заказчик:
+ * «фильтр по Местоположению должен быть списком из имеющихся значений или
+ * готовыми кнопками „Балкон“, „Гараж“, если их не больше разумного числа».
+ * Поэтому свободный ввод остался только в форме и правке вещи (там место
+ * можно назвать как угодно), а фильтр предлагает уже введённые места: до
+ * `LOCATION_CHIPS_LIMIT` — кнопками, больше — выпадающим списком. Место,
+ * вписанное в форму или в строку вещи, появляется в фильтре само.
+ *
  * **Каждая вещь — отдельная белая плашка (03.11.2026).** Заказчик:
  * «Давай каждую единицу в отдельную пилюлю и белый цвет». Строки больше
  * не делятся линиями: у вещи своя карточка на белом, поэтому её видно
@@ -157,26 +165,62 @@ const filteredItems = computed(() => {
 
   return items.value.filter((item) => {
     const titleMatches = title.length === 0 || item.title.toLowerCase().includes(title)
+    // Место выбирается из списка, поэтому сравниваем целиком, а не вхождением:
+    // «Гараж» не должен находить «Гараж на даче». Регистр по-прежнему не важен.
     const locationMatches =
-      location.length === 0 || (item.location ?? '').toLowerCase().includes(location)
+      location.length === 0 || (item.location ?? '').trim().toLowerCase() === location
 
     return titleMatches && locationMatches
   })
 })
 
 /**
- * Подсказки местоположения — из уже введённых значений.
+ * Места для фильтра — из уже введённых значений.
  *
  * Справочник мест не заводим: заказчик называл «балкон», «гараж», «дачу»,
  * и любое новое место должно приниматься сразу, без отдельной настройки.
+ * Повторы, отличающиеся только регистром, — одно место: два чипа «Балкон»
+ * и «балкон» фильтровали бы по сути одно и то же.
  */
 const locationHints = computed(() => {
-  const unique = new Set<string>()
+  const unique = new Map<string, string>()
   for (const item of items.value) {
-    if (typeof item.location === 'string' && item.location.length > 0) unique.add(item.location)
+    const place = item.location?.trim()
+    if (!place) continue
+
+    const key = place.toLowerCase()
+    if (!unique.has(key)) unique.set(key, place)
   }
 
-  return [...unique].sort((left, right) => left.localeCompare(right, 'ru'))
+  return [...unique.values()].sort((left, right) => left.localeCompare(right, 'ru'))
+})
+
+/**
+ * Сколько мест ещё показываем кнопками.
+ *
+ * Восемь — предел, после которого ряд чипов перестаёт читаться и превращается
+ * в облако: тогда место выбирается выпадающим списком, но из тех же значений.
+ */
+const LOCATION_CHIPS_LIMIT = 8
+
+const isLocationChips = computed(
+  () => locationHints.value.length > 0 && locationHints.value.length <= LOCATION_CHIPS_LIMIT,
+)
+
+function toggleLocation(place: string): void {
+  filterLocation.value = filterLocation.value === place ? '' : place
+}
+
+/**
+ * Выбранного места больше нет — фильтр снимаем.
+ *
+ * Место могло исчезнуть после правки или удаления последней вещи: оставлять
+ * фильтр, которого нет в списке, значило бы показывать пустоту без причины.
+ */
+watch(locationHints, (places) => {
+  if (filterLocation.value !== '' && !places.includes(filterLocation.value)) {
+    filterLocation.value = ''
+  }
 })
 
 // ─────────────────────── секции и порядок ───────────────────────
@@ -931,17 +975,67 @@ async function removeVehicleById(vehicle: Vehicle) {
               />
             </label>
 
-            <label class="flex flex-col gap-1">
+            <div class="flex flex-col gap-1" data-test="gear-filter-location">
               <span class="text-xs text-muted">Местоположение</span>
-              <input
+
+              <p
+                v-if="locationHints.length === 0"
+                class="py-2 text-sm text-muted"
+                data-test="gear-filter-location-empty"
+              >
+                Ни у одной вещи место не указано.
+              </p>
+
+              <div
+                v-else-if="isLocationChips"
+                class="flex flex-wrap gap-1.5 py-0.5"
+                data-test="gear-filter-location-chips"
+              >
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-xl border px-3 py-1.5 text-sm transition-colors"
+                  :class="
+                    filterLocation === ''
+                      ? 'border-primary bg-primary/10 font-medium text-text'
+                      : 'border-border bg-field text-muted hover:border-primary hover:text-text'
+                  "
+                  :aria-pressed="filterLocation === ''"
+                  data-test="gear-filter-location-all"
+                  @click="filterLocation = ''"
+                >
+                  Все места
+                </button>
+
+                <button
+                  v-for="(place, index) in locationHints"
+                  :key="place"
+                  type="button"
+                  class="cursor-pointer rounded-xl border px-3 py-1.5 text-sm transition-colors"
+                  :class="
+                    filterLocation === place
+                      ? 'border-primary bg-primary/10 font-medium text-text'
+                      : 'border-border bg-field text-muted hover:border-primary hover:text-text'
+                  "
+                  :aria-pressed="filterLocation === place"
+                  :data-test="`gear-filter-location-option-${index}`"
+                  @click="toggleLocation(place)"
+                >
+                  {{ place }}
+                </button>
+              </div>
+
+              <select
+                v-else
                 v-model="filterLocation"
-                type="search"
-                list="gear-locations"
-                placeholder="Гараж"
-                class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-                data-test="gear-filter-location"
-              />
-            </label>
+                class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+                data-test="gear-filter-location-select"
+              >
+                <option value="">Все места</option>
+                <option v-for="place in locationHints" :key="place" :value="place">
+                  {{ place }}
+                </option>
+              </select>
+            </div>
 
             <button
               v-if="hasFilter"
