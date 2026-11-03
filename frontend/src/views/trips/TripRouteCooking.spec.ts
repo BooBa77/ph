@@ -849,6 +849,38 @@ describe('секция «Готовка»', () => {
     expect(pillTexts(wrapper)).toEqual(['Котёл походный (Олег)'])
   })
 
+  it('«Отмена» в ручной форме возвращает к выбору вещи с тем же поиском', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([
+        gearItem({
+          id: '60',
+          typeCode: 'kettle',
+          typeName: 'Котёл',
+          title: 'Котёл 5 л',
+        }),
+      ]),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-cooking-extra-dishes"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-search"]').setValue('котёл')
+    await wrapper.get('[data-test="route-extra-manual"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="manual-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(true)
+    expect(
+      (wrapper.get('[data-test="route-extra-search"]').element as HTMLInputElement).value,
+    ).toBe('котёл')
+  })
+
   it('ошибка «Добавить ещё» видна строкой, вещи в секции нет', async () => {
     mocks.listGear.mockResolvedValue(
       gearList([gearItem({ id: '60', typeCode: 'other', typeName: 'Прочее', title: 'Лодка' })]),

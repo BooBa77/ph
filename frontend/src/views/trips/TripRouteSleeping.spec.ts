@@ -356,6 +356,30 @@ describe('личные вещи ночёвки', () => {
     expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(false)
   })
 
+  it('«Отмена» в ручной форме возвращает к выбору вещи с тем же поиском', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([gearItem({ id: '14', typeCode: 'other', typeName: 'Прочее', title: 'Грелка' })]),
+    )
+
+    const wrapper = mounted()
+    await wrapper.get('[data-test="route-sleeping-extra"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-search"]').setValue('грелка')
+    await wrapper.get('[data-test="route-extra-manual"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="manual-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(true)
+    expect(
+      (wrapper.get('[data-test="route-extra-search"]').element as HTMLInputElement).value,
+    ).toBe('грелка')
+  })
+
   it('«Указать вручную» из «Добавить ещё» заводит вещь в личном каталоге', async () => {
     mocks.createGearItem.mockResolvedValue(gearItem({ id: '99', title: 'Грелка' }))
 

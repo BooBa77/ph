@@ -272,12 +272,18 @@ async function pickExtra(item: GearItem): Promise<void> {
 const isManualExtraOpen = ref(false)
 
 function openManualExtra(): void {
-  isExtraOpen.value = false
+  // Выбор не закрываем: форма открывается поверх него, и «Отмена» вернёт
+  // к тому же каталогу, а не в секцию.
   isManualExtraOpen.value = true
+}
+
+function closeManualExtra(): void {
+  isManualExtraOpen.value = false
 }
 
 async function onManualExtraCreated(item: GearItem): Promise<void> {
   isManualExtraOpen.value = false
+  isExtraOpen.value = false
   isExtraSaving.value = true
   extraError.value = null
 
@@ -408,7 +414,7 @@ async function remove(row: RouteSleeping): Promise<void> {
       default-type-code=""
       mode="personal"
       @created-personal="onManualExtraCreated"
-      @close="isManualExtraOpen = false"
+      @close="closeManualExtra"
     />
 
     <!--

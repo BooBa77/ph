@@ -745,9 +745,20 @@ function openManual(typeCode: string): void {
 
 /** «Указать вручную» из «Добавить ещё»: тип выбирает сам человек. */
 function openExtraManual(): void {
-  isExtraOpen.value = false
+  // Выбор вещи не закрываем, а открываем форму поверх него: «Отмена» вернёт
+  // к тому же каталогу с тем же поиском и выбранной группой, а не выбросит
+  // в секцию. Закроются оба экрана только после создания вещи.
   isManualExtra.value = true
   isManualOpen.value = true
+}
+
+/**
+ * Закрыли ручную форму. Если её открыли из «Добавить ещё», за формой остался
+ * тот же выбор — он и покажется снова.
+ */
+function closeManual(): void {
+  isManualOpen.value = false
+  isManualExtra.value = false
 }
 
 /**
@@ -762,6 +773,7 @@ function onManualCreated(item: TripGearItem): void {
   emit('gear', [...props.gear, item])
   isManualOpen.value = false
   isManualExtra.value = false
+  isExtraOpen.value = false
 }
 
 // ───────────────────────────── «добавить ещё» ─────────────────────────────
@@ -1371,7 +1383,7 @@ async function pickExtra(item: GearItem): Promise<void> {
         :route-section="manualRouteSection"
         :owner-options="manualOwnerOptions"
         @created="onManualCreated"
-        @close="isManualOpen = false"
+        @close="closeManual"
       />
     </template>
   </section>

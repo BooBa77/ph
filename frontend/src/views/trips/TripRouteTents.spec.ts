@@ -1122,6 +1122,31 @@ describe('секция «Палатки»', () => {
     expect(tentTitles(wrapper)).toEqual(['Анна 3-х местная'])
   })
 
+  it('«Отмена» в ручной форме возвращает к тому же выбору, сохраняя поиск', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([personalGear('20', 'Лодка надувная', 'other')]),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-tent-extra-add"]').trigger('click')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-search"]').setValue('лодка')
+    await wrapper.get('[data-test="route-extra-manual"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="manual-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(true)
+    expect(
+      (wrapper.get('[data-test="route-extra-search"]').element as HTMLInputElement).value,
+    ).toBe('лодка')
+  })
+
   it('«Указать вручную» из «Добавить ещё»: любой тип и пометка «Палатки»', async () => {
     mocks.addManualTripGear.mockResolvedValue(
       tripGearItem({

@@ -585,20 +585,36 @@ function openManual(): void {
 /** «Указать вручную» из «Добавить ещё»: тип выбирает сам человек. */
 function openExtraManual(): void {
   activeType.value = null
-  isExtraOpen.value = false
+  // Выбор не закрываем: форма открывается поверх него, и «Отмена» вернёт
+  // к тому же каталогу с тем же поиском и группой.
   isManualOpen.value = true
 }
 
-/** Закрыть форму и убрать контекст: следующее открытие начнёт с чистого. */
-function closeManual(): void {
+/**
+ * Закрыли форму без сохранения.
+ *
+ * Если её открыли из «Добавить ещё», `extraGroup` остался — за формой лежит
+ * тот же выбор, и он снова виден. Если из диалога кнопки, диалог уже закрыт,
+ * и человек возвращается в секцию.
+ */
+function cancelManual(): void {
   isManualOpen.value = false
+  activeType.value = null
+
+  if (extraGroup.value === null) isExtraOpen.value = false
+}
+
+/** Вещь создана: закрываем и форму, и выбор за ней. */
+function finishManual(): void {
+  isManualOpen.value = false
+  isExtraOpen.value = false
   activeType.value = null
   extraGroup.value = null
 }
 
 function onManualCreated(item: TripGearItem): void {
   items.value = [...items.value, item]
-  closeManual()
+  finishManual()
 }
 </script>
 
@@ -836,7 +852,7 @@ function onManualCreated(item: TripGearItem): void {
       :route-section="manualRouteSection"
       :owner-options="manualOwnerOptions"
       @created="onManualCreated"
-      @close="closeManual"
+      @close="cancelManual"
     />
   </section>
 </template>
