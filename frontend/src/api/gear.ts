@@ -29,14 +29,87 @@ export async function listGear(): Promise<GearList> {
 }
 
 /**
- * GET /api/gear-groups — полки каталога, только действующие.
+ * GET /api/gear-groups — мои группы с типами (02.11.2026).
  *
- * Из этого списка экран берёт названия секций, их порядок и выбор группы
- * в форме вещи. Архивных групп здесь нет: вещь в архивной полке покажется
- * после действующих, и её имя приходит самой вещью (`groupName`).
+ * Группы личные: сервер при первом обращении заводит копии рекомендуемых
+ * и раскладывает по ним типы. В ответе у каждой группы — её типы, поэтому
+ * настройщику группировки не нужен отдельный запрос.
  */
 export async function fetchGearGroups(): Promise<GearGroup[]> {
   const list = await apiFetch<GearGroupList>('/gear-groups')
+
+  return list.items
+}
+
+/**
+ * POST /api/gear-groups — своя группа.
+ *
+ * Встаёт перед «Прочим»: заказчик выбрал, что «Прочее» — последнее.
+ * Ответ — список целиком, как у остальных правок групп.
+ */
+export async function createGearGroup(input: {
+  name: string
+  sortOrder?: number
+}): Promise<GearGroup[]> {
+  const list = await apiFetch<GearGroupList>('/gear-groups', {
+    method: 'POST',
+    body: JSON.stringify(input),
+  })
+
+  return list.items
+}
+
+/** PATCH /api/gear-groups/:id — имя и порядок. «Прочее» порядок не меняет. */
+export async function updateGearGroup(
+  id: number,
+  patch: { name?: string; sortOrder?: number },
+): Promise<GearGroup[]> {
+  const list = await apiFetch<GearGroupList>(`/gear-groups/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(patch),
+  })
+
+  return list.items
+}
+
+/**
+ * DELETE /api/gear-groups/:id — удалить группу, её типы уедут в «Прочее».
+ *
+ * «Прочее» так удалить нельзя — сервер ответит 409.
+ */
+export async function deleteGearGroup(id: number): Promise<GearGroup[]> {
+  const list = await apiFetch<GearGroupList>(`/gear-groups/${id}`, {
+    method: 'DELETE',
+  })
+
+  return list.items
+}
+
+/** POST /api/gear-groups/:id/move — переставить группу ↑/↓. */
+export async function moveGearGroup(
+  id: number,
+  direction: 'up' | 'down',
+): Promise<GearGroup[]> {
+  const list = await apiFetch<GearGroupList>(`/gear-groups/${id}/move`, {
+    method: 'POST',
+    body: JSON.stringify({ direction }),
+  })
+
+  return list.items
+}
+
+/** POST /api/gear-groups/:id/types — переложить тип в эту группу. */
+export async function assignGearGroupType(
+  groupId: number,
+  typeId: number,
+): Promise<GearGroup[]> {
+  const list = await apiFetch<GearGroupList>(
+    `/gear-groups/${groupId}/types`,
+    {
+      method: 'POST',
+      body: JSON.stringify({ typeId }),
+    },
+  )
 
   return list.items
 }
@@ -50,10 +123,10 @@ export async function fetchGearGroups(): Promise<GearGroup[]> {
  */
 export async function createGearItem(body: {
   typeId: number
-  groupId?: number
   title: string
   weightGrams?: number | null
   note?: string | null
+  location?: string | null
   attributes?: GearAttributePayload
 }): Promise<GearItem> {
   return apiFetch<GearItem>('/gear', {
@@ -77,10 +150,10 @@ export async function updateGearItem(
   id: string,
   patch: {
     typeId?: number
-    groupId?: number
     title?: string
     weightGrams?: number | null
     note?: string | null
+    location?: string | null
     attributes?: GearAttributePayload
   },
 ): Promise<GearItem> {
@@ -93,9 +166,10 @@ export async function updateGearItem(
 /**
  * POST /api/gear/:id/move — переставить вещь выше или ниже в её группе.
  *
- * Через границу группы стрелка не переставляет: порядок полок задаёт админ,
- * а не человек. Ответ — список целиком: после перестановки изменились две
- * строки, и клиенту не нужно угадывать вторую.
+ * Через границу группы стрелка не переставляет: порядок групп человек
+ * настраивает отдельно (`moveGearGroup`), а соседи внутри — вещи всех типов,
+ * которые сложены в одну группу. Ответ — список целиком: после перестановки
+ * изменились две строки, и клиенту не нужно угадывать вторую.
  */
 export async function moveGearItem(
   id: string,

@@ -142,6 +142,12 @@ export interface GearType {
   code: string
   name: string
   sortOrder: number
+  /**
+   * Рекомендуемая группа — шаблон, в который тип приходит человеку
+   * (02.11.2026). `null` — «Прочее». Необязательное поле в типе, чтобы
+   * старые фейки тестов не пришлось учить: сервер его всегда присылает.
+   */
+  recommendedGroupId?: number | null
   attributes: GearTypeAttribute[]
 }
 
@@ -167,6 +173,8 @@ export interface CreateGearTypeInput {
   code: string
   name: string
   sortOrder?: number
+  /** Шаблон, в который тип придёт человеку; `null` — «Прочее». */
+  recommendedGroupId?: number | null
 }
 
 /**
@@ -179,6 +187,7 @@ export interface UpdateGearTypeInput {
   name?: string
   sortOrder?: number
   isActive?: boolean
+  recommendedGroupId?: number | null
 }
 
 /** Тело `POST /api/gear/admin/types/:id/attributes`. */

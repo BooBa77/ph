@@ -3,67 +3,71 @@ import type { VueWrapper } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api/errors'
-import type { AdminGearGroup } from '@/types/gear'
+import type { AdminGearGroupTemplate } from '@/types/gear'
 import GearGroupsAdmin from '@/views/admin/GearGroupsAdmin.vue'
 
 /**
- * Тесты админки групп снаряжения (31.10.2026).
+ * Тесты админки **рекомендуемых** групп снаряжения (02.11.2026).
  *
- * Проверяем то, что видит админ: список полок с архивом и числом вещей,
- * создание и правку, архив и возврат, «Прочее» без кнопки архива (это
- * умолчание — сервер ответил бы 409), ошибки 400/409 **в модалке**.
- * Права (403) и данные — бэкенд, они покрыты e2e; здесь API подменён.
+ * Проверяем то, что видит админ: список шаблонов с архивом и числом
+ * рекомендованных типов, создание и правку, архив и возврат, «Прочее»
+ * без кнопки архива (это умолчание — сервер ответил бы 409), ошибки
+ * 400/409 **в модалке**. Права (403) и данные — бэкенд, они покрыты e2e;
+ * здесь API подменён.
  *
- * Отдельная спека, а не добавка к `GearTypesAdmin.spec.ts`: типы и группы
- * — разные справочники со своими формами, и один файл на оба стал бы
- * свалкой.
+ * Числа вещей здесь нет намеренно: шаблон — образец, вещи живут в личных
+ * группах людей, и админ за них не отвечает.
  */
 const mocks = vi.hoisted(() => ({
-  fetchAdminGearGroups: vi.fn(),
-  createGearGroup: vi.fn(),
-  updateGearGroup: vi.fn(),
-  archiveGearGroup: vi.fn(),
+  fetchAdminGearGroupTemplates: vi.fn(),
+  createGearGroupTemplate: vi.fn(),
+  updateGearGroupTemplate: vi.fn(),
+  archiveGearGroupTemplate: vi.fn(),
 }))
 
 vi.mock('@/api/gearGroups', () => ({
-  fetchAdminGearGroups: mocks.fetchAdminGearGroups,
-  createGearGroup: mocks.createGearGroup,
-  updateGearGroup: mocks.updateGearGroup,
-  archiveGearGroup: mocks.archiveGearGroup,
+  fetchAdminGearGroupTemplates: mocks.fetchAdminGearGroupTemplates,
+  createGearGroupTemplate: mocks.createGearGroupTemplate,
+  updateGearGroupTemplate: mocks.updateGearGroupTemplate,
+  archiveGearGroupTemplate: mocks.archiveGearGroupTemplate,
 }))
 
-function makeGroup(overrides: Partial<AdminGearGroup> = {}): AdminGearGroup {
+function makeGroup(
+  overrides: Partial<AdminGearGroupTemplate> = {},
+): AdminGearGroupTemplate {
   return {
     id: 1,
     code: 'roof',
     name: 'Кров',
     sortOrder: 10,
     isActive: true,
-    itemsCount: 2,
+    typesCount: 2,
     ...overrides,
   }
 }
 
-const GROUPS: AdminGearGroup[] = [
+const GROUPS: AdminGearGroupTemplate[] = [
   makeGroup(),
   makeGroup({
     id: 2,
     code: 'campfire',
     name: 'Костровое',
     sortOrder: 20,
-    itemsCount: 3,
+    typesCount: 4,
   }),
   makeGroup({
     id: 3,
     code: 'other',
     name: 'Прочее',
     sortOrder: 100,
-    itemsCount: 0,
+    typesCount: 0,
   }),
 ]
 
-async function mounted(groups: AdminGearGroup[] = GROUPS): Promise<VueWrapper> {
-  mocks.fetchAdminGearGroups.mockResolvedValue(groups)
+async function mounted(
+  groups: AdminGearGroupTemplate[] = GROUPS,
+): Promise<VueWrapper> {
+  mocks.fetchAdminGearGroupTemplates.mockResolvedValue(groups)
 
   const wrapper = mount(GearGroupsAdmin)
   await flushPromises()
@@ -78,17 +82,17 @@ function rowOf(wrapper: VueWrapper, code: string) {
     .find((row) => row.get('[data-test="group-meta"]').text().startsWith(code))
 }
 
-describe('Админка групп снаряжения', () => {
+describe('Админка рекомендуемых групп снаряжения', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    mocks.createGearGroup.mockResolvedValue(makeGroup({ id: 9 }))
-    mocks.updateGearGroup.mockResolvedValue(makeGroup())
-    mocks.archiveGearGroup.mockResolvedValue(undefined)
+    mocks.createGearGroupTemplate.mockResolvedValue(makeGroup({ id: 9 }))
+    mocks.updateGearGroupTemplate.mockResolvedValue(makeGroup())
+    mocks.archiveGearGroupTemplate.mockResolvedValue(undefined)
   })
 
   // ─────────────────────────── список ───────────────────────────
 
-  it('показывает полки с кодом, порядком и числом вещей', async () => {
+  it('показывает шаблоны с кодом, порядком и числом рекомендованных типов', async () => {
     const wrapper = await mounted()
 
     const rows = wrapper.findAll('[data-test="group-row"]')
@@ -96,12 +100,13 @@ describe('Админка групп снаряжения', () => {
     expect(rows[0]?.text()).toContain('Кров')
     expect(rows[1]?.text()).toContain('Костровое')
     expect(rows[2]?.text()).toContain('Прочее')
+    expect(rows[0]?.get('[data-test="group-meta"]').text()).toContain('roof · порядок 10')
     expect(rows[0]?.get('[data-test="group-meta"]').text()).toContain(
-      'roof · порядок 10 · вещей 2',
+      'рекомендованных типов 2',
     )
   })
 
-  it('архивная полка приглушена и помечена', async () => {
+  it('архивный шаблон приглушён и помечен', async () => {
     const wrapper = await mounted([
       makeGroup({ isActive: false, name: 'Рыбалка', code: 'fishing' }),
     ])
@@ -119,7 +124,7 @@ describe('Админка групп снаряжения', () => {
     expect(row?.find('[data-test="group-archive"]').exists()).toBe(false)
   })
 
-  it('пустой справочник объясняет, откуда берутся базовые полки', async () => {
+  it('пустой справочник объясняет, откуда берутся базовые группы', async () => {
     const wrapper = await mounted([])
 
     expect(wrapper.get('[data-test="groups-empty"]').text()).toContain('seed:gear-groups')
@@ -127,7 +132,9 @@ describe('Админка групп снаряжения', () => {
   })
 
   it('ошибку загрузки показывает строкой сверху', async () => {
-    mocks.fetchAdminGearGroups.mockRejectedValue(new ApiError(403, 'Раздел только для администратора'))
+    mocks.fetchAdminGearGroupTemplates.mockRejectedValue(
+      new ApiError(403, 'Раздел только для администратора'),
+    )
 
     const wrapper = mount(GearGroupsAdmin)
     await flushPromises()
@@ -139,7 +146,7 @@ describe('Админка групп снаряжения', () => {
 
   // ─────────────────────────── создание ───────────────────────────
 
-  it('создаёт группу и перечитывает список', async () => {
+  it('создаёт шаблон и перечитывает список', async () => {
     const wrapper = await mounted()
 
     await wrapper.get('[data-test="add-group"]').trigger('click')
@@ -149,13 +156,13 @@ describe('Админка групп снаряжения', () => {
     await wrapper.get('[data-test="group-form"]').trigger('submit')
     await flushPromises()
 
-    expect(mocks.createGearGroup).toHaveBeenCalledWith({
+    expect(mocks.createGearGroupTemplate).toHaveBeenCalledWith({
       code: 'fishing',
       name: 'Рыбалка',
       sortOrder: 40,
     })
     expect(wrapper.find('[data-test="group-form"]').exists()).toBe(false)
-    expect(mocks.fetchAdminGearGroups).toHaveBeenCalledTimes(2)
+    expect(mocks.fetchAdminGearGroupTemplates).toHaveBeenCalledTimes(2)
   })
 
   it('кириллица в коде до сервера не доходит', async () => {
@@ -167,7 +174,7 @@ describe('Админка групп снаряжения', () => {
     await wrapper.get('[data-test="group-form"]').trigger('submit')
     await flushPromises()
 
-    expect(mocks.createGearGroup).not.toHaveBeenCalled()
+    expect(mocks.createGearGroupTemplate).not.toHaveBeenCalled()
     expect(wrapper.get('[data-test="group-form-error"]').text()).toContain('латиница')
   })
 
@@ -186,13 +193,13 @@ describe('Админка групп снаряжения', () => {
     await wrapper.get('[data-test="group-form"]').trigger('submit')
     await flushPromises()
 
-    expect(mocks.createGearGroup).not.toHaveBeenCalled()
+    expect(mocks.createGearGroupTemplate).not.toHaveBeenCalled()
     expect(wrapper.get('[data-test="group-form-error"]').text()).toContain('Порядок')
   })
 
   it('409 «код занят» показывается в модалке, форма не закрывается', async () => {
-    mocks.createGearGroup.mockRejectedValue(
-      new ApiError(409, 'Группа с кодом «fishing» уже есть — код занимается навсегда'),
+    mocks.createGearGroupTemplate.mockRejectedValue(
+      new ApiError(409, 'Рекомендуемая группа с кодом «fishing» уже есть'),
     )
 
     const wrapper = await mounted()
@@ -212,10 +219,13 @@ describe('Админка групп снаряжения', () => {
   it('в правке код только для чтения, меняются имя и порядок', async () => {
     const wrapper = await mounted()
 
-    await rowOf(wrapper, 'roof')?.get('[data-test="group-edit"]').trigger('click')
+    await rowOf(wrapper, 'roof')
+      ?.get('[data-test="group-edit"]')
+      .trigger('click')
 
     expect(
-      (wrapper.get('[data-test="group-form-code"]').element as HTMLInputElement).readOnly,
+      (wrapper.get('[data-test="group-form-code"]').element as HTMLInputElement)
+        .readOnly,
     ).toBe(true)
 
     await wrapper.get('[data-test="group-form-name"]').setValue('Ночлег')
@@ -223,20 +233,22 @@ describe('Админка групп снаряжения', () => {
     await wrapper.get('[data-test="group-form"]').trigger('submit')
     await flushPromises()
 
-    expect(mocks.updateGearGroup).toHaveBeenCalledWith(1, {
+    expect(mocks.updateGearGroupTemplate).toHaveBeenCalledWith(1, {
       name: 'Ночлег',
       sortOrder: 5,
       isActive: true,
     })
   })
 
-  it('архивирует и возвращает полку', async () => {
+  it('архивирует и возвращает шаблон', async () => {
     const wrapper = await mounted()
 
-    await rowOf(wrapper, 'campfire')?.get('[data-test="group-archive"]').trigger('click')
+    await rowOf(wrapper, 'campfire')
+      ?.get('[data-test="group-archive"]')
+      .trigger('click')
     await flushPromises()
 
-    expect(mocks.archiveGearGroup).toHaveBeenCalledWith(2)
+    expect(mocks.archiveGearGroupTemplate).toHaveBeenCalledWith(2)
 
     const archived = await mounted([
       makeGroup({ id: 2, code: 'campfire', name: 'Костровое', isActive: false }),
@@ -244,20 +256,22 @@ describe('Админка групп снаряжения', () => {
     await archived.get('[data-test="group-restore"]').trigger('click')
     await flushPromises()
 
-    expect(mocks.updateGearGroup).toHaveBeenCalledWith(2, { isActive: true })
+    expect(mocks.updateGearGroupTemplate).toHaveBeenCalledWith(2, { isActive: true })
   })
 
   it('ошибку архива показывает строкой, а не молчанием', async () => {
-    mocks.archiveGearGroup.mockRejectedValue(
-      new ApiError(409, '«Прочее» — группа по умолчанию: её нельзя убрать в архив'),
+    mocks.archiveGearGroupTemplate.mockRejectedValue(
+      new ApiError(409, '«Прочее» — умолчание для типа без рекомендованной группы'),
     )
 
     const wrapper = await mounted()
 
-    await rowOf(wrapper, 'campfire')?.get('[data-test="group-archive"]').trigger('click')
+    await rowOf(wrapper, 'campfire')
+      ?.get('[data-test="group-archive"]')
+      .trigger('click')
     await flushPromises()
 
-    expect(wrapper.get('[data-test="gear-groups-error"]').text()).toContain('по умолчанию')
+    expect(wrapper.get('[data-test="gear-groups-error"]').text()).toContain('Прочее')
   })
 
   it('Escape закрывает форму', async () => {

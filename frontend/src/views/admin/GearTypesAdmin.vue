@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
+import { fetchAdminGearGroupTemplates } from '@/api/gearGroups'
 import {
   archiveGearType,
   archiveGearTypeAttribute,
@@ -32,6 +33,7 @@ import type {
   CreateGearAttributeOptionInput,
   GearValueKind,
 } from '@/types/gearTypes'
+import type { AdminGearGroupTemplate } from '@/types/gear'
 import GearGroupsAdmin from '@/views/admin/GearGroupsAdmin.vue'
 
 /**
@@ -39,8 +41,14 @@ import GearGroupsAdmin from '@/views/admin/GearGroupsAdmin.vue'
  *
  * Что здесь: плоский список типов и их характеристик, формы типа
  * и характеристики, варианты характеристики-списка, архив и возврат из него.
- * Чего нет и не будет до Stage B: групп у типов, экземпляров вещей и значений
- * характеристик.
+ * Вещей и значений характеристик здесь нет — они живут в каталоге.
+ *
+ * **Рекомендуемая группа типа (02.11.2026).** Заказчик: «Типы, по-прежнему,
+ * создаёт админ… Заводим рекомендуемые группы… приходят новым пользователям
+ * и с новыми типами». В форме типа появился выбор шаблона: новый пользователь
+ * получит тип уже в этой группе, а человек вправе переложить его у себя.
+ * `null` — «Прочее». Список шаблонов ведёт секция «Рекомендуемые группы»
+ * ниже (её можно сравнить с личными группами человека: шаблон — образец).
  *
  * **Список вариантов (30.10.2026).** Четвёртый вид значения — `select`:
  * у характеристики появляются варианты («резьбовой», «цанговый») и флаг
@@ -59,7 +67,7 @@ import GearGroupsAdmin from '@/views/admin/GearGroupsAdmin.vue'
  * **Удаления нет, есть архив.** «В архив» ставит `is_active = false`
  * (архивный тип не попадает в публичный `GET /api/gear-types`, но остаётся
  * виден здесь), «Вернуть» возвращает. Физическое удаление выдернуло бы
- * в Stage B вещи, которые на тип ссылаются.
+ * вещи, которые на тип ссылаются.
  *
  * **`code` и `valueKind` неизменяемы**, поэтому в правке поля только
  * для чтения, а под ними — совет: исправление это архив и новая строка
@@ -71,19 +79,24 @@ const error = ref<string | null>(null)
 const isLoading = ref(false)
 
 /**
- * Черновик формы типа.
+ * Шаблоны рекомендуемых групп для выбора в форме типа.
  *
- * `id: null` — создание: код вводится руками и больше не меняется.
- * `sortOrder` — `string | number`: поле ввода `type="number"` под `v-model`
- * Vue приводит к числу сам, а нам нужно различать пустое поле (это 0)
- * и мусор (это ошибка) до запроса, а не 400-м от сервера.
+ * Грузятся отдельно и мягко: если список не пришёл, тип всё равно можно
+ * сохранить — без рекомендации он попадёт в «Прочее». Ошибка шаблонов
+ * показывается под полем, а не закрывает форму.
  */
+const groupTemplates = ref<AdminGearGroupTemplate[]>([])
+const groupTemplatesError = ref<string | null>(null)
+
+/** Порядок формы типа: поле «Порядок» — строка до разбора. */
 interface TypeForm {
   id: number | null
   code: string
   name: string
   sortOrder: string | number
   isActive: boolean
+  /** Шаблон, в который тип придёт новому пользователю. `null` — «Прочее». */
+  recommendedGroupId: number | null
 }
 
 /**
@@ -216,6 +229,19 @@ async function load() {
   }
 }
 
+async function loadGroupTemplates() {
+  groupTemplatesError.value = null
+
+  try {
+    groupTemplates.value = await fetchAdminGearGroupTemplates()
+  } catch (cause) {
+    groupTemplatesError.value = messageOf(
+      cause,
+      'Не удалось загрузить рекомендуемые группы.',
+    )
+  }
+}
+
 /** Хвост заголовка типа: код, число характеристик, сколько в архиве. */
 function typeMeta(type: AdminGearType): string {
   const active = type.attributes.filter((attribute) => attribute.isActive).length
@@ -298,7 +324,14 @@ async function setAttributeActive(
 
 function openTypeCreate() {
   typeFormError.value = null
-  typeForm.value = { id: null, code: '', name: '', sortOrder: '0', isActive: true }
+  typeForm.value = {
+    id: null,
+    code: '',
+    name: '',
+    sortOrder: '0',
+    isActive: true,
+    recommendedGroupId: null,
+  }
 }
 
 function openTypeEdit(type: AdminGearType) {
@@ -309,6 +342,7 @@ function openTypeEdit(type: AdminGearType) {
     name: type.name,
     sortOrder: String(type.sortOrder),
     isActive: type.isActive,
+    recommendedGroupId: type.recommendedGroupId ?? null,
   }
 }
 
@@ -343,9 +377,19 @@ async function submitTypeForm() {
 
   try {
     if (form.id === null) {
-      await createGearType({ code, name, sortOrder })
+      await createGearType({
+        code,
+        name,
+        sortOrder,
+        recommendedGroupId: form.recommendedGroupId,
+      })
     } else {
-      await updateGearType(form.id, { name, sortOrder, isActive: form.isActive })
+      await updateGearType(form.id, {
+        name,
+        sortOrder,
+        isActive: form.isActive,
+        recommendedGroupId: form.recommendedGroupId,
+      })
     }
     closeTypeForm()
     await load()
@@ -717,6 +761,7 @@ function onKeydown(event: KeyboardEvent) {
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   void load()
+  void loadGroupTemplates()
 })
 
 onBeforeUnmount(() => {
@@ -962,6 +1007,33 @@ onBeforeUnmount(() => {
           min="0"
           class="mt-1 w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
         />
+
+        <label class="mt-3 block text-sm text-muted" for="gear-type-recommended">
+          Рекомендуемая группа
+        </label>
+        <select
+          id="gear-type-recommended"
+          v-model="typeForm.recommendedGroupId"
+          data-test="type-form-recommended"
+          class="mt-1 w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
+        >
+          <option :value="null">Прочее (по умолчанию)</option>
+          <option
+            v-for="group in groupTemplates"
+            :key="group.id"
+            :value="group.id"
+            :disabled="!group.isActive"
+          >
+            {{ group.name }}{{ group.isActive ? '' : ' — в архиве' }}
+          </option>
+        </select>
+        <p class="mt-1 text-xs text-muted">
+          В этой группе тип появится у нового пользователя. Он вправе переложить его
+          в «Настройке группировки снаряжения» — рекомендация не запрет.
+        </p>
+        <p v-if="groupTemplatesError" class="mt-1 text-xs text-red-600" data-test="type-form-groups-error">
+          {{ groupTemplatesError }}
+        </p>
 
         <label v-if="typeForm.id !== null" class="mt-3 flex cursor-pointer items-center gap-2 text-sm text-text">
           <input

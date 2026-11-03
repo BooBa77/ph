@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import {
   createGearItem,
@@ -11,7 +11,6 @@ import {
 } from '@/api/gear'
 import { fetchGearTypes } from '@/api/gearTypes'
 import { ApiError } from '@/api/errors'
-import { GEAR_DEFAULT_GROUP_CODE } from '@/types/gear'
 import type { GearGroup, GearItem } from '@/types/gear'
 import type { GearType, GearTypeAttribute } from '@/types/gearTypes'
 import {
@@ -27,6 +26,7 @@ import {
   type VehicleKind,
 } from '@/types/trips'
 import GearAttributeFields from '@/components/gear/GearAttributeFields.vue'
+import GearGroupingModal from '@/components/gear/GearGroupingModal.vue'
 import {
   buildGearAttributes,
   gearAttributeDrafts,
@@ -38,83 +38,64 @@ import { formatWeight, formatWeightTotal, parseWeightGrams } from '@/utils/gearW
 /**
  * «Снаряжение» — личный каталог предметов с весом.
  *
- * **Зачем каталог, если есть чек-листы.** Чек-лист отвечает «что взять
- * в этот поход», каталог — «что у меня есть и сколько это весит». Второй
- * нужен вкладке «Снаряжение» похода (Ф7): участники предлагают предметы
- * из своих каталогов, а вес рюкзака считается из этих чисел.
+ * **Тип вместо вида (Stage B, 30.10.2026).** Типами правит админ
+ * (`/admin/gear`), и вместе с типом приходят **характеристики**: у палатки
+ * вместимость и модель, у горелки соединение и мощность. Поэтому форма
+ * собрана из двух частей — выбор типа и поля его характеристик.
  *
- * **Тип вместо вида (Stage B, 30.10.2026).** Вид был списком в коде: восемь
- * категорий, и «топор» в него не влезал — приходилось писать «Техника».
- * Теперь типами правит админ (`/admin/gear`), и вместе с типом приходят
- * **характеристики**: у палатки вместимость и модель, у горелки соединение
- * и мощность. Поэтому форма собрана из двух частей — выбор типа и поля
- * его характеристик под ним.
+ * **Секции — по личным группам (02.11.2026).** Заказчик: «Типы, по-прежнему,
+ * создаёт админ… А группировать их разрешим самостоятельно». Группа больше
+ * не полка отдельной вещи: человек раскладывает **типы** в инструменте
+ * «Настройка группировки снаряжения», и вещь показывается в группе своего
+ * типа. Поэтому в форме вещи выбора группы нет — иначе было бы два
+ * источника правды.
  *
- * **Секции — по группам (31.10.2026).** Группа — полка каталога, а не тип:
- * «Костровое» собирает топор, пилу и розжиг, которые лежат в разных типах.
- * Тип у вещи остаётся и виден строкой («Топор · 900 г»), но список
- * группируется по полкам. Порядок полок задаёт админ (`GET /api/gear-groups`),
- * порядок вещей внутри полки — сам человек: стрелки ↑ и ↓ в строке меняют
- * соседей местами, и сервер хранит результат в `sort_order`. Через границу
- * группы стрелка не переставляет — порядок полок не его дело.
+ * **Пустые группы и типы не показываем.** Секция рисуется, только если
+ * в ней есть вещи (после фильтра — тоже). Сами группы живут в настройке:
+ * только что созданную группу видно там, пока в неё не переложили тип.
  *
- * **Обязательные спрашиваются сразу.** Поле, без которого вещь не описать
- * (у палатки — вместимость), помечено звёздочкой, и отправка без него
- * не уходит на сервер: человек узнаёт про пустое поле до запроса, а текст
- * ошибки совпадает с серверным. Правило теперь одно для всех клиентов —
- * старая прослойка, где обязательные проверялись только при присланном
- * `typeId`, умирает вместе с видом.
+ * **Местоположение — свободный текст с подсказками (02.11.2026).**
+ * Заказчик: «У юзера снаряга лежит на балконе и в гараже… кликает на поле
+ * местоположения, поле, посмотрев все объекты, предлагает „Гараж“ и
+ * „Балкон“, либо пустое поле, где он сам может вписать, например, „дача“».
+ * Подсказки собираются из уже введённых значений (`<datalist>`), отдельного
+ * справочника мест нет.
  *
- * **Группа у вещи обязательна.** В форме полка выбирается, по умолчанию
- * стоит «Прочее»: вещь без полки выпала бы из секций. Если справочник
- * групп не загрузился, форма не отправляет `groupId` — сервер положит вещь
- * в «Прочее» сам, и каталог не сломается из-за одного запроса.
+ * **Фильтр — два поля, фильтруют сразу.** Наименование и местоположение:
+ * пустое поле не фильтрует, регистр не важен.
+ *
+ * **Группы сворачиваются** — как в «Питании»: у каждой секции своя кнопка,
+ * а одна общая сворачивает все.
  *
  * **Вес правится на месте.** Самая частая правка — «взвесил позже»:
- * поэтому вес в строке — поле ввода, которое сохраняется по `change`
- * (то есть по потере фокуса, если значение изменилось). Отдельного режима
- * правки нет: он нужен ради одной цифры.
+ * поэтому вес в строке — поле ввода, которое сохраняется по `change`.
  *
- * **Характеристики правятся в раскрывающемся блоке под строкой.** Их
- * бывает до четырёх, у каждой свой вид поля (число, текст, галочка, список),
- * и держать это в строке рядом с названием и весом значило бы превратить
- * строку в ещё одну форму. Правка открывается кнопкой, тип в ней меняется
- * там же: смена типа стирает значения прежнего типа, и это делает сервер.
- *
- * **Итог считается на клиенте** из уже загруженных предметов. Бэкенд отдаёт
- * те же два числа, но после каждой правки перечитывать список ради суммы
- * значит лишний запрос на каждое взвешивание.
+ * **Характеристики правятся в раскрывающемся блоке под строкой** — их
+ * бывает до четырёх, и держать это в строке рядом с названием и весом
+ * значило бы превратить строку в ещё одну форму.
  */
 const items = ref<GearItem[]>([])
 const isLoading = ref(true)
 const error = ref<string | null>(null)
 
-/**
- * Справочник типов: из него собраны выбор типа и поля характеристик.
- *
- * Справочник маленький и меняется редко, поэтому грузится целиком и один
- * раз. Ошибка загрузки — не повод прятать каталог: список вещей покажется,
- * а форма нового предмета скажет словами, чего не хватает.
- */
+/** Справочник типов: из него собраны выбор типа и поля характеристик. */
 const types = ref<GearType[]>([])
 const typesError = ref<string | null>(null)
 
-/**
- * Справочник групп — полки каталога.
- *
- * Как и типы, справочник маленький и грузится один раз. Отдельная ошибка,
- * а не общая: каталог с вещами покажется и без групп (имя полки приходит
- * самой вещью), а форма нового предмета просто не пришлёт `groupId` —
- * сервер положит вещь в «Прочее».
- */
+/** Справочник личных групп вместе с их типами. */
 const groupsList = ref<GearGroup[]>([])
 const groupsError = ref<string | null>(null)
 
-/** Форма нового предмета. */
+/** Форма нового предмета раскрывается кнопкой «Добавить объект». */
+const isAddOpen = ref(false)
+
+/** Настройка группировки: диалог, а не отдельная страница. */
+const isGroupingOpen = ref(false)
+
 const newTypeId = ref<number | null>(null)
-const newGroupId = ref<number | null>(null)
 const newTitle = ref('')
 const newWeight = ref('')
+const newLocation = ref('')
 const newNote = ref('')
 const newDrafts = ref<GearAttributeDrafts>({})
 const isAdding = ref(false)
@@ -127,16 +108,26 @@ const newAttributes = computed<readonly GearTypeAttribute[]>(
   () => newType.value?.attributes ?? [],
 )
 
+/**
+ * Группа, в которую попадёт новая вещь: она следует из типа.
+ *
+ * Это подсказка, а не выбор: заказчик просил группировать типы, поэтому
+ * «полка» вещи задаётся настройкой группировки.
+ */
+const newTypeGroup = computed<GearGroup | null>(() => {
+  if (newTypeId.value === null) return null
+
+  return (
+    groupsList.value.find((group) =>
+      group.types.some((type) => type.id === newTypeId.value),
+    ) ?? null
+  )
+})
+
 /** Что сейчас сохраняется: id предмета, чтобы не дёргать его дважды. */
 const savingId = ref<string | null>(null)
 
-/**
- * Что ждёт подтверждения удаления.
- *
- * Удаление предмета необратимо, поэтому спрашиваем — тем же способом, что
- * у блюд и шаблонов: кнопка превращается в «Да»/«Нет». Предметы и техника
- * нумеруются в разных списках, поэтому и «ждёт» у них своё.
- */
+/** Что ждёт подтверждения удаления. */
 const confirmingItemId = ref<string | null>(null)
 const confirmingVehicleId = ref<string | null>(null)
 
@@ -144,7 +135,7 @@ const confirmingVehicleId = ref<string | null>(null)
  * Итог: сумма известных весов и число невзвешенных.
  *
  * Считаем здесь, а не берём из ответа, — иначе после каждой правки
- * пришлось бы перечитывать список. Формулы ровно те же, что на бэкенде.
+ * пришлось бы перечитывать список ради суммы.
  */
 const totalWeightGrams = computed(() =>
   items.value.reduce((sum, item) => sum + (item.weightGrams ?? 0), 0),
@@ -153,55 +144,150 @@ const itemsWithoutWeight = computed(
   () => items.value.filter((item) => item.weightGrams === null).length,
 )
 
-/**
- * Предметы по группам: название секции — имя группы из справочника.
- *
- * Порядок секций — порядок админа (`sortOrder`), а группы, которых
- * в действующем справочнике нет (вещь в архивной полке), идут после
- * и по имени: молча потерять такую вещь нельзя, она правдоподобно исчезла
- * бы из каталога. Внутри секции — личный порядок `sortOrder`, тот самый,
- * который меняют стрелки; `id` разрешает ничьи, если у старых вещей
- * порядок совпал.
- */
-const groups = computed(() => {
-  const order = new Map(groupsList.value.map((group, index) => [group.id, index]))
-  const byId = new Map<
-    number,
-    { id: number; code: string; label: string; items: GearItem[] }
-  >()
+// ───────────────────────────── фильтр ─────────────────────────────
 
-  for (const item of items.value) {
-    const group = byId.get(item.groupId) ?? {
-      id: item.groupId,
-      code: item.groupCode,
-      label: item.groupName,
-      items: [],
-    }
-    group.items.push(item)
-    byId.set(item.groupId, group)
-  }
+const filterTitle = ref('')
+const filterLocation = ref('')
 
-  for (const group of byId.values()) {
-    group.items.sort(
-      (left, right) =>
-        left.sortOrder - right.sortOrder || Number(left.id) - Number(right.id),
-    )
-  }
+const hasFilter = computed(
+  () => filterTitle.value.trim().length > 0 || filterLocation.value.trim().length > 0,
+)
 
-  return [...byId.values()].sort((left, right) => {
-    const leftOrder = order.get(left.id) ?? Number.MAX_SAFE_INTEGER
-    const rightOrder = order.get(right.id) ?? Number.MAX_SAFE_INTEGER
+/** Отфильтрованные вещи: оба поля работают одновременно и сразу. */
+const filteredItems = computed(() => {
+  const title = filterTitle.value.trim().toLowerCase()
+  const location = filterLocation.value.trim().toLowerCase()
 
-    if (leftOrder !== rightOrder) return leftOrder - rightOrder
+  return items.value.filter((item) => {
+    const titleMatches = title.length === 0 || item.title.toLowerCase().includes(title)
+    const locationMatches =
+      location.length === 0 || (item.location ?? '').toLowerCase().includes(location)
 
-    return left.label.localeCompare(right.label, 'ru')
+    return titleMatches && locationMatches
   })
 })
 
-/** Правка характеристик: id предмета, тип, группа и черновик значений. */
+/**
+ * Подсказки местоположения — из уже введённых значений.
+ *
+ * Справочник мест не заводим: заказчик называл «балкон», «гараж», «дачу»,
+ * и любое новое место должно приниматься сразу, без отдельной настройки.
+ */
+const locationHints = computed(() => {
+  const unique = new Set<string>()
+  for (const item of items.value) {
+    if (typeof item.location === 'string' && item.location.length > 0) unique.add(item.location)
+  }
+
+  return [...unique].sort((left, right) => left.localeCompare(right, 'ru'))
+})
+
+// ─────────────────────── секции и порядок ───────────────────────
+
+/** Внутри секции — личный порядок `sortOrder`; `id` разрешает ничьи. */
+function sortItems(rows: GearItem[]): GearItem[] {
+  return [...rows].sort(
+    (left, right) =>
+      left.sortOrder - right.sortOrder || Number(left.id) - Number(right.id),
+  )
+}
+
+/** Полная раскладка вещей по группам — для стрелок, без фильтра. */
+const allItemsByGroup = computed(() => {
+  const map = new Map<number, GearItem[]>()
+  for (const item of items.value) {
+    const rows = map.get(item.groupId) ?? []
+    rows.push(item)
+    map.set(item.groupId, rows)
+  }
+  for (const [id, rows] of map) map.set(id, sortItems(rows))
+
+  return map
+})
+
+interface GroupView {
+  id: number
+  name: string
+  isDefault: boolean
+  items: GearItem[]
+}
+
+/**
+ * Секции каталога: порядок групп — личный, пустые секции не рисуются.
+ *
+ * Группа, которой нет в справочнике (теоретически при гонке), не теряется:
+ * она показывается после известных и по имени вещи.
+ */
+const visibleGroups = computed<GroupView[]>(() => {
+  const views: GroupView[] = []
+  const known = new Set<number>()
+
+  for (const group of groupsList.value) {
+    known.add(group.id)
+    const rows = allItemsByGroup.value.get(group.id) ?? []
+    const filtered = sortItems(
+      rows.filter((item) => filteredItems.value.some((row) => row.id === item.id)),
+    )
+    if (filtered.length > 0) {
+      views.push({ id: group.id, name: group.name, isDefault: group.isDefault, items: filtered })
+    }
+  }
+
+  for (const [id, rows] of allItemsByGroup.value) {
+    if (known.has(id)) continue
+    const filtered = sortItems(
+      rows.filter((item) => filteredItems.value.some((row) => row.id === item.id)),
+    )
+    if (filtered.length > 0) {
+      views.push({
+        id,
+        name: rows[0]?.groupName ?? 'Без группы',
+        isDefault: false,
+        items: filtered,
+      })
+    }
+  }
+
+  return views
+})
+
+/** Свёрнутые группы: режим просмотра, а не настройка. */
+const collapsedGroups = ref<Set<number>>(new Set())
+
+function isCollapsed(groupId: number): boolean {
+  return collapsedGroups.value.has(groupId)
+}
+
+function toggleGroup(groupId: number): void {
+  const next = new Set(collapsedGroups.value)
+  if (next.has(groupId)) next.delete(groupId)
+  else next.add(groupId)
+  collapsedGroups.value = next
+}
+
+/** Все показанные группы свёрнуты — тогда общая кнопка разворачивает. */
+const allCollapsed = computed(
+  () =>
+    visibleGroups.value.length > 0 &&
+    visibleGroups.value.every((group) => collapsedGroups.value.has(group.id)),
+)
+
+function toggleAllGroups(): void {
+  const collapse = !allCollapsed.value
+  const next = new Set<number>()
+  if (collapse) for (const group of visibleGroups.value) next.add(group.id)
+  collapsedGroups.value = next
+}
+
+/** Смена фильтра не должна оставлять «свёрнутым» то, что теперь видно. */
+watch(visibleGroups, (groups) => {
+  const next = new Set([...collapsedGroups.value].filter((id) => groups.some((g) => g.id === id)))
+  if (next.size !== collapsedGroups.value.size) collapsedGroups.value = next
+})
+
+/** Правка характеристик: id предмета, тип и черновик значений. */
 const editingItemId = ref<string | null>(null)
 const editTypeId = ref<number | null>(null)
-const editGroupId = ref<number | null>(null)
 const editDrafts = ref<GearAttributeDrafts>({})
 
 const editingItem = computed(
@@ -219,8 +305,7 @@ const editAttributes = computed<readonly GearTypeAttribute[]>(
  *
  * Так бывает, когда админ отправил тип в архив: значения у вещи остались,
  * а полей для них взять негде. Экран говорит это словами и предлагает
- * выбрать действующий тип — молча показать пустую форму значило бы
- * «сохранить» и стереть значения, ничего не объяснив.
+ * выбрать действующий тип.
  */
 const editTypeArchived = computed(
   () => editingItem.value !== null && editType.value === null,
@@ -248,8 +333,6 @@ async function loadTypes() {
 
   try {
     types.value = await fetchGearTypes()
-    // Первый тип по умолчанию: пустой список типов оставлял бы форму
-    // в состоянии «выберите тип», которое нечем исправить.
     if (newTypeId.value === null && types.value.length > 0) {
       newTypeId.value = types.value[0]?.id ?? null
     }
@@ -258,35 +341,31 @@ async function loadTypes() {
   }
 }
 
-/**
- * Группы: полки каталога и умолчание формы.
- *
- * По умолчанию выбирается «Прочее» (`other`), а если его нет — первая
- * группа: форма с пустым обязательным выбором не давала бы завести вещь,
- * хотя сервер прекрасно кладёт её в «Прочее» и без поля.
- */
 async function loadGroups() {
   groupsError.value = null
 
   try {
     groupsList.value = await fetchGearGroups()
-    if (newGroupId.value === null) {
-      const fallback =
-        groupsList.value.find((group) => group.code === GEAR_DEFAULT_GROUP_CODE) ??
-        groupsList.value[0]
-      newGroupId.value = fallback?.id ?? null
-    }
   } catch (cause) {
     groupsError.value = messageOf(cause, 'Не удалось загрузить группы снаряжения.')
   }
 }
 
 /**
- * Вес из поля: пусто — «не указан», мусор — `undefined` (и ошибка).
+ * После настройки группировки перечитываем и группы, и вещи.
  *
- * Само правило — в `utils/gearWeight.ts`: тот же вес спрашивает «Указать
- * вручную» в походе, и две копии разбора разошлись бы на первой правке.
+ * Тип переехал в другую группу — у его вещей изменился `groupId`, а такой
+ * связи в памяти экрана нет: её знает только сервер.
  */
+async function onGroupingUpdated(next: GearGroup[]) {
+  groupsList.value = next
+  await load()
+}
+
+function toggleAdd(): void {
+  isAddOpen.value = !isAddOpen.value
+  error.value = null
+}
 
 async function add() {
   const title = newTitle.value.trim()
@@ -316,17 +395,19 @@ async function add() {
   try {
     const created = await createGearItem({
       typeId: type.id,
-      ...(newGroupId.value === null ? {} : { groupId: newGroupId.value }),
       title,
       weightGrams,
+      location: newLocation.value.trim() || null,
       note: newNote.value.trim() || null,
       attributes: built.attributes,
     })
     items.value.push(created)
     newTitle.value = ''
     newWeight.value = ''
+    newLocation.value = ''
     newNote.value = ''
     newDrafts.value = {}
+    isAddOpen.value = false
   } catch (cause) {
     error.value = messageOf(cause, 'Не удалось добавить предмет.')
   } finally {
@@ -340,14 +421,12 @@ function startEditAttributes(item: GearItem) {
   confirmingItemId.value = null
   editingItemId.value = item.id
   editTypeId.value = item.typeId
-  editGroupId.value = item.groupId
   editDrafts.value = gearAttributeDrafts(item.attributes)
 }
 
 function cancelEditAttributes() {
   editingItemId.value = null
   editTypeId.value = null
-  editGroupId.value = null
   editDrafts.value = {}
 }
 
@@ -355,10 +434,7 @@ function cancelEditAttributes() {
  * Сохранить характеристики и (если поменяли) тип.
  *
  * `typeId` уходит только при смене типа: без него `PATCH` — обычная правка,
- * и вещь с дырой в обязательной характеристике (значение появилось раньше,
- * чем обязательность) правится свободно, как и записано в правилах бэкенда.
- * При смене типа сервер стирает значения прежнего типа и заново спрашивает
- * обязательные — поэтому пустые поля здесь проверяются и на клиенте.
+ * и вещь с дырой в обязательной характеристике правится свободно.
  */
 async function saveAttributes(item: GearItem) {
   const type = editType.value
@@ -379,19 +455,14 @@ async function saveAttributes(item: GearItem) {
   try {
     const updated = await updateGearItem(item.id, {
       ...(type.id === item.typeId ? {} : { typeId: type.id }),
-      ...(editGroupId.value === null || editGroupId.value === item.groupId
-        ? {}
-        : { groupId: editGroupId.value }),
       attributes: built.attributes,
     })
     Object.assign(item, updated)
     editingItemId.value = null
     editTypeId.value = null
-    editGroupId.value = null
     editDrafts.value = {}
   } catch (cause) {
     error.value = messageOf(cause, 'Не удалось сохранить характеристики.')
-    // Значения в форме могли разойтись с базой — перечитываем список.
     await load()
   } finally {
     savingId.value = null
@@ -441,9 +512,20 @@ async function saveNote(item: GearItem, event: Event) {
   await save(item, { note: note || null })
 }
 
+/** Местоположение: пустое поле стирает значение (`null`), не оставляет «». */
+async function saveLocation(item: GearItem, event: Event) {
+  const input = event.target as HTMLInputElement
+  const location = input.value.trim()
+  const next = location.length === 0 ? null : location
+
+  if (next === item.location) return
+
+  await save(item, { location: next })
+}
+
 async function save(
   item: GearItem,
-  patch: { title?: string; weightGrams?: number | null; note?: string | null },
+  patch: { title?: string; weightGrams?: number | null; note?: string | null; location?: string | null },
 ) {
   savingId.value = item.id
   error.value = null
@@ -453,7 +535,6 @@ async function save(
     Object.assign(item, updated)
   } catch (cause) {
     error.value = messageOf(cause, 'Не удалось сохранить предмет.')
-    // Значение в поле могло разойтись с базой — перечитываем список.
     await load()
   } finally {
     savingId.value = null
@@ -481,14 +562,9 @@ async function remove(item: GearItem) {
 /** Что сейчас переставляется: второе нажатие стрелки не шлёт второй запрос. */
 const movingId = ref<string | null>(null)
 
-/**
- * Соседи вещи в её группе — в том порядке, в каком они нарисованы.
- *
- * Стрелка через границу группы не работает: порядок полок задаёт админ,
- * поэтому «выше» в начале секции и «ниже» в конце — просто нечего делать.
- */
+/** Соседи вещи в её группе — в том порядке, в каком они нарисованы. */
 function canMove(item: GearItem, direction: 'up' | 'down'): boolean {
-  const siblings = groups.value.find((group) => group.id === item.groupId)?.items ?? []
+  const siblings = allItemsByGroup.value.get(item.groupId) ?? []
   const index = siblings.findIndex((row) => row.id === item.id)
 
   if (index === -1) return false
@@ -500,9 +576,7 @@ function canMove(item: GearItem, direction: 'up' | 'down'): boolean {
  * Переставить вещь на позицию выше или ниже.
  *
  * Сервер отвечает списком целиком: после перестановки изменились две строки,
- * и склеивать их на клиенте значило бы повторять правило сервера. Ответ
- * заменяет `items`, поэтому и порядок, и `sortOrder` сразу согласованы
- * с базой — без перечитывания каталога.
+ * и склеивать их на клиенте значило бы повторять правило сервера.
  */
 async function move(item: GearItem, direction: 'up' | 'down') {
   if (movingId.value !== null || !canMove(item, direction)) return
@@ -535,11 +609,8 @@ onMounted(loadVehicles)
  * На вкладке «Трансфер» эта техника выбирается из списка, поэтому заводится
  * она здесь, рядом с тем, что человек и так ведёт.
  *
- * **Вместимости здесь нет** (28.10.2026). Места считаются у карточки
- * перемещения: одна и та же машина едет то с вещами, то без, и держать
- * в каталоге цифру, которая врёт половину поездок, незачем. Поле в API
- * осталось — прежние записи не портятся, — но экран его не спрашивает
- * и не показывает.
+ * **Вместимости здесь нет** (28.10.2026): места считаются у карточки
+ * перемещения.
  */
 const vehicles = ref<Vehicle[]>([])
 const vehiclesError = ref<string | null>(null)
@@ -641,86 +712,140 @@ async function removeVehicleById(vehicle: Vehicle) {
       {{ formatWeightTotal(totalWeightGrams, itemsWithoutWeight) }}
     </p>
 
-    <!-- Новый предмет: сначала группа и тип, потом его характеристики -->
+    <div class="mb-4 flex flex-wrap items-center gap-2">
+      <button
+        type="button"
+        class="cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90"
+        :aria-expanded="isAddOpen"
+        data-test="gear-add-toggle"
+        @click="toggleAdd"
+      >
+        {{ isAddOpen ? 'Скрыть форму' : 'Добавить объект' }}
+      </button>
+
+      <button
+        type="button"
+        class="cursor-pointer rounded-xl border border-border px-4 py-2 text-sm text-text transition-colors hover:border-primary"
+        data-test="grouping-open"
+        @click="isGroupingOpen = true"
+      >
+        Настройка группировки снаряжения
+      </button>
+    </div>
+
+    <!-- Новый предмет: тип задаёт характеристики и группу -->
     <form
-      class="grid gap-2 sm:grid-cols-[9rem_9rem_1fr_5rem_1fr_auto] sm:items-end"
+      v-if="isAddOpen"
+      class="mb-4 flex flex-col gap-3 rounded-xl border border-border bg-surface p-3"
+      data-test="gear-add-form"
       @submit.prevent="add"
     >
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-muted">Группа</span>
-        <select
-          v-model="newGroupId"
-          :disabled="groupsList.length === 0"
-          class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60"
-          data-test="gear-new-group"
-        >
-          <option v-if="groupsList.length === 0" :value="null">—</option>
-          <option v-for="group in groupsList" :key="group.id" :value="group.id">
-            {{ group.name }}
-          </option>
-        </select>
-      </label>
+      <div class="grid gap-2 sm:grid-cols-[9rem_1fr_5rem_1fr_auto] sm:items-end">
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-muted">Тип</span>
+          <select
+            v-model="newTypeId"
+            :disabled="types.length === 0"
+            class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60"
+            data-test="gear-type"
+            @change="newDrafts = {}"
+          >
+            <option v-if="types.length === 0" :value="null">—</option>
+            <option v-for="type in types" :key="type.id" :value="type.id">{{ type.name }}</option>
+          </select>
+        </label>
 
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-muted">Тип</span>
-        <select
-          v-model="newTypeId"
-          :disabled="types.length === 0"
-          class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60"
-          data-test="gear-type"
-          @change="newDrafts = {}"
-        >
-          <option v-if="types.length === 0" :value="null">—</option>
-          <option v-for="type in types" :key="type.id" :value="type.id">{{ type.name }}</option>
-        </select>
-      </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-muted">Название</span>
+          <input
+            v-model="newTitle"
+            type="text"
+            maxlength="120"
+            placeholder="Палатка на четверых"
+            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+            data-test="gear-title"
+          />
+        </label>
 
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-muted">Название</span>
-        <input
-          v-model="newTitle"
-          type="text"
-          maxlength="120"
-          placeholder="Палатка на четверых"
-          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-          data-test="gear-title"
-        />
-      </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-muted">Вес, г</span>
+          <input
+            v-model="newWeight"
+            type="number"
+            min="1"
+            step="1"
+            placeholder="2400"
+            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+            data-test="gear-weight"
+          />
+        </label>
 
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-muted">Вес, г</span>
-        <input
-          v-model="newWeight"
-          type="number"
-          min="1"
-          step="1"
-          placeholder="2400"
-          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-          data-test="gear-weight"
-        />
-      </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-muted">Местоположение</span>
+          <input
+            v-model="newLocation"
+            type="text"
+            maxlength="120"
+            list="gear-locations"
+            placeholder="балкон, гараж, дача"
+            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+            data-test="gear-location"
+          />
+        </label>
 
-      <label class="flex flex-col gap-1">
-        <span class="text-xs text-muted">Заметка</span>
-        <input
-          v-model="newNote"
-          type="text"
-          maxlength="500"
-          placeholder="проклеена, течёт по шву"
-          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-          data-test="gear-note"
-        />
-      </label>
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-muted">Заметка</span>
+          <input
+            v-model="newNote"
+            type="text"
+            maxlength="500"
+            placeholder="проклеена, течёт по шву"
+            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+            data-test="gear-note"
+          />
+        </label>
+      </div>
+
+      <p class="text-xs text-muted" data-test="gear-new-group-hint">
+        <template v-if="newTypeGroup">
+          Попадёт в группу «{{ newTypeGroup.name }}» — группу типа меняют в «Настройке
+          группировки».
+        </template>
+        <template v-else>
+          Тип задаёт характеристики и группу вещи: группу меняют в «Настройке группировки».
+        </template>
+      </p>
 
       <button
         type="submit"
         :disabled="isAdding || newTitle.trim().length === 0 || newType === null"
-        class="cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+        class="self-start cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
         data-test="gear-add"
       >
         {{ isAdding ? 'Добавляем…' : 'Добавить' }}
       </button>
+
+      <!-- Характеристики выбранного типа: их набор задаёт справочник -->
+      <div
+        v-if="newAttributes.length > 0"
+        class="rounded-xl border border-border bg-base p-3"
+        data-test="gear-attributes"
+      >
+        <h3 class="mb-2 text-sm font-medium text-text">
+          Характеристики типа «{{ newType?.name }}»
+        </h3>
+        <GearAttributeFields
+          v-model="newDrafts"
+          :attributes="newAttributes"
+          prefix="new"
+          :disabled="isAdding"
+        />
+      </div>
     </form>
+
+    <datalist id="gear-locations">
+      <option v-for="place in locationHints" :key="place" :value="place" />
+    </datalist>
 
     <p v-if="typesError" class="mt-2 text-sm text-red-600" data-test="gear-types-error">
       {{ typesError }}
@@ -730,259 +855,335 @@ async function removeVehicleById(vehicle: Vehicle) {
       {{ groupsError }}
     </p>
 
-    <!-- Характеристики выбранного типа: их набор задаёт справочник -->
-    <div
-      v-if="newAttributes.length > 0"
-      class="mt-3 rounded-xl border border-border bg-surface p-3"
-      data-test="gear-attributes"
-    >
-      <h3 class="mb-2 text-sm font-medium text-text">
-        Характеристики типа «{{ newType?.name }}»
-      </h3>
-      <GearAttributeFields
-        v-model="newDrafts"
-        :attributes="newAttributes"
-        prefix="new"
-        :disabled="isAdding"
-      />
-    </div>
-
     <p v-if="isLoading" class="mt-4 text-sm text-muted" data-test="gear-loading">
       Загружаем снаряжение…
     </p>
 
-    <p
-      v-else-if="items.length === 0"
-      class="mt-4 rounded-xl border border-dashed border-border p-4 text-sm text-muted"
-      data-test="gear-empty"
-    >
-      Список пуст. Начните с того, что точно поедет в следующий поход: палатка, спальник, рюкзак.
-    </p>
+    <template v-else>
+      <p
+        v-if="items.length === 0"
+        class="mt-4 rounded-xl border border-dashed border-border p-4 text-sm text-muted"
+        data-test="gear-empty"
+      >
+        Список пуст. Начните с того, что точно поедет в следующий поход: палатка, спальник, рюкзак.
+      </p>
 
-    <div v-else class="mt-5 flex flex-col gap-5">
-      <section v-for="group in groups" :key="group.id" data-test="gear-group">
-        <h3 class="mb-1 text-sm font-medium text-text" data-test="gear-group-name">
-          {{ group.label }}
-        </h3>
+      <template v-else>
+        <!-- Фильтр: оба поля фильтруют список сразу, без кнопки «найти» -->
+        <div
+          class="mb-3 grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end"
+          data-test="gear-filter"
+        >
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-muted">Наименование</span>
+            <input
+              v-model="filterTitle"
+              type="search"
+              placeholder="Палатка"
+              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+              data-test="gear-filter-title"
+            />
+          </label>
 
-        <ul class="flex flex-col">
-          <li
-            v-for="item in group.items"
-            :key="item.id"
-            class="border-t border-border py-2"
-            data-test="gear-item"
+          <label class="flex flex-col gap-1">
+            <span class="text-xs text-muted">Местоположение</span>
+            <input
+              v-model="filterLocation"
+              type="search"
+              list="gear-locations"
+              placeholder="Гараж"
+              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+              data-test="gear-filter-location"
+            />
+          </label>
+
+          <button
+            v-if="hasFilter"
+            type="button"
+            class="cursor-pointer rounded-xl border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-text"
+            data-test="gear-filter-reset"
+            @click="filterTitle = ''; filterLocation = ''"
           >
-            <div class="grid gap-2 sm:grid-cols-[1fr_6rem_1fr_auto] sm:items-center">
-              <input
-                :value="item.title"
-                type="text"
-                maxlength="120"
-                :disabled="savingId === item.id"
-                class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
-                aria-label="Название предмета"
-                data-test="item-title"
-                @change="saveTitle(item, $event)"
-              />
+            Сбросить
+          </button>
+        </div>
 
-              <div class="flex items-center gap-1">
-                <input
-                  :value="item.weightGrams ?? ''"
-                  type="number"
-                  min="1"
-                  step="1"
-                  placeholder="—"
-                  :disabled="savingId === item.id"
-                  class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-right text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
-                  aria-label="Вес в граммах"
-                  data-test="item-weight"
-                  @change="saveWeight(item, $event)"
-                />
-                <span class="shrink-0 text-xs text-muted">{{ formatWeight(item.weightGrams) }}</span>
-              </div>
+        <p
+          v-if="visibleGroups.length === 0"
+          class="rounded-xl border border-dashed border-border p-4 text-sm text-muted"
+          data-test="gear-filter-empty"
+        >
+          Ничего не найдено. Измените фильтр или
+          <button
+            type="button"
+            class="cursor-pointer text-primary underline"
+            @click="filterTitle = ''; filterLocation = ''"
+          >
+            сбросьте его
+          </button>
+          .
+        </p>
 
-              <input
-                :value="item.note ?? ''"
-                type="text"
-                maxlength="500"
-                placeholder="заметка"
-                :disabled="savingId === item.id"
-                class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-xs text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
-                aria-label="Заметка"
-                data-test="item-note"
-                @change="saveNote(item, $event)"
-              />
+        <div v-else class="mt-2 flex flex-col gap-5">
+          <div class="flex justify-end">
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-border px-3 py-1 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+              data-test="groups-collapse-all"
+              @click="toggleAllGroups"
+            >
+              {{ allCollapsed ? 'Развернуть все группы' : 'Свернуть все группы' }}
+            </button>
+          </div>
 
-              <div class="flex flex-wrap items-center gap-2 justify-self-start">
-                <!--
-                  Личный порядок внутри полки — стрелками, а не перетаскиванием:
-                  на телефоне стрелка работает так же, как мышью, и не требует
-                  отдельного кода сенсорных событий.
-                -->
-                <div class="flex items-center gap-1">
-                  <button
-                    type="button"
-                    :disabled="movingId !== null || !canMove(item, 'up')"
-                    class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                    title="Выше в группе"
-                    data-test="item-move-up"
-                    @click="move(item, 'up')"
-                  >
-                    ↑
-                  </button>
-                  <button
-                    type="button"
-                    :disabled="movingId !== null || !canMove(item, 'down')"
-                    class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
-                    title="Ниже в группе"
-                    data-test="item-move-down"
-                    @click="move(item, 'down')"
-                  >
-                    ↓
-                  </button>
-                </div>
-
-                <template v-if="confirmingItemId === item.id">
-                  <span class="text-xs text-muted">Удалить?</span>
-                  <button
-                    type="button"
-                    :disabled="savingId === item.id"
-                    class="cursor-pointer rounded-xl border border-red-600 px-2 py-1 text-xs text-red-600 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50"
-                    data-test="item-delete-confirm"
-                    @click="remove(item)"
-                  >
-                    Да
-                  </button>
-                  <button
-                    type="button"
-                    class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:text-text"
-                    data-test="item-delete-cancel"
-                    @click="confirmingItemId = null"
-                  >
-                    Нет
-                  </button>
-                </template>
-
-                <button
-                  v-else
-                  type="button"
-                  :disabled="savingId === item.id"
-                  class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600 disabled:opacity-50"
-                  data-test="item-delete"
-                  @click="confirmingItemId = item.id"
-                >
-                  Удалить
-                </button>
-              </div>
-            </div>
-
-            <!-- Характеристики: тип, подпись словами и кнопка правки -->
-            <div class="mt-1 flex flex-wrap items-center justify-between gap-2 px-2">
-              <p class="text-xs text-muted" data-test="item-attributes-summary">
-                <span class="text-text" data-test="item-type-name">{{ item.typeName }}</span>
-                <template v-if="gearAttributesSummary(item)">
-                  · {{ gearAttributesSummary(item) }}
-                </template>
-                <template v-else> · характеристики не заполнены</template>
-              </p>
+          <section
+            v-for="group in visibleGroups"
+            :key="group.id"
+            data-test="gear-group"
+          >
+            <div class="mb-1 flex items-center justify-between gap-2">
+              <h3 class="text-sm font-medium text-text" data-test="gear-group-name">
+                {{ group.name }}
+                <span class="text-xs font-normal text-muted">
+                  · {{ group.items.length }}
+                </span>
+              </h3>
 
               <button
                 type="button"
-                class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-primary hover:text-text"
-                data-test="item-attributes"
-                @click="editingItemId === item.id ? cancelEditAttributes() : startEditAttributes(item)"
+                class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+                :aria-expanded="!isCollapsed(group.id)"
+                :data-test="`group-toggle-${group.id}`"
+                @click="toggleGroup(group.id)"
               >
-                {{ editingItemId === item.id ? 'Скрыть' : 'Характеристики' }}
+                {{ isCollapsed(group.id) ? 'Развернуть группу' : 'Свернуть группу' }}
               </button>
             </div>
 
-            <div
-              v-if="editingItemId === item.id"
-              class="mt-2 flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
-              data-test="item-attributes-editor"
-            >
-              <label class="flex flex-col gap-1">
-                <span class="text-xs text-muted">Тип</span>
-                <select
-                  v-model="editTypeId"
-                  :disabled="savingId === item.id"
-                  class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 sm:max-w-xs"
-                  data-test="item-type"
-                  @change="editDrafts = {}"
-                >
-                  <option v-for="type in types" :key="type.id" :value="type.id">
-                    {{ type.name }}
-                  </option>
-                  <option v-if="editTypeArchived" :value="item.typeId">
-                    {{ item.typeName }} — в архиве
-                  </option>
-                </select>
-              </label>
-
-              <label class="flex flex-col gap-1">
-                <span class="text-xs text-muted">Группа</span>
-                <select
-                  v-model="editGroupId"
-                  :disabled="savingId === item.id"
-                  class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 sm:max-w-xs"
-                  data-test="item-group"
-                >
-                  <option v-for="group in groupsList" :key="group.id" :value="group.id">
-                    {{ group.name }}
-                  </option>
-                  <option
-                    v-if="!groupsList.some((group) => group.id === item.groupId)"
-                    :value="item.groupId"
-                  >
-                    {{ item.groupName }} — в архиве
-                  </option>
-                </select>
-              </label>
-
-              <p
-                v-if="editTypeArchived"
-                class="text-xs text-muted"
-                data-test="item-type-archived"
+            <ul v-if="!isCollapsed(group.id)" class="flex flex-col">
+              <li
+                v-for="item in group.items"
+                :key="item.id"
+                class="border-t border-border py-2"
+                data-test="gear-item"
               >
-                Тип вещи в архиве справочника: выберите действующий. При смене типа значения прежнего
-                типа стираются.
-              </p>
+                <div class="grid gap-2 sm:grid-cols-[1fr_6rem_10rem_1fr_auto] sm:items-center">
+                  <input
+                    :value="item.title"
+                    type="text"
+                    maxlength="120"
+                    :disabled="savingId === item.id"
+                    class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                    aria-label="Название предмета"
+                    data-test="item-title"
+                    @change="saveTitle(item, $event)"
+                  />
 
-              <GearAttributeFields
-                v-else-if="editAttributes.length > 0"
-                v-model="editDrafts"
-                :attributes="editAttributes"
-                prefix="edit"
-                :disabled="savingId === item.id"
-              />
+                  <div class="flex items-center gap-1">
+                    <input
+                      :value="item.weightGrams ?? ''"
+                      type="number"
+                      min="1"
+                      step="1"
+                      placeholder="—"
+                      :disabled="savingId === item.id"
+                      class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-right text-sm text-text transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                      aria-label="Вес в граммах"
+                      data-test="item-weight"
+                      @change="saveWeight(item, $event)"
+                    />
+                    <span class="shrink-0 text-xs text-muted">{{ formatWeight(item.weightGrams) }}</span>
+                  </div>
 
-              <p v-else class="text-xs text-muted" data-test="item-attributes-empty">
-                У выбранного типа нет характеристик.
-              </p>
+                  <input
+                    :value="item.location ?? ''"
+                    type="text"
+                    maxlength="120"
+                    list="gear-locations"
+                    placeholder="где лежит"
+                    :disabled="savingId === item.id"
+                    class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-sm text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                    aria-label="Местоположение"
+                    data-test="item-location"
+                    @change="saveLocation(item, $event)"
+                  />
 
-              <div class="flex flex-wrap items-center gap-2">
-                <button
-                  type="button"
-                  :disabled="savingId === item.id || editTypeArchived"
-                  class="cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-                  data-test="item-attributes-save"
-                  @click="saveAttributes(item)"
+                  <input
+                    :value="item.note ?? ''"
+                    type="text"
+                    maxlength="500"
+                    placeholder="заметка"
+                    :disabled="savingId === item.id"
+                    class="w-full rounded-lg border border-transparent bg-transparent px-2 py-1 text-xs text-muted transition-colors hover:border-border focus:border-primary focus:bg-field focus:outline-none disabled:opacity-60"
+                    aria-label="Заметка"
+                    data-test="item-note"
+                    @change="saveNote(item, $event)"
+                  />
+
+                  <div class="flex flex-wrap items-center gap-2 justify-self-start">
+                    <!--
+                      Личный порядок внутри полки — стрелками, а не перетаскиванием:
+                      на телефоне стрелка работает так же, как мышью.
+                    -->
+                    <div class="flex items-center gap-1">
+                      <button
+                        type="button"
+                        :disabled="movingId !== null || !canMove(item, 'up')"
+                        class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                        title="Выше в группе"
+                        data-test="item-move-up"
+                        @click="move(item, 'up')"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        type="button"
+                        :disabled="movingId !== null || !canMove(item, 'down')"
+                        class="cursor-pointer rounded-lg border border-border px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text disabled:cursor-not-allowed disabled:opacity-40"
+                        title="Ниже в группе"
+                        data-test="item-move-down"
+                        @click="move(item, 'down')"
+                      >
+                        ↓
+                      </button>
+                    </div>
+
+                    <template v-if="confirmingItemId === item.id">
+                      <span class="text-xs text-muted">Удалить?</span>
+                      <button
+                        type="button"
+                        :disabled="savingId === item.id"
+                        class="cursor-pointer rounded-xl border border-red-600 px-2 py-1 text-xs text-red-600 transition-colors hover:bg-red-600 hover:text-white disabled:opacity-50"
+                        data-test="item-delete-confirm"
+                        @click="remove(item)"
+                      >
+                        Да
+                      </button>
+                      <button
+                        type="button"
+                        class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:text-text"
+                        data-test="item-delete-cancel"
+                        @click="confirmingItemId = null"
+                      >
+                        Нет
+                      </button>
+                    </template>
+
+                    <button
+                      v-else
+                      type="button"
+                      :disabled="savingId === item.id"
+                      class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600 disabled:opacity-50"
+                      data-test="item-delete"
+                      @click="confirmingItemId = item.id"
+                    >
+                      Удалить
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Характеристики: тип, подпись словами и кнопка правки -->
+                <div class="mt-1 flex flex-wrap items-center justify-between gap-2 px-2">
+                  <p class="text-xs text-muted" data-test="item-attributes-summary">
+                    <span class="text-text" data-test="item-type-name">{{ item.typeName }}</span>
+                    <template v-if="gearAttributesSummary(item)">
+                      · {{ gearAttributesSummary(item) }}
+                    </template>
+                    <template v-else> · характеристики не заполнены</template>
+                    <span class="text-muted"> · {{ group.name }}</span>
+                  </p>
+
+                  <button
+                    type="button"
+                    class="cursor-pointer rounded-xl border border-border px-2 py-1 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+                    data-test="item-attributes"
+                    @click="editingItemId === item.id ? cancelEditAttributes() : startEditAttributes(item)"
+                  >
+                    {{ editingItemId === item.id ? 'Скрыть' : 'Характеристики' }}
+                  </button>
+                </div>
+
+                <div
+                  v-if="editingItemId === item.id"
+                  class="mt-2 flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
+                  data-test="item-attributes-editor"
                 >
-                  Сохранить
-                </button>
-                <button
-                  type="button"
-                  class="cursor-pointer rounded-xl border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-text"
-                  data-test="item-attributes-cancel"
-                  @click="cancelEditAttributes"
-                >
-                  Отмена
-                </button>
-              </div>
-            </div>
-          </li>
-        </ul>
-      </section>
-    </div>
+                  <label class="flex flex-col gap-1">
+                    <span class="text-xs text-muted">Тип</span>
+                    <select
+                      v-model="editTypeId"
+                      :disabled="savingId === item.id"
+                      class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60 sm:max-w-xs"
+                      data-test="item-type"
+                      @change="editDrafts = {}"
+                    >
+                      <option v-for="type in types" :key="type.id" :value="type.id">
+                        {{ type.name }}
+                      </option>
+                      <option v-if="editTypeArchived" :value="item.typeId">
+                        {{ item.typeName }} — в архиве
+                      </option>
+                    </select>
+                  </label>
+
+                  <p class="text-xs text-muted" data-test="item-group-hint">
+                    Группа: {{ group.name }} — задаётся типом в «Настройке группировки».
+                  </p>
+
+                  <p
+                    v-if="editTypeArchived"
+                    class="text-xs text-muted"
+                    data-test="item-type-archived"
+                  >
+                    Тип вещи в архиве справочника: выберите действующий. При смене типа значения прежнего
+                    типа стираются.
+                  </p>
+
+                  <GearAttributeFields
+                    v-else-if="editAttributes.length > 0"
+                    v-model="editDrafts"
+                    :attributes="editAttributes"
+                    prefix="edit"
+                    :disabled="savingId === item.id"
+                  />
+
+                  <p v-else class="text-xs text-muted" data-test="item-attributes-empty">
+                    У выбранного типа нет характеристик.
+                  </p>
+
+                  <div class="flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      :disabled="savingId === item.id || editTypeArchived"
+                      class="cursor-pointer rounded-xl border border-primary bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+                      data-test="item-attributes-save"
+                      @click="saveAttributes(item)"
+                    >
+                      Сохранить
+                    </button>
+                    <button
+                      type="button"
+                      class="cursor-pointer rounded-xl border border-border px-4 py-2 text-sm text-muted transition-colors hover:text-text"
+                      data-test="item-attributes-cancel"
+                      @click="cancelEditAttributes"
+                    >
+                      Отмена
+                    </button>
+                  </div>
+                </div>
+              </li>
+            </ul>
+          </section>
+        </div>
+      </template>
+    </template>
+
+    <GearGroupingModal
+      v-if="isGroupingOpen"
+      :groups="groupsList"
+      @close="isGroupingOpen = false"
+      @updated="onGroupingUpdated"
+    />
 
     <!-- Моя техника: своя структура, поэтому отдельной секцией -->
     <section class="mt-8 flex flex-col gap-3" data-test="vehicles">

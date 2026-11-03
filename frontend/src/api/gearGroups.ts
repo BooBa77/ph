@@ -1,59 +1,71 @@
 import { apiFetch } from '@/api/client'
-import type { AdminGearGroup, AdminGearGroupList } from '@/types/gear'
+import type {
+  AdminGearGroupTemplate,
+  AdminGearGroupTemplateList,
+} from '@/types/gear'
 
 /**
- * Админка групп снаряжения (31.10.2026).
+ * Админка **рекомендуемых** групп снаряжения (02.11.2026).
  *
- * Отдельный файл, а не добавка к `api/gearTypes.ts`: типы и группы —
- * соседние, но разные справочники, и один файл на оба стал бы свалкой
- * из двух наборов путей. Публичное чтение групп — `fetchGearGroups`
- * в `api/gear.ts`: его спрашивает каталог, а не админка.
+ * С 02.11.2026 группы бывают двумя видами: рекомендуемые (шаблоны, этот
+ * файл) и личные (копии у человека, `api/gear.ts`). Шаблон — образец:
+ * новый пользователь получает его копию, а новый тип приходит в ту группу,
+ * которую админ указал рекомендацией.
  *
- * Все пути под `/gear/admin/groups`: права проверяет бэкенд
+ * Все пути под `/gear/admin/group-templates`: права проверяет бэкенд
  * (`isAdminUser`), чужому — 403 «Раздел только для администратора».
  */
 
-/** GET /api/gear/admin/groups — все группы, включая архивные. */
-export async function fetchAdminGearGroups(): Promise<AdminGearGroup[]> {
-  const list = await apiFetch<AdminGearGroupList>('/gear/admin/groups')
+/** GET /api/gear/admin/group-templates — все шаблоны, включая архивные. */
+export async function fetchAdminGearGroupTemplates(): Promise<
+  AdminGearGroupTemplate[]
+> {
+  const list = await apiFetch<AdminGearGroupTemplateList>(
+    '/gear/admin/group-templates',
+  )
 
   return list.items
 }
 
 /**
- * POST /api/gear/admin/groups — новая полка.
+ * POST /api/gear/admin/group-templates — новая рекомендуемая группа.
  *
  * `code` занимается навсегда: в `PATCH` его нет, а ошибку исправляют
- * архивом и новым кодом (как у типов).
+ * архивом и новой группой с новым кодом (как у типов).
  */
-export async function createGearGroup(input: {
+export async function createGearGroupTemplate(input: {
   code: string
   name: string
   sortOrder?: number
-}): Promise<AdminGearGroup> {
-  return apiFetch<AdminGearGroup>('/gear/admin/groups', {
+}): Promise<AdminGearGroupTemplate> {
+  return apiFetch<AdminGearGroupTemplate>('/gear/admin/group-templates', {
     method: 'POST',
     body: JSON.stringify(input),
   })
 }
 
-/** PATCH /api/gear/admin/groups/:id — имя, порядок, архив и возврат. */
-export async function updateGearGroup(
+/** PATCH /api/gear/admin/group-templates/:id — имя, порядок, архив и возврат. */
+export async function updateGearGroupTemplate(
   id: number,
   patch: { name?: string; sortOrder?: number; isActive?: boolean },
-): Promise<AdminGearGroup> {
-  return apiFetch<AdminGearGroup>(`/gear/admin/groups/${id}`, {
-    method: 'PATCH',
-    body: JSON.stringify(patch),
-  })
+): Promise<AdminGearGroupTemplate> {
+  return apiFetch<AdminGearGroupTemplate>(
+    `/gear/admin/group-templates/${id}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify(patch),
+    },
+  )
 }
 
 /**
- * DELETE /api/gear/admin/groups/:id — в архив (204).
+ * DELETE /api/gear/admin/group-templates/:id — в архив (204).
  *
- * «Прочее» (`other`) так убрать нельзя — сервер ответит 409: это группа
- * по умолчанию, в неё кладутся вещи без явной полки.
+ * «Прочее» (`other`) так убрать нельзя — сервер ответит 409: это умолчание
+ * для типа без рекомендованной группы.
  */
-export async function archiveGearGroup(id: number): Promise<void> {
-  await apiFetch<void>(`/gear/admin/groups/${id}`, { method: 'DELETE' })
+export async function archiveGearGroupTemplate(id: number): Promise<void> {
+  await apiFetch<void>(`/gear/admin/group-templates/${id}`, {
+    method: 'DELETE',
+  })
 }

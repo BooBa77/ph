@@ -3,45 +3,47 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
 import {
-  archiveGearGroup,
-  createGearGroup,
-  fetchAdminGearGroups,
-  updateGearGroup,
+  archiveGearGroupTemplate,
+  createGearGroupTemplate,
+  fetchAdminGearGroupTemplates,
+  updateGearGroupTemplate,
 } from '@/api/gearGroups'
 import { GEAR_CODE_HINT, GEAR_NAME_MAX_LENGTH, isGearCode } from '@/types/gearTypes'
 import { GEAR_DEFAULT_GROUP_CODE } from '@/types/gear'
-import type { AdminGearGroup } from '@/types/gear'
+import type { AdminGearGroupTemplate } from '@/types/gear'
 
 /**
- * Группы снаряжения — админка полок каталога (31.10.2026).
+ * Рекомендуемые группы снаряжения — админка шаблонов (02.11.2026).
  *
- * Заказчик: «Группа — это полка в каталоге и в снаряжении похода
- * („Костровое“, „Ночлег“), а не тип: одна группа собирает топор, пилу
- * и розжиг, которые лежат в разных типах. Заводит и упорядочивает админ
- * в `/admin/gear` рядом с типами».
+ * Заказчик: «Заводим рекомендуемые группы, они управляются админом,
+ * приходят новым пользователям и с новыми типами, но пользователь в праве
+ * сам менять их под себя».
  *
- * Секция стоит под списком типов и живёт отдельным компонентом: типы
- * и группы — разные справочники, и держать два набора форм и модалок
- * в одном файле значило бы сделать его нечитаемым. Сюда же переехали
- * ограничения, которые общие с типами: `code` — латиница и неизменяем,
- * удаления нет (только архив), порядок задаёт админ, а не алфавит.
+ * Шаблон — **образец**, а не рабочая группа: человек получает его копию
+ * (`gear_groups`), которую переименовывает, переставляет и удаляет сам.
+ * Поэтому здесь нет числа вещей: вещи живут в личных группах, а шаблон
+ * отвечает на два вопроса — «что придёт новому пользователю» и «в какую
+ * группу попадёт тип, для которого эта рекомендация указана».
  *
- * **«Прочее» (`other`) не архивируется.** Это группа по умолчанию: вещь
- * без явной полки падает в неё, поэтому сервер отвечает 409, а кнопки
- * архива у строки нет вовсе — «нажать и получить отказ» хуже, чем её
- * отсутствие с подписью «умолчание».
+ * **`code` — контракт и неизменяем**: по нему личная копия находит
+ * «Прочее» (`other`) и понимает, куда положить новый тип. Ошибку
+ * исправляют архивом и новой строкой с новым кодом.
+ *
+ * **Удаления нет, есть архив.** Архивный шаблон не приходит новым
+ * пользователям и не предлагается в выборе рекомендуемой группы, но копии
+ * у существующих людей остаются. «Прочее» не архивируется (409).
  *
  * Права проверяет бэкенд (`isAdminUser`): 403 «Раздел только для
- * администратора» показывается строкой сверху, фронт проверку не повторяет.
+ * администратора» показывается строкой сверху.
  */
-const groups = ref<AdminGearGroup[]>([])
+const groups = ref<AdminGearGroupTemplate[]>([])
 const error = ref<string | null>(null)
 const isLoading = ref(false)
 
 /** Что сейчас меняется: повторное нажатие не шлёт второй запрос. */
 const busyId = ref<number | null>(null)
 
-/** Черновик формы группы. `id: null` — создание: код вводится руками. */
+/** Черновик формы шаблона. `id: null` — создание: код вводится руками. */
 interface GroupForm {
   id: number | null
   code: string
@@ -54,7 +56,7 @@ const form = ref<GroupForm | null>(null)
 const formError = ref<string | null>(null)
 const isSaving = ref(false)
 
-/** Имя группы по умолчанию — его код защищён от архива на сервере. */
+/** Код умолчания: его сервер не даёт убрать в архив. */
 const DEFAULT_CODE = GEAR_DEFAULT_GROUP_CODE
 
 const activeCount = computed(() => groups.value.filter((group) => group.isActive).length)
@@ -68,9 +70,9 @@ async function load() {
   error.value = null
 
   try {
-    groups.value = await fetchAdminGearGroups()
+    groups.value = await fetchAdminGearGroupTemplates()
   } catch (cause) {
-    error.value = messageOf(cause, 'Не удалось загрузить группы снаряжения.')
+    error.value = messageOf(cause, 'Не удалось загрузить рекомендуемые группы.')
   } finally {
     isLoading.value = false
   }
@@ -81,7 +83,7 @@ function openCreate() {
   form.value = { id: null, code: '', name: '', sortOrder: 10, isActive: true }
 }
 
-function openEdit(group: AdminGearGroup) {
+function openEdit(group: AdminGearGroupTemplate) {
   formError.value = null
   form.value = {
     id: group.id,
@@ -102,8 +104,7 @@ function closeForm() {
  *
  * `sortOrder` разбирается до запроса: пустое поле — это 0, а мусор и минус —
  * ошибка в форме, а не 400 от сервера. Код проверяется той же регуляркой,
- * что и на бэкенде (`isGearCode`), но только при создании: в правке он
- * только для чтения и меняться не может.
+ * что и на бэкенде (`isGearCode`), но только при создании.
  */
 async function submit(): Promise<void> {
   const draft = form.value
@@ -135,9 +136,13 @@ async function submit(): Promise<void> {
 
   try {
     if (draft.id === null) {
-      await createGearGroup({ code: draft.code.trim().toLowerCase(), name, sortOrder })
+      await createGearGroupTemplate({
+        code: draft.code.trim().toLowerCase(),
+        name,
+        sortOrder,
+      })
     } else {
-      await updateGearGroup(draft.id, {
+      await updateGearGroupTemplate(draft.id, {
         name,
         sortOrder,
         isActive: draft.isActive,
@@ -147,21 +152,21 @@ async function submit(): Promise<void> {
     closeForm()
     await load()
   } catch (cause) {
-    formError.value = messageOf(cause, 'Не удалось сохранить группу.')
+    formError.value = messageOf(cause, 'Не удалось сохранить рекомендуемую группу.')
   } finally {
     isSaving.value = false
   }
 }
 
-async function setActive(group: AdminGearGroup, isActive: boolean) {
+async function setActive(group: AdminGearGroupTemplate, isActive: boolean) {
   if (busyId.value !== null) return
 
   busyId.value = group.id
   error.value = null
 
   try {
-    if (isActive) await updateGearGroup(group.id, { isActive: true })
-    else await archiveGearGroup(group.id)
+    if (isActive) await updateGearGroupTemplate(group.id, { isActive: true })
+    else await archiveGearGroupTemplate(group.id)
 
     await load()
   } catch (cause) {
@@ -194,13 +199,14 @@ onBeforeUnmount(() => {
 
 <template>
   <section class="mt-10" data-test="gear-groups-admin">
-    <h2 class="text-xl font-bold text-text">Группы снаряжения</h2>
+    <h2 class="text-xl font-bold text-text">Рекомендуемые группы снаряжения</h2>
 
     <p class="mt-2 text-sm text-muted">
-      Полки каталога: «Кров» собирает палатку и тент, «Костровое» — топор, пилу и розжиг, хотя это
-      разные типы. Порядок групп — этот, а порядок вещей внутри группы человек задаёт сам стрелками
-      в своём каталоге. Группа у вещи обязательна, поэтому «Прочее» существует всегда и в архив
-      не убирается.
+      Шаблоны, которые получает новый пользователь: «Кров» собирает палатку и тент,
+      «Костровое» — топор, пилу и розжиг, хотя это разные типы. Человек вправе переименовать,
+      переставить и удалить свою копию, а также переложить типы между группами — шаблон от этого
+      не меняется. Рекомендуемую группу выбирают у типа в справочнике выше: новый тип попадёт
+      в неё. «Прочее» — умолчание, оно существует всегда и в архив не убирается.
     </p>
 
     <p v-if="error" data-test="gear-groups-error" class="mt-3 text-sm text-red-600">{{ error }}</p>
@@ -221,8 +227,8 @@ onBeforeUnmount(() => {
     </div>
 
     <p v-if="!isLoading && groups.length === 0" data-test="groups-empty" class="mt-3 text-sm text-muted">
-      Групп пока нет. Четыре базовые — «Кров», «Костровое», «Кухня» и «Прочее» — приезжают миграцией
-      и сидом <code>seed:gear-groups</code>, остальные заводят здесь.
+      Групп пока нет. Пять базовых — «Кров», «Костровое», «Кухня», «Посуда» и «Прочее» —
+      приезжают миграцией и сидом <code>seed:gear-groups</code>, остальные заводят здесь.
     </p>
 
     <ul v-else data-test="groups-list" class="mt-4 space-y-2">
@@ -253,7 +259,8 @@ onBeforeUnmount(() => {
               </span>
             </h3>
             <p data-test="group-meta" class="text-xs text-muted">
-              {{ group.code }} · порядок {{ group.sortOrder }} · вещей {{ group.itemsCount }}
+              {{ group.code }} · порядок {{ group.sortOrder }} · рекомендованных типов
+              {{ group.typesCount }}
             </p>
           </div>
 
@@ -291,7 +298,7 @@ onBeforeUnmount(() => {
       </li>
     </ul>
 
-    <!-- Форма группы -->
+    <!-- Форма шаблона -->
     <div
       v-if="form"
       class="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
@@ -306,7 +313,7 @@ onBeforeUnmount(() => {
         @submit.prevent="submit"
       >
         <h2 id="gear-group-form-title" class="text-lg font-semibold text-text">
-          {{ form.id === null ? 'Новая группа снаряжения' : 'Группа снаряжения' }}
+          {{ form.id === null ? 'Новая рекомендуемая группа' : 'Рекомендуемая группа' }}
         </h2>
 
         <label class="mt-3 block text-sm text-muted" for="gear-group-code">Код</label>
@@ -324,7 +331,8 @@ onBeforeUnmount(() => {
         <p class="mt-1 text-xs text-muted">
           <template v-if="form.id === null">{{ GEAR_CODE_HINT }}</template>
           <template v-else>
-            Код не меняется: на него опирается умолчание и фильтры. Исправление — архив и новый код.
+            Код не меняется: на него опирается умолчание и раскладка типов. Исправление — архив
+            и новый код.
           </template>
         </p>
 
@@ -339,7 +347,7 @@ onBeforeUnmount(() => {
           class="mt-1 w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
         />
 
-        <label class="mt-3 block text-sm text-muted" for="gear-group-sort">Порядок полок</label>
+        <label class="mt-3 block text-sm text-muted" for="gear-group-sort">Порядок</label>
         <input
           id="gear-group-sort"
           v-model="form.sortOrder"
@@ -349,8 +357,8 @@ onBeforeUnmount(() => {
           class="mt-1 w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text"
         />
         <p class="mt-1 text-xs text-muted">
-          Меньше число — выше секция в каталоге. «Прочее» стоит последним по смыслу, но порядок
-          можно поставить любой.
+          Меньше число — выше секция в каталоге. «Прочее» по смыслу последнее, и его копия
+          у человека всегда остаётся внизу.
         </p>
 
         <label

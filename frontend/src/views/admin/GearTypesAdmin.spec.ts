@@ -31,15 +31,15 @@ vi.mock('@/api/gearTypes', () => ({
 }))
 
 /**
- * Группы живут вложенным компонентом (`GearGroupsAdmin`) и ходят в свой
- * API. Своя спека у них есть — здесь важно лишь, что экран типов
- * не падает от их присутствия, поэтому список групп пуст.
+ * Рекомендуемые группы живут вложенным компонентом (`GearGroupsAdmin`)
+ * и ходят в свой API. Своя спека у них есть — здесь важно лишь, что экран
+ * типов не падает от их присутствия, поэтому список групп пуст.
  */
 vi.mock('@/api/gearGroups', () => ({
-  fetchAdminGearGroups: vi.fn().mockResolvedValue([]),
-  createGearGroup: vi.fn(),
-  updateGearGroup: vi.fn(),
-  archiveGearGroup: vi.fn(),
+  fetchAdminGearGroupTemplates: vi.fn().mockResolvedValue([]),
+  createGearGroupTemplate: vi.fn(),
+  updateGearGroupTemplate: vi.fn(),
+  archiveGearGroupTemplate: vi.fn(),
 }))
 
 import * as api from '@/api/gearTypes'
@@ -205,6 +205,7 @@ describe('GearTypesAdmin', () => {
       code: 'sleeping',
       name: 'Спальник',
       sortOrder: 20,
+      recommendedGroupId: null,
     })
     // Форма закрылась, список перечитан.
     expect(wrapper.find('[data-test="type-form"]').exists()).toBe(false)
@@ -263,6 +264,7 @@ describe('GearTypesAdmin', () => {
       name: 'Палатка 2',
       sortOrder: 5,
       isActive: true,
+      recommendedGroupId: null,
     })
   })
 
