@@ -163,6 +163,49 @@ describe('TripGearExtraPicker («Добавить ещё»)', () => {
     expect(wrapper.find('[data-test="route-extra-chips"]').exists()).toBe(false)
   })
 
+  it('«Прочее» — такая же группа: показывается, когда в ней есть свободная вещь', () => {
+    const wrapper = mounted({
+      items: [
+        gearItem({ id: '1', title: 'Лодка', groupCode: 'other', groupName: 'Прочее' }),
+        gearItem({
+          id: '2',
+          title: 'Котёл 5 л',
+          typeCode: 'kettle',
+          typeName: 'Котёл',
+          groupCode: 'kitchen',
+          groupName: 'Кухня',
+        }),
+      ],
+    })
+
+    expect(filterChipsText(wrapper)).toEqual(['Все', 'Кухня', 'Прочее'])
+  })
+
+  it('девять групп — вместо чипов выпадающий список', async () => {
+    const items = Array.from({ length: 9 }, (_, index) =>
+      gearItem({
+        id: `${index + 1}`,
+        title: `Вещь ${index + 1}`,
+        groupCode: `group-${index + 1}`,
+        groupName: `Группа ${index + 1}`,
+      }),
+    )
+    const wrapper = mounted({ items })
+
+    expect(wrapper.find('[data-test="route-extra-filter-all"]').exists()).toBe(false)
+
+    const select = wrapper.get('[data-test="route-extra-groups-select"]')
+    expect(select.findAll('option')).toHaveLength(10)
+    expect(select.findAll('option')[0]?.text()).toBe('Все')
+
+    await select.setValue('group-5')
+
+    expect(itemsText(wrapper)).toEqual(['Вещь 5 · Прочее'])
+    expect(wrapper.get('[data-test="route-extra-groups-hint"]').text()).toContain(
+      'свободные вещи',
+    )
+  })
+
   it('пустой каталог объясняется словами', () => {
     const wrapper = mounted({ items: [] })
 

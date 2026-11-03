@@ -124,6 +124,17 @@ const groupOptions = computed<{ code: string; name: string }[]>(() => {
 })
 
 /**
+ * Сколько групп ещё показываем чипами.
+ *
+ * Как и у мест в «Поиске снаряжения», восемь — предел: дальше ряд чипов
+ * растёт в облако и съедает высоту списка. Тогда группа выбирается
+ * выпадающим списком из тех же значений.
+ */
+const GROUP_CHIPS_LIMIT = 8
+
+const isGroupChips = computed(() => groupOptions.value.length <= GROUP_CHIPS_LIMIT)
+
+/**
  * Полка, которая реально фильтрует.
  *
  * Вещь убрали из похода или поиск поменял набор полок — выбранной может
@@ -136,6 +147,14 @@ const activeGroup = computed<string | null>(() => {
   if (code === null) return null
 
   return groupOptions.value.some((group) => group.code === code) ? code : null
+})
+
+/** Значение для `select`: `activeGroup` — код или `null`, у списка — пустая строка. */
+const selectedGroupValue = computed<string>({
+  get: () => activeGroup.value ?? '',
+  set: (value) => {
+    selectedGroup.value = value === '' ? null : value
+  },
 })
 
 /** Отфильтровано полкой и поиском: полка сужает, поиск ищет внутри. */
@@ -238,7 +257,7 @@ function pick(item: GearItem): void {
         data-test="route-extra-chips"
       >
         <span class="text-xs text-muted">Группа</span>
-        <div class="flex flex-wrap gap-1.5">
+        <div v-if="isGroupChips" class="flex flex-wrap gap-1.5">
           <button
             type="button"
             class="cursor-pointer rounded-xl border px-3 py-1.5 text-sm transition-colors"
@@ -271,6 +290,26 @@ function pick(item: GearItem): void {
             {{ group.name }}
           </button>
         </div>
+
+        <!--
+          Групп больше восьми — чипы превращаются в облако и съедают список;
+          тогда тот же выбор живёт в выпадающем списке.
+        -->
+        <select
+          v-else
+          v-model="selectedGroupValue"
+          class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+          data-test="route-extra-groups-select"
+        >
+          <option value="">Все</option>
+          <option v-for="group in groupOptions" :key="group.code" :value="group.code">
+            {{ group.name }}
+          </option>
+        </select>
+
+        <p class="text-xs text-muted" data-test="route-extra-groups-hint">
+          Показаны группы, в которых есть свободные вещи.
+        </p>
       </div>
 
       <!--
