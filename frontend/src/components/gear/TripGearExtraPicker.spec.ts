@@ -14,7 +14,9 @@ import type { GearItem } from '@/types/gear'
  * - список — **весь** каталог, без фильтра по типам секции;
  * - полки секции идут первыми, остальные — после;
  * - вещь, которая уже в походе, не предлагается; поиск ищет по названию,
- *   типу и полке.
+ *   типу и полке;
+ * - рядом с поиском — **список-фильтр по группам** (03.11.2026): он сужает
+ *   набор полкой и складывается с поиском.
  */
 function gearItem(
   overrides: Partial<GearItem> & Pick<GearItem, 'id' | 'title'>,
@@ -44,6 +46,12 @@ function groupsText(wrapper: ReturnType<typeof mount>): string[] {
 function itemsText(wrapper: ReturnType<typeof mount>): string[] {
   return wrapper
     .findAll('[data-test^="route-extra-item-"]')
+    .map((node) => node.text())
+}
+
+function filterChipsText(wrapper: ReturnType<typeof mount>): string[] {
+  return wrapper
+    .findAll('[data-test^="route-extra-filter-"]')
     .map((node) => node.text())
 }
 
@@ -108,6 +116,51 @@ describe('TripGearExtraPicker («Добавить ещё»)', () => {
     await wrapper.get('[data-test="route-extra-search"]').setValue('ничего такого')
 
     expect(wrapper.find('[data-test="route-extra-not-found"]').exists()).toBe(true)
+  })
+
+  it('рядом с поиском — список полок, полки секции первыми', () => {
+    const wrapper = mounted({ preferredGroupCodes: ['kitchen'] })
+
+    expect(filterChipsText(wrapper)).toEqual(['Все', 'Кухня', 'Прочее'])
+  })
+
+  it('полка сужает список, «Все» возвращает его целиком', async () => {
+    const wrapper = mounted()
+
+    await wrapper.get('[data-test="route-extra-filter-group-kitchen"]').trigger('click')
+
+    expect(itemsText(wrapper)).toEqual(['Котёл 5 л · Котёл'])
+    expect(
+      wrapper.get('[data-test="route-extra-filter-group-kitchen"]').attributes('aria-pressed'),
+    ).toBe('true')
+
+    await wrapper.get('[data-test="route-extra-filter-all"]').trigger('click')
+
+    expect(itemsText(wrapper)).toHaveLength(2)
+    expect(wrapper.get('[data-test="route-extra-filter-all"]').attributes('aria-pressed')).toBe(
+      'true',
+    )
+  })
+
+  it('полка и поиск складываются: ищется внутри выбранной полки', async () => {
+    const wrapper = mounted()
+
+    await wrapper.get('[data-test="route-extra-filter-group-other"]').trigger('click')
+    await wrapper.get('[data-test="route-extra-search"]').setValue('котёл')
+
+    expect(wrapper.find('[data-test="route-extra-not-found"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="route-extra-search"]').setValue('лодка')
+
+    expect(itemsText(wrapper)).toEqual(['Лодка надувная · Прочее'])
+  })
+
+  it('фильтр по полкам показывается только когда полок больше одной', () => {
+    const wrapper = mounted({
+      items: [gearItem({ id: '1', title: 'Котёл', groupCode: 'kitchen', groupName: 'Кухня' })],
+    })
+
+    expect(wrapper.find('[data-test="route-extra-chips"]').exists()).toBe(false)
   })
 
   it('пустой каталог объясняется словами', () => {

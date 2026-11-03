@@ -30,6 +30,12 @@ import { weightInGrams } from '@/utils/gearWeight'
  *
  * Поиск — по названию, типу и полке: каталог бывает длинным, а человек
  * помнит слово («котёл», «спальник»), а не полку.
+ *
+ * **Фильтр по группам (03.11.2026).** Заказчик попросил рядом с поиском
+ * список групп: длинный каталог быстрее сузить полкой, чем вспоминать
+ * название. Полки идут в том же порядке, что и в списке (полки секции
+ * первыми), «Все» снимает фильтр. Фильтр складывается с поиском: выбрать
+ * «Кров» и набрать «2» — значит «двушка в „Крове“».
  */
 const props = defineProps<{
   /** Весь личный каталог: `GET /api/gear`. */
@@ -55,6 +61,9 @@ const emit = defineEmits<{
 }>()
 
 const search = ref('')
+
+/** Выбранная полка; `null` — «Все». */
+const selectedGroup = ref<string | null>(null)
 
 /** Что можно предложить: всё, кроме уже добавленного в поход. */
 const available = computed(() => {
@@ -90,13 +99,50 @@ function typeRank(typeCode: string): number {
   return index === -1 ? preferred.length : index
 }
 
-/** Отфильтровано поиском: название, тип и полка — три слова человека. */
+/** Полки для фильтра: только те, в которых есть что предложить. */
+const groupOptions = computed<{ code: string; name: string }[]>(() => {
+  const byCode = new Map<string, string>()
+
+  for (const item of available.value) {
+    if (!byCode.has(item.groupCode)) byCode.set(item.groupCode, item.groupName)
+  }
+
+  return [...byCode.entries()]
+    .map(([code, name]) => ({ code, name }))
+    .sort(
+      (left, right) =>
+        groupRank(left.code) - groupRank(right.code) ||
+        left.name.localeCompare(right.name, 'ru'),
+    )
+})
+
+/**
+ * Полка, которая реально фильтрует.
+ *
+ * Вещь убрали из похода или поиск поменял набор полок — выбранной может
+ * уже не быть. Тогда фильтр считается снятым, а не пустым списком: иначе
+ * модалка выглядела бы сломанной.
+ */
+const activeGroup = computed<string | null>(() => {
+  const code = selectedGroup.value
+
+  if (code === null) return null
+
+  return groupOptions.value.some((group) => group.code === code) ? code : null
+})
+
+/** Отфильтровано полкой и поиском: полка сужает, поиск ищет внутри. */
 const filtered = computed<GearItem[]>(() => {
+  const byGroup =
+    activeGroup.value === null
+      ? [...available.value]
+      : available.value.filter((item) => item.groupCode === activeGroup.value)
+
   const query = search.value.trim().toLowerCase()
 
-  if (query === '') return [...available.value]
+  if (query === '') return byGroup
 
-  return available.value.filter((item) =>
+  return byGroup.filter((item) =>
     [item.title, item.typeName, item.groupName].some((field) =>
       field.toLowerCase().includes(query),
     ),
@@ -160,7 +206,7 @@ function pick(item: GearItem): void {
         <h3 class="text-base font-medium text-text">{{ title ?? 'Добавить ещё' }}</h3>
         <p class="text-xs text-muted">
           Любая вещь из личного снаряжения или новая вручную — сначала показаны
-          подходящие полки.
+          подходящие группы.
         </p>
       </div>
 
@@ -170,10 +216,55 @@ function pick(item: GearItem): void {
           v-model="search"
           type="search"
           class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-          placeholder="Название, тип или полка"
+          placeholder="Название, тип или группа"
           data-test="route-extra-search"
         />
       </label>
+
+      <!--
+        Список-фильтр по группам: полки идут в том же порядке, что и блоки
+        ниже, «Все» снимает фильтр. Складывается с поиском, а не заменяет его.
+      -->
+      <div
+        v-if="groupOptions.length > 1"
+        class="flex flex-col gap-1"
+        data-test="route-extra-chips"
+      >
+        <span class="text-xs text-muted">Группа</span>
+        <div class="flex flex-wrap gap-1.5">
+          <button
+            type="button"
+            class="cursor-pointer rounded-xl border px-3 py-1.5 text-sm transition-colors"
+            :class="
+              activeGroup === null
+                ? 'border-primary bg-primary/10 font-medium text-text'
+                : 'border-border bg-field text-muted hover:border-primary hover:text-text'
+            "
+            :aria-pressed="activeGroup === null"
+            data-test="route-extra-filter-all"
+            @click="selectedGroup = null"
+          >
+            Все
+          </button>
+
+          <button
+            v-for="group in groupOptions"
+            :key="group.code"
+            type="button"
+            class="cursor-pointer rounded-xl border px-3 py-1.5 text-sm transition-colors"
+            :class="
+              activeGroup === group.code
+                ? 'border-primary bg-primary/10 font-medium text-text'
+                : 'border-border bg-field text-muted hover:border-primary hover:text-text'
+            "
+            :aria-pressed="activeGroup === group.code"
+            :data-test="`route-extra-filter-group-${group.code}`"
+            @click="selectedGroup = group.code"
+          >
+            {{ group.name }}
+          </button>
+        </div>
+      </div>
 
       <p v-if="loading" class="text-sm text-muted" data-test="route-extra-loading">
         Загружаем снаряжение…

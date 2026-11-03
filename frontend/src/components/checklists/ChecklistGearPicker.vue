@@ -153,7 +153,7 @@ onBeforeUnmount(() => {
         ref="searchInput"
         v-model="search"
         type="search"
-        placeholder="Поиск: название, тип или полка"
+        placeholder="Поиск: название, тип или группа"
         class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
         data-test="gear-search"
       />
