@@ -36,6 +36,13 @@ import { weightInGrams } from '@/utils/gearWeight'
  * название. Полки идут в том же порядке, что и в списке (полки секции
  * первыми), «Все» снимает фильтр. Фильтр складывается с поиском: выбрать
  * «Кров» и набрать «2» — значит «двушка в „Крове“».
+ *
+ * **Список прокручивается внутри модалки (03.11.2026).** «Все» показывает
+ * весь свободный каталог, и на 100+ вещах страница уезжала: «Отмена»
+ * и «Указать вручную» оказывались под длинным списком. Теперь прокрутка
+ * живёт в середине, а поиск, чипы и нижние кнопки стоят на месте. До сотни
+ * записей это дешевле серверной пагинации; если каталоги вырастут
+ * до тысяч, понадобится поиск на сервере.
  */
 const props = defineProps<{
   /** Весь личный каталог: `GET /api/gear`. */
@@ -200,9 +207,9 @@ function pick(item: GearItem): void {
     data-test="route-extra-picker"
   >
     <div
-      class="flex w-full max-w-lg flex-col gap-3 rounded-xl border border-border bg-surface p-4"
+      class="flex max-h-[calc(100dvh_-_2rem)] w-full max-w-lg flex-col gap-3 rounded-xl border border-border bg-surface p-4"
     >
-      <div class="flex flex-col gap-1">
+      <div class="flex shrink-0 flex-col gap-1">
         <h3 class="text-base font-medium text-text">{{ title ?? 'Добавить ещё' }}</h3>
         <p class="text-xs text-muted">
           Любая вещь из личного снаряжения или новая вручную — сначала показаны
@@ -210,7 +217,7 @@ function pick(item: GearItem): void {
         </p>
       </div>
 
-      <label class="flex flex-col gap-1 text-xs text-muted">
+      <label class="flex shrink-0 flex-col gap-1 text-xs text-muted">
         Поиск
         <input
           v-model="search"
@@ -227,7 +234,7 @@ function pick(item: GearItem): void {
       -->
       <div
         v-if="groupOptions.length > 1"
-        class="flex flex-col gap-1"
+        class="flex shrink-0 flex-col gap-1"
         data-test="route-extra-chips"
       >
         <span class="text-xs text-muted">Группа</span>
@@ -266,45 +273,55 @@ function pick(item: GearItem): void {
         </div>
       </div>
 
-      <p v-if="loading" class="text-sm text-muted" data-test="route-extra-loading">
-        Загружаем снаряжение…
-      </p>
-
-      <p
-        v-else-if="available.length === 0"
-        class="text-sm text-muted"
-        data-test="route-extra-empty"
+      <!--
+        Список прокручивается внутри модалки, а поиск, чипы и нижние кнопки
+        остаются на месте: на 100+ вещах «Отмена» и «Указать вручную» иначе
+        уезжают под длинный список. Шапка и подвал не сжимаются.
+      -->
+      <div
+        class="min-h-0 flex-1 overflow-y-auto pr-1"
+        data-test="route-extra-list"
       >
-        В личном снаряжении ничего не осталось — заведите вещь вручную.
-      </p>
+        <p v-if="loading" class="text-sm text-muted" data-test="route-extra-loading">
+          Загружаем снаряжение…
+        </p>
 
-      <p
-        v-else-if="filtered.length === 0"
-        class="text-sm text-muted"
-        data-test="route-extra-not-found"
-      >
-        Поиск ничего не нашёл — попробуйте другое слово или заведите вещь вручную.
-      </p>
-
-      <div v-else class="flex flex-col gap-3">
-        <div
-          v-for="group in groups"
-          :key="group.code"
-          class="flex flex-col gap-1"
-          :data-test="`route-extra-group-${group.code}`"
+        <p
+          v-else-if="available.length === 0"
+          class="text-sm text-muted"
+          data-test="route-extra-empty"
         >
-          <span class="text-xs text-muted">{{ group.name }}</span>
+          В личном снаряжении ничего не осталось — заведите вещь вручную.
+        </p>
 
-          <button
-            v-for="item in group.items"
-            :key="item.id"
-            type="button"
-            class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-left text-sm text-text transition-colors hover:border-primary"
-            :data-test="`route-extra-item-${item.id}`"
-            @click="pick(item)"
+        <p
+          v-else-if="filtered.length === 0"
+          class="text-sm text-muted"
+          data-test="route-extra-not-found"
+        >
+          Поиск ничего не нашёл — попробуйте другое слово или заведите вещь вручную.
+        </p>
+
+        <div v-else class="flex flex-col gap-3">
+          <div
+            v-for="group in groups"
+            :key="group.code"
+            class="flex flex-col gap-1"
+            :data-test="`route-extra-group-${group.code}`"
           >
-            {{ itemText(item) }}
-          </button>
+            <span class="text-xs text-muted">{{ group.name }}</span>
+
+            <button
+              v-for="item in group.items"
+              :key="item.id"
+              type="button"
+              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-left text-sm text-text transition-colors hover:border-primary"
+              :data-test="`route-extra-item-${item.id}`"
+              @click="pick(item)"
+            >
+              {{ itemText(item) }}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -321,7 +338,7 @@ function pick(item: GearItem): void {
         Указать вручную
       </button>
 
-      <div class="flex flex-wrap items-center gap-2">
+      <div class="flex shrink-0 flex-wrap items-center gap-2">
         <button
           type="button"
           class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary"
