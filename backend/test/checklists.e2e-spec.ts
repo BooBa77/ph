@@ -42,9 +42,8 @@ describe('Чек-листы (e2e)', () => {
   /** Поход для пунктов-ссылок: общий список, участник и своя вещь. */
   let gearTripId: string;
 
-  /** Тип и полка для вещей проверки — свой код, без зависимости от сидов. */
+  /** Тип для вещей проверки — свой код, без зависимости от сидов. */
   let gearTypeId: number;
-  let gearGroupId: number;
   /** Как называется тип: этим текстом пункт подписывается после удаления вещи. */
   const gearTypeName = 'Рюкзак проверки чек-листа';
 
@@ -154,7 +153,7 @@ describe('Чек-листы (e2e)', () => {
       [tripId, organizerId, memberId, privateTripId, copyTripId, gearTripId],
     );
 
-    // Тип и полка для пунктов-ссылок. Свои коды, а не сиды: спека не должна
+    // Тип для пунктов-ссылок. Свой код, а не сид: спека не должна
     // зависеть от того, прогнали ли на этой базе `seed:gear-types`.
     await dataSource.query(
       `INSERT INTO gear_types (code, name) VALUES ('e2e_checklist_pack', $1)
@@ -164,16 +163,6 @@ describe('Чек-листы (e2e)', () => {
     gearTypeId = (
       await dataSource.query(
         `SELECT id FROM gear_types WHERE code = 'e2e_checklist_pack'`,
-      )
-    )[0].id;
-
-    await dataSource.query(
-      `INSERT INTO gear_groups (code, name) VALUES ('e2e_checklist_group', 'Проверка чек-листов')
-       ON CONFLICT (code) DO NOTHING`,
-    );
-    gearGroupId = (
-      await dataSource.query(
-        `SELECT id FROM gear_groups WHERE code = 'e2e_checklist_group'`,
       )
     )[0].id;
   });
@@ -186,7 +175,7 @@ describe('Чек-листы (e2e)', () => {
         'DELETE FROM checklists WHERE owner_user_id = ANY($1::uuid[])',
         [[organizerId, memberId, strangerId]],
       );
-      // Вещи проверки — до типов, полок и людей: все три ключа RESTRICT.
+      // Вещи проверки — до типов и людей: оба ключа RESTRICT.
       // Пункты-ссылки живых списков к этому моменту уже удалены.
       await dataSource.query(
         'DELETE FROM gear_items WHERE owner_user_id = ANY($1::uuid[])',
@@ -194,9 +183,6 @@ describe('Чек-листы (e2e)', () => {
       );
       await dataSource.query(
         `DELETE FROM gear_types WHERE code = 'e2e_checklist_pack'`,
-      );
-      await dataSource.query(
-        `DELETE FROM gear_groups WHERE code = 'e2e_checklist_group'`,
       );
       await dataSource.query(
         'DELETE FROM trips WHERE id = ANY($1::bigint[])',
@@ -246,12 +232,11 @@ describe('Чек-листы (e2e)', () => {
   ): Promise<string> {
     const rows = await dataSource.query(
       `INSERT INTO gear_items
-         (owner_user_id, gear_type_id, group_id, title, weight_grams, is_trip_only)
-       VALUES ($1, $2, $3, $4, 2400, $5) RETURNING id`,
+         (owner_user_id, gear_type_id, title, weight_grams, is_trip_only)
+       VALUES ($1, $2, $3, 2400, $4) RETURNING id`,
       [
         options.owner ?? organizerId,
         gearTypeId,
-        gearGroupId,
         title,
         options.tripOnly ?? false,
       ],

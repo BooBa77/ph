@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, In } from 'typeorm';
 
 import {
   CreateGearItemDto,
@@ -17,13 +17,14 @@ import {
   parseAttributeValue,
   type GearValueColumns,
 } from './gear-attribute-values';
-import { GearGroup } from './entities/gear-group.entity';
+import { GearGroupsService, type UserGrouping } from './gear-groups.service';
+import type { GearGroup } from './entities/gear-group.entity';
 import { GearItem } from './entities/gear-item.entity';
 import { GearItemAttribute } from './entities/gear-item-attribute.entity';
 import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
+import { GearTypeGroup } from './entities/gear-type-group.entity';
 import { TripGear } from './entities/trip-gear.entity';
-import { GEAR_DEFAULT_GROUP_CODE } from './gear.types';
 
 /** Шаг личного порядка: между двумя вещами всегда есть место для вставки. */
 const SORT_STEP = 10;
@@ -38,12 +39,11 @@ const SORT_STEP = 10;
  */
 export interface CreateItemData {
   typeId: number;
-  /** Полка каталога. Не указана — «Прочее» (группа у вещи обязательна). */
-  groupId?: number;
   attributes?: Record<string, unknown>;
   /** `null`/пусто — подписать именем типа (только для одноразовой вещи). */
   title?: string | null;
   weightGrams?: number | null;
+  location?: string | null;
   note?: string | null;
   tripOnly: boolean;
 }
@@ -79,31 +79,32 @@ export interface CreateItemData {
  */
 @Injectable()
 export class GearService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly gearGroups: GearGroupsService,
+  ) {}
 
   /** Мой список и итог по весу. Одноразовые вещи похода сюда не входят. */
   async list(userId: string): Promise<GearListDto> {
+    const grouping = await this.gearGroups.ensure(userId);
     const items = await this.dataSource.manager.find(GearItem, {
       where: { ownerUserId: userId, isTripOnly: false },
       relations: {
         gearType: true,
-        group: true,
         attributes: { gearTypeAttribute: true },
       },
     });
 
     for (const item of items) this.sortValues(item);
     items.sort((left, right) => {
-      // Архивная группа уезжает в конец: вещь не теряется, но и не встаёт
-      // в середину действующего каталога.
-      if (left.group.isActive !== right.group.isActive) {
-        return left.group.isActive ? -1 : 1;
+      const leftGroup = this.groupOf(left, grouping);
+      const rightGroup = this.groupOf(right, grouping);
+
+      if (leftGroup.sortOrder !== rightGroup.sortOrder) {
+        return leftGroup.sortOrder - rightGroup.sortOrder;
       }
-      if (left.group.sortOrder !== right.group.sortOrder) {
-        return left.group.sortOrder - right.group.sortOrder;
-      }
-      if (left.group.name !== right.group.name) {
-        return left.group.name.localeCompare(right.group.name, 'ru');
+      if (leftGroup.name !== rightGroup.name) {
+        return leftGroup.name.localeCompare(rightGroup.name, 'ru');
       }
       if (left.sortOrder !== right.sortOrder) {
         return left.sortOrder - right.sortOrder;
@@ -112,7 +113,7 @@ export class GearService {
       return Number(left.id) - Number(right.id);
     });
 
-    return this.toList(items);
+    return this.toList(items, grouping);
   }
 
   /** Новый предмет каталога. */
@@ -122,19 +123,23 @@ export class GearService {
       throw new BadRequestException('У предмета должно быть название');
     }
 
+    // Раскладка типов нужна до вставки: от неё зависит, в какую группу
+    // встанет вещь и какой у неё будет личный порядок.
+    await this.gearGroups.ensure(userId);
+
     const item = await this.dataSource.transaction((tx) =>
       this.createItem(tx, userId, {
         typeId: dto.typeId,
-        groupId: dto.groupId,
         attributes: dto.attributes,
         title,
         weightGrams: dto.weightGrams ?? null,
+        location: dto.location ?? null,
         note: dto.note ?? null,
         tripOnly: false,
       }),
     );
 
-    return GearItemDto.from(item);
+    return this.loadItem(this.dataSource.manager, userId, item.id);
   }
 
   /**
@@ -163,7 +168,6 @@ export class GearService {
     data: CreateItemData,
   ): Promise<GearItem> {
     const type = await this.resolveType(manager, data.typeId);
-    const group = await this.resolveGroup(manager, data.groupId);
     const attributes = await this.typeAttributes(manager, type.id);
     const active = attributes.filter((attribute) => attribute.isActive);
 
@@ -182,10 +186,10 @@ export class GearService {
       manager.create(GearItem, {
         ownerUserId,
         gearTypeId: type.id,
-        groupId: group.id,
-        sortOrder: await this.nextSortOrder(manager, ownerUserId, group.id),
+        sortOrder: await this.nextSortOrder(manager, ownerUserId, type.id),
         title,
         weightGrams: data.weightGrams ?? null,
+        location: this.normalizeLocation(data.location),
         note: data.note?.trim() || null,
         isTripOnly: data.tripOnly,
       }),
@@ -196,7 +200,6 @@ export class GearService {
       where: { id: saved.id },
       relations: {
         gearType: true,
-        group: true,
         attributes: { gearTypeAttribute: true },
       },
     });
@@ -229,6 +232,10 @@ export class GearService {
     const manager = this.dataSource.manager;
     const item = await this.findOwned(manager, userId, id);
 
+    // Смена типа переставляет вещь в группу нового типа — раскладка должна
+    // быть актуальной до расчёта личного порядка.
+    await this.gearGroups.ensure(userId);
+
     await this.dataSource.transaction(async (tx) => {
       const current = await tx.findOne(GearItem, {
         where: { id: item.id },
@@ -258,8 +265,8 @@ export class GearService {
         title?: string;
         weightGrams?: number | null;
         note?: string | null;
+        location?: string | null;
         gearTypeId?: number;
-        groupId?: number;
         sortOrder?: number;
       } = {};
 
@@ -299,16 +306,14 @@ export class GearService {
 
       if (dto.weightGrams !== undefined) changes.weightGrams = dto.weightGrams;
       if (dto.note !== undefined) changes.note = dto.note?.trim() || null;
-      if (typeChanged) changes.gearTypeId = typeId;
-
-      // Смена группы — это переезд на другую полку: вещь встаёт в конец
-      // новой группы, иначе она оказалась бы посреди чужого порядка.
-      if (dto.groupId !== undefined) {
-        const group = await this.resolveGroup(tx, dto.groupId);
-        if (group.id !== current.groupId) {
-          changes.groupId = group.id;
-          changes.sortOrder = await this.nextSortOrder(tx, userId, group.id);
-        }
+      if (dto.location !== undefined) {
+        changes.location = this.normalizeLocation(dto.location);
+      }
+      if (typeChanged) {
+        changes.gearTypeId = typeId;
+        // Вещь переехала в группу нового типа — встаёт в её конец, иначе
+        // оказалась бы посреди чужого порядка.
+        changes.sortOrder = await this.nextSortOrder(tx, userId, typeId);
       }
 
       if (values !== null) await this.writeValues(tx, current.id, values);
@@ -374,8 +379,11 @@ export class GearService {
     const item = await this.findOwned(manager, userId, id);
 
     await this.dataSource.transaction(async (tx) => {
+      // Группа вещи выводится из её типа: соседи — вещи всех типов,
+      // которые человек сложил в эту группу.
+      const typeIds = await this.typeIdsOfTypeGroup(tx, userId, item.gearTypeId);
       const siblings = await tx.find(GearItem, {
-        where: { ownerUserId: userId, groupId: item.groupId },
+        where: { ownerUserId: userId, gearTypeId: In(typeIds) },
         order: { sortOrder: 'ASC', id: 'ASC' },
       });
       const index = siblings.findIndex((row) => row.id === item.id);
@@ -429,60 +437,66 @@ export class GearService {
   }
 
   /**
-   * Группа вещи из тела запроса — или «Прочее».
-   *
-   * Группа в базе обязательна, но API её не требует: поле не передали —
-   * значит «Прочее» (код `other`). Архивная группа не принимается, как
-   * и архивный тип: вещь в архивной полке некуда показать, а каталог
-   * сортирует по порядку действующих групп.
-   */
-  private async resolveGroup(
-    manager: EntityManager,
-    groupId?: number,
-  ): Promise<GearGroup> {
-    if (groupId === undefined) {
-      const fallback = await manager.findOne(GearGroup, {
-        where: { code: GEAR_DEFAULT_GROUP_CODE },
-      });
-      if (!fallback) {
-        throw new BadRequestException(
-          'Группа снаряжения по умолчанию «Прочее» не заведена',
-        );
-      }
-
-      return fallback;
-    }
-
-    const group = await manager.findOne(GearGroup, { where: { id: groupId } });
-    if (!group) throw new BadRequestException('Группа снаряжения не найдена');
-    if (!group.isActive) {
-      throw new BadRequestException(
-        'Группа снаряжения в архиве — выберите действующую',
-      );
-    }
-
-    return group;
-  }
-
-  /**
    * Следующая позиция в конце группы: «добавил — встало вниз».
    *
-   * Считается по максимуму, а не по количеству: вещи удаляют, и позиция
-   * `count + 1` однажды совпала бы с уже занятой.
+   * Группа выводится из типа, поэтому максимум считается по всем вещам
+   * типов, сложенных в ту же группу. Считается по максимуму, а не по
+   * количеству: вещи удаляют, и позиция `count + 1` однажды совпала бы
+   * с уже занятой.
    */
   private async nextSortOrder(
     manager: EntityManager,
     ownerUserId: string,
-    groupId: number,
+    typeId: number,
   ): Promise<number> {
+    const typeIds = await this.typeIdsOfTypeGroup(manager, ownerUserId, typeId);
     const row: { max: string | null } | undefined = await manager
       .createQueryBuilder(GearItem, 'item')
       .select('MAX(item.sort_order)', 'max')
       .where('item.owner_user_id = :ownerUserId', { ownerUserId })
-      .andWhere('item.group_id = :groupId', { groupId })
+      .andWhere('item.gear_type_id IN (:...typeIds)', { typeIds })
       .getRawOne();
 
     return Number(row?.max ?? 0) + SORT_STEP;
+  }
+
+  /**
+   * Типы, которые у человека лежат в одной группе с указанным типом.
+   *
+   * Для одноразовой вещи виртуального участника раскладки может не быть
+   * вовсе (каталога у него нет) — тогда группа — он сам: порядок считается
+   * внутри типа, а в каталог такая вещь всё равно не попадает.
+   */
+  private async typeIdsOfTypeGroup(
+    manager: EntityManager,
+    ownerUserId: string,
+    typeId: number,
+  ): Promise<number[]> {
+    const mapping = await manager.findOne(GearTypeGroup, {
+      where: { ownerUserId, gearTypeId: typeId },
+    });
+    if (!mapping) return [typeId];
+
+    const siblings = await manager.find(GearTypeGroup, {
+      where: { ownerUserId, groupId: mapping.groupId },
+    });
+
+    return siblings.length > 0
+      ? siblings.map((row) => row.gearTypeId)
+      : [typeId];
+  }
+
+  /** Группа вещи в раскладке человека; без раскладки — «Прочее». */
+  private groupOf(item: GearItem, grouping: UserGrouping): GearGroup {
+    return grouping.groupByType.get(item.gearTypeId) ?? grouping.defaultGroup;
+  }
+
+  /** Местоположение: пустое — `null`, лишние пробелы убираем. */
+  private normalizeLocation(raw: string | null | undefined): string | null {
+    if (raw === null || raw === undefined) return null;
+    const location = raw.trim();
+
+    return location.length === 0 ? null : location;
   }
 
   /** Все характеристики типа, включая архивные: по ним ловим ошибку в ключе. */
@@ -661,11 +675,11 @@ export class GearService {
     userId: string,
     id: string,
   ): Promise<GearItemDto> {
+    const grouping = await this.gearGroups.ensure(userId);
     const item = await manager.findOne(GearItem, {
       where: { id, ownerUserId: userId, isTripOnly: false },
       relations: {
         gearType: true,
-        group: true,
         attributes: { gearTypeAttribute: true },
       },
     });
@@ -673,7 +687,7 @@ export class GearService {
 
     this.sortValues(item);
 
-    return GearItemDto.from(item);
+    return GearItemDto.from(item, this.groupOf(item, grouping));
   }
 
   /**
@@ -696,7 +710,7 @@ export class GearService {
   }
 
   /** Список с итогом: сумма известных весов и сколько осталось без веса. */
-  private toList(items: GearItem[]): GearListDto {
+  private toList(items: GearItem[], grouping: UserGrouping): GearListDto {
     let totalWeightGrams = 0;
     let itemsWithoutWeight = 0;
 
@@ -706,7 +720,9 @@ export class GearService {
     }
 
     return {
-      items: items.map((item) => GearItemDto.from(item)),
+      items: items.map((item) =>
+        GearItemDto.from(item, this.groupOf(item, grouping)),
+      ),
       totalWeightGrams,
       itemsWithoutWeight,
     };

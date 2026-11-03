@@ -3,15 +3,18 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { TripsModule } from '../trips/trips.module';
 import { GearAttributeOption } from './entities/gear-attribute-option.entity';
+import { GearGroupTemplate } from './entities/gear-group-template.entity';
 import { GearGroup } from './entities/gear-group.entity';
 import { GearItem } from './entities/gear-item.entity';
 import { GearItemAttribute } from './entities/gear-item-attribute.entity';
+import { GearTypeGroup } from './entities/gear-type-group.entity';
 import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
 import { TripGear } from './entities/trip-gear.entity';
-import { GearAdminGroupsController } from './gear-admin-groups.controller';
+import { GearAdminGroupTemplatesController } from './gear-admin-groups.controller';
 import { GearAdminTypesController } from './gear-admin.controller';
 import { GearController } from './gear.controller';
+import { GearGroupTemplatesService } from './gear-group-templates.service';
 import { GearGroupsController } from './gear-groups.controller';
 import { GearGroupsService } from './gear-groups.service';
 import { GearService } from './gear.service';
@@ -24,8 +27,9 @@ import { TripGearService } from './trip-gear.service';
  * Снаряжение: личный каталог предметов и общественное снаряжение похода.
  *
  * Свой модуль, а не методы в `UsersModule`: каталог снаряжения — отдельный
- * домен со своими правилами (вес, виды), и держать его рядом с профилем
- * значило бы растить `UsersService`, который и так делает много.
+ * домен со своими правилами (вес, типы, личные группы), и держать его
+ * рядом с профилем значило бы растить `UsersService`, который и так
+ * делает много.
  *
  * `TripsModule` импортируется ради двух правил похода: «виден ли поход»
  * (`getVisibleTrip`) и «можно ли править вкладку» (`canEditTab`). Копия
@@ -36,10 +40,11 @@ import { TripGearService } from './trip-gear.service';
  * уже едет в походе, нельзя удалить из каталога (409 вместо ошибки
  * внешнего ключа).
  *
- * `GearTypesService` — справочник типов и характеристик (Stage A): типы
- * правит админ, и каталог вещей переедет на них в Stage B. Лежит здесь же,
- * потому что это тот же домен снаряжения и та же таблица-сосед; отдельный
- * модуль ради двух таблиц добавил бы импорт без пользы.
+ * **Две пары «шаблон — копия» (02.11.2026):** `GearGroupTemplatesService`
+ * ведёт рекомендуемые группы админа, `GearGroupsService` — личные группы
+ * человека и раскладку типов. `GearService` спрашивает у второго
+ * `ensure()`: без него новая вещь не знала бы, в какую секцию каталога
+ * встать.
  */
 @Module({
   imports: [
@@ -50,7 +55,9 @@ import { TripGearService } from './trip-gear.service';
       GearType,
       GearTypeAttribute,
       GearAttributeOption,
+      GearGroupTemplate,
       GearGroup,
+      GearTypeGroup,
     ]),
     TripsModule,
   ],
@@ -60,14 +67,21 @@ import { TripGearService } from './trip-gear.service';
     GearTypesController,
     GearAdminTypesController,
     GearGroupsController,
-    GearAdminGroupsController,
+    GearAdminGroupTemplatesController,
   ],
   providers: [
     GearService,
     TripGearService,
     GearTypesService,
     GearGroupsService,
+    GearGroupTemplatesService,
   ],
-  exports: [GearService, TripGearService, GearTypesService, GearGroupsService],
+  exports: [
+    GearService,
+    TripGearService,
+    GearTypesService,
+    GearGroupsService,
+    GearGroupTemplatesService,
+  ],
 })
 export class GearModule {}

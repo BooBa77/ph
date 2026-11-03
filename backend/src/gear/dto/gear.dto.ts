@@ -11,6 +11,7 @@ import {
 
 import type { GearValueKind } from '../gear.types';
 import { GEAR_VALUE_KINDS } from '../gear.types';
+import type { GearGroup } from '../entities/gear-group.entity';
 import type { GearItemAttribute } from '../entities/gear-item-attribute.entity';
 import type { GearItem } from '../entities/gear-item.entity';
 
@@ -82,11 +83,18 @@ export class GearItemDto {
   @ApiProperty({ description: 'Id группы — полки каталога', example: 1 })
   groupId: number;
 
-  @ApiProperty({ description: 'Код группы', example: 'roof' })
-  groupCode: string;
+  @ApiProperty({ description: 'Код группы', example: 'roof', nullable: true })
+  groupCode: string | null;
 
   @ApiProperty({ description: 'Название группы', example: 'Кров' })
   groupName: string;
+
+  @ApiProperty({
+    description: 'Местоположение: «балкон», «гараж», «дача»',
+    example: 'гараж',
+    nullable: true,
+  })
+  location: string | null;
 
   @ApiProperty({
     description: 'Личный порядок вещи внутри группы',
@@ -120,15 +128,19 @@ export class GearItemDto {
   @ApiProperty({ description: 'Создан', example: '2026-10-21T08:00:00.000Z' })
   createdAt: string;
 
-  static from(item: GearItem): GearItemDto {
+  static from(item: GearItem, group: GearGroup): GearItemDto {
     return {
       id: item.id,
       typeId: item.gearTypeId,
       typeCode: item.gearType.code,
       typeName: item.gearType.name,
-      groupId: item.groupId,
-      groupCode: item.group.code,
-      groupName: item.group.name,
+      groupId: group.id,
+      // Личная группа не имеет стабильного кода: у копии шаблона он есть,
+      // у своей группы — нет. `groupCode` остаётся ключом для экранов,
+      // которые складывают вещи по полкам, поэтому подставляем синтетический.
+      groupCode: group.templateCode ?? `custom_${group.id}`,
+      groupName: group.name,
+      location: item.location,
       sortOrder: item.sortOrder,
       title: item.title,
       weightGrams: item.weightGrams,
@@ -179,26 +191,16 @@ export class GearListDto {
  * опечатку значило бы сохранить вещь без значения и не сказать об этом.
  * `null` или пустая строка — стереть значение.
  *
- * **`groupId` — полка каталога (31.10.2026).** В базе группа обязательна,
- * но в API поле необязательное: его отсутствие значит «Прочее». Иначе
- * каждая старая форма и каждый тест пришлось бы учить новой группе ради
- * фонарика, который и так лежит в «Прочем».
+ * **`groupId` в теле больше нет (02.11.2026).** Группа — свойство **типа**
+ * у человека (`gear_type_groups`), а не отдельной вещи: «перекидывают
+ * содержащиеся типы». Поэтому вещь попадает в группу своего типа, и выбор
+ * полки из формы убран — второй источник правды разошёлся бы с первым.
  */
 export class CreateGearItemDto {
   @ApiProperty({ description: 'Id типа снаряжения', example: 1 })
   @IsInt({ message: 'Тип снаряжения должен быть указан числом' })
   @Min(1, { message: 'Некорректный тип снаряжения' })
   typeId: number;
-
-  @ApiProperty({
-    description: 'Id группы — полки каталога. Не указан — «Прочее»',
-    example: 1,
-    required: false,
-  })
-  @IsOptional()
-  @IsInt({ message: 'Группа снаряжения должна быть указана числом' })
-  @Min(1, { message: 'Некорректная группа снаряжения' })
-  groupId?: number;
 
   @ApiProperty({
     description: 'Название: «Палатка на четверых»',
@@ -232,6 +234,17 @@ export class CreateGearItemDto {
   note?: string | null;
 
   @ApiProperty({
+    description: 'Местоположение: «балкон», «гараж», «дача». null — не указано',
+    maxLength: 120,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString({ message: 'Местоположение должно быть строкой' })
+  @MaxLength(120, { message: 'Местоположение не должно превышать 120 символов' })
+  location?: string | null;
+
+  @ApiProperty({
     description: 'Значения характеристик: { код: значение }',
     example: { seats: 3, model: 'MSR' },
     required: false,
@@ -245,8 +258,11 @@ export class CreateGearItemDto {
  * Тело `PATCH /api/gear/:id`.
  *
  * `weightGrams: null` — осознанно стереть вес: «не знаю, взвешу позже».
- * Поэтому поле принимает `null`, а не только число. Так же ведёт себя
- * `attributes`: ключа нет — значение не трогаем, `null` — стираем.
+ * Поэтому поле принимает `null`, а не только число. Так же ведут себя
+ * `attributes` и `location`: ключа нет — значение не трогаем, `null` — стираем.
+ *
+ * **Группы здесь нет (02.11.2026).** Полка — свойство типа у человека;
+ * чтобы вещь переехала, перекладывают тип в настройке группировки.
  */
 export class UpdateGearItemDto {
   @ApiProperty({ description: 'Id типа снаряжения', required: false })
@@ -254,16 +270,6 @@ export class UpdateGearItemDto {
   @IsInt({ message: 'Тип снаряжения должен быть указан числом' })
   @Min(1, { message: 'Некорректный тип снаряжения' })
   typeId?: number;
-
-  @ApiProperty({
-    description: 'Id группы — полки каталога. Смена группы переносит вещь в конец',
-    example: 2,
-    required: false,
-  })
-  @IsOptional()
-  @IsInt({ message: 'Группа снаряжения должна быть указана числом' })
-  @Min(1, { message: 'Некорректная группа снаряжения' })
-  groupId?: number;
 
   @ApiProperty({ description: 'Название', maxLength: 120, required: false })
   @IsOptional()
@@ -293,6 +299,17 @@ export class UpdateGearItemDto {
   note?: string | null;
 
   @ApiProperty({
+    description: 'Местоположение. null — стереть',
+    maxLength: 120,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsString({ message: 'Местоположение должно быть строкой' })
+  @MaxLength(120, { message: 'Местоположение не должно превышать 120 символов' })
+  location?: string | null;
+
+  @ApiProperty({
     description: 'Значения характеристик: { код: значение }. null — стереть',
     example: { seats: 4 },
     required: false,
@@ -311,10 +328,10 @@ export type GearMoveDirection = (typeof GEAR_MOVE_DIRECTIONS)[number];
  * Тело `POST /api/gear/:id/move` (31.10.2026).
  *
  * Стрелки в каталоге двигают вещь на одну позицию **внутри её группы**:
- * через границу группы не переставляют, потому что порядок групп задаёт
- * админ, а не человек. Сервер отвечает списком целиком — после перестановки
- * изменились две строки, и отдавать одну значило бы заставлять клиент
- * догадываться о второй.
+ * через границу группы не переставляют, потому что порядок групп человек
+ * настраивает отдельно (`POST /api/gear-groups/:id/move`). Сервер отвечает
+ * списком целиком — после перестановки изменились две строки, и отдавать
+ * одну значило бы заставлять клиент догадываться о второй.
  */
 export class MoveGearItemDto {
   @ApiProperty({

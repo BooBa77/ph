@@ -2,71 +2,82 @@ import {
   Check,
   Column,
   Entity,
+  Index,
+  JoinColumn,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
-  Unique,
 } from 'typeorm';
 
+import { User } from '../../users/entities/user.entity';
 import { GEAR_CODE_PATTERN } from '../gear.types';
-import { GearItem } from './gear-item.entity';
+import { GearTypeGroup } from './gear-type-group.entity';
 
 /**
- * Группа снаряжения — **полка каталога**, а не тип вещи (31.10.2026).
+ * Личная группа снаряжения (02.11.2026).
  *
- * Заказчик: «Группа — это полка в каталоге и в снаряжении похода
- * („Костровое“, „Ночлег“), а не тип: одна группа собирает топор, пилу
- * и розжиг, которые лежат в разных типах». Поэтому группа — отдельная
- * таблица, а вещь ссылается на неё (`gear_items.group_id`). У типа группы
- * нет: `gear_types.group_id` не делаем — иначе топор нельзя было бы
- * положить в «Костровое», не переопределив тип.
+ * Заказчик: «Типы, по-прежнему, создаёт админ… А группировать их разрешим
+ * самостоятельно. Заводим рекомендуемые группы, они управляются админом,
+ * приходят новым пользователям и с новыми типами, но пользователь в праве
+ * сам менять их под себя».
  *
- * **Группа у вещи обязательна.** Иначе вещь выпала бы из каталога, который
- * на экране собран секциями по группам. Для вещей, которым полка не нужна,
- * есть «Прочее» (`code = 'other'`): это группа по умолчанию, и API ставит
- * её, когда `groupId` не передали. Архив «Прочего» запрещён — иначе
- * умолчание некуда девать.
+ * Поэтому группа теперь **личная** (`owner_user_id`) и собирает **типы**,
+ * а не вещи: вещь попадает в группу своего типа. Связь «тип → группа»
+ * лежит в `gear_type_groups`, а не здесь: одна строка — один тип.
  *
- * **`code` — контракт и не меняется**, как у типов: он уходит в API,
- * на него опирается умолчание (`other`) и будущие фильтры. Ошибку
- * исправляют архивом и новой строкой с новым кодом.
+ * `template_code` — след шаблона, из которого группа пришла (`roof`,
+ * `campfire`, `kitchen`, `dishes`, `other`). Он нужен ровно для двух вещей:
+ * найти «Прочее» (`other`) и положить в ту же группу новый тип, для
+ * которого админ указал этот шаблон. У группы, заведённой человеком,
+ * шаблона нет (`NULL`).
  *
- * **Порядок задаёт админ** (`sort_order`), а вещи внутри группы человек
- * упорядочивает сам (`gear_items.sort_order`): это разные порядки и разные
- * владельцы настройки.
+ * **«Прочее» неудаляемо и всегда последнее.** Это умолчание для типа без
+ * рекомендованной группы и место, куда переезжают типы удалённой группы;
+ * переставить его выше других API не даёт.
  *
- * **Удаления нет, есть архив** (`is_active`): на группу ссылаются вещи,
- * и физическое удаление выдернуло бы их полку. Архивная группа видна
- * в админке, но не в публичном списке; вещи в ней остаются и идут после
- * действующих групп.
+ * **Удаление разрешено, архива нет.** Группа — личная настройка, и человек
+ * вправе её убрать; типы уходят в «Прочее», вещи не теряются. Это отличие
+ * от шаблонов админа (`gear_group_templates`), где удаление заменено
+ * архивом, потому что на шаблон ссылается рекомендуемая группа типа.
  */
 @Entity('gear_groups')
-@Unique('UQ_gear_groups_code', ['code'])
-@Check(
-  'chk_gear_groups_code',
-  `"code" ~ '${GEAR_CODE_PATTERN.source}' AND char_length("code") <= 40`,
-)
+@Index('IDX_gear_groups_owner_order', ['ownerUserId', 'sortOrder', 'id'])
+@Index('UQ_gear_groups_owner_template', ['ownerUserId', 'templateCode'], {
+  unique: true,
+  where: `"template_code" IS NOT NULL`,
+})
 @Check('chk_gear_groups_name', `char_length(btrim("name")) BETWEEN 1 AND 100`)
 @Check('chk_gear_groups_sort', `"sort_order" >= 0`)
+@Check(
+  'chk_gear_groups_template_code',
+  `"template_code" IS NULL OR ("template_code" ~ '${GEAR_CODE_PATTERN.source}' AND char_length("template_code") <= 40)`,
+)
 export class GearGroup {
   @PrimaryGeneratedColumn({ type: 'integer' })
   id: number;
 
-  /** Стабильный код: `other`, `campfire`, `kitchen`, `roof`. */
-  @Column({ type: 'text' })
-  code: string;
+  @Column({ name: 'owner_user_id', type: 'uuid' })
+  ownerUserId: string;
 
-  /** Название для человека: «Костровое», «Прочее». */
+  @ManyToOne(() => User, { onDelete: 'CASCADE' })
+  @JoinColumn({
+    name: 'owner_user_id',
+    foreignKeyConstraintName: 'FK_gear_groups_owner',
+  })
+  owner: User;
+
+  /** Код шаблона, из которого пришла группа. `NULL` — своя группа. */
+  @Column({ name: 'template_code', type: 'text', nullable: true })
+  templateCode: string | null;
+
+  /** Название для человека: «Кров», «Костровое», «Прочее». */
   @Column({ type: 'text' })
   name: string;
 
-  /** Архив: группа остаётся в справочнике, но не отдаётся публично. */
-  @Column({ name: 'is_active', type: 'boolean', default: true })
-  isActive: boolean;
-
-  /** Порядок секций каталога; задаёт админ, а не алфавит. */
+  /** Порядок секций каталога: свой у каждого человека. */
   @Column({ name: 'sort_order', type: 'integer', default: 0 })
   sortOrder: number;
 
-  @OneToMany(() => GearItem, (item) => item.group)
-  items: GearItem[];
+  @OneToMany(() => GearTypeGroup, (mapping) => mapping.group)
+  typeGroups: GearTypeGroup[];
 }

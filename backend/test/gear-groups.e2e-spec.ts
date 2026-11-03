@@ -1,4 +1,3 @@
-import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Test, TestingModule } from '@nestjs/testing';
 import type { NestExpressApplication } from '@nestjs/platform-express';
@@ -11,28 +10,32 @@ import { configureApp } from './../src/app.setup';
 import { adminUserIds } from './../src/calendar/admin';
 
 /**
- * Группы снаряжения и полка у вещи (e2e, 31.10.2026).
+ * Личные группы снаряжения (e2e, 02.11.2026).
  *
- * Группа — полка каталога, а не тип: «Костровое» собирает топор, пилу
- * и розжиг. Проверяем всё, на чём держится контракт:
+ * Заказчик: «Типы, по-прежнему, создаёт админ… А группировать их разрешим
+ * самостоятельно. Заводим рекомендуемые группы, они управляются админом,
+ * приходят новым пользователям и с новыми типами, но пользователь в праве
+ * сам менять их под себя».
  *
- * - **публичный `GET /api/gear-groups`** отдаёт только действующие группы
- *   в порядке `sortOrder`, архивных в нём нет;
- * - **админка `/api/gear/admin/groups`** закрыта `isAdminUser`: 401/403,
- *   архив вместо удаления, `code` неизменяем (400), дубликат кода — 409;
- * - **«Прочее» не архивируется** (409): это умолчание для вещи без полки;
- * - **`groupId` необязателен**: без него вещь попадает в «Прочее»,
- *   с ним — на выбранную полку; архивная группа — 400;
- * - **личный порядок**: новые вещи встают в конец группы, стрелки
- *   `POST /api/gear/:id/move` меняют соседей местами, за границу группы
- *   не переставляют, чужую вещь двигать нельзя (404);
- * - **смена группы** переносит вещь в конец новой полки.
+ * Проверяем всё, на чём держится контракт:
+ *
+ * - **рекомендуемые группы** (`gear/admin/group-templates`) — админские,
+ *   `code` неизменяем, удаления нет (архив), «Прочее» не архивируется;
+ * - **личные группы** (`gear-groups`) — у каждого свои: новый пользователь
+ *   получает копии шаблонов, «Прочее» последнее и неудаляемо;
+ * - **новый тип** с рекомендованной группой сам доезжает до человека;
+ * - **раскладка типов** — один тип в одной группе, перекладывание типа
+ *   переносит все его вещи, архивный тип не перекладывают;
+ * - **вещь больше не выбирает группу**: её полка — группа типа; `groupId`
+ *   в теле — 400, как удалённое поле;
+ * - **местоположение** — свободный текст, пустое становится `null`;
+ * - **личный порядок** — внутри группы, через типы, и чужую вещь не двигают.
  *
  * Пользователей заводим напрямую в базе, токены — `JwtService`: стратегия
- * проверяет только подпись и не ходит в БД (тот же приём, что в
- * `gear-types.e2e-spec.ts`). За собой убираем всё с префиксом `e2e_…`.
+ * проверяет только подпись и не ходит в БД. За собой убираем всё с префиксом
+ * `e2e_…`.
  */
-describe('Группы снаряжения (e2e)', () => {
+describe('Личные группы снаряжения (e2e)', () => {
   let app: NestExpressApplication;
   let dataSource: DataSource;
 
@@ -40,14 +43,15 @@ describe('Группы снаряжения (e2e)', () => {
   let ownerToken: string;
   let ownerId: string;
   let strangerToken: string;
+  let strangerId: string;
 
-  let typeId: number;
-  let groupAId: number;
-  let groupBId: number;
-  let otherGroupId: number;
+  let recommendedTemplateId: number;
+  let typeAId: number;
+  let typeBId: number;
+  let typeOtherId: number;
 
-  /** Уникальный префикс кодов: повторный прогон не спорит с прошлым. */
   const suffix = Date.now().toString(36);
+  const templateCode = `e2e_${suffix}_rec`;
 
   type Method = 'get' | 'post' | 'patch' | 'delete';
 
@@ -61,6 +65,42 @@ describe('Группы снаряжения (e2e)', () => {
     if (token) agent.set('Authorization', `Bearer ${token}`);
 
     return body === undefined ? agent : agent.send(body as object);
+  }
+
+  interface GroupBody {
+    id: number;
+    name: string;
+    sortOrder: number;
+    templateCode: string | null;
+    isDefault: boolean;
+    types: Array<{ id: number; code: string; name: string; isActive: boolean }>;
+  }
+
+  async function myGroups(token = ownerToken): Promise<GroupBody[]> {
+    const response = await call('get', '/api/gear-groups', token).expect(200);
+
+    return response.body.items as GroupBody[];
+  }
+
+  function groupOfTemplate(groups: GroupBody[], code: string): GroupBody {
+    const group = groups.find((row) => row.templateCode === code);
+    expect(group).toBeDefined();
+
+    return group as GroupBody;
+  }
+
+  async function addItem(
+    body: Record<string, unknown> = {},
+    token = ownerToken,
+  ): Promise<Record<string, unknown>> {
+    const response = await call('post', '/api/gear', token, {
+      typeId: typeAId,
+      title: 'Проверочная вещь',
+      ...body,
+    });
+    expect(response.status).toBe(201);
+
+    return response.body as Record<string, unknown>;
   }
 
   beforeAll(async () => {
@@ -78,358 +118,542 @@ describe('Группы снаряжения (e2e)', () => {
     adminToken = await jwtService.signAsync({
       sub: adminUserIds()[0] as string,
     });
-    strangerToken = await jwtService.signAsync({ sub: randomUUID() });
 
     ownerId = (
       await dataSource.query(
-        `INSERT INTO users (display_name) VALUES ('Хозяин каталога e2e')
+        `INSERT INTO users (display_name) VALUES ('Хозяин групп e2e')
          RETURNING id`,
       )
     )[0].id;
     ownerToken = await jwtService.signAsync({ sub: ownerId });
 
-    typeId = (
+    strangerId = (
       await dataSource.query(
-        `INSERT INTO gear_types (code, name)
-         VALUES ($1, 'Проверочный тип группы')
-         ON CONFLICT (code) DO NOTHING
+        `INSERT INTO users (display_name) VALUES ('Посторонний групп e2e')
          RETURNING id`,
-        [`e2e_${suffix}_type`],
       )
-    )[0]?.id;
-
-    if (typeId === undefined) {
-      typeId = (
-        await dataSource.query('SELECT id FROM gear_types WHERE code = $1', [
-          `e2e_${suffix}_type`,
-        ])
-      )[0].id;
-    }
-
-    otherGroupId = (
-      await dataSource.query(`SELECT id FROM gear_groups WHERE code = 'other'`)
     )[0].id;
+    strangerToken = await jwtService.signAsync({ sub: strangerId });
 
-    const groupA = await call('post', '/api/gear/admin/groups', adminToken, {
+    // Рекомендуемая группа админа: на неё будут опираться два типа.
+    const template = await call(
+      'post',
+      '/api/gear/admin/group-templates',
+      adminToken,
+      { code: templateCode, name: 'Проверочная рекомендуемая', sortOrder: 45 },
+    ).expect(201);
+    recommendedTemplateId = template.body.id as number;
+
+    const typeA = await call('post', '/api/gear/admin/types', adminToken, {
       code: `e2e_${suffix}_a`,
-      name: 'Полка А',
-      sortOrder: 10,
-    });
-    expect(groupA.status).toBe(201);
-    groupAId = groupA.body.id as number;
+      name: 'Тип А',
+      recommendedGroupId: recommendedTemplateId,
+    }).expect(201);
+    typeAId = typeA.body.id as number;
 
-    const groupB = await call('post', '/api/gear/admin/groups', adminToken, {
+    const typeB = await call('post', '/api/gear/admin/types', adminToken, {
       code: `e2e_${suffix}_b`,
-      name: 'Полка Б',
-      sortOrder: 20,
-    });
-    expect(groupB.status).toBe(201);
-    groupBId = groupB.body.id as number;
+      name: 'Тип Б',
+      recommendedGroupId: recommendedTemplateId,
+    }).expect(201);
+    typeBId = typeB.body.id as number;
+
+    // Тип без рекомендации: попадает в «Прочее» — нужен для смены группы.
+    const typeOther = await call('post', '/api/gear/admin/types', adminToken, {
+      code: `e2e_${suffix}_other`,
+      name: 'Тип вне рекомендаций',
+    }).expect(201);
+    typeOtherId = typeOther.body.id as number;
   });
 
   afterAll(async () => {
     if (dataSource?.isInitialized) {
       await dataSource.query(
-        'DELETE FROM gear_items WHERE owner_user_id = $1',
-        [ownerId],
+        'DELETE FROM gear_items WHERE owner_user_id = ANY($1)',
+        [[ownerId, strangerId]],
       );
-      await dataSource.query(`DELETE FROM gear_groups WHERE code LIKE 'e2e\\_%'`);
       await dataSource.query(`DELETE FROM gear_types WHERE code LIKE 'e2e\\_%'`);
-      await dataSource.query('DELETE FROM users WHERE id = $1', [ownerId]);
+      await dataSource.query(
+        `DELETE FROM gear_group_templates WHERE code LIKE 'e2e\\_%'`,
+      );
+      await dataSource.query('DELETE FROM users WHERE id = ANY($1)', [
+        [ownerId, strangerId],
+      ]);
     }
     await app?.close();
   });
 
-  /** Завести вещь и вернуть её тело. */
-  async function addItem(body: Record<string, unknown> = {}) {
-    const response = await call('post', '/api/gear', ownerToken, {
-      typeId,
-      title: 'Проверочная вещь',
-      ...body,
-    });
-    expect(response.status).toBe(201);
-
-    return response.body as Record<string, unknown>;
-  }
-
-  /** Вещи группы по названию — в том порядке, в каком их отдаёт список. */
-  async function titlesOfGroup(groupId: number): Promise<string[]> {
-    const response = await call('get', '/api/gear', ownerToken).expect(200);
-    const items = response.body.items as Array<{
-      title: string;
-      groupId: number;
-    }>;
-
-    return items.filter((item) => item.groupId === groupId).map((item) => item.title);
-  }
-
   // ─────────────────────────── доступ ───────────────────────────
 
-  it('без токена публичный список не отдаёт', async () => {
+  it('без токена личные группы не отдаются', async () => {
     await call('get', '/api/gear-groups').expect(401);
   });
 
-  it('чужому админский список не отдаёт — 403', async () => {
-    await call('get', '/api/gear/admin/groups', strangerToken).expect(403);
+  it('без токена рекомендуемые группы не отдаются', async () => {
+    await call('get', '/api/gear/admin/group-templates').expect(401);
   });
 
-  it('без токена админский список не отдаёт — 401', async () => {
-    await call('get', '/api/gear/admin/groups').expect(401);
+  it('чужому рекомендуемые группы не отдаются — 403', async () => {
+    await call(
+      'get',
+      '/api/gear/admin/group-templates',
+      strangerToken,
+    ).expect(403);
   });
 
-  // ─────────────────────────── публичный список ───────────────────────────
+  // ─────────────────── рекомендуемые группы (админ) ───────────────────
 
-  it('публичный список: действующие группы в порядке админа', async () => {
-    const response = await call('get', '/api/gear-groups', ownerToken).expect(200);
-    const items = response.body.items as Array<{
-      id: number;
-      code: string;
-      name: string;
-      sortOrder: number;
-      isActive?: boolean;
-    }>;
+  it('админ создаёт рекомендуемую группу: код, имя, порядок', async () => {
+    const created = await call(
+      'post',
+      '/api/gear/admin/group-templates',
+      adminToken,
+      {
+        code: `e2e_${suffix}_extra`,
+        name: 'Ещё одна рекомендуемая',
+        sortOrder: 60,
+      },
+    ).expect(201);
 
-    expect(items.length).toBeGreaterThan(0);
-
-    const codes = items.map((group) => group.code);
-    expect(codes).toContain('other');
-    expect(codes).toContain(`e2e_${suffix}_a`);
-
-    // Архивного флага в публичном ответе нет вовсе, а не `true`.
-    expect(items.every((group) => group.isActive === undefined)).toBe(true);
-
-    const orders = items.map((group) => group.sortOrder);
-    expect([...orders].sort((left, right) => left - right)).toEqual(orders);
-  });
-
-  // ─────────────────────────── админка ───────────────────────────
-
-  it('админ создаёт группу: код, имя, порядок, пустая полка', async () => {
-    const response = await call('post', '/api/gear/admin/groups', adminToken, {
-      code: `e2e_${suffix}_c`,
-      name: 'Полка В',
-      sortOrder: 30,
-    }).expect(201);
-
-    expect(response.body.code).toBe(`e2e_${suffix}_c`);
-    expect(response.body.name).toBe('Полка В');
-    expect(response.body.sortOrder).toBe(30);
-    expect(response.body.isActive).toBe(true);
-    expect(response.body.itemsCount).toBe(0);
+    expect(created.body.code).toBe(`e2e_${suffix}_extra`);
+    expect(created.body.name).toBe('Ещё одна рекомендуемая');
+    expect(created.body.sortOrder).toBe(60);
+    expect(created.body.isActive).toBe(true);
+    expect(created.body.typesCount).toBe(0);
 
     await call(
       'delete',
-      `/api/gear/admin/groups/${response.body.id}`,
+      `/api/gear/admin/group-templates/${created.body.id}`,
       adminToken,
     ).expect(204);
   });
 
-  it('дубликат кода — 409, код занимается навсегда', async () => {
-    await call('post', '/api/gear/admin/groups', adminToken, {
-      code: `e2e_${suffix}_a`,
-      name: 'Вторая полка А',
+  it('код рекомендуемой группы уникален и не меняется', async () => {
+    await call('post', '/api/gear/admin/group-templates', adminToken, {
+      code: templateCode,
+      name: 'Дубль',
     }).expect(409);
-  });
 
-  it('кириллица в коде — 400', async () => {
-    await call('post', '/api/gear/admin/groups', adminToken, {
-      code: 'полка',
+    await call('post', '/api/gear/admin/group-templates', adminToken, {
+      code: 'рекомендуемая',
       name: 'Кириллица',
     }).expect(400);
+
+    await call(
+      'patch',
+      `/api/gear/admin/group-templates/${recommendedTemplateId}`,
+      adminToken,
+      { code: `e2e_${suffix}_new` },
+    ).expect(400);
   });
 
-  it('код группы в PATCH не меняется — 400', async () => {
-    await call('patch', `/api/gear/admin/groups/${groupAId}`, adminToken, {
-      code: `e2e_${suffix}_new`,
-    }).expect(400);
-  });
-
-  it('админ переименовывает и переставляет группу', async () => {
+  it('админ переименовывает и переставляет рекомендуемую группу', async () => {
     const response = await call(
       'patch',
-      `/api/gear/admin/groups/${groupAId}`,
+      `/api/gear/admin/group-templates/${recommendedTemplateId}`,
       adminToken,
-      { name: 'Полка А (переименована)', sortOrder: 40 },
+      { name: 'Проверочная рекомендуемая 2', sortOrder: 46 },
     ).expect(200);
 
-    expect(response.body.name).toBe('Полка А (переименована)');
-    expect(response.body.sortOrder).toBe(40);
+    expect(response.body.name).toBe('Проверочная рекомендуемая 2');
+    expect(response.body.sortOrder).toBe(46);
   });
 
-  it('архив: 204, повторно 204, из публичного списка исчезает', async () => {
+  it('архив рекомендуемой группы: 204, повторно 204, из списка не исчезает', async () => {
+    const created = await call(
+      'post',
+      '/api/gear/admin/group-templates',
+      adminToken,
+      { code: `e2e_${suffix}_arch`, name: 'В архив' },
+    ).expect(201);
+
     await call(
       'delete',
-      `/api/gear/admin/groups/${groupBId}`,
+      `/api/gear/admin/group-templates/${created.body.id}`,
       adminToken,
     ).expect(204);
     await call(
       'delete',
-      `/api/gear/admin/groups/${groupBId}`,
+      `/api/gear/admin/group-templates/${created.body.id}`,
       adminToken,
     ).expect(204);
 
-    const publicList = await call('get', '/api/gear-groups', ownerToken).expect(200);
-    const codes = (publicList.body.items as Array<{ code: string }>).map(
-      (group) => group.code,
-    );
-    expect(codes).not.toContain(`e2e_${suffix}_b`);
-
-    const adminList = await call(
+    const list = await call(
       'get',
-      '/api/gear/admin/groups',
+      '/api/gear/admin/group-templates',
       adminToken,
     ).expect(200);
-    const archived = (
-      adminList.body.items as Array<{
-        id: number;
-        isActive: boolean;
-        itemsCount: number;
-      }>
-    ).find((group) => group.id === groupBId);
+    const archived = (list.body.items as Array<{ id: number; isActive: boolean }>).find(
+      (row) => row.id === created.body.id,
+    );
     expect(archived?.isActive).toBe(false);
-    expect(archived?.itemsCount).toBe(0);
   });
 
   it('«Прочее» в архив не убирается — 409', async () => {
+    const list = await call(
+      'get',
+      '/api/gear/admin/group-templates',
+      adminToken,
+    ).expect(200);
+    const other = (
+      list.body.items as Array<{ id: number; code: string }>
+    ).find((row) => row.code === 'other');
+
     const response = await call(
       'delete',
-      `/api/gear/admin/groups/${otherGroupId}`,
+      `/api/gear/admin/group-templates/${other?.id}`,
       adminToken,
     ).expect(409);
-
     expect(response.body.message as string).toContain('Прочее');
   });
 
-  // ─────────────────────────── полка у вещи ───────────────────────────
+  // ─────────────────── личные копии рекомендуемых ───────────────────
 
-  it('вещь без groupId попадает в «Прочее»', async () => {
-    const item = await addItem({ title: 'Фонарик без полки' });
+  it('новый пользователь получает копии рекомендуемых групп', async () => {
+    const groups = await myGroups();
 
-    expect(item.groupId).toBe(otherGroupId);
-    expect(item.groupCode).toBe('other');
-    expect(item.groupName).toBe('Прочее');
-    expect(item.sortOrder as number).toBeGreaterThan(0);
+    const copy = groupOfTemplate(groups, templateCode);
+    expect(copy.isDefault).toBe(false);
+    expect(copy.name).toBe('Проверочная рекомендуемая 2');
+    expect(copy.types.map((type) => type.id)).toEqual(
+      expect.arrayContaining([typeAId, typeBId]),
+    );
   });
 
-  it('вещь с groupId — на выбранной полке', async () => {
-    const item = await addItem({ title: 'Топор на полке', groupId: groupAId });
+  it('«Прочее» есть у каждого, помечено умолчанием и стоит последним', async () => {
+    const groups = await myGroups();
+    const other = groupOfTemplate(groups, 'other');
 
-    expect(item.groupId).toBe(groupAId);
-    expect(item.groupCode).toBe(`e2e_${suffix}_a`);
+    expect(other.isDefault).toBe(true);
+    expect(groups.at(-1)?.id).toBe(other.id);
+    expect(groups.map((group) => group.sortOrder)).toEqual(
+      groups.map((group) => group.sortOrder).sort((a, b) => a - b),
+    );
   });
 
-  it('несуществующая группа — 400', async () => {
-    await call('post', '/api/gear', ownerToken, {
-      typeId,
-      title: 'Вещь в никуда',
-      groupId: 2147483000,
+  it('новый тип с рекомендацией доезжает до человека сам', async () => {
+    const created = await call('post', '/api/gear/admin/types', adminToken, {
+      code: `e2e_${suffix}_late`,
+      name: 'Поздний тип',
+      recommendedGroupId: recommendedTemplateId,
+    }).expect(201);
+
+    const groups = await myGroups();
+    const copy = groupOfTemplate(groups, templateCode);
+    expect(copy.types.some((type) => type.id === created.body.id)).toBe(true);
+
+    await call(
+      'delete',
+      `/api/gear/admin/types/${created.body.id}`,
+      adminToken,
+    ).expect(204);
+  });
+
+  it('у постороннего свои группы, а не копии хозяина', async () => {
+    const groups = await myGroups(strangerToken);
+
+    const copy = groupOfTemplate(groups, templateCode);
+    expect(copy.id).not.toBe(groupOfTemplate(await myGroups(), templateCode).id);
+    expect(copy.types.map((type) => type.id)).toEqual(
+      expect.arrayContaining([typeAId, typeBId]),
+    );
+  });
+
+  // ─────────────────── свои группы: имя, порядок ───────────────────
+
+  it('создаёт свою группу перед «Прочим»', async () => {
+    const response = await call('post', '/api/gear-groups', ownerToken, {
+      name: 'Рыбалка',
+    }).expect(201);
+
+    const groups = response.body.items as GroupBody[];
+    const created = groups.find((group) => group.name === 'Рыбалка');
+    const other = groupOfTemplate(groups, 'other');
+
+    expect(created).toBeDefined();
+    expect(created?.templateCode).toBeNull();
+    expect(created?.isDefault).toBe(false);
+    expect(other.sortOrder).toBeGreaterThan(created?.sortOrder as number);
+  });
+
+  it('одинаковое имя группы у человека — 409', async () => {
+    await call('post', '/api/gear-groups', ownerToken, {
+      name: 'рыбалка',
+    }).expect(409);
+  });
+
+  it('переименовывает группу и меняет порядок', async () => {
+    const groups = await myGroups();
+    const target = groups.find((group) => group.name === 'Рыбалка') as GroupBody;
+
+    const response = await call(
+      'patch',
+      `/api/gear-groups/${target.id}`,
+      ownerToken,
+      { name: 'Рыбалка и охота' },
+    ).expect(200);
+
+    expect(
+      (response.body.items as GroupBody[]).find((group) => group.id === target.id)
+        ?.name,
+    ).toBe('Рыбалка и охота');
+  });
+
+  it('«Прочее» переименовать можно, переставить — 400', async () => {
+    const other = groupOfTemplate(await myGroups(), 'other');
+
+    await call('patch', `/api/gear-groups/${other.id}`, ownerToken, {
+      name: 'Прочее (переименовано)',
+    }).expect(200);
+
+    await call('patch', `/api/gear-groups/${other.id}`, ownerToken, {
+      sortOrder: 0,
     }).expect(400);
-  });
 
-  it('архивная группа в теле вещи — 400', async () => {
-    await call('post', '/api/gear', ownerToken, {
-      typeId,
-      title: 'Вещь в архивной полке',
-      groupId: groupBId,
+    await call('post', `/api/gear-groups/${other.id}/move`, ownerToken, {
+      direction: 'up',
     }).expect(400);
+
+    await call('patch', `/api/gear-groups/${other.id}`, ownerToken, {
+      name: 'Прочее',
+    }).expect(200);
   });
 
-  // ─────────────────────────── личный порядок ───────────────────────────
-
-  it('новые вещи встают в конец своей группы', async () => {
-    await addItem({ title: 'Вторая', groupId: groupAId });
-    await addItem({ title: 'Третья', groupId: groupAId });
-
-    expect(await titlesOfGroup(groupAId)).toEqual([
-      'Топор на полке',
-      'Вторая',
-      'Третья',
-    ]);
-  });
-
-  it('стрелка вниз меняет соседей местами', async () => {
-    const items = (await call('get', '/api/gear', ownerToken).expect(200)).body
-      .items as Array<{ id: string; title: string; groupId: number }>;
-    const first = items.find((item) => item.title === 'Топор на полке');
+  it('стрелка переставляет свою группу, но не «Прочее»', async () => {
+    const groups = await myGroups();
+    const target = groups.find((group) => group.name === 'Рыбалка и охота') as GroupBody;
 
     const response = await call(
       'post',
-      `/api/gear/${first?.id}/move`,
+      `/api/gear-groups/${target.id}/move`,
+      ownerToken,
+      { direction: 'up' },
+    ).expect(200);
+
+    const moved = (response.body.items as GroupBody[]).find(
+      (group) => group.id === target.id,
+    );
+    expect(moved?.sortOrder).toBeLessThan(target.sortOrder);
+    expect((response.body.items as GroupBody[]).at(-1)?.isDefault).toBe(true);
+  });
+
+  it('направление вне up/down — 400', async () => {
+    const groups = await myGroups();
+    const target = groups.find((group) => group.name === 'Рыбалка и охота') as GroupBody;
+
+    await call('post', `/api/gear-groups/${target.id}/move`, ownerToken, {
+      direction: 'left',
+    }).expect(400);
+  });
+
+  it('чужую личную группу изменить нельзя — 404', async () => {
+    const groups = await myGroups();
+    const target = groups.find((group) => group.name === 'Рыбалка и охота') as GroupBody;
+
+    await call(
+      'patch',
+      `/api/gear-groups/${target.id}`,
+      strangerToken,
+      { name: 'Чужая' },
+    ).expect(404);
+    await call(
+      'delete',
+      `/api/gear-groups/${target.id}`,
+      strangerToken,
+    ).expect(404);
+  });
+
+  // ─────────────────── раскладка типов ───────────────────
+
+  it('тип перекладывается в другую группу и уходит из прежней', async () => {
+    const groups = await myGroups();
+    const target = groups.find((group) => group.name === 'Рыбалка и охота') as GroupBody;
+    const source = groupOfTemplate(groups, templateCode);
+
+    const response = await call(
+      'post',
+      `/api/gear-groups/${target.id}/types`,
+      ownerToken,
+      { typeId: typeAId },
+    ).expect(200);
+
+    const items = response.body.items as GroupBody[];
+    expect(
+      items.find((group) => group.id === target.id)?.types.map((type) => type.id),
+    ).toContain(typeAId);
+    expect(
+      items.find((group) => group.id === source.id)?.types.map((type) => type.id),
+    ).not.toContain(typeAId);
+  });
+
+  it('архивный тип перекладывать нельзя — 400', async () => {
+    const groups = await myGroups();
+    const target = groups.find((group) => group.name === 'Рыбалка и охота') as GroupBody;
+
+    const archived = await call('post', '/api/gear/admin/types', adminToken, {
+      code: `e2e_${suffix}_arch_type`,
+      name: 'Архивный тип',
+      recommendedGroupId: recommendedTemplateId,
+    }).expect(201);
+    await call(
+      'delete',
+      `/api/gear/admin/types/${archived.body.id}`,
+      adminToken,
+    ).expect(204);
+
+    await call(
+      'post',
+      `/api/gear-groups/${target.id}/types`,
+      ownerToken,
+      { typeId: archived.body.id },
+    ).expect(400);
+  });
+
+  it('тип кладётся в чужую группу только если она своя — 404', async () => {
+    const groups = await myGroups(strangerToken);
+    const foreign = groups.find((group) => group.isDefault) as GroupBody;
+
+    // Группа своя для постороннего, но тип перекладывает он же — это
+    // разрешено; а вот чужая группа для хозяина не находится.
+    const ownerGroups = await myGroups();
+    const ownerGroup = ownerGroups.find(
+      (group) => group.name === 'Рыбалка и охота',
+    ) as GroupBody;
+
+    await call(
+      'post',
+      `/api/gear-groups/${ownerGroup.id}/types`,
+      strangerToken,
+      { typeId: typeAId },
+    ).expect(404);
+
+    expect(foreign.id).not.toBe(ownerGroup.id);
+  });
+
+  // ─────────────────── вещь и её группа ───────────────────
+
+  it('вещь попадает в группу своего типа без выбора полки', async () => {
+    const item = await addItem({ title: 'Вещь типа А' });
+    const groups = await myGroups();
+    const target = groups.find((group) =>
+      group.types.some((type) => type.id === typeAId),
+    ) as GroupBody;
+
+    expect(item.groupId).toBe(target.id);
+    expect(item.groupName).toBe(target.name);
+    expect(item.groupCode).toBe(target.templateCode ?? `custom_${target.id}`);
+  });
+
+  it('groupId в теле — удалённое поле, 400', async () => {
+    await call('post', '/api/gear', ownerToken, {
+      typeId: typeAId,
+      title: 'Вещь со старой полкой',
+      groupId: 1,
+    }).expect(400);
+  });
+
+  it('местоположение сохраняется и обрезается, пустое — null', async () => {
+    const withPlace = await addItem({ title: 'В гараже', location: '  гараж  ' });
+    expect(withPlace.location).toBe('гараж');
+
+    const withoutPlace = await addItem({ title: 'Без места', location: '   ' });
+    expect(withoutPlace.location).toBeNull();
+  });
+
+  it('смена типа переносит вещь в группу нового типа', async () => {
+    const item = await addItem({ title: 'Переезжающая' });
+    const response = await call(
+      'patch',
+      `/api/gear/${item.id}`,
+      ownerToken,
+      { typeId: typeOtherId },
+    ).expect(200);
+
+    const groups = await myGroups();
+    const other = groupOfTemplate(groups, 'other');
+    expect(response.body.groupId).toBe(other.id);
+    expect(response.body.groupCode).toBe('other');
+  });
+
+  it('порядок двигается внутри группы, в том числе между типами', async () => {
+    await call('post', `/api/gear-groups/${groupOfTemplate(await myGroups(), templateCode).id}/types`, ownerToken, { typeId: typeAId }).expect(200);
+
+    const first = await addItem({ title: 'Первая в группе', typeId: typeAId });
+    const second = await addItem({ title: 'Вторая в группе', typeId: typeBId });
+
+    const response = await call(
+      'post',
+      `/api/gear/${first.id}/move`,
       ownerToken,
       { direction: 'down' },
     ).expect(200);
 
-    const titles = (
-      response.body.items as Array<{ title: string; groupId: number }>
-    )
-      .filter((item) => item.groupId === groupAId)
-      .map((item) => item.title);
-
-    expect(titles).toEqual(['Вторая', 'Топор на полке', 'Третья']);
-  });
-
-  it('стрелка вверх в начале группы ничего не меняет', async () => {
-    const items = (await call('get', '/api/gear', ownerToken).expect(200)).body
-      .items as Array<{ id: string; title: string; groupId: number }>;
-    const first = items.find(
-      (item) => item.groupId === groupAId && item.title === 'Вторая',
+    const ordered = (response.body.items as Array<{ id: string; groupId: number }>)
+      .filter((item) => item.groupId === first.groupId)
+      .map((item) => item.id);
+    expect(ordered.indexOf(second.id as string)).toBeLessThan(
+      ordered.indexOf(first.id as string),
     );
-
-    await call('post', `/api/gear/${first?.id}/move`, ownerToken, {
-      direction: 'up',
-    }).expect(200);
-
-    expect(await titlesOfGroup(groupAId)).toEqual([
-      'Вторая',
-      'Топор на полке',
-      'Третья',
-    ]);
   });
 
   it('чужую вещь двигать нельзя — 404', async () => {
-    const items = (await call('get', '/api/gear', ownerToken).expect(200)).body
-      .items as Array<{ id: string }>;
+    const items = (
+      await call('get', '/api/gear', ownerToken).expect(200)
+    ).body.items as Array<{ id: string }>;
 
     await call('post', `/api/gear/${items[0]?.id}/move`, strangerToken, {
       direction: 'up',
     }).expect(404);
   });
 
-  it('направление вне up/down — 400', async () => {
-    const items = (await call('get', '/api/gear', ownerToken).expect(200)).body
-      .items as Array<{ id: string }>;
+  // ─────────────────── удаление своей группы ───────────────────
 
-    await call('post', `/api/gear/${items[0]?.id}/move`, ownerToken, {
-      direction: 'left',
-    }).expect(400);
-  });
+  it('удаление группы переносит её типы в «Прочее»', async () => {
+    // Своя группа, в которую положим тип Б.
+    const created = await call('post', '/api/gear-groups', ownerToken, {
+      name: 'Временная',
+    }).expect(201);
+    const temp = (created.body.items as GroupBody[]).find(
+      (group) => group.name === 'Временная',
+    ) as GroupBody;
 
-  it('смена группы переносит вещь в конец новой полки', async () => {
-    const items = (await call('get', '/api/gear', ownerToken).expect(200)).body
-      .items as Array<{ id: string; title: string; sortOrder: number }>;
-    const moved = items.find((item) => item.title === 'Вторая');
-
-    const response = await call(
-      'patch',
-      `/api/gear/${moved?.id}`,
+    await call(
+      'post',
+      `/api/gear-groups/${temp.id}/types`,
       ownerToken,
-      { groupId: otherGroupId },
+      { typeId: typeBId },
     ).expect(200);
 
-    expect(response.body.groupId).toBe(otherGroupId);
-    expect(response.body.sortOrder as number).toBeGreaterThan(
-      moved?.sortOrder as number,
-    );
+    const response = await call(
+      'delete',
+      `/api/gear-groups/${temp.id}`,
+      ownerToken,
+    ).expect(200);
 
-    expect(await titlesOfGroup(groupAId)).toEqual(['Топор на полке', 'Третья']);
+    const groups = response.body.items as GroupBody[];
+    expect(groups.some((group) => group.id === temp.id)).toBe(false);
+    expect(
+      groupOfTemplate(groups, 'other').types.map((type) => type.id),
+    ).toContain(typeBId);
   });
 
-  it('архивная группа не принимается и в PATCH — 400', async () => {
-    const items = (await call('get', '/api/gear', ownerToken).expect(200)).body
-      .items as Array<{ id: string }>;
+  it('«Прочее» удалить нельзя — 409', async () => {
+    const other = groupOfTemplate(await myGroups(), 'other');
 
-    await call('patch', `/api/gear/${items[0]?.id}`, ownerToken, {
-      groupId: groupBId,
-    }).expect(400);
+    const response = await call(
+      'delete',
+      `/api/gear-groups/${other.id}`,
+      ownerToken,
+    ).expect(409);
+    expect(response.body.message as string).toContain('Прочее');
+  });
+
+  it('удалённая копия шаблона не воскресает при следующем открытии', async () => {
+    const roof = groupOfTemplate(await myGroups(), 'roof');
+
+    await call('delete', `/api/gear-groups/${roof.id}`, ownerToken).expect(200);
+
+    const after = await myGroups();
+    expect(after.some((group) => group.templateCode === 'roof')).toBe(false);
   });
 });

@@ -22,73 +22,76 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
-  CreateGearGroupDto,
-  GearAdminGroupDto,
-  GearAdminGroupListDto,
-  UpdateGearGroupDto,
+  CreateGearGroupTemplateDto,
+  GearAdminGroupTemplateDto,
+  GearAdminGroupTemplateListDto,
+  UpdateGearGroupTemplateDto,
 } from './dto/gear-group.dto';
-import { GearGroupsService } from './gear-groups.service';
+import { GearGroupTemplatesService } from './gear-group-templates.service';
 
 /**
- * Админка групп снаряжения (31.10.2026).
+ * Админка рекомендуемых групп снаряжения (02.11.2026).
  *
- * Префикс `gear/admin/groups` — тот же приём, что `gear/admin/types`:
- * один контроллер и одна проверка прав (`isAdminUser` в сервисе),
- * публичный `gear-groups` остаётся только чтением.
+ * Префикс `gear/admin/group-templates` — тот же приём, что
+ * `gear/admin/types`: один контроллер и одна проверка прав
+ * (`isAdminUser` в сервисе). Личные группы живут под `gear-groups`
+ * и доступны любому авторизованному — это его собственный каталог.
  *
  * **Удаление — архив.** `DELETE` отвечает 204 и ставит `is_active = false`;
- * повторный вызов тоже 204. Физического удаления нет: на группу ссылаются
- * вещи. Исключение одно — «Прочее»: её архив запрещён (409), потому что
- * это группа по умолчанию.
+ * повторный вызов тоже 204. Физического удаления нет: на шаблон ссылаются
+ * рекомендуемые группы типов и личные копии. Исключение — «Прочее»: её
+ * архив запрещён (409), потому что это умолчание.
  */
 @ApiTags('gear')
-@Controller('gear/admin/groups')
+@Controller('gear/admin/group-templates')
 @ApiForbiddenResponse({ description: 'Раздел только для администратора' })
-export class GearAdminGroupsController {
-  constructor(private readonly gearGroupsService: GearGroupsService) {}
+export class GearAdminGroupTemplatesController {
+  constructor(
+    private readonly templatesService: GearGroupTemplatesService,
+  ) {}
 
-  /** Все группы, включая архивные, с числом вещей. */
+  /** Все шаблоны, включая архивные, с числом рекомендованных типов. */
   @Get()
-  @ApiOperation({ summary: 'Группы снаряжения для админки' })
-  @ApiOkResponse({ type: GearAdminGroupListDto })
+  @ApiOperation({ summary: 'Рекомендуемые группы снаряжения' })
+  @ApiOkResponse({ type: GearAdminGroupTemplateListDto })
   async list(
     @CurrentUser() authUser: AuthUser,
-  ): Promise<GearAdminGroupListDto> {
-    return this.gearGroupsService.listAdmin(authUser.id);
+  ): Promise<GearAdminGroupTemplateListDto> {
+    return this.templatesService.listAdmin(authUser.id);
   }
 
-  /** Новая группа. `code` занимается навсегда: в `PATCH` его нет. */
+  /** Новый шаблон. `code` занимается навсегда: в `PATCH` его нет. */
   @Post()
-  @ApiOperation({ summary: 'Создать группу снаряжения' })
-  @ApiCreatedResponse({ type: GearAdminGroupDto })
+  @ApiOperation({ summary: 'Создать рекомендуемую группу' })
+  @ApiCreatedResponse({ type: GearAdminGroupTemplateDto })
   async create(
     @CurrentUser() authUser: AuthUser,
-    @Body() dto: CreateGearGroupDto,
-  ): Promise<GearAdminGroupDto> {
-    return this.gearGroupsService.createGroup(authUser.id, dto);
+    @Body() dto: CreateGearGroupTemplateDto,
+  ): Promise<GearAdminGroupTemplateDto> {
+    return this.templatesService.create(authUser.id, dto);
   }
 
-  /** Правка группы: имя, порядок, активность. `code` не меняется — 400. */
+  /** Правка: имя, порядок, активность. `code` не меняется — 400. */
   @Patch(':id')
-  @ApiOperation({ summary: 'Изменить группу снаряжения' })
-  @ApiOkResponse({ type: GearAdminGroupDto })
+  @ApiOperation({ summary: 'Изменить рекомендуемую группу' })
+  @ApiOkResponse({ type: GearAdminGroupTemplateDto })
   async update(
     @CurrentUser() authUser: AuthUser,
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: UpdateGearGroupDto,
-  ): Promise<GearAdminGroupDto> {
-    return this.gearGroupsService.updateGroup(authUser.id, id, dto);
+    @Body() dto: UpdateGearGroupTemplateDto,
+  ): Promise<GearAdminGroupTemplateDto> {
+    return this.templatesService.update(authUser.id, id, dto);
   }
 
   /** В архив: `is_active = false`, ответ 204. «Прочее» — 409. */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Убрать группу в архив' })
-  @ApiNoContentResponse({ description: 'Группа в архиве' })
+  @ApiOperation({ summary: 'Убрать рекомендуемую группу в архив' })
+  @ApiNoContentResponse({ description: 'Шаблон в архиве' })
   async archive(
     @CurrentUser() authUser: AuthUser,
     @Param('id', ParseIntPipe) id: number,
   ): Promise<void> {
-    return this.gearGroupsService.archiveGroup(authUser.id, id);
+    return this.templatesService.archive(authUser.id, id);
   }
 }

@@ -2,12 +2,15 @@ import {
   Check,
   Column,
   Entity,
+  JoinColumn,
+  ManyToOne,
   OneToMany,
   PrimaryGeneratedColumn,
   Unique,
 } from 'typeorm';
 
 import { GEAR_CODE_PATTERN } from '../gear.types';
+import { GearGroupTemplate } from './gear-group-template.entity';
 import { GearTypeAttribute } from './gear-type-attribute.entity';
 
 /**
@@ -23,9 +26,10 @@ import { GearTypeAttribute } from './gear-type-attribute.entity';
  * Ошибка в коде лечится архивом строки и новой строкой с новым кодом —
  * не переименованием.
  *
- * **Групп нет.** Группы (`gear_groups` + привязка вещей) — отдельная
- * миграция Stage B, у типа группы не будет: группируются вещи, а не
- * справочник. Пока список типов в админке плоский.
+ * **Рекомендуемая группа — есть (02.11.2026).** Админ указывает шаблон
+ * (`recommended_group_id`), в который тип попадает у нового пользователя.
+ * Это именно **рекомендация**: человек волен переложить тип в свою группу,
+ * и его личная раскладка (`gear_type_groups`) главнее. `NULL` — «Прочее».
  *
  * **Удаления нет, есть архив** (`is_active`): на тип ссылаются вещи,
  * а физическое удаление строки из справочника выдернуло бы их молча.
@@ -58,6 +62,23 @@ export class GearType {
   /** Порядок в списке; порядок задаёт админ, а не алфавит. */
   @Column({ name: 'sort_order', type: 'integer', default: 0 })
   sortOrder: number;
+
+  /**
+   * Рекомендуемая группа: шаблон, в который тип попадает у человека.
+   *
+   * `NULL` — «Прочее». Архив шаблона рекомендацию не отменяет: новые
+   * пользователи просто получат личную группу по коду, а если человек её
+   * удалил — тип ляжет в «Прочее».
+   */
+  @Column({ name: 'recommended_group_id', type: 'integer', nullable: true })
+  recommendedGroupId: number | null;
+
+  @ManyToOne(() => GearGroupTemplate, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({
+    name: 'recommended_group_id',
+    foreignKeyConstraintName: 'FK_gear_types_recommended_group',
+  })
+  recommendedGroup: GearGroupTemplate | null;
 
   @OneToMany(() => GearTypeAttribute, (attribute) => attribute.gearType)
   attributes: GearTypeAttribute[];

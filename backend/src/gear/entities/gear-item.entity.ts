@@ -12,7 +12,6 @@ import {
 } from 'typeorm';
 
 import { User } from '../../users/entities/user.entity';
-import { GearGroup } from './gear-group.entity';
 import { GearItemAttribute } from './gear-item-attribute.entity';
 import { GearType } from './gear-type.entity';
 
@@ -36,11 +35,20 @@ import { GearType } from './gear-type.entity';
  * что угодно, и ограничивать его незачем. В снаряжении похода `title`
  * не участвует: строка собирается из типа, характеристик, веса и хозяина.
  *
- * **Полка каталога — группа (31.10.2026).** У вещи обязательный
- * `group_id`: каталог собран секциями по группам, и вещь без полки выпала
- * бы из него. Группа собирает вещи разных типов — топор, пилу и розжиг
- * в «Костровое», — поэтому она ссылка на `gear_groups`, а не код типа.
- * Группу выбирает человек, а по умолчанию (поле не передали) стоит «Прочее».
+ * **Полка каталога — в группе типа (02.11.2026).** Раньше у вещи был
+ * обязательный `group_id`, и полку выбирали для каждой вещи отдельно.
+ * Заказчик поменял модель: «группировать их [типы] разрешим самостоятельно».
+ * Теперь группа — свойство **типа** у человека (`gear_type_groups`),
+ * а вещь попадает в группу своего типа. Поэтому `group_id` здесь больше нет:
+ * второй источник правды разошёлся бы с первым после первого «перекинуть
+ * тип».
+ *
+ * **Местоположение — свободный текст (02.11.2026).** «У юзера снаряга лежит
+ * на балконе и в гараже… кликает на поле местоположения, поле, посмотрев
+ * все объекты, предлагает „Гараж“ и „Балкон“, либо пустое поле, где он сам
+ * может вписать, например, „дача“». Хранится строкой, а подсказки фронт
+ * собирает из уже введённых значений: справочник мест ради этого заводить
+ * незачем.
  *
  * **Порядок внутри группы задаёт владелец** (`sort_order`): это второй,
  * личный порядок, а порядок самих групп настраивает админ. Нули у всех
@@ -62,9 +70,9 @@ import { GearType } from './gear-type.entity';
 @Entity('gear_items')
 @Index('IDX_gear_items_owner_type', ['ownerUserId', 'gearTypeId', 'id'])
 @Index('IDX_gear_items_owner_trip_only', ['ownerUserId', 'isTripOnly'])
-@Index('IDX_gear_items_owner_order', [
+@Index('IDX_gear_items_owner_type_sort', [
   'ownerUserId',
-  'groupId',
+  'gearTypeId',
   'sortOrder',
   'id',
 ])
@@ -74,6 +82,13 @@ import { GearType } from './gear-type.entity';
 )
 @Check('chk_gear_items_title', `char_length(btrim("title")) > 0`)
 @Check('chk_gear_items_sort', `"sort_order" >= 0`)
+// «Пусто» — это `NULL`, а не пробелы: API обрезает, база не даёт сохранить
+// строку из одних пробелов. Без этого `@Check` в entity `schema:log`
+// предлагал снести ограничение, которое миграция завела.
+@Check(
+  'chk_gear_items_location',
+  `"location" IS NULL OR char_length(btrim("location")) BETWEEN 1 AND 120`,
+)
 export class GearItem {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: string;
@@ -100,27 +115,21 @@ export class GearItem {
   gearType: GearType;
 
   /**
-   * Полка каталога: «Костровое», «Кров», «Прочее».
+   * Где вещь лежит: «балкон», «гараж», «дача».
    *
-   * `RESTRICT` — группу с вещами физически не удалить; в API удаления
-   * и нет, только архив.
+   * `NULL` — не указано. Пустая строка не хранится: API превращает её
+   * в `NULL`, чтобы «пусто» было одним состоянием, а не двумя.
    */
-  @Column({ name: 'group_id', type: 'integer' })
-  groupId: number;
-
-  @ManyToOne(() => GearGroup, { onDelete: 'RESTRICT' })
-  @JoinColumn({
-    name: 'group_id',
-    foreignKeyConstraintName: 'FK_gear_items_group',
-  })
-  group: GearGroup;
+  @Column({ type: 'varchar', length: 120, nullable: true })
+  location: string | null;
 
   /**
    * Личный порядок вещи внутри её группы.
    *
    * Не `id` и не алфавит: «сначала палатка, потом спальник» — решение
    * человека. Стрелки в каталоге меняют местами соседей, и сервер хранит
-   * результат здесь. Порядок групп — другой: его задаёт админ.
+   * результат здесь. Группа вещи выводится из её типа, поэтому порядок
+   * считается по всем вещам типов этой группы.
    */
   @Column({ name: 'sort_order', type: 'integer', default: 0 })
   sortOrder: number;

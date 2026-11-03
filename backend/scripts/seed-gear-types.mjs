@@ -274,6 +274,33 @@ try {
     }
   }
 
+  // Рекомендуемая группа типа (02.11.2026): новый пользователь получает
+  // тип уже разложенным. Только при первом заполнении — выбор админа
+  // сид не перезаписывает, как и имя с порядком.
+  const RECOMMENDED = {
+    roof: ['tent', 'shelter', 'sleeping_bag', 'mat'],
+    campfire: ['axe', 'saw', 'firestarter', 'tagan'],
+    kitchen: ['stove', 'gas'],
+    dishes: ['kettle', 'ladle', 'knife'],
+  };
+
+  for (const [code, typeCodes] of Object.entries(RECOMMENDED)) {
+    const group = await client.query(
+      'SELECT id FROM gear_group_templates WHERE code = $1',
+      [code],
+    );
+    const groupId = group.rows[0]?.id;
+    if (!groupId) continue;
+
+    await client.query(
+      `UPDATE gear_types
+          SET recommended_group_id = $1
+        WHERE code = ANY($2)
+          AND recommended_group_id IS NULL`,
+      [groupId, typeCodes],
+    );
+  }
+
   await client.query('COMMIT');
 } catch (error) {
   await client.query('ROLLBACK');

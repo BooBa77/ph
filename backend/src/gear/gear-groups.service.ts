@@ -1,210 +1,585 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, EntityManager } from 'typeorm';
 
-import { isAdminUser } from '../calendar/admin';
 import {
+  AssignGearGroupTypeDto,
   CreateGearGroupDto,
-  GearAdminGroupDto,
-  GearAdminGroupListDto,
   GearGroupDto,
   GearGroupListDto,
   UpdateGearGroupDto,
 } from './dto/gear-group.dto';
+import type { GearGroupMoveDirection } from './gear.types';
+import { GearGroupTemplate } from './entities/gear-group-template.entity';
 import { GearGroup } from './entities/gear-group.entity';
-import { GearItem } from './entities/gear-item.entity';
-import {
-  GEAR_CODE_PATTERN,
-  GEAR_DEFAULT_GROUP_CODE,
-} from './gear.types';
+import { GearTypeGroup } from './entities/gear-type-group.entity';
+import { GearType } from './entities/gear-type.entity';
+import { GEAR_DEFAULT_GROUP_CODE } from './gear.types';
+
+/** Шаг порядка групп: между соседями всегда есть куда вставить. */
+const GROUP_SORT_STEP = 10;
 
 /**
- * Группы снаряжения — полки каталога (31.10.2026).
+ * Результат «у пользователя точно есть группы и раскладка типов».
  *
- * Два контракта в одном сервисе, как у типов: **публичный** список
- * (только действующие группы) нужен экрану каталога, **админский**
- * (с архивом и числом вещей) — `/admin/gear`.
+ * `groupByType` — карта «тип → личная группа», по ней каталог раскладывает
+ * вещи по секциям. `defaultGroup` — «Прочее»: туда попадает тип, для
+ * которого нет ни раскладки, ни рекомендуемой группы.
+ */
+export interface UserGrouping {
+  groups: GearGroup[];
+  defaultGroup: GearGroup;
+  groupByType: Map<number, GearGroup>;
+  types: GearType[];
+}
+
+/**
+ * Личные группы снаряжения (02.11.2026).
  *
- * **Группы — данные, а не код.** Их заводит и упорядочивает админ, поэтому
- * появление новой полки («Рыбалка», «Фото») не требует миграции. Код
- * остаётся контрактом: он неизменяем и уникален даже у архивной строки.
+ * Модель заказчика: «Типы, по-прежнему, создаёт админ, потому что там
+ * задаются характеристики. А группировать их разрешим самостоятельно.
+ * Заводим рекомендуемые группы, они управляются админом, приходят новым
+ * пользователям и с новыми типами, но пользователь в праве сам менять их
+ * под себя».
  *
- * **`other` защищена от архива.** Группа у вещи обязательна, а умолчание
- * для пропущенного `groupId` — «Прочее». Если её погасить, API не сможет
- * завести вещь без явной группы. Поэтому `archiveGroup` отвечает 409
- * на `code = 'other'`; переименовать её можно (имя — не контракт).
+ * Поэтому сервис делает две вещи:
  *
- * **Удаления нет, есть архив.** Вещи в архивной группе остаются на месте:
- * каталог покажет её после действующих групп, а не молча потеряет вещи.
+ * 1. **Материализует копии шаблонов** — лениво, при первом обращении
+ *    к каталогу (`ensure`). Шаблоны правит админ (`GearGroupTemplatesService`),
+ *    но копия — собственность человека: он её переименовывает, удаляет
+ *    и переставляет, и это не трогает никого другого.
+ * 2. **Держит раскладку типов** — `gear_type_groups`: один тип ровно
+ *    в одной группе. Новый тип приходит в группу, которую админ указал
+ *    рекомендованной; если человек эту группу удалил, тип ложится
+ *    в «Прочее».
+ *
+ * **«Прочее» — неудаляемое и последнее.** Его нельзя удалить (409) и нельзя
+ * переставить выше других (400): это умолчание и место, куда переезжают
+ * типы удалённой группы. Порядок остальных групп человек задаёт стрелками.
+ *
+ * **Пустые группы в каталоге не показываются**, но в настройке группировки
+ * видны: иначе только что созданную группу некуда было бы положить тип,
+ * а опустевшую нельзя было бы удалить.
  */
 @Injectable()
 export class GearGroupsService {
   constructor(private readonly dataSource: DataSource) {}
 
-  /** Публичный список: действующие группы в порядке админа. */
-  async listPublic(): Promise<GearGroupListDto> {
-    const groups = await this.dataSource.manager.find(GearGroup, {
-      where: { isActive: true },
-      order: { sortOrder: 'ASC', name: 'ASC' },
-    });
+  /**
+   * Группы человека с их типами — ответ экрана каталога и настройки.
+   *
+   * Перед чтением досоздаёт недостающее (`ensure`): без этого новый
+   * пользователь увидел бы пустой список групп, а новый тип — ни в одной.
+   */
+  async list(userId: string): Promise<GearGroupListDto> {
+    const grouping = await this.ensure(userId);
 
-    return { items: groups.map((group) => GearGroupDto.from(group)) };
+    return this.toList(grouping);
   }
 
-  /** Админский список: архивные группы тоже, с числом вещей. */
-  async listAdmin(userId: string): Promise<GearAdminGroupListDto> {
-    this.assertAdmin(userId);
-    const manager = this.dataSource.manager;
-    const groups = await manager.find(GearGroup, {
-      order: { isActive: 'DESC', sortOrder: 'ASC', name: 'ASC' },
-    });
-
-    const items: GearAdminGroupDto[] = [];
-    for (const group of groups) {
-      const itemsCount = await manager.count(GearItem, {
-        where: { groupId: group.id },
+  /**
+   * Убедиться, что у человека есть личные группы и раскладка **всех** типов.
+   *
+   * Работает идемпотентно и в одной транзакции: массовый первый заход
+   * не создаст дублей. Вставки идут через `ON CONFLICT DO NOTHING`, потому
+   * что два параллельных запроса (каталог и настройка) могут прийти
+   * одновременно.
+   *
+   * Архивные типы тоже раскладываются: у человека могут быть вещи в типе,
+   * который админ позже отправил в архив, и без строки раскладки вещь
+   * осталась бы без секции.
+   */
+  async ensure(userId: string): Promise<UserGrouping> {
+    return this.dataSource.transaction(async (tx) => {
+      const templates = await tx.find(GearGroupTemplate, {
+        order: { sortOrder: 'ASC', id: 'ASC' },
       });
-      items.push(GearAdminGroupDto.fromAdmin(group, itemsCount));
-    }
+      const groups = await tx.find(GearGroup, {
+        where: { ownerUserId: userId },
+        order: { sortOrder: 'ASC', id: 'ASC' },
+      });
 
-    return { items };
-  }
+      // Первый заход: групп ещё нет вовсе. «Прочее» неудаляемо, поэтому
+      // у вернувшегося человека групп не может быть ноль — значит, копии
+      // шаблонов создаются ровно один раз. Иначе удалённая человеком группа
+      // воскресала бы при каждом открытии каталога, и «сам меняет их под
+      // себя» было бы неправдой.
+      const isFirstVisit = groups.length === 0;
 
-  /** Новая группа. Код занимается навсегда, даже если группу заархивируют. */
-  async createGroup(
-    userId: string,
-    dto: CreateGearGroupDto,
-  ): Promise<GearAdminGroupDto> {
-    this.assertAdmin(userId);
-
-    const code = this.normalizeCode(dto.code);
-    const name = this.normalizeName(dto.name);
-    const manager = this.dataSource.manager;
-
-    const taken = await manager.findOne(GearGroup, { where: { code } });
-    if (taken) throw this.duplicateGroup(code);
-
-    try {
-      const saved = await manager.save(
-        manager.create(GearGroup, {
-          code,
-          name,
-          isActive: true,
-          sortOrder: dto.sortOrder ?? 0,
-        }),
+      const otherTemplate = templates.find(
+        (template) => template.code === GEAR_DEFAULT_GROUP_CODE,
       );
 
-      return GearAdminGroupDto.fromAdmin(saved, 0);
-    } catch (error) {
-      // Между проверкой и вставкой код мог занять другой запрос: unique
-      // в базе остаётся последним словом, и ответ должен быть тот же 409.
-      if (this.isUniqueViolation(error)) throw this.duplicateGroup(code);
-      throw error;
-    }
-  }
-
-  /**
-   * Правка группы: имя, порядок, активность.
-   *
-   * `code` меняться не может: на него опирается умолчание `other`.
-   * Если поле пришло, отвечаем 400 с причиной, а не молча игнорируем.
-   */
-  async updateGroup(
-    userId: string,
-    id: number,
-    dto: UpdateGearGroupDto,
-  ): Promise<GearAdminGroupDto> {
-    this.assertAdmin(userId);
-
-    if (dto.code !== undefined) {
-      throw new BadRequestException(
-        'Код группы менять нельзя: ошибку исправляют архивом и новым кодом',
+      let defaultGroup = groups.find(
+        (group) => group.templateCode === GEAR_DEFAULT_GROUP_CODE,
       );
-    }
 
-    const manager = this.dataSource.manager;
-    const group = await this.findGroup(manager, id);
-
-    if (dto.name !== undefined) group.name = this.normalizeName(dto.name);
-    if (dto.sortOrder !== undefined) group.sortOrder = dto.sortOrder;
-
-    // «Прочее» возвращать из архива можно, а убирать — нет. Если строка
-    // каким-то образом уже в архиве (руками в базе), `isActive: true`
-    // её починит; `false` для неё по-прежнему 409.
-    if (dto.isActive !== undefined) {
-      if (!dto.isActive && group.code === GEAR_DEFAULT_GROUP_CODE) {
-        throw this.defaultGroupArchive();
+      if (!defaultGroup) {
+        defaultGroup = await this.insertGroup(tx, userId, {
+          templateCode: GEAR_DEFAULT_GROUP_CODE,
+          name: otherTemplate?.name ?? 'Прочее',
+          sortOrder: this.maxSort(groups) + GROUP_SORT_STEP,
+        });
+        groups.push(defaultGroup);
       }
-      group.isActive = dto.isActive;
-    }
 
-    await manager.save(group);
+      const groupsByTemplate = new Map(
+        groups
+          .filter((group) => group.templateCode !== null)
+          .map((group) => [group.templateCode as string, group]),
+      );
 
-    const itemsCount = await manager.count(GearItem, {
-      where: { groupId: group.id },
+      // Копии **всех** действующих шаблонов — только при первом заходе:
+      // «рекомендуемые группы приходят новым пользователям». Пустая группа
+      // тоже приходит, человек наполнит её сам. Дальше недостающую группу
+      // создаёт `resolveTargetGroup`, когда админ рекомендует в неё новый
+      // тип, — то есть «приходят с новыми типами».
+      if (isFirstVisit) {
+        for (const template of templates) {
+          if (!template.isActive) continue;
+          if (template.code === GEAR_DEFAULT_GROUP_CODE) continue;
+          if (groupsByTemplate.has(template.code)) continue;
+
+          const created = await this.insertGroup(tx, userId, {
+            templateCode: template.code,
+            name: template.name,
+            sortOrder: template.sortOrder,
+          });
+          groups.push(created);
+          groupsByTemplate.set(template.code, created);
+        }
+      }
+
+      // «Прочее» всегда последнее. Проверка стоит **после** раскладки:
+      // `resolveTargetGroup` может создать копию нового шаблона и поставить
+      // её в конец, и тогда «Прочее» перестало бы быть последним.
+      const types = await tx.find(GearType, {
+        order: { sortOrder: 'ASC', id: 'ASC' },
+      });
+      const mappings = await tx.find(GearTypeGroup, {
+        where: { ownerUserId: userId },
+      });
+      const mappingByType = new Map(
+        mappings.map((mapping) => [mapping.gearTypeId, mapping]),
+      );
+      const groupByType = new Map<number, GearGroup>();
+
+      for (const type of types) {
+        const mapping = mappingByType.get(type.id);
+        const current = mapping
+          ? groups.find((group) => group.id === mapping.groupId)
+          : undefined;
+
+        if (mapping && current) {
+          groupByType.set(type.id, current);
+          continue;
+        }
+
+        const target = await this.resolveTargetGroup(
+          tx,
+          userId,
+          type,
+          templates,
+          groups,
+          groupsByTemplate,
+          defaultGroup,
+        );
+
+        if (mapping) {
+          mapping.groupId = target.id;
+          await tx.save(mapping);
+        } else {
+          await tx
+            .createQueryBuilder()
+            .insert()
+            .into(GearTypeGroup)
+            .values({
+              ownerUserId: userId,
+              gearTypeId: type.id,
+              groupId: target.id,
+            })
+            .orIgnore()
+            .execute();
+        }
+
+        groupByType.set(type.id, target);
+      }
+
+      // Теперь, когда новые копии шаблонов созданы, «Прочее» снова
+      // отправляем в конец: иначе новая группа оказалась бы под свалкой.
+      const maxOthers = Math.max(
+        0,
+        ...groups
+          .filter((group) => group.id !== defaultGroup.id)
+          .map((group) => group.sortOrder),
+      );
+      if (defaultGroup.sortOrder <= maxOthers) {
+        defaultGroup.sortOrder = maxOthers + GROUP_SORT_STEP;
+        await tx.save(defaultGroup);
+      }
+
+      groups.sort(
+        (left, right) =>
+          left.sortOrder - right.sortOrder || left.id - right.id,
+      );
+
+      return { groups, defaultGroup, groupByType, types };
     });
-
-    return GearAdminGroupDto.fromAdmin(group, itemsCount);
   }
 
-  /**
-   * Архив группы. Ответ 204, повторный вызов идемпотентен.
-   *
-   * «Прочее» в архив не уходит (409): это группа по умолчанию. Вещи
-   * остальных групп архив не трогает — у вещи остаётся полка, просто
-   * она перестаёт предлагаться новым вещам.
-   */
-  async archiveGroup(userId: string, id: number): Promise<void> {
-    this.assertAdmin(userId);
-
-    const manager = this.dataSource.manager;
-    const group = await this.findGroup(manager, id);
-
-    if (group.code === GEAR_DEFAULT_GROUP_CODE) {
-      throw this.defaultGroupArchive();
-    }
-
-    if (group.isActive) {
-      group.isActive = false;
-      await manager.save(group);
-    }
-  }
-
-  // ───────────────────────── внутреннее ─────────────────────────
-
-  private assertAdmin(userId: string): void {
-    if (!isAdminUser(userId)) {
-      throw new ForbiddenException('Раздел только для администратора');
-    }
-  }
-
-  private async findGroup(
-    manager: EntityManager,
-    id: number,
-  ): Promise<GearGroup> {
-    const group = await manager.findOne(GearGroup, { where: { id } });
+  /** Группа человека с типами — по id; чужая отвечает 404. */
+  async findOwned(userId: string, id: number): Promise<GearGroup> {
+    const group = await this.dataSource.manager.findOne(GearGroup, {
+      where: { id, ownerUserId: userId },
+    });
     if (!group) throw new NotFoundException('Группа снаряжения не найдена');
 
     return group;
   }
 
-  private normalizeCode(raw: string): string {
-    const code = raw.trim().toLowerCase();
-    if (code.length === 0) {
-      throw new BadRequestException('Код группы не может быть пустым');
-    }
-    if (!GEAR_CODE_PATTERN.test(code) || code.length > 40) {
-      throw new BadRequestException(
-        'Код группы — латиница, начиная с буквы: a-z, цифры и подчёркивание, до 40 символов',
+  /** Своя группа. Встаёт перед «Прочим», если порядок не задан явно. */
+  async create(
+    userId: string,
+    dto: CreateGearGroupDto,
+  ): Promise<GearGroupListDto> {
+    const grouping = await this.ensure(userId);
+    const name = this.normalizeName(dto.name);
+    this.assertNameFree(grouping.groups, name);
+
+    await this.dataSource.transaction(async (tx) => {
+      const defaultGroup = await tx.findOneOrFail(GearGroup, {
+        where: { id: grouping.defaultGroup.id },
+      });
+
+      let sortOrder = dto.sortOrder;
+      if (sortOrder === undefined) {
+        // Новую группу ставят перед свалкой, а «Прочее» съезжает вниз.
+        sortOrder = defaultGroup.sortOrder;
+        defaultGroup.sortOrder += GROUP_SORT_STEP;
+        await tx.save(defaultGroup);
+      } else if (sortOrder >= defaultGroup.sortOrder) {
+        defaultGroup.sortOrder = sortOrder + GROUP_SORT_STEP;
+        await tx.save(defaultGroup);
+      }
+
+      await this.insertGroup(tx, userId, { name, sortOrder });
+    });
+
+    return this.list(userId);
+  }
+
+  /**
+   * Правка группы: имя и порядок.
+   *
+   * «Прочее» переименовать можно, переставить — нет: оно обязано остаться
+   * последним, иначе порядок секций каталога теряет смысл.
+   */
+  async update(
+    userId: string,
+    id: number,
+    dto: UpdateGearGroupDto,
+  ): Promise<GearGroupListDto> {
+    const grouping = await this.ensure(userId);
+
+    await this.dataSource.transaction(async (tx) => {
+      const group = await tx.findOne(GearGroup, {
+        where: { id, ownerUserId: userId },
+      });
+      if (!group) throw new NotFoundException('Группа снаряжения не найдена');
+
+      if (dto.name !== undefined) {
+        const name = this.normalizeName(dto.name);
+        this.assertNameFree(grouping.groups, name, group.id);
+        group.name = name;
+      }
+
+      if (dto.sortOrder !== undefined) {
+        if (group.id === grouping.defaultGroup.id) {
+          throw new BadRequestException(
+            '«Прочее» всегда последнее: переставить его нельзя',
+          );
+        }
+        group.sortOrder = dto.sortOrder;
+        if (group.sortOrder >= grouping.defaultGroup.sortOrder) {
+          const defaultGroup = await tx.findOneOrFail(GearGroup, {
+            where: { id: grouping.defaultGroup.id },
+          });
+          defaultGroup.sortOrder = group.sortOrder + GROUP_SORT_STEP;
+          await tx.save(defaultGroup);
+        }
+      }
+
+      await tx.save(group);
+    });
+
+    return this.list(userId);
+  }
+
+  /**
+   * Удалить группу. Типы переезжают в «Прочее» — не теряются с вещами.
+   *
+   * «Прочее» удалить нельзя (409): это умолчание для типа без раскладки.
+   */
+  async remove(userId: string, id: number): Promise<GearGroupListDto> {
+    const grouping = await this.ensure(userId);
+
+    if (id === grouping.defaultGroup.id) {
+      throw new ConflictException(
+        '«Прочее» удалить нельзя: это группа по умолчанию, в неё попадают типы без своей группы',
       );
     }
 
-    return code;
+    await this.dataSource.transaction(async (tx) => {
+      const group = await tx.findOne(GearGroup, {
+        where: { id, ownerUserId: userId },
+      });
+      if (!group) throw new NotFoundException('Группа снаряжения не найдена');
+
+      await tx.update(
+        GearTypeGroup,
+        { ownerUserId: userId, groupId: group.id },
+        { groupId: grouping.defaultGroup.id },
+      );
+      await tx.delete(GearGroup, { id: group.id });
+    });
+
+    return this.list(userId);
+  }
+
+  /**
+   * Переставить группу на позицию выше или ниже.
+   *
+   * «Прочее» не двигается (400). После перестановки порядок перенумеровывается
+   * шагом 10: одинаковые `sort_order` (старые данные) иначе не давали бы
+   * перестановке эффекта.
+   */
+  async move(
+    userId: string,
+    id: number,
+    direction: GearGroupMoveDirection,
+  ): Promise<GearGroupListDto> {
+    const grouping = await this.ensure(userId);
+
+    if (id === grouping.defaultGroup.id) {
+      throw new BadRequestException(
+        '«Прочее» всегда последнее: переставить его нельзя',
+      );
+    }
+
+    await this.dataSource.transaction(async (tx) => {
+      const groups = await tx.find(GearGroup, {
+        where: { ownerUserId: userId },
+        order: { sortOrder: 'ASC', id: 'ASC' },
+      });
+      const movable = groups.filter(
+        (group) => group.id !== grouping.defaultGroup.id,
+      );
+      const index = movable.findIndex((group) => group.id === id);
+      if (index === -1) throw new NotFoundException('Группа снаряжения не найдена');
+
+      const target = direction === 'up' ? index - 1 : index + 1;
+      if (target < 0 || target >= movable.length) return;
+
+      const [moved] = movable.splice(index, 1);
+      if (!moved) return;
+      movable.splice(target, 0, moved);
+
+      let order = GROUP_SORT_STEP;
+      for (const group of movable) {
+        if (group.sortOrder !== order) {
+          await tx.update(GearGroup, { id: group.id }, { sortOrder: order });
+        }
+        order += GROUP_SORT_STEP;
+      }
+
+      const defaultGroup = await tx.findOneOrFail(GearGroup, {
+        where: { id: grouping.defaultGroup.id },
+      });
+      if (defaultGroup.sortOrder !== order) {
+        await tx.update(GearGroup, { id: defaultGroup.id }, { sortOrder: order });
+      }
+    });
+
+    return this.list(userId);
+  }
+
+  /**
+   * Переложить тип в группу.
+   *
+   * Тип один на человека (`UNIQUE` в `gear_type_groups`), поэтому это
+   * «переезд», а не «добавление»: в прежней группе он исчезает. Архивный
+   * тип не перекладывают — он не предлагается новым вещам.
+   */
+  async assignType(
+    userId: string,
+    groupId: number,
+    dto: AssignGearGroupTypeDto,
+  ): Promise<GearGroupListDto> {
+    await this.ensure(userId);
+
+    const manager = this.dataSource.manager;
+    const group = await manager.findOne(GearGroup, {
+      where: { id: groupId, ownerUserId: userId },
+    });
+    if (!group) throw new NotFoundException('Группа снаряжения не найдена');
+
+    const type = await manager.findOne(GearType, {
+      where: { id: dto.typeId },
+    });
+    if (!type) throw new BadRequestException('Тип снаряжения не найден');
+    if (!type.isActive) {
+      throw new BadRequestException(
+        'Тип снаряжения в архиве — перекладывать его незачем',
+      );
+    }
+
+    const existing = await manager.findOne(GearTypeGroup, {
+      where: { ownerUserId: userId, gearTypeId: type.id },
+    });
+    if (existing) {
+      if (existing.groupId !== group.id) {
+        existing.groupId = group.id;
+        await manager.save(existing);
+      }
+    } else {
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(GearTypeGroup)
+        .values({ ownerUserId: userId, gearTypeId: type.id, groupId: group.id })
+        .orIgnore()
+        .execute();
+    }
+
+    return this.list(userId);
+  }
+
+  // ───────────────────────── внутреннее ─────────────────────────
+
+  /** Личная группа по коду шаблона — для ленивой материализации копий. */
+  private async ensureGroupForTemplate(
+    manager: EntityManager,
+    userId: string,
+    template: GearGroupTemplate,
+    groups: GearGroup[],
+    groupsByTemplate: Map<string, GearGroup>,
+  ): Promise<GearGroup> {
+    const existing = groupsByTemplate.get(template.code);
+    if (existing) return existing;
+
+    const order =
+      Math.max(0, ...groups.map((group) => group.sortOrder)) + GROUP_SORT_STEP;
+    const created = await this.insertGroup(manager, userId, {
+      templateCode: template.code,
+      name: template.name,
+      sortOrder: order,
+    });
+    groups.push(created);
+    groupsByTemplate.set(template.code, created);
+
+    return created;
+  }
+
+  private async resolveTargetGroup(
+    manager: EntityManager,
+    userId: string,
+    type: GearType,
+    templates: GearGroupTemplate[],
+    groups: GearGroup[],
+    groupsByTemplate: Map<string, GearGroup>,
+    defaultGroup: GearGroup,
+  ): Promise<GearGroup> {
+    if (type.recommendedGroupId === null) return defaultGroup;
+
+    const template = templates.find(
+      (row) => row.id === type.recommendedGroupId,
+    );
+    // Архивный шаблон новым типам не рекомендуют, но у старой строки он
+    // может остаться: копию не создаём, тип ложится в «Прочее».
+    if (!template || !template.isActive) return defaultGroup;
+
+    return this.ensureGroupForTemplate(
+      manager,
+      userId,
+      template,
+      groups,
+      groupsByTemplate,
+    );
+  }
+
+  /**
+   * Вставка группы с защитой от гонки.
+   *
+   * `ON CONFLICT DO NOTHING` умеет только конфликт уникального индекса;
+   * если параллельный запрос уже создал копию шаблона, забираем её.
+   */
+  private async insertGroup(
+    manager: EntityManager,
+    userId: string,
+    data: { name: string; sortOrder: number; templateCode?: string },
+  ): Promise<GearGroup> {
+    const values = {
+      ownerUserId: userId,
+      name: data.name,
+      sortOrder: data.sortOrder,
+      templateCode: data.templateCode ?? null,
+    };
+
+    const inserted = await manager
+      .createQueryBuilder()
+      .insert()
+      .into(GearGroup)
+      .values(values)
+      .orIgnore()
+      .returning('*')
+      .execute();
+
+    if (inserted.raw.length > 0) {
+      const row = inserted.raw[0] as Record<string, unknown>;
+
+      return manager.create(GearGroup, {
+        id: Number(row.id),
+        ownerUserId: String(row.owner_user_id),
+        templateCode: (row.template_code as string | null) ?? null,
+        name: String(row.name),
+        sortOrder: Number(row.sort_order),
+      });
+    }
+
+    const found = await manager.findOne(GearGroup, {
+      where: {
+        ownerUserId: userId,
+        ...(data.templateCode === undefined
+          ? { name: data.name }
+          : { templateCode: data.templateCode }),
+      },
+    });
+    if (!found) throw new ConflictException('Не удалось создать группу');
+
+    return found;
+  }
+
+  private maxSort(groups: GearGroup[]): number {
+    return Math.max(0, ...groups.map((group) => group.sortOrder));
+  }
+
+  private toList(grouping: UserGrouping): GearGroupListDto {
+    return {
+      items: grouping.groups.map((group) =>
+        GearGroupDto.from(
+          group,
+          grouping.types
+            .filter(
+              (type) => grouping.groupByType.get(type.id)?.id === group.id,
+            )
+            .sort((left, right) => left.name.localeCompare(right.name, 'ru')),
+        ),
+      ),
+    };
   }
 
   private normalizeName(raw: string): string {
@@ -221,24 +596,19 @@ export class GearGroupsService {
     return name;
   }
 
-  private duplicateGroup(code: string): ConflictException {
-    return new ConflictException(
-      `Группа с кодом «${code}» уже есть — код занимается навсегда`,
+  /** Одинаковые имена групп у одного человека путали бы выбор. */
+  private assertNameFree(
+    groups: GearGroup[],
+    name: string,
+    exceptId?: number,
+  ): void {
+    const clash = groups.find(
+      (group) =>
+        group.id !== exceptId &&
+        group.name.toLowerCase() === name.toLowerCase(),
     );
-  }
-
-  private defaultGroupArchive(): ConflictException {
-    return new ConflictException(
-      '«Прочее» — группа по умолчанию: её нельзя убрать в архив, вещи без явной полки кладутся в неё. Переименовать её можно',
-    );
-  }
-
-  private isUniqueViolation(error: unknown): boolean {
-    return (
-      typeof error === 'object' &&
-      error !== null &&
-      'code' in error &&
-      (error as { code?: string }).code === '23505'
-    );
+    if (clash) {
+      throw new ConflictException(`Группа «${name}» уже есть`);
+    }
   }
 }

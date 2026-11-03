@@ -79,7 +79,6 @@ describe('Ночёвки похода (e2e)', () => {
   let tentTypeId: number;
   let bagTypeId: number;
   let matTypeId: number;
-  let groupId: number;
 
   const routeRoleCode = `routeE2e${Date.now()}`;
 
@@ -191,9 +190,9 @@ describe('Ночёвки похода (e2e)', () => {
     return (
       await dataSource.query(
         `INSERT INTO gear_items
-           (owner_user_id, gear_type_id, group_id, title, weight_grams)
-         VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-        [ownerId, typeId, groupId, title, weightGrams],
+           (owner_user_id, gear_type_id, title, weight_grams)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [ownerId, typeId, title, weightGrams],
       )
     )[0].id as string;
   }
@@ -328,14 +327,8 @@ describe('Ночёвки похода (e2e)', () => {
       [tripId, moderatorId, roleId],
     );
 
-    // Снаряжение: полка, три типа и вещи.
-    groupId = (
-      await dataSource.query(
-        `INSERT INTO gear_groups (code, name) VALUES ($1, 'Кров (тест)') RETURNING id`,
-        [`roof_e2e_${stamp}`],
-      )
-    )[0].id;
-
+    // Снаряжение: три типа и вещи. Группа вещи выводится из её типа,
+    // отдельная полка больше не нужна (02.11.2026).
     // Коды типов — контракт экранов: палатка ровно `tent`, спальник —
     // `sleeping_bag`, коврик — `mat`. Тип мог остаться от сида.
     tentTypeId = await typeIdOf('tent', 'Палатка');
@@ -388,7 +381,6 @@ describe('Ночёвки похода (e2e)', () => {
       );
       // Типы `tent`, `sleeping_bag` и `mat` — канонические коды проекта:
       // их не удаляем, вдруг они заведены сидом и нужны другим спекам.
-      await dataSource.query('DELETE FROM gear_groups WHERE id = $1', [groupId]);
       await dataSource.query('DELETE FROM objects WHERE id = $1', [objectId]);
       await dataSource.query('DELETE FROM users WHERE id = $1', [virtualId]);
       await dataSource.query('DELETE FROM roles WHERE code = $1', [

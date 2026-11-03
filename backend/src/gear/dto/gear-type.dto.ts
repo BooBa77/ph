@@ -187,6 +187,14 @@ export class GearTypeDto {
   sortOrder: number;
 
   @ApiProperty({
+    description:
+      'Рекомендуемая группа (шаблон), в которую тип приходит человеку; null — «Прочее»',
+    example: 2,
+    nullable: true,
+  })
+  recommendedGroupId: number | null;
+
+  @ApiProperty({
     description: 'Характеристики типа в порядке показа',
     type: [GearTypeAttributeDto],
   })
@@ -203,6 +211,7 @@ export class GearTypeDto {
       code: type.code,
       name: type.name,
       sortOrder: type.sortOrder,
+      recommendedGroupId: type.recommendedGroupId,
       attributes: (type.attributes ?? [])
         .filter((attribute) => attribute.isActive)
         .map((attribute) => GearTypeAttributeDto.from(attribute)),
@@ -227,6 +236,7 @@ export class GearAdminTypeDto extends GearTypeDto {
       code: type.code,
       name: type.name,
       sortOrder: type.sortOrder,
+      recommendedGroupId: type.recommendedGroupId,
       isActive: type.isActive,
       attributes: (type.attributes ?? []).map((attribute) =>
         GearAdminTypeAttributeDto.fromAdmin(attribute),
@@ -279,6 +289,18 @@ export class CreateGearTypeDto {
   @IsInt({ message: 'Порядок должен быть целым числом' })
   @Min(0, { message: 'Порядок не может быть отрицательным' })
   sortOrder?: number;
+
+  @ApiProperty({
+    description:
+      'Рекомендуемая группа: сюда тип попадёт у нового пользователя. null — «Прочее»',
+    example: 2,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Рекомендуемая группа должна быть указана числом' })
+  @Min(1, { message: 'Некорректная рекомендуемая группа' })
+  recommendedGroupId?: number | null;
 }
 
 /**
@@ -315,6 +337,16 @@ export class UpdateGearTypeDto {
   @IsInt({ message: 'Порядок должен быть целым числом' })
   @Min(0, { message: 'Порядок не может быть отрицательным' })
   sortOrder?: number;
+
+  @ApiProperty({
+    description: 'Рекомендуемая группа; null — «Прочее»',
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Рекомендуемая группа должна быть указана числом' })
+  @Min(1, { message: 'Некорректная рекомендуемая группа' })
+  recommendedGroupId?: number | null;
 }
 
 /**

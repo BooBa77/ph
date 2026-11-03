@@ -23,6 +23,7 @@ import {
   UpdateGearTypeDto,
 } from './dto/gear-type.dto';
 import { GearAttributeOption } from './entities/gear-attribute-option.entity';
+import { GearGroupTemplate } from './entities/gear-group-template.entity';
 import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
 import { parseAttributeValue } from './gear-attribute-values';
@@ -107,6 +108,11 @@ export class GearTypesService {
     const taken = await manager.findOne(GearType, { where: { code } });
     if (taken) throw this.duplicateType(code);
 
+    const recommended = await this.resolveRecommendedGroup(
+      manager,
+      dto.recommendedGroupId,
+    );
+
     try {
       const saved = await manager.save(
         manager.create(GearType, {
@@ -114,6 +120,7 @@ export class GearTypesService {
           name,
           isActive: true,
           sortOrder: dto.sortOrder ?? 0,
+          recommendedGroupId: recommended?.id ?? null,
           attributes: [],
         }),
       );
@@ -152,6 +159,19 @@ export class GearTypesService {
     if (dto.name !== undefined) type.name = this.normalizeName(dto.name);
     if (dto.sortOrder !== undefined) type.sortOrder = dto.sortOrder;
     if (dto.isActive !== undefined) type.isActive = dto.isActive;
+
+    if (dto.recommendedGroupId !== undefined) {
+      // Архивную рекомендацию, которая уже стоит у типа, разрешаем оставить:
+      // иначе правка имени типа падала бы 400 из-за архива, к которому
+      // админ отношения не имеет. Новую архивную выбрать нельзя.
+      if (dto.recommendedGroupId !== type.recommendedGroupId) {
+        const recommended = await this.resolveRecommendedGroup(
+          manager,
+          dto.recommendedGroupId,
+        );
+        type.recommendedGroupId = recommended?.id ?? null;
+      }
+    }
 
     await manager.save(type);
 
@@ -641,6 +661,33 @@ export class GearTypesService {
     if (!type) throw new NotFoundException('Тип снаряжения не найден');
 
     return type;
+  }
+
+  /**
+   * Рекомендуемая группа типа: шаблон, в который тип придёт человеку.
+   *
+   * `null` — «Прочее». Архивный шаблон выбрать нельзя: он не приходит новым
+   * пользователям, и тип молча уехал бы в «Прочее» вместо указанной группы.
+   */
+  private async resolveRecommendedGroup(
+    manager: EntityManager,
+    id: number | null | undefined,
+  ): Promise<GearGroupTemplate | null> {
+    if (id === null || id === undefined) return null;
+
+    const template = await manager.findOne(GearGroupTemplate, {
+      where: { id },
+    });
+    if (!template) {
+      throw new BadRequestException('Рекомендуемая группа не найдена');
+    }
+    if (!template.isActive) {
+      throw new BadRequestException(
+        'Рекомендуемая группа в архиве — выберите действующую',
+      );
+    }
+
+    return template;
   }
 
   /**

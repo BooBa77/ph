@@ -45,6 +45,7 @@ describe('Тип вещи и значения характеристик (e2e)',
 
   let ownerId: string;
   let ownerToken: string;
+  let strangerId: string;
   let strangerToken: string;
   let adminToken: string;
 
@@ -120,7 +121,16 @@ describe('Тип вещи и значения характеристик (e2e)',
     ownerId = owner.id;
 
     const jwtService = moduleFixture.get(JwtService);
-    strangerToken = await jwtService.signAsync({ sub: '00000000-0000-4000-8000-000000000000' });
+    // Посторонний — настоящая строка `users`, а не выдуманный UUID: с
+    // 02.11.2026 каталог при первом обращении заводит личные группы,
+    // и внешний ключ на владельца требует живого человека.
+    strangerId = (
+      await dataSource.query(
+        `INSERT INTO users (display_name) VALUES ('Посторонний каталога e2e')
+         RETURNING id`,
+      )
+    )[0].id;
+    strangerToken = await jwtService.signAsync({ sub: strangerId });
 
     // Админский токен: `isAdminUser` смотрит только на UUID из списка.
     adminToken = await jwtService.signAsync({
@@ -217,6 +227,7 @@ describe('Тип вещи и значения характеристик (e2e)',
         [ownerId],
       );
       await dataSource.query(`DELETE FROM gear_types WHERE code LIKE 'e2e\\_%'`);
+      await dataSource.query('DELETE FROM users WHERE id = $1::uuid', [strangerId]);
       await dataSource.query('DELETE FROM users WHERE id = $1::uuid', [ownerId]);
     }
     await app?.close();

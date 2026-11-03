@@ -1041,61 +1041,131 @@ const itemModelId = (
   )
 ).rows[0].id;
 
-// ─── Группы снаряжения (31.10.2026) ───
+// ─── Группы снаряжения (02.11.2026) ───
 /**
- * Инварианты `gear_groups` и полки у вещи.
+ * Инварианты рекомендуемых и личных групп.
  *
- * Проверяется то, что держит каталог собранным: **группа у вещи
- * обязательна** (иначе вещь выпала бы из секций), **группа с вещами
- * не удаляется** (`RESTRICT`), **код — контракт** (латиница, уникален
- * даже у архивной строки), а **порядок** — неотрицательное число.
- * Отдельно — «Прочее»: умолчание API, без него `POST /api/gear` без
- * `groupId` некуда положить вещь.
+ * С 02.11.2026 группы двух видов: **шаблоны админа**
+ * (`gear_group_templates`) и **личные копии** (`gear_groups`), а собирают
+ * они **типы** (`gear_type_groups`). Проверяется то, что держит каталог
+ * собранным: код шаблона — контракт, у личной группы обязателен владелец,
+ * тип лежит ровно в одной группе, «Прочее» есть всегда, а вещь больше
+ * не ссылается на группу — её полка выводится из типа.
+ *
+ * **Удаление теперь разрешено только у личной группы.** Шаблон с типами
+ * не удаляют (архив), а личную группу человек вправе убрать: её типы
+ * сервис переносит в «Прочее». Схема это не запрещает — правило живёт
+ * в API, и e2e проверяет его отдельно.
  */
-const groupShape = await client.query(
+const templateShape = await client.query(
   `SELECT column_name, is_nullable, column_default
      FROM information_schema.columns
-    WHERE table_name = 'gear_groups'
+    WHERE table_name = 'gear_group_templates'
       AND column_name IN ('code', 'name', 'is_active', 'sort_order')
     ORDER BY column_name`,
 );
-const groupShapeByName = new Map(
-  groupShape.rows.map((row) => [row.column_name, row]),
+const templateShapeByName = new Map(
+  templateShape.rows.map((row) => [row.column_name, row]),
 );
-const groupShapeOk =
-  groupShape.rows.length === 4 &&
-  groupShapeByName.get('code')?.is_nullable === 'NO' &&
-  groupShapeByName.get('name')?.is_nullable === 'NO' &&
-  groupShapeByName.get('is_active')?.is_nullable === 'NO' &&
-  (groupShapeByName.get('is_active')?.column_default ?? '').includes('true') &&
-  groupShapeByName.get('sort_order')?.is_nullable === 'NO' &&
-  (groupShapeByName.get('sort_order')?.column_default ?? '').includes('0');
-if (!groupShapeOk) failed += 1;
+const templateShapeOk =
+  templateShape.rows.length === 4 &&
+  templateShapeByName.get('code')?.is_nullable === 'NO' &&
+  templateShapeByName.get('name')?.is_nullable === 'NO' &&
+  templateShapeByName.get('is_active')?.is_nullable === 'NO' &&
+  (templateShapeByName.get('is_active')?.column_default ?? '').includes('true') &&
+  templateShapeByName.get('sort_order')?.is_nullable === 'NO' &&
+  (templateShapeByName.get('sort_order')?.column_default ?? '').includes('0');
+if (!templateShapeOk) failed += 1;
 rows.push([
-  groupShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
-  'группа: code/name обязательны, is_active=true и sort_order=0 по умолчанию',
-  `колонки: ${groupShape.rows
+  templateShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
+  'шаблон: code/name обязательны, is_active=true и sort_order=0 по умолчанию',
+  `колонки: ${templateShape.rows
     .map((row) => `${row.column_name}(${row.is_nullable})`)
     .join(', ') || 'нет'}`,
 ]);
 
-const defaultGroup = await client.query(
-  `SELECT id FROM gear_groups WHERE code = 'other'`,
+const otherTemplate = await client.query(
+  `SELECT id FROM gear_group_templates WHERE code = 'other'`,
 );
-const defaultGroupId = defaultGroup.rows[0]?.id;
-const defaultGroupOk = defaultGroupId !== undefined;
-if (!defaultGroupOk) failed += 1;
+const otherTemplateOk = otherTemplate.rowCount === 1;
+if (!otherTemplateOk) failed += 1;
 rows.push([
-  defaultGroupOk ? 'ok' : 'НЕТ ГРУППЫ ПО УМОЛЧАНИЮ',
-  'группа: «Прочее» (other) заведена — умолчание для вещи без полки',
+  otherTemplateOk ? 'ok' : 'НЕТ ГРУППЫ ПО УМОЛЧАНИЮ',
+  'шаблон: «Прочее» (other) заведён — умолчание для типа без рекомендации',
   '',
+]);
+
+const personalGroupShape = await client.query(
+  `SELECT column_name, is_nullable, column_default
+     FROM information_schema.columns
+    WHERE table_name = 'gear_groups'
+      AND column_name IN ('owner_user_id', 'template_code', 'name', 'sort_order')
+    ORDER BY column_name`,
+);
+const personalGroupShapeByName = new Map(
+  personalGroupShape.rows.map((row) => [row.column_name, row]),
+);
+const personalGroupShapeOk =
+  personalGroupShape.rows.length === 4 &&
+  personalGroupShapeByName.get('owner_user_id')?.is_nullable === 'NO' &&
+  personalGroupShapeByName.get('template_code')?.is_nullable === 'YES' &&
+  personalGroupShapeByName.get('name')?.is_nullable === 'NO' &&
+  personalGroupShapeByName.get('sort_order')?.is_nullable === 'NO' &&
+  (personalGroupShapeByName.get('sort_order')?.column_default ?? '').includes('0');
+if (!personalGroupShapeOk) failed += 1;
+rows.push([
+  personalGroupShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
+  'личная группа: владелец и имя обязательны, шаблон необязателен, порядок=0',
+  `колонки: ${personalGroupShape.rows
+    .map((row) => `${row.column_name}(${row.is_nullable})`)
+    .join(', ') || 'нет'}`,
+]);
+
+const typeGroupShape = await client.query(
+  `SELECT column_name, is_nullable
+     FROM information_schema.columns
+    WHERE table_name = 'gear_type_groups'
+      AND column_name IN ('owner_user_id', 'gear_type_id', 'group_id')
+    ORDER BY column_name`,
+);
+const typeGroupShapeByName = new Map(
+  typeGroupShape.rows.map((row) => [row.column_name, row]),
+);
+const typeGroupShapeOk =
+  typeGroupShape.rows.length === 3 &&
+  typeGroupShapeByName.get('owner_user_id')?.is_nullable === 'NO' &&
+  typeGroupShapeByName.get('gear_type_id')?.is_nullable === 'NO' &&
+  typeGroupShapeByName.get('group_id')?.is_nullable === 'NO';
+if (!typeGroupShapeOk) failed += 1;
+rows.push([
+  typeGroupShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
+  'раскладка типов: владелец, тип и группа обязательны',
+  `колонки: ${typeGroupShape.rows
+    .map((row) => `${row.column_name}(${row.is_nullable})`)
+    .join(', ') || 'нет'}`,
+]);
+
+const typeGroupUnique = await client.query(
+  `SELECT indexdef FROM pg_indexes WHERE indexname = 'UQ_gear_type_groups_type'`,
+);
+const typeGroupUniqueDef = typeGroupUnique.rows[0]?.indexdef ?? '';
+const typeGroupUniqueOk =
+  typeGroupUnique.rowCount === 1 &&
+  typeGroupUniqueDef.includes('UNIQUE') &&
+  typeGroupUniqueDef.includes('owner_user_id') &&
+  typeGroupUniqueDef.includes('gear_type_id');
+if (!typeGroupUniqueOk) failed += 1;
+rows.push([
+  typeGroupUniqueOk ? 'ok' : 'НЕТ УНИКАЛЬНОСТИ',
+  'раскладка: один тип — одна группа у человека',
+  typeGroupUniqueDef,
 ]);
 
 const groupItemShape = await client.query(
   `SELECT column_name, is_nullable, column_default
      FROM information_schema.columns
     WHERE table_name = 'gear_items'
-      AND column_name IN ('group_id', 'sort_order')
+      AND column_name IN ('group_id', 'location', 'sort_order')
     ORDER BY column_name`,
 );
 const groupItemShapeByName = new Map(
@@ -1103,19 +1173,20 @@ const groupItemShapeByName = new Map(
 );
 const groupItemShapeOk =
   groupItemShape.rows.length === 2 &&
-  groupItemShapeByName.get('group_id')?.is_nullable === 'NO' &&
+  groupItemShapeByName.get('group_id') === undefined &&
+  groupItemShapeByName.get('location')?.is_nullable === 'YES' &&
   groupItemShapeByName.get('sort_order')?.is_nullable === 'NO' &&
   (groupItemShapeByName.get('sort_order')?.column_default ?? '').includes('0');
 if (!groupItemShapeOk) failed += 1;
 rows.push([
   groupItemShapeOk ? 'ok' : 'СТАРАЯ СХЕМА',
-  'вещь: group_id обязателен, sort_order=0 по умолчанию',
+  'вещь: group_id больше нет, location необязателен, sort_order=0',
   `колонки: ${groupItemShape.rows
     .map((row) => `${row.column_name}(${row.is_nullable})`)
     .join(', ') || 'нет'}`,
 ]);
 
-const groupIndexName = 'IDX_gear_items_owner_order';
+const groupIndexName = 'IDX_gear_items_owner_type_sort';
 const groupIndex = await client.query(
   `SELECT indexdef FROM pg_indexes WHERE indexname = $1`,
   [groupIndexName],
@@ -1123,63 +1194,128 @@ const groupIndex = await client.query(
 const groupIndexDef = groupIndex.rows[0]?.indexdef ?? '';
 const groupIndexOk =
   groupIndex.rowCount === 1 &&
-  groupIndexDef.includes('group_id') &&
+  groupIndexDef.includes('gear_type_id') &&
   groupIndexDef.includes('sort_order');
 if (!groupIndexOk) failed += 1;
 rows.push([
   groupIndexOk ? 'ok' : 'НЕТ ИНДЕКСА',
-  'вещь: каталог читается по группе и личному порядку — индекс',
+  'вещь: каталог читается по типу и личному порядку — индекс',
   groupIndexDef,
 ]);
 
-const testGroupId = (
+const testTemplateId = (
   await client.query(
-    `INSERT INTO gear_groups (code, name, sort_order)
-     VALUES ('e2e_check_group', 'Проверочная группа', 50)
+    `INSERT INTO gear_group_templates (code, name, sort_order)
+     VALUES ('e2e_check_template', 'Проверочный шаблон', 50)
      RETURNING id`,
   )
 ).rows[0].id;
 
 await check(
-  'группа: кириллица в коде запрещена (CHECK)',
+  'шаблон: кириллица в коде запрещена (CHECK)',
   'fail',
-  `INSERT INTO gear_groups (code, name) VALUES ('Проверочная', 'Кириллица')`,
+  `INSERT INTO gear_group_templates (code, name) VALUES ('Проверочная', 'Кириллица')`,
 );
 
 await check(
-  'группа: пустое имя запрещено (CHECK)',
+  'шаблон: пустое имя запрещено (CHECK)',
   'fail',
-  `INSERT INTO gear_groups (code, name) VALUES ('e2e_check_group_empty', '   ')`,
+  `INSERT INTO gear_group_templates (code, name)
+   VALUES ('e2e_check_template_empty', '   ')`,
 );
 
 await check(
-  'группа: отрицательный порядок запрещён (CHECK)',
+  'шаблон: отрицательный порядок запрещён (CHECK)',
   'fail',
-  `INSERT INTO gear_groups (code, name, sort_order)
-   VALUES ('e2e_check_group_sort', 'Минус', -10)`,
+  `INSERT INTO gear_group_templates (code, name, sort_order)
+   VALUES ('e2e_check_template_sort', 'Минус', -10)`,
 );
 
 await check(
-  'группа: код уникален, в том числе с архивными строками',
+  'шаблон: код уникален, в том числе с архивными строками',
   'fail',
-  `INSERT INTO gear_groups (code, name) VALUES ('e2e_check_group', 'Дубль')`,
+  `INSERT INTO gear_group_templates (code, name)
+   VALUES ('e2e_check_template', 'Дубль')`,
+);
+
+const testGroupId = (
+  await client.query(
+    `INSERT INTO gear_groups (owner_user_id, template_code, name, sort_order)
+     VALUES ($1, 'e2e_check_personal', 'Проверочная личная', 50)
+     RETURNING id`,
+    [user1],
+  )
+).rows[0].id;
+
+await check(
+  'личная группа: пустое имя запрещено (CHECK)',
+  'fail',
+  `INSERT INTO gear_groups (owner_user_id, name) VALUES ($1, '   ')`,
+  [user1],
+);
+
+await check(
+  'личная группа: отрицательный порядок запрещён (CHECK)',
+  'fail',
+  `INSERT INTO gear_groups (owner_user_id, name, sort_order)
+   VALUES ($1, 'Минус', -10)`,
+  [user1],
+);
+
+await check(
+  'личная группа: кириллица в коде шаблона запрещена (CHECK)',
+  'fail',
+  `INSERT INTO gear_groups (owner_user_id, template_code, name)
+   VALUES ($1, 'Проверочная', 'Кириллица')`,
+  [user1],
+);
+
+await check(
+  'личная группа: один шаблон — одна копия у человека (unique)',
+  'fail',
+  `INSERT INTO gear_groups (owner_user_id, template_code, name)
+   VALUES ($1, 'e2e_check_personal', 'Вторая копия')`,
+  [user1],
+);
+
+await check(
+  'раскладка: тип кладётся в личную группу',
+  'ok',
+  `INSERT INTO gear_type_groups (owner_user_id, gear_type_id, group_id)
+   VALUES ($1, $2, $3)`,
+  [user1, itemTypeId, testGroupId],
+);
+
+await check(
+  'раскладка: тот же тип второй раз запрещён (unique)',
+  'fail',
+  `INSERT INTO gear_type_groups (owner_user_id, gear_type_id, group_id)
+   VALUES ($1, $2, $3)`,
+  [user1, itemTypeId, testGroupId],
 );
 
 const groupItemId = (
   await client.query(
-    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-     VALUES ($1, $2, $3, 'Вещь в проверочной группе')
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title, location)
+     VALUES ($1, $2, 'Вещь в проверочной группе', 'гараж')
      RETURNING id`,
-    [user1, itemTypeId, testGroupId],
+    [user1, itemTypeId],
   )
 ).rows[0].id;
 
 await check(
-  'вещь: без группы не создаётся (NOT NULL)',
-  'fail',
+  'вещь: без группы создаётся — полка выводится из типа',
+  'ok',
   `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
    VALUES ($1, $2, 'Вещь без полки')`,
   [user1, itemTypeId],
+);
+
+await check(
+  'вещь: местоположение из пробелов запрещено (CHECK)',
+  'fail',
+  `UPDATE gear_items SET location = '   ' WHERE id = $1`,
+  [groupItemId],
 );
 
 await check(
@@ -1189,29 +1325,53 @@ await check(
   [groupItemId],
 );
 
-await check(
-  'группа: с вещами не удаляется (RESTRICT)',
-  'fail',
-  `DELETE FROM gear_groups WHERE id = $1`,
-  [testGroupId],
+// Личная группа удаляется свободно: сервис сначала переносит типы
+// в «Прочее», а схема просто уносит раскладку каскадом.
+await client.query(`DELETE FROM gear_groups WHERE id = $1`, [testGroupId]);
+const mappingAfterGroupDelete = await client.query(
+  `SELECT count(*)::int AS count FROM gear_type_groups
+    WHERE owner_user_id = $1 AND gear_type_id = $2`,
+  [user1, itemTypeId],
 );
+const groupDeleteCascadeOk = mappingAfterGroupDelete.rows[0].count === 0;
+if (!groupDeleteCascadeOk) failed += 1;
+rows.push([
+  groupDeleteCascadeOk ? 'ok' : 'ОСТАЛАСЬ РАСКЛАДКА',
+  'личная группа: удаление уносит раскладку (CASCADE)',
+  '',
+]);
 
-await check(
-  'группа: архив при вещах разрешён — вещь остаётся на месте',
-  'ok',
-  `UPDATE gear_groups SET is_active = false WHERE id = $1`,
-  [testGroupId],
+// Удаление шаблона обнуляет рекомендацию у типа (SET NULL), а не ломает
+// справочник: API вместо этого архивирует шаблон, но схема страхует.
+await client.query(
+  `UPDATE gear_types SET recommended_group_id = $1 WHERE id = $2`,
+  [testTemplateId, itemTypeId],
 );
+await client.query(`DELETE FROM gear_group_templates WHERE id = $1`, [
+  testTemplateId,
+]);
+const recommendationAfterDelete = await client.query(
+  `SELECT recommended_group_id FROM gear_types WHERE id = $1`,
+  [itemTypeId],
+);
+const templateDeleteOk = recommendationAfterDelete.rows[0]?.recommended_group_id === null;
+if (!templateDeleteOk) failed += 1;
+rows.push([
+  templateDeleteOk ? 'ok' : 'ОСТАЛАСЬ РЕКОМЕНДАЦИЯ',
+  'шаблон: удаление обнуляет рекомендуемую группу типа (SET NULL)',
+  '',
+]);
 
 await client.query(`DELETE FROM gear_items WHERE id = $1`, [groupItemId]);
-await client.query(`DELETE FROM gear_groups WHERE id = $1`, [testGroupId]);
 
+// Вещь для проверок значений характеристик: у неё две характеристики,
+// чтобы каскад при удалении было на чём проверить.
 const itemId = (
   await client.query(
-    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-     VALUES ($1, $2, $3, 'Проверочная палатка')
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+     VALUES ($1, $2, 'Проверочная вещь')
      RETURNING id`,
-    [user1, itemTypeId, defaultGroupId],
+    [user1, itemTypeId],
   )
 ).rows[0].id;
 
@@ -1225,9 +1385,9 @@ await check(
 await check(
   'вещь: несуществующий тип запрещён (внешний ключ)',
   'fail',
-  `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-   VALUES ($1, 2147483000, $2, 'Вещь с чужим типом')`,
-  [user1, defaultGroupId],
+  `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+   VALUES ($1, 2147483000, 'Вещь с чужим типом')`,
+  [user1],
 );
 
 await check(
@@ -1322,10 +1482,10 @@ rows.push([
 
 const modelItemId = (
   await client.query(
-    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-     VALUES ($1, $2, $3, 'Проверочная модель')
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+     VALUES ($1, $2, 'Проверочная модель')
      RETURNING id`,
-    [user1, itemTypeId, defaultGroupId],
+    [user1, itemTypeId],
   )
 ).rows[0].id;
 await client.query(
@@ -1352,6 +1512,10 @@ rows.push([
 ]);
 
 await client.query(`DELETE FROM gear_items WHERE id = $1`, [modelItemId]);
+// «Вещь без полки» из проверки выше осталась висеть на типе — без этой
+// уборки тип с вещами не удалить (RESTRICT), и скрипт падал бы на своей же
+// проверке.
+await client.query(`DELETE FROM gear_items WHERE gear_type_id = $1`, [itemTypeId]);
 await client.query(`DELETE FROM gear_types WHERE id = $1`, [itemTypeId]);
 
 // ─── Люди без аккаунта и одноразовое снаряжение (31.10.2026) ───
@@ -1506,10 +1670,10 @@ const manualTypeId = (
 ).rows[0].id;
 
 const defaultTripOnly = await client.query(
-  `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-   VALUES ($1, $2, $3, 'Обычная вещь каталога')
+  `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+   VALUES ($1, $2, 'Обычная вещь каталога')
    RETURNING is_trip_only`,
-  [user2, manualTypeId, defaultGroupId],
+  [user2, manualTypeId],
 );
 const defaultTripOnlyOk = defaultTripOnly.rows[0].is_trip_only === false;
 if (!defaultTripOnlyOk) failed += 1;
@@ -1522,9 +1686,9 @@ rows.push([
 await check(
   'вещь: одноразовую вещь может держать человек без аккаунта',
   'ok',
-  `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title, is_trip_only)
-   VALUES ($1, $2, $3, 'Бутылка бензина', true)`,
-  [virtualUserId, manualTypeId, defaultGroupId],
+  `INSERT INTO gear_items (owner_user_id, gear_type_id, title, is_trip_only)
+   VALUES ($1, $2, 'Бутылка бензина', true)`,
+  [virtualUserId, manualTypeId],
 );
 
 // ─── Таблица ночёвок: ночи, кто где живёт и личные вещи (01.11.2026) ───
@@ -1596,17 +1760,17 @@ const routeAxeTypeId = (
 
 const routeTentItemId = (
   await client.query(
-    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-     VALUES ($1, $2, $3, 'Палатка проверки') RETURNING id`,
-    [user1, routeTentTypeId, defaultGroupId],
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+     VALUES ($1, $2, 'Палатка проверки') RETURNING id`,
+    [user1, routeTentTypeId],
   )
 ).rows[0].id;
 
 const routeAxeItemId = (
   await client.query(
-    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-     VALUES ($1, $2, $3, 'Спальник проверки') RETURNING id`,
-    [user1, routeAxeTypeId, defaultGroupId],
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+     VALUES ($1, $2, 'Спальник проверки') RETURNING id`,
+    [user1, routeAxeTypeId],
   )
 ).rows[0].id;
 
@@ -1634,9 +1798,9 @@ const routeExtraTypeId = (
 
 const routeExtraItemId = (
   await client.query(
-    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-     VALUES ($1, $2, $3, 'Лодка проверки') RETURNING id`,
-    [user1, routeExtraTypeId, defaultGroupId],
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+     VALUES ($1, $2, 'Лодка проверки') RETURNING id`,
+    [user1, routeExtraTypeId],
   )
 ).rows[0].id;
 
@@ -1885,9 +2049,9 @@ const checklistTypeId = (
 
 const checklistGearItemId = (
   await client.query(
-    `INSERT INTO gear_items (owner_user_id, gear_type_id, group_id, title)
-     VALUES ($1, $2, $3, 'Вещь пункта') RETURNING id`,
-    [user1, checklistTypeId, defaultGroupId],
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+     VALUES ($1, $2, 'Вещь пункта') RETURNING id`,
+    [user1, checklistTypeId],
   )
 ).rows[0].id;
 
