@@ -337,9 +337,79 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-backpack"]').exists()).toBe(true)
   })
 
+  it('в заголовках секций количеств нет, а у списков — прогресс «1/3»', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      shared: checklist('c1', 'trip', [
+        checklistItem('i1', 'Котёл', { isDone: true }),
+        checklistItem('i2', 'Топор'),
+        checklistItem('i3', 'Пила'),
+      ]),
+      recommendation: checklist('r1', 'recommendation', [checklistItem('ri1', 'Рюкзак')]),
+    })
+
+    const wrapper = await mounted(true)
+
+    // Заказчик: «убирай количества в заголовках секций… у „Личных вещей
+    // участников“, „Берём“ — вообще не нужно количество».
+    expect(wrapper.get('[data-test="gear-shared-checklist"] > summary').text()).toBe('Список')
+    expect(wrapper.get('[data-test="gear-personal-checklist"] > summary').text()).toBe('Список')
+    expect(wrapper.get('[data-test="gear-recommendation-checklist"] > summary').text()).toBe(
+      'Личные вещи участников',
+    )
+    expect(wrapper.get('[data-test="gear-taking"] > summary').text()).toBe('Берём')
+    expect(wrapper.get('[data-test="gear-distribution"] > summary').text()).toBe('Распределение')
+    expect(wrapper.get('[data-test="gear-declined"] > summary').text()).toBe('Не берём')
+    expect(wrapper.get('[data-test="gear-unassigned"] p').text()).toBe('Не распределено')
+    expect(wrapper.get('[data-test="gear-taken"] > summary').text()).toBe('Взял')
+    expect(wrapper.get('[data-test="gear-backpack"] > summary').text()).toBe('Мой рюкзак')
+
+    // А у самого списка закрытые пункты обозначены прогрессом «1/3».
+    expect(
+      wrapper.get('[data-test="gear-shared-checklist"] [data-test="checklist-progress"]').text(),
+    ).toBe('1/3')
+  })
+
+  it('подписи списков — словами заказчика, а у личных вещей есть скрытие инструментов', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      shared: checklist('c1', 'trip', []),
+      personal: checklist('p1', 'personal', [checklistItem('pi1', 'Спальник')]),
+      recommendation: checklist('r1', 'recommendation', []),
+    })
+
+    const wrapper = await mounted(true)
+
+    expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).toContain(
+      'Список общественного снаряжения. Редактируют только организаторы.',
+    )
+    expect(wrapper.get('[data-test="gear-recommendation-checklist"]').text()).toContain(
+      'Рекомендация добавляется каждому участнику в личный список. Выполнение на его совести.',
+    )
+
+    // Кнопка скрытия инструментов — только у «Мои личные вещи».
+    expect(
+      wrapper.find('[data-test="gear-personal-checklist"] [data-test="checklist-tools-toggle"]')
+        .exists(),
+    ).toBe(true)
+    expect(
+      wrapper.find('[data-test="gear-shared-checklist"] [data-test="checklist-tools-toggle"]')
+        .exists(),
+    ).toBe(false)
+
+    // Модалка импорта говорит, чем станет вещь в общественном списке.
+    await wrapper
+      .get('[data-test="gear-shared-checklist"] [data-test="checklist-import"]')
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="template-picker"]').text()).toContain(
+      'В список общественного снаряжения вещи из шаблона попадут названиями типов: «Топор», а не «мой любимый Fixars».',
+    )
+  })
+
   it('«Берём»: утверждённое и предложенное, без прав — подпись «ждёт решения»', async () => {
     const wrapper = await mounted()
-
     const pills = wrapper.findAll('[data-test^="gear-taking-item-"]')
     expect(pills.map((pill) => pill.text())).toHaveLength(4)
     expect(wrapper.find('[data-test="gear-taking-item-g1"]').exists()).toBe(true)
@@ -390,7 +460,8 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(textOf(wrapper, `[data-test="gear-bag-${ME}"]`)).toContain('Всего: 2,6 кг')
     expect(textOf(wrapper, `[data-test="gear-bag-${ANNA}"]`)).toContain('Всего: 800 г')
 
-    expect(wrapper.find('[data-test="gear-unassigned"]').text()).toContain('Не распределено · 1')
+    // Количества у зоны нет: заказчик просил убрать их из заголовков секций.
+    expect(wrapper.get('[data-test="gear-unassigned"] p').text()).toBe('Не распределено')
     expect(wrapper.find('[data-test="gear-unassigned-item-g2"]').exists()).toBe(true)
   })
 
@@ -649,7 +720,7 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.get('[data-test="gear-personal-checklist"]').text()).toContain('Коврик')
   })
 
-  it('«Из чек-листа» открывает выбор пунктов личных шаблонов', async () => {
+  it('«Из чек-листа» открывает выбор чек-листа личных шаблонов', async () => {
     mocks.listTripChecklists.mockResolvedValue({
       ...emptyChecklists(),
       shared: checklist('c1', 'trip', []),

@@ -39,7 +39,9 @@ function template(title: string, items: ChecklistItem[]): Checklist {
   }
 }
 
-describe('выбор пунктов из личных чек-листов', () => {
+const KOSTROVOE = 't-Костровое'
+
+describe('выбор чек-листа из личных чек-листов', () => {
   enableAutoUnmount(afterEach)
 
   beforeEach(() => {
@@ -61,57 +63,109 @@ describe('выбор пунктов из личных чек-листов', () =
     ])
   })
 
-  function mounted() {
+  function mounted(props: Record<string, unknown> = {}) {
     return mount(ChecklistTemplatePicker, {
-      props: { note: 'Проверка подписи' },
+      props: { note: 'Проверка подписи', ...props },
     })
   }
 
-  it('показывает шаблоны, пункты и чем станет вещь', async () => {
+  it('по умолчанию чек-листы свёрнуты, пункты не показаны, ничего не выбрано', async () => {
     const wrapper = mounted()
     await flushPromises()
 
     expect(wrapper.text()).toContain('Костровое')
-    expect(wrapper.text()).toContain('Топор Fixars 1243')
-    expect(wrapper.text()).toContain('Топор · 900 г · из снаряжения')
-    expect(wrapper.text()).toContain('спички')
-    expect(wrapper.text()).toContain('свободный текст')
+    expect(wrapper.text()).toContain('Одежда')
     expect(wrapper.text()).toContain('Проверка подписи')
-  })
+    expect(wrapper.text()).toContain('Пункты берутся из одного чек-листа')
 
-  it('выбранные пункты уходят событием, а не пишутся сразу', async () => {
-    const wrapper = mounted()
-    await flushPromises()
+    // Пункты спрятаны до разворота: заказчик просил свёрнутые чек-листы.
+    expect(wrapper.find('[data-test="template-item-111"]').exists()).toBe(false)
 
-    await wrapper.get('[data-test="template-item-111"] input').setValue(true)
-    await wrapper.get('[data-test="template-item-113"] input').setValue(true)
+    const header = wrapper.get(`[data-test="template-choose-${KOSTROVOE}"]`)
+      .element as HTMLInputElement
+    expect(header.checked).toBe(false)
 
-    expect(wrapper.get('[data-test="template-selected"]').text()).toContain('2')
-
-    await wrapper.get('[data-test="template-apply"]').trigger('click')
-
-    expect(wrapper.emitted('apply')?.[0]).toEqual([['111', '113']])
-    expect(mocks.listTemplates).toHaveBeenCalledTimes(1)
-  })
-
-  it('«Выбрать все» берёт весь шаблон, «Снять все» — очищает', async () => {
-    const wrapper = mounted()
-    await flushPromises()
-
-    await wrapper.get('[data-test="template-all-t-Костровое"]').trigger('click')
-    expect(wrapper.get('[data-test="template-selected"]').text()).toContain('2')
-
-    await wrapper.get('[data-test="template-all-t-Костровое"]').trigger('click')
-    expect(wrapper.get('[data-test="template-selected"]').text()).toContain('0')
-  })
-
-  it('пустой выбор не отправляется', async () => {
-    const wrapper = mounted()
-    await flushPromises()
-
+    expect(wrapper.get('[data-test="template-selected"]').text()).toBe('Выбрано: 0')
     expect(
       (wrapper.get('[data-test="template-apply"]').element as HTMLButtonElement).disabled,
     ).toBe(true)
+  })
+
+  it('чекбокс чек-листа выбирает его целиком — все пункты', async () => {
+    const wrapper = mounted()
+    await flushPromises()
+
+    await wrapper.get(`[data-test="template-choose-${KOSTROVOE}"]`).setValue(true)
+
+    expect(wrapper.get('[data-test="template-selected"]').text()).toContain('Выбрано: 2')
+    expect(wrapper.get('[data-test="template-selected"]').text()).toContain('«Костровое»')
+
+    await wrapper.get('[data-test="template-apply"]').trigger('click')
+
+    expect(wrapper.emitted('apply')?.[0]).toEqual([['111', '112']])
+    expect(mocks.listTemplates).toHaveBeenCalledTimes(1)
+  })
+
+  it('разворот выбирает чек-лист, а снятый пункт делает выбор частичным', async () => {
+    const wrapper = mounted()
+    await flushPromises()
+
+    await wrapper.get(`[data-test="template-expand-${KOSTROVOE}"]`).trigger('click')
+
+    // «Выбираешь чек-лист, все позиции в true»: разворот уже выбрал всё.
+    expect(wrapper.get('[data-test="template-selected"]').text()).toContain('Выбрано: 2')
+    expect(wrapper.text()).toContain('Топор Fixars 1243')
+    expect(wrapper.text()).toContain('Топор · 900 г · из снаряжения')
+    expect(wrapper.text()).toContain('свободный текст')
+
+    await wrapper.get('[data-test="template-item-112"] input').setValue(false)
+
+    const header = wrapper.get(`[data-test="template-choose-${KOSTROVOE}"]`)
+      .element as HTMLInputElement
+
+    expect(header.checked).toBe(false)
+    expect(header.indeterminate).toBe(true)
+    expect(wrapper.get('[data-test="template-selected"]').text()).toContain('Выбрано: 1')
+
+    await wrapper.get('[data-test="template-apply"]').trigger('click')
+
+    expect(wrapper.emitted('apply')?.[0]).toEqual([['111']])
+  })
+
+  it('другой чек-лист заменяет выбор: пункты берутся из одного', async () => {
+    const wrapper = mounted()
+    await flushPromises()
+
+    await wrapper.get(`[data-test="template-choose-${KOSTROVOE}"]`).setValue(true)
+    await wrapper.get('[data-test="template-choose-t-Одежда"]').setValue(true)
+
+    expect(wrapper.get('[data-test="template-selected"]').text()).toContain('Выбрано: 1')
+    expect(wrapper.get('[data-test="template-selected"]').text()).toContain('«Одежда»')
+
+    await wrapper.get('[data-test="template-apply"]').trigger('click')
+
+    expect(wrapper.emitted('apply')?.[0]).toEqual([['113']])
+  })
+
+  it('снятый чекбокс очищает выбор', async () => {
+    const wrapper = mounted()
+    await flushPromises()
+
+    await wrapper.get(`[data-test="template-choose-${KOSTROVOE}"]`).setValue(true)
+    await wrapper.get(`[data-test="template-choose-${KOSTROVOE}"]`).setValue(false)
+
+    expect(wrapper.get('[data-test="template-selected"]').text()).toBe('Выбрано: 0')
+    expect(
+      (wrapper.get('[data-test="template-apply"]').element as HTMLButtonElement).disabled,
+    ).toBe(true)
+  })
+
+  it('пустой выбор не отправляется, а без подписи объясняет, что выбрать чек-лист', async () => {
+    const wrapper = mounted({ note: '' })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Выберите чек-лист')
+    expect(wrapper.emitted('apply')).toBeUndefined()
   })
 
   it('пустой профиль объясняет, где завести чек-лист', async () => {

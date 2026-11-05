@@ -59,6 +59,12 @@ const props = withDefaults(
     variant?: 'default' | 'recommended'
     /** Что произойдёт с вещами из шаблона — подпись в модалке. */
     importNote?: string
+    /**
+     * Кнопка «Скрыть инструменты»: свернуть правку, оставив только чтение
+     * и галочки. Заказчик 05.11.2026: «в „Мои личные вещи“ лучше бы добавить
+     * кнопку скрытия инструментов редактирования чек-листа».
+     */
+    toolsToggle?: boolean
   }>(),
   {
     heading: '',
@@ -70,6 +76,7 @@ const props = withDefaults(
     canImport: false,
     variant: 'default',
     importNote: '',
+    toolsToggle: false,
   },
 )
 
@@ -94,7 +101,38 @@ const editingItemId = ref<string | null>(null)
 const titleDraft = ref('')
 const isPickerOpen = ref(false)
 
+/**
+ * Инструменты правки скрыты кнопкой. Состояние живёт в компоненте,
+ * а не в localStorage: это способ посмотреть список «как его видят люди»,
+ * и при следующем открытии вкладки человек снова получает редактор.
+ */
+const toolsHidden = ref(false)
+
+const editToolsVisible = computed(() => props.canManage && !toolsHidden.value)
+
 const isRecommended = computed(() => props.variant === 'recommended')
+
+/**
+ * «1/3» — сколько пунктов закрыто из скольких. Заказчик 05.11.2026:
+ * «убирай количества в заголовках секций… у списков можно закрытые пункты
+ * обозначать „1/3“». У секций счётчиков больше нет, а у списка прогресс
+ * полезен: видно, собрался ли поход. Пока не закрыт ни один пункт, числа
+ * нет — иначе это опять количество, а не прогресс.
+ */
+const progress = computed(() => {
+  const items = local.value?.items ?? []
+  const done = items.filter((item) => item.isDone).length
+
+  return done > 0 ? `${done}/${items.length}` : ''
+})
+
+function toggleTools(): void {
+  toolsHidden.value = !toolsHidden.value
+
+  // Инструменты прячем — незаконченная правка текста тоже уходит:
+  // иначе поле осталось бы висеть без кнопок «Сохранить».
+  if (toolsHidden.value) cancelEdit()
+}
 
 const sectionClass = computed(() =>
   isRecommended.value
@@ -275,14 +313,22 @@ async function onImport(itemIds: string[]): Promise<void> {
 
 <template>
   <section :class="sectionClass" data-test="trip-checklist" :data-scope="scope">
-    <div v-if="heading || isRecommended" class="flex flex-wrap items-baseline gap-2">
+    <div
+      v-if="heading || isRecommended || (toolsToggle && canManage)"
+      class="flex flex-wrap items-baseline gap-2"
+    >
       <h3
         v-if="heading"
         class="text-sm font-medium"
         :class="isRecommended ? 'text-emerald-900' : 'text-text'"
         data-test="checklist-heading"
       >
-        {{ heading }}<template v-if="local"> · {{ local.items.length }}</template>
+        {{ heading }}<span
+          v-if="progress"
+          class="ml-1 text-xs font-normal"
+          :class="isRecommended ? 'text-emerald-700' : 'text-muted'"
+          data-test="checklist-progress"
+        >{{ progress }}</span>
       </h3>
 
       <span
@@ -292,6 +338,17 @@ async function onImport(itemIds: string[]): Promise<void> {
       >
         рекомендация
       </span>
+
+      <button
+        v-if="toolsToggle && canManage"
+        type="button"
+        class="ml-auto cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
+        :aria-pressed="toolsHidden"
+        data-test="checklist-tools-toggle"
+        @click="toggleTools"
+      >
+        {{ toolsHidden ? 'Показать инструменты' : 'Скрыть инструменты' }}
+      </button>
     </div>
 
     <p v-if="subtitle" class="text-xs" :class="isRecommended ? 'text-emerald-900' : 'text-muted'">
@@ -388,7 +445,7 @@ async function onImport(itemIds: string[]): Promise<void> {
             </p>
           </div>
 
-          <div v-if="canManage && editingItemId !== item.id" class="flex shrink-0 items-center gap-2">
+          <div v-if="editToolsVisible && editingItemId !== item.id" class="flex shrink-0 items-center gap-2">
             <button
               v-if="!item.gear"
               type="button"
@@ -411,7 +468,7 @@ async function onImport(itemIds: string[]): Promise<void> {
         </li>
       </ul>
 
-      <form v-if="canManage" class="flex flex-wrap gap-2" @submit.prevent="addItem">
+      <form v-if="editToolsVisible" class="flex flex-wrap gap-2" @submit.prevent="addItem">
         <input
           v-model="draft"
           type="text"

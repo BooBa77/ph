@@ -110,11 +110,6 @@ const hasRecommendation = computed(
   () => (checklists.value?.recommendation?.items.length ?? 0) > 0,
 )
 
-/** Сколько пунктов у списка — для заголовка «Список · 3». */
-function itemsCount(checklist: Checklist | null | undefined): number {
-  return checklist?.items.length ?? 0
-}
-
 /**
  * Компонент вернул изменённый список — кладём его на место.
  *
@@ -478,7 +473,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           data-test="gear-shared-checklist"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Список<template v-if="checklists"> · {{ itemsCount(checklists.shared) }}</template>
+            Список
           </summary>
 
           <div class="mt-2">
@@ -488,10 +483,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               :checklist="checklists.shared"
               scope="trip"
               heading="Что берём в поход"
-              subtitle="Список общественного снаряжения. Правки и отметки — у того, кому доступна вкладка; остальные его видят."
+              subtitle="Список общественного снаряжения. Редактируют только организаторы."
               empty-text="Список общественного снаряжения ещё не завели."
               add-placeholder="Добавить в список: «Котёл»"
-              import-note="В общий список вещи из шаблона попадут названиями типов: «Топор», а не «Топор Fixars»."
+              import-note="В список общественного снаряжения вещи из шаблона попадут названиями типов: «Топор», а не «мой любимый Fixars»."
               :can-manage="canEdit"
               :can-mark="canEdit"
               :can-import="canEdit"
@@ -519,7 +514,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           data-test="gear-recommendation-checklist"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Личные вещи участников<template v-if="checklists"> · {{ itemsCount(checklists.recommendation) }}</template>
+            Личные вещи участников
           </summary>
 
           <div class="mt-2">
@@ -530,7 +525,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               scope="recommendation"
               variant="recommended"
               heading="Что взять каждому"
-              subtitle="Рекомендация попадёт каждому участнику в личный список. Удалить её участник не сможет, а его отметки вам не видны."
+              subtitle="Рекомендация добавляется каждому участнику в личный список. Выполнение на его совести."
               empty-text="Рекомендации личных вещей ещё нет."
               add-placeholder="Добавить в рекомендацию: «Рюкзак»"
               import-note="В рекомендацию вещи из шаблона попадут названиями типов: «Топор», а не «Топор Fixars»."
@@ -555,7 +550,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           data-test="gear-taking"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Берём<template v-if="taking.length > 0"> · {{ taking.length }}</template>
+            Берём
           </summary>
 
           <div class="mt-2 flex flex-col gap-2">
@@ -650,7 +645,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               data-test="gear-declined"
             >
               <summary class="cursor-pointer select-none text-xs text-muted">
-                Не берём · {{ declined.length }}
+                Не берём
               </summary>
 
               <ul class="mt-2 flex flex-wrap gap-1.5">
@@ -711,7 +706,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                 @drop.prevent="dropOn(null)"
               >
                 <p class="text-xs font-medium text-muted">
-                  Не распределено · {{ unassigned.length }}
+                  Не распределено
                 </p>
 
                 <ul v-if="unassigned.length > 0" class="mt-1 flex flex-wrap gap-1.5">
@@ -832,7 +827,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           data-test="gear-personal-checklist"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Список<template v-if="checklists"> · {{ itemsCount(checklists.personal) }}</template>
+            Список
           </summary>
 
           <div class="mt-2 flex flex-col gap-3">
@@ -861,6 +856,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                 :can-manage="true"
                 :can-mark="true"
                 :can-import="true"
+                tools-toggle
                 @updated="applyChecklist('personal', $event)"
               />
             </template>
@@ -881,7 +877,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           data-test="gear-taken"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Взял<template v-if="myItems.length > 0"> · {{ myItems.length }}</template>
+            Взял
           </summary>
 
           <div class="mt-2 flex flex-col gap-2">

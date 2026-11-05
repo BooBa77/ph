@@ -159,13 +159,13 @@ describe('чек-лист вкладки «Снаряжение» похода',
 
     expect(wrapper.find('[data-test="template-picker"]').exists()).toBe(true)
 
-    await wrapper.get('[data-test="template-item-111"] input').setValue(true)
+    await wrapper.get('[data-test="template-choose-t1"]').setValue(true)
     await wrapper.get('[data-test="template-apply"]').trigger('click')
     await flushPromises()
 
     expect(mocks.importChecklistItems).toHaveBeenCalledWith('1', {
       scope: 'trip',
-      itemIds: [111],
+      itemIds: [111, 112],
     })
     expect(wrapper.find('[data-test="template-picker"]').exists()).toBe(false)
     expect(wrapper.text()).toContain('Топор')
@@ -216,5 +216,65 @@ describe('чек-лист вкладки «Снаряжение» похода',
     expect(wrapper.find('[data-test="checklist-error"]').text()).toContain(
       'Не удалось сохранить отметку',
     )
+  })
+
+  it('в заголовке прогресс «1/3», а количества пунктов нет', async () => {
+    const wrapper = mounted({
+      heading: 'Что берём в поход',
+      checklist: checklist([
+        item('i1', 'Котёл', { isDone: true }),
+        item('i2', 'Топор'),
+        item('i3', 'Пила'),
+      ]),
+    })
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="checklist-progress"]').text()).toBe('1/3')
+    expect(wrapper.get('[data-test="checklist-heading"]').text()).not.toContain('·')
+  })
+
+  it('пока не закрыт ни один пункт, прогресса нет — это не количество', async () => {
+    const wrapper = mounted({
+      heading: 'Что берём в поход',
+      checklist: checklist([item('i1', 'Котёл'), item('i2', 'Топор')]),
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="checklist-progress"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="checklist-heading"]').text()).toBe('Что берём в поход')
+  })
+
+  it('кнопка «Скрыть инструменты» убирает правку, оставляя галочки и чтение', async () => {
+    const wrapper = mounted({
+      heading: 'Мои личные вещи',
+      toolsToggle: true,
+      checklist: checklist([item('i1', 'Котёл')]),
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="checklist-new-item"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="checklist-import"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="checklist-item-remove"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="checklist-tools-toggle"]').trigger('click')
+
+    expect(wrapper.find('[data-test="checklist-new-item"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="checklist-import"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="checklist-item-remove"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="checklist-item-check-i1"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="checklist-tools-toggle"]').text()).toContain(
+      'Показать инструменты',
+    )
+
+    await wrapper.get('[data-test="checklist-tools-toggle"]').trigger('click')
+
+    expect(wrapper.find('[data-test="checklist-new-item"]').exists()).toBe(true)
+  })
+
+  it('кнопки скрытия инструментов нет там, где её не просили', async () => {
+    const wrapper = mounted({ heading: 'Что берём в поход' })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="checklist-tools-toggle"]').exists()).toBe(false)
   })
 })
