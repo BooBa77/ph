@@ -1,5 +1,15 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsBoolean, IsIn, IsInt, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import {
+  ArrayNotEmpty,
+  IsArray,
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+} from 'class-validator';
 
 import type { GearItem } from '../../gear/entities/gear-item.entity';
 import type { ChecklistScope, TripChecklistScope } from '../checklist.types';
@@ -129,7 +139,7 @@ export class ChecklistDto {
 
   @ApiProperty({
     description: 'Где живёт список',
-    enum: ['template', 'trip', 'personal'],
+    enum: ['template', 'trip', 'personal', 'recommendation'],
     example: 'trip',
   })
   scope: ChecklistScope;
@@ -176,11 +186,16 @@ export class ChecklistListDto {
 }
 
 /**
- * Чек-листы похода: общий и свой личный.
+ * Чек-листы похода: общий, рекомендация и свой личный.
  *
- * Оба `null`, пока их не завели: «списка ещё нет» и «список пустой» —
+ * Все три `null`, пока их не завели: «списка ещё нет» и «список пустой» —
  * разные вещи, и вкладке нужно различать их, чтобы предложить «создать»,
  * а не показать пустой блок.
+ *
+ * **`recommendation` — с отметками смотрящего** (05.11.2026): пункты одни
+ * на всех, а `isDone` у каждого свой. Поэтому ответ зависит от того, кто
+ * спросил, и вкладка может показать участнику его галочки, не открывая
+ * чужих.
  */
 export class TripChecklistListDto {
   @ApiProperty({
@@ -196,6 +211,13 @@ export class TripChecklistListDto {
     nullable: true,
   })
   personal: ChecklistDto | null;
+
+  @ApiProperty({
+    description: 'Рекомендация личных вещей от организатора, с моими отметками',
+    type: () => ChecklistDto,
+    nullable: true,
+  })
+  recommendation: ChecklistDto | null;
 }
 
 /** Тело `POST /api/checklists` — новый шаблон. */
@@ -310,7 +332,8 @@ export class CreateTripChecklistDto {
     example: 'trip',
   })
   @IsIn(TRIP_CHECKLIST_SCOPES, {
-    message: 'Список бывает общим (trip) или личным (personal)',
+    message:
+      'Список бывает общим (trip), личным (personal) или рекомендацией (recommendation)',
   })
   scope: TripChecklistScope;
 
@@ -333,4 +356,72 @@ export class CreateTripChecklistDto {
   @IsInt({ message: 'Шаблон должен быть id из справочника' })
   @Min(1, { message: 'Шаблон должен быть id из справочника' })
   fromTemplateId?: number | null;
+}
+
+/**
+ * Тело `POST /api/trips/:id/checklists/import` — добавить пункты
+ * из моих шаблонов (05.11.2026).
+ *
+ * Передаются **пункты**, а не шаблон целиком: из «Кострового для малых
+ * групп» можно взять топор и пилу, а спички не брать. `itemIds` приходят
+ * из модалки выбора; принадлежность шаблона проверяет сервис — чужой
+ * пункт так же неотличим от несуществующего, как и везде в проекте.
+ *
+ * **Преобразование зависит от цели:**
+ *
+ * - в личный список вещь переносится конкретным экземпляром
+ *   («Топор Fixars 1243») вместе со ссылкой на каталог;
+ * - в общий список и в рекомендацию — типом («Топор»), без ссылки:
+ *   у похода общий топор, а не топор организатора.
+ */
+export class ImportChecklistItemsDto {
+  @ApiProperty({
+    description: 'В какой список похода добавляем',
+    enum: TRIP_CHECKLIST_SCOPES,
+    example: 'personal',
+  })
+  @IsIn(TRIP_CHECKLIST_SCOPES, {
+    message: 'Список бывает общим (trip), личным (personal) или рекомендацией (recommendation)',
+  })
+  scope: TripChecklistScope;
+
+  @ApiProperty({
+    description: 'Пункты моих шаблонов',
+    type: [Number],
+    example: [111, 112],
+  })
+  @IsArray({ message: 'Пункты должны быть списком id' })
+  @ArrayNotEmpty({ message: 'Выберите хотя бы один пункт' })
+  @IsInt({ each: true, message: 'Пункт должен быть id из справочника' })
+  @Min(1, { each: true, message: 'Пункт должен быть id из справочника' })
+  itemIds: number[];
+}
+
+/**
+ * Тело `PATCH /api/trips/:id/checklists/recommendation/items/:itemId` —
+ * поставить или снять **свою** отметку на пункте рекомендации.
+ *
+ * Пункт остаётся общим, отметка — личная. Поэтому это отдельная ручка,
+ * а не `PATCH /api/checklists/items/:id`: там `isDone` пишется в сам пункт,
+ * и чужой человек увидел бы мой «взял».
+ */
+export class SetRecommendationMarkDto {
+  @ApiProperty({ description: 'Отметить или снять отметку' })
+  @IsBoolean({ message: 'Отметка должна быть true или false' })
+  isDone: boolean;
+}
+
+/** Отметка участника на пункте рекомендации. */
+export class RecommendationMarkDto {
+  @ApiProperty({ description: 'Id пункта рекомендации' })
+  itemId: string;
+
+  @ApiProperty({ description: 'Отмечен ли пункт этим участником' })
+  isDone: boolean;
+
+  @ApiProperty({
+    description: 'Когда отмечен. null — не отмечен',
+    nullable: true,
+  })
+  doneAt: string | null;
 }

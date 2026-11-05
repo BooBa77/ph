@@ -41,6 +41,8 @@ describe('Чек-листы (e2e)', () => {
   let copyTripId: string;
   /** Поход для пунктов-ссылок: общий список, участник и своя вещь. */
   let gearTripId: string;
+  /** Поход для рекомендации и импорта пунктов из шаблонов. */
+  let importTripId: string;
 
   /** Тип для вещей проверки — свой код, без зависимости от сидов. */
   let gearTypeId: number;
@@ -142,6 +144,14 @@ describe('Чек-листы (e2e)', () => {
       )
     )[0].id;
 
+    importTripId = (
+      await dataSource.query(
+        `INSERT INTO trips (organizer_user_id, goal_object_id, route_text, visibility)
+         VALUES ($1, $2, '', 'private') RETURNING id`,
+        [organizerId, objectId],
+      )
+    )[0].id;
+
     // Организатор и участник в составе; посторонний — нет. В походах,
     // которые проверяют приватность, организатор тоже в составе: иначе
     // его собственный поход отвечал бы ему 404 и тест врал бы.
@@ -149,8 +159,16 @@ describe('Чек-листы (e2e)', () => {
       `INSERT INTO trip_participants (trip_id, user_id, status)
        VALUES ($1, $2, 'going'), ($1, $3, 'going'),
               ($4, $2, 'going'), ($5, $2, 'going'), ($6, $2, 'going'),
-              ($6, $3, 'going')`,
-      [tripId, organizerId, memberId, privateTripId, copyTripId, gearTripId],
+              ($6, $3, 'going'), ($7, $2, 'going'), ($7, $3, 'going')`,
+      [
+        tripId,
+        organizerId,
+        memberId,
+        privateTripId,
+        copyTripId,
+        gearTripId,
+        importTripId,
+      ],
     );
 
     // Тип для пунктов-ссылок. Свой код, а не сид: спека не должна
@@ -186,7 +204,7 @@ describe('Чек-листы (e2e)', () => {
       );
       await dataSource.query(
         'DELETE FROM trips WHERE id = ANY($1::bigint[])',
-        [[tripId, privateTripId, copyTripId, gearTripId]],
+        [[tripId, privateTripId, copyTripId, gearTripId, importTripId]],
       );
       await dataSource.query('DELETE FROM objects WHERE id = $1', [objectId]);
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
@@ -490,7 +508,7 @@ describe('Чек-листы (e2e)', () => {
       expect(own.body.personal).not.toBeNull();
     });
 
-    it('отметку в общем списке ставит любой участник, посторонний — 403', async () => {
+    it('отметку в общем списке ставит ведущий снаряжения, участник без роли — 403', async () => {
       const shared = await dataSource.query(
         `SELECT id FROM checklists WHERE trip_id = $1 AND scope = 'trip'`,
         [tripId],
@@ -504,11 +522,17 @@ describe('Чек-листы (e2e)', () => {
         )
       ).body.id as string;
 
-      const done = await call('patch', `/api/checklists/items/${item}`, memberToken, {
+      // Заказчик 05.11.2026: список снаряжения отмечает тот, у кого есть
+      // доступ к вкладке; остальные только видят.
+      await call('patch', `/api/checklists/items/${item}`, memberToken, {
+        isDone: true,
+      }).expect(403);
+
+      const done = await call('patch', `/api/checklists/items/${item}`, organizerToken, {
         isDone: true,
       });
       expect(done.status).toBe(200);
-      expect(done.body.doneByUserId).toBe(memberId);
+      expect(done.body.doneByUserId).toBe(organizerId);
 
       await call('patch', `/api/checklists/items/${item}`, strangerToken, {
         isDone: true,
@@ -799,7 +823,7 @@ describe('Чек-листы (e2e)', () => {
       expect(found?.title).toBe(gearTypeName);
     });
 
-    it('копия шаблона сохраняет ссылку на вещь', async () => {
+    it('копия шаблона в общий список превращает вещь в тип', async () => {
       const gear = await makeGear('Рюкзак в поход');
       const template = await createTemplate('Ссылки в поход');
       await call('post', `/api/checklists/${template}/items`, organizerToken, {
@@ -811,6 +835,28 @@ describe('Чек-листы (e2e)', () => {
         `/api/trips/${gearTripId}/checklists`,
         organizerToken,
         { scope: 'trip', fromTemplateId: Number(template) },
+      );
+
+      expect(created.status).toBe(201);
+      expect((created.body.items as unknown[]).length).toBe(1);
+      // 05.11.2026: общественный список — про тип, а не про конкретный
+      // рюкзак организатора. Экземпляр живёт в личном списке.
+      expect(created.body.items[0].gear).toBeNull();
+      expect(created.body.items[0].title).toBe(gearTypeName);
+    });
+
+    it('копия шаблона в личный список сохраняет экземпляр и ссылку', async () => {
+      const gear = await makeGear('Рюкзак в поход');
+      const template = await createTemplate('Личные ссылки в поход');
+      await call('post', `/api/checklists/${template}/items`, organizerToken, {
+        gearItemId: Number(gear),
+      }).expect(201);
+
+      const created = await call(
+        'post',
+        `/api/trips/${gearTripId}/checklists`,
+        organizerToken,
+        { scope: 'personal', fromTemplateId: Number(template) },
       );
 
       expect(created.status).toBe(201);
@@ -835,15 +881,302 @@ describe('Чек-листы (e2e)', () => {
         gearItemId: Number(ownGear),
       }).expect(403);
 
-      // Отметка при этом разрешена: это другое поле и другое право.
-      const ticked = await call(
+      // Отметка — другое поле и другое право, но с 05.11.2026 её ставит
+      // тоже ведущий снаряжения: участник без роли список только видит.
+      await call(
         'patch',
         `/api/checklists/items/${item.id}`,
         memberToken,
         { isDone: true },
+      ).expect(403);
+
+      const ticked = await call(
+        'patch',
+        `/api/checklists/items/${item.id}`,
+        organizerToken,
+        { isDone: true },
       );
       expect(ticked.status).toBe(200);
-      expect(ticked.body.doneByUserId).toBe(memberId);
+      expect(ticked.body.doneByUserId).toBe(organizerId);
+    });
+  });
+
+  describe('рекомендация личных вещей и импорт из шаблонов', () => {
+    let recommendationId = '';
+
+    /** Чтение рекомендации глазами конкретного человека. */
+    async function recommendationOf(token: string) {
+      const view = await call(
+        'get',
+        `/api/trips/${importTripId}/checklists`,
+        token,
+      ).expect(200);
+
+      return view.body.recommendation as {
+        id: string;
+        items: Array<{
+          id: string;
+          title: string;
+          isDone: boolean;
+          doneByUserId: string | null;
+          gear: unknown;
+        }>;
+      } | null;
+    }
+
+    it('рекомендацию заводит ведущий снаряжения, участник без роли — 403', async () => {
+      await call(
+        'post',
+        `/api/trips/${importTripId}/checklists`,
+        memberToken,
+        { scope: 'recommendation' },
+      ).expect(403);
+
+      const created = await call(
+        'post',
+        `/api/trips/${importTripId}/checklists`,
+        organizerToken,
+        { scope: 'recommendation' },
+      );
+      expect(created.status).toBe(201);
+      expect(created.body.scope).toBe('recommendation');
+      expect(created.body.tripId).toBe(importTripId);
+      expect(created.body.ownerUserId).toBeNull();
+      recommendationId = created.body.id as string;
+
+      await call(
+        'post',
+        `/api/trips/${importTripId}/checklists`,
+        organizerToken,
+        { scope: 'recommendation' },
+      ).expect(409);
+    });
+
+    it('пункт рекомендации виден участнику, но отметок в нём нет', async () => {
+      await call(
+        'post',
+        `/api/checklists/${recommendationId}/items`,
+        organizerToken,
+        { title: 'Рюкзак' },
+      ).expect(201);
+
+      const view = await recommendationOf(memberToken);
+      expect(view).not.toBeNull();
+      expect(view?.items.map((item) => item.title)).toEqual(['Рюкзак']);
+      expect(view?.items[0].isDone).toBe(false);
+    });
+
+    it('отметка рекомендации личная: участник видит свою, организатор — нет', async () => {
+      const before = await recommendationOf(memberToken);
+      const itemId = before?.items[0].id as string;
+
+      const marked = await call(
+        'patch',
+        `/api/trips/${importTripId}/checklists/recommendation/items/${itemId}`,
+        memberToken,
+        { isDone: true },
+      );
+      expect(marked.status).toBe(200);
+      expect(marked.body.isDone).toBe(true);
+      expect(marked.body.doneAt).toBeTruthy();
+
+      const mine = await recommendationOf(memberToken);
+      expect(mine?.items[0].isDone).toBe(true);
+      expect(mine?.items[0].doneByUserId).toBe(memberId);
+
+      // Организатору отметки не возвращаются: он передал рекомендацию.
+      const organizerView = await recommendationOf(organizerToken);
+      expect(organizerView?.items[0].isDone).toBe(false);
+      expect(organizerView?.items[0].doneByUserId).toBeNull();
+
+      // Снятая отметка удаляет строку, а не пишет `false`.
+      const cleared = await call(
+        'patch',
+        `/api/trips/${importTripId}/checklists/recommendation/items/${itemId}`,
+        memberToken,
+        { isDone: false },
+      );
+      expect(cleared.status).toBe(200);
+      expect(cleared.body.isDone).toBe(false);
+
+      const after = await recommendationOf(memberToken);
+      expect(after?.items[0].isDone).toBe(false);
+    });
+
+    it('посторонний отметку рекомендации не ставит — 404 на закрытый поход', async () => {
+      const view = await recommendationOf(memberToken);
+      const itemId = view?.items[0].id as string;
+
+      await call(
+        'patch',
+        `/api/trips/${importTripId}/checklists/recommendation/items/${itemId}`,
+        strangerToken,
+        { isDone: true },
+      ).expect(404);
+    });
+
+    it('пункт рекомендации участник не правит и не удаляет — 403', async () => {
+      const view = await recommendationOf(memberToken);
+      const itemId = view?.items[0].id as string;
+
+      await call('patch', `/api/checklists/items/${itemId}`, memberToken, {
+        title: 'Мой рюкзак',
+      }).expect(403);
+      await call('delete', `/api/checklists/items/${itemId}`, memberToken).expect(403);
+    });
+
+    it('отметка рекомендации через общий PATCH отклоняется — 400', async () => {
+      const view = await recommendationOf(organizerToken);
+      const itemId = view?.items[0].id as string;
+
+      const response = await call(
+        'patch',
+        `/api/checklists/items/${itemId}`,
+        organizerToken,
+        { isDone: true },
+      );
+
+      expect(response.status).toBe(400);
+      expect(response.body.message).toContain('у каждого участника');
+    });
+
+    it('импорт в общий список и рекомендацию превращает вещь в тип', async () => {
+      const gear = await makeGear('Рюкзак Fixars 1243');
+      const template = await createTemplate('Костровое для малых групп');
+      const gearItem = (
+        await call('post', `/api/checklists/${template}/items`, organizerToken, {
+          gearItemId: Number(gear),
+        })
+      ).body.id as string;
+      const textItem = (
+        await call('post', `/api/checklists/${template}/items`, organizerToken, {
+          title: 'спички',
+        })
+      ).body.id as string;
+
+      await call(
+        'post',
+        `/api/trips/${importTripId}/checklists`,
+        organizerToken,
+        { scope: 'trip' },
+      ).expect(201);
+
+      const imported = await call(
+        'post',
+        `/api/trips/${importTripId}/checklists/import`,
+        organizerToken,
+        { scope: 'trip', itemIds: [Number(gearItem), Number(textItem)] },
+      );
+
+      expect(imported.status).toBe(201);
+      expect(
+        (imported.body.items as Array<{ title: string; gear: unknown }>).map(
+          (item) => item.title,
+        ),
+      ).toEqual([gearTypeName, 'спички']);
+      expect(
+        (imported.body.items as Array<{ gear: unknown }>).every(
+          (item) => item.gear === null,
+        ),
+      ).toBe(true);
+
+      // Повторный импорт тех же пунктов не плодит строки.
+      const again = await call(
+        'post',
+        `/api/trips/${importTripId}/checklists/import`,
+        organizerToken,
+        { scope: 'trip', itemIds: [Number(gearItem), Number(textItem)] },
+      );
+      expect((again.body.items as unknown[]).length).toBe(2);
+
+      // Рекомендация тоже хранит тип, а не экземпляр организатора.
+      const recommended = await call(
+        'post',
+        `/api/trips/${importTripId}/checklists/import`,
+        organizerToken,
+        { scope: 'recommendation', itemIds: [Number(gearItem)] },
+      );
+      expect(recommended.status).toBe(201);
+      const added = (
+        recommended.body.items as Array<{
+          title: string;
+          gear: unknown;
+        }>
+      ).at(-1);
+      expect(added?.title).toBe(gearTypeName);
+      expect(added?.gear).toBeNull();
+    });
+
+    it('импорт в личный список сохраняет конкретный экземпляр', async () => {
+      const gear = await makeGear('Топор Fixars 1243');
+      const template = await createTemplate('Личное костровое');
+      const gearItem = (
+        await call('post', `/api/checklists/${template}/items`, organizerToken, {
+          gearItemId: Number(gear),
+        })
+      ).body.id as string;
+      const textItem = (
+        await call('post', `/api/checklists/${template}/items`, organizerToken, {
+          title: 'спички',
+        })
+      ).body.id as string;
+
+      await call(
+        'post',
+        `/api/trips/${importTripId}/checklists`,
+        organizerToken,
+        { scope: 'personal' },
+      ).expect(201);
+
+      const imported = await call(
+        'post',
+        `/api/trips/${importTripId}/checklists/import`,
+        organizerToken,
+        { scope: 'personal', itemIds: [Number(gearItem), Number(textItem)] },
+      );
+
+      expect(imported.status).toBe(201);
+      const rows = imported.body.items as Array<{
+        title: string;
+        gear: { id: string } | null;
+      }>;
+      expect(rows.map((item) => item.title)).toEqual([
+        'Топор Fixars 1243',
+        'спички',
+      ]);
+      expect(rows[0].gear?.id).toBe(gear);
+      expect(rows[1].gear).toBeNull();
+    });
+
+    it('чужой шаблон и чужой пункт импортировать нельзя — 404', async () => {
+      const template = await createTemplate('Чужой импорт');
+      const item = (
+        await call('post', `/api/checklists/${template}/items`, organizerToken, {
+          title: 'Пункт организатора',
+        })
+      ).body.id as string;
+
+      await call(
+        'post',
+        `/api/trips/${importTripId}/checklists/import`,
+        memberToken,
+        { scope: 'personal', itemIds: [Number(item)] },
+      ).expect(404);
+
+      await call(
+        'post',
+        `/api/trips/${importTripId}/checklists/import`,
+        organizerToken,
+        { scope: 'trip', itemIds: [999999999] },
+      ).expect(404);
+
+      // Пустой выбор — 400 от валидации.
+      await call(
+        'post',
+        `/api/trips/${importTripId}/checklists/import`,
+        organizerToken,
+        { scope: 'trip', itemIds: [] },
+      ).expect(400);
     });
   });
 

@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 import TripGear from '@/views/trips/TripGear.vue'
+import type { Checklist, ChecklistItem, TripChecklists } from '@/types/checklists'
 import type { GearItem, TripGearItem } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
 import type { User } from '@/api/types'
@@ -30,6 +31,14 @@ const mocks = vi.hoisted(() => ({
   addManualTripGear: vi.fn(),
   createGearItem: vi.fn(),
   fetchGearTypes: vi.fn(),
+  listTripChecklists: vi.fn(),
+  createTripChecklist: vi.fn(),
+  importChecklistItems: vi.fn(),
+  setRecommendationMark: vi.fn(),
+  addChecklistItem: vi.fn(),
+  updateChecklistItem: vi.fn(),
+  deleteChecklistItem: vi.fn(),
+  listTemplates: vi.fn(),
 }))
 
 vi.mock('@/api/gear', () => ({
@@ -40,6 +49,20 @@ vi.mock('@/api/gear', () => ({
   updateTripGear: mocks.updateTripGear,
   addManualTripGear: mocks.addManualTripGear,
   createGearItem: mocks.createGearItem,
+}))
+
+vi.mock('@/api/tripChecklists', () => ({
+  listTripChecklists: mocks.listTripChecklists,
+  createTripChecklist: mocks.createTripChecklist,
+  importChecklistItems: mocks.importChecklistItems,
+  setRecommendationMark: mocks.setRecommendationMark,
+}))
+
+vi.mock('@/api/checklists', () => ({
+  listTemplates: mocks.listTemplates,
+  addChecklistItem: mocks.addChecklistItem,
+  updateChecklistItem: mocks.updateChecklistItem,
+  deleteChecklistItem: mocks.deleteChecklistItem,
 }))
 
 vi.mock('@/api/trips', () => ({ listParticipants: mocks.listParticipants }))
@@ -63,10 +86,10 @@ function makeUser(): User {
   }
 }
 
-function makeTrip(): Trip {
+function makeTrip(organizerUserId = ME): Trip {
   return {
     id: '1',
-    organizerUserId: ME,
+    organizerUserId,
     goalObjectId: '10',
     goalObject: { id: '10', name: 'Витязь', type: 'скальник', url: null },
     announcement: null,
@@ -155,6 +178,46 @@ function tripGearList(items: TripGearItem[]): {
   return { items, totalWeightGrams: 0, itemsWithoutWeight: 0 }
 }
 
+function checklistItem(
+  id: string,
+  title: string,
+  overrides: Partial<ChecklistItem> = {},
+): ChecklistItem {
+  return {
+    id,
+    title,
+    isDone: false,
+    doneByUserId: null,
+    doneAt: null,
+    createdByUserId: ME,
+    gear: null,
+    createdAt: '2026-11-05T10:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function checklist(
+  id: string,
+  scope: Checklist['scope'],
+  items: ChecklistItem[],
+  title = '',
+): Checklist {
+  return {
+    id,
+    scope,
+    title,
+    tripId: '1',
+    ownerUserId: scope === 'personal' ? ME : null,
+    items,
+    createdAt: '2026-11-05T10:00:00.000Z',
+    updatedAt: '2026-11-05T10:00:00.000Z',
+  }
+}
+
+function emptyChecklists(): TripChecklists {
+  return { shared: null, personal: null, recommendation: null }
+}
+
 /**
  * Набор похода: палатка моя (несу я), топор не распределён, котёл ждёт
  * решения, лодку уже отклонили, спальник едет Анне. Этого хватает на все
@@ -215,9 +278,12 @@ function defaultItems(): TripGearItem[] {
   ]
 }
 
-async function mounted(canEdit = false): Promise<ReturnType<typeof mount>> {
+async function mounted(
+  canEdit = false,
+  organizerUserId = ME,
+): Promise<ReturnType<typeof mount>> {
   const wrapper = mount(TripGear, {
-    props: { trip: makeTrip(), canEdit },
+    props: { trip: makeTrip(organizerUserId), canEdit },
   })
   await flushPromises()
 
@@ -243,6 +309,8 @@ describe('вкладка «Снаряжение» похода', () => {
       participant(PETYA, 'Петя', 'maybe'),
     ])
     mocks.listGear.mockResolvedValue({ items: [], totalWeightGrams: 0, itemsWithoutWeight: 0 })
+    mocks.listTripChecklists.mockResolvedValue(emptyChecklists())
+    mocks.listTemplates.mockResolvedValue([])
     mocks.removeTripGear.mockResolvedValue(undefined)
     mocks.updateTripGear.mockImplementation(
       async (_tripId: string, gearId: string, body: Record<string, unknown>) => {
@@ -447,5 +515,153 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-distribution-empty"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="gear-taken-empty"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="gear-backpack-empty"]').exists()).toBe(true)
+  })
+
+  // ───────────────────────── «Список»: чек-листы (05.11.2026) ─────────────────────────
+
+  it('«Список»: общий чек-лист виден всем, галочки — только с доступом', async () => {
+    const shared = checklist('c1', 'trip', [
+      checklistItem('i1', 'Котёл'),
+      checklistItem('i2', 'Топор', { isDone: true }),
+    ])
+    mocks.listTripChecklists.mockResolvedValue({ ...emptyChecklists(), shared })
+
+    const readOnly = await mounted(false)
+    const readBlock = readOnly.get('[data-test="gear-shared-checklist"]')
+
+    expect(readBlock.text()).toContain('Котёл')
+    expect(readBlock.text()).toContain('Топор')
+    // Без доступа список только виден: ни галочек, ни поля добавления.
+    expect(readBlock.find('[data-test="checklist-item-check-i1"]').exists()).toBe(false)
+    expect(readBlock.find('[data-test="checklist-new-item"]').exists()).toBe(false)
+
+    const editor = await mounted(true)
+    const editBlock = editor.get('[data-test="gear-shared-checklist"]')
+
+    expect(editBlock.find('[data-test="checklist-item-check-i1"]').exists()).toBe(true)
+    expect(editBlock.find('[data-test="checklist-new-item"]').exists()).toBe(true)
+  })
+
+  it('«Список»: создаёт и заполняет список с нуля', async () => {
+    mocks.createTripChecklist.mockResolvedValue(checklist('c1', 'trip', []))
+    const wrapper = await mounted(true)
+
+    expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).toContain(
+      'ещё не завели',
+    )
+
+    await wrapper
+      .get('[data-test="gear-shared-checklist"] [data-test="checklist-create"]')
+      .trigger('click')
+    await flushPromises()
+
+    expect(mocks.createTripChecklist).toHaveBeenCalledWith('1', 'trip')
+    expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).toContain(
+      'Пунктов пока нет',
+    )
+
+    mocks.addChecklistItem.mockResolvedValue(checklistItem('i1', 'Котёл'))
+    await wrapper
+      .get('[data-test="gear-shared-checklist"] [data-test="checklist-new-item"]')
+      .setValue('Котёл')
+    await wrapper.get('[data-test="gear-shared-checklist"] form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.addChecklistItem).toHaveBeenCalledWith('c1', { title: 'Котёл' })
+    expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).toContain('Котёл')
+  })
+
+  it('рекомендация организатора видна ему и стоит над личным списком', async () => {
+    const recommendation = checklist('r1', 'recommendation', [
+      checklistItem('ri1', 'Рюкзак'),
+      checklistItem('ri2', 'Спальник'),
+    ])
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      recommendation,
+    })
+
+    const organizer = await mounted(true)
+
+    // Редактор рекомендации — во второй подсекции общественного снаряжения.
+    expect(organizer.find('[data-test="gear-recommendation-checklist"]').exists()).toBe(true)
+
+    // В личной секции рекомендация — над своим списком, отдельным блоком.
+    const personal = organizer.get('[data-test="gear-personal-checklist"]')
+    expect(personal.text()).toContain('Рекомендовано организатором')
+    expect(personal.text()).toContain('Рюкзак')
+    expect(personal.text()).toContain('Спальник')
+    // Удалить рекомендацию участник не может.
+    expect(personal.find('[data-test="checklist-item-remove"]').exists()).toBe(false)
+  })
+
+  it('участник без прав не видит редактор рекомендации, но получает её в личном списке', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      recommendation: checklist('r1', 'recommendation', [checklistItem('ri1', 'Рюкзак')]),
+    })
+
+    const wrapper = await mounted(false, ANNA)
+
+    expect(wrapper.find('[data-test="gear-recommendation-checklist"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="gear-personal-checklist"]').text()).toContain('Рюкзак')
+  })
+
+  it('отметка рекомендации уходит в отдельную ручку и остаётся личной', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      recommendation: checklist('r1', 'recommendation', [checklistItem('ri1', 'Рюкзак')]),
+    })
+    mocks.setRecommendationMark.mockResolvedValue({
+      itemId: 'ri1',
+      isDone: true,
+      doneAt: '2026-11-05T12:00:00.000Z',
+    })
+
+    const wrapper = await mounted(false, ANNA)
+    const checkbox = wrapper.get(
+      '[data-test="gear-personal-checklist"] [data-test="checklist-item-check-ri1"]',
+    )
+    await checkbox.setValue(true)
+    await flushPromises()
+
+    expect(mocks.setRecommendationMark).toHaveBeenCalledWith('1', 'ri1', true)
+    // Общий PATCH для отметки не зовётся: он записал бы «взял» за всех.
+    expect(mocks.updateChecklistItem).not.toHaveBeenCalled()
+  })
+
+  it('личный список: пункт добавляется из поля', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      personal: checklist('p1', 'personal', [checklistItem('pi1', 'Спальник')]),
+    })
+    mocks.addChecklistItem.mockResolvedValue(checklistItem('pi2', 'Коврик'))
+
+    const wrapper = await mounted(false)
+    const block = wrapper.get('[data-test="gear-personal-checklist"]')
+
+    expect(block.text()).toContain('Спальник')
+    await block.get('[data-test="checklist-new-item"]').setValue('Коврик')
+    await block.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.addChecklistItem).toHaveBeenCalledWith('p1', { title: 'Коврик' })
+    expect(wrapper.get('[data-test="gear-personal-checklist"]').text()).toContain('Коврик')
+  })
+
+  it('«Из чек-листа» открывает выбор пунктов личных шаблонов', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      shared: checklist('c1', 'trip', []),
+    })
+
+    const wrapper = await mounted(true)
+    await wrapper
+      .get('[data-test="gear-shared-checklist"] [data-test="checklist-import"]')
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="template-picker"]').exists()).toBe(true)
+    expect(mocks.listTemplates).toHaveBeenCalled()
   })
 })

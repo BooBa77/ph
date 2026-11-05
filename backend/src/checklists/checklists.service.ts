@@ -5,11 +5,19 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager, In, Not } from 'typeorm';
+import {
+  DataSource,
+  EntityManager,
+  FindOptionsWhere,
+  In,
+  Not,
+} from 'typeorm';
 
 import { GearItem } from '../gear/entities/gear-item.entity';
 import { TripParticipant } from '../trips/entities/trip-participant.entity';
+import type { Trip } from '../trips/entities/trip.entity';
 import { TripsService } from '../trips/trips.service';
+import type { TripChecklistScope } from './checklist.types';
 import {
   ChecklistDto,
   ChecklistItemDto,
@@ -17,11 +25,15 @@ import {
   CreateChecklistDto,
   CreateChecklistItemDto,
   CreateTripChecklistDto,
+  ImportChecklistItemsDto,
+  RecommendationMarkDto,
+  SetRecommendationMarkDto,
   TripChecklistListDto,
   UpdateChecklistDto,
   UpdateChecklistItemDto,
 } from './dto/checklist.dto';
 import { ChecklistItem } from './entities/checklist-item.entity';
+import { ChecklistRecommendationMark } from './entities/checklist-recommendation-mark.entity';
 import { Checklist } from './entities/checklist.entity';
 
 /**
@@ -37,15 +49,31 @@ import { Checklist } from './entities/checklist.entity';
  *
  * ## Кто что может
  *
- * | | шаблон | общий похода | личный |
- * |---|---|---|---|
- * | видеть | владелец | кто видит поход | владелец |
- * | править список и пункты | владелец | организатор | владелец |
- * | ставить отметки | владелец | участник похода | владелец |
+ * | | шаблон | общий похода | личный | рекомендация |
+ * |---|---|---|---|---|
+ * | видеть | владелец | кто видит поход | владелец | кто видит поход |
+ * | править список и пункты | владелец | ведущий «Снаряжения» | владелец | ведущий «Снаряжения» |
+ * | ставить отметки | владелец | ведущий «Снаряжения» | владелец | каждый участник себе |
+ *
+ * «Ведущий снаряжения» — организатор или роль, которой матрица дала правку
+ * вкладки `gear` (`TripsService.canEditTab`). Заказчик 05.11.2026: список
+ * снаряжения правит и отмечает **тот, у кого есть доступ**, остальные
+ * только видят.
  *
  * «Участник» — это `invited` / `going` / `maybe`, но **не** `declined`:
  * отказавшийся в подготовке не участвует (то же правило, что у чатов
  * в `ConversationsService`).
+ *
+ * ## Рекомендация — отдельная область
+ *
+ * С 05.11.2026 у похода есть третий список — рекомендация личных вещей
+ * от организатора: «Рюкзак, Спальник, Коврик». Он один на поход и виден
+ * всем, а его пункты попадают участникам в личный список.
+ *
+ * **Отметки живут отдельно** (`checklist_recommendation_marks`): пункт
+ * рекомендации общий, а «взял» у каждого своё. Записывать отметку в пункт
+ * значило бы, что первый отметивший сделал это за всех, — а заказчик прямо
+ * сказал, что организатору отметки не возвращаются.
  *
  * ## Шаблон — копия, а не ссылка
  *
@@ -173,7 +201,17 @@ export class ChecklistsService {
         ? await this.findOwnedGear(manager, userId, dto.gearItemId)
         : null;
 
-    const title = (gear ? gear.title : (dto.title ?? '')).trim();
+    /**
+     * В общем списке и рекомендации вещь становится **типом** — «Топор»,
+     * а не «Топор Fixars 1243»: у похода общий топор, конкретный экземпляр
+     * живёт в личном списке (`ImportChecklistItemsDto`). Текст без вещи
+     * остаётся как есть.
+     */
+    const typeOnly =
+      checklist.scope === 'trip' || checklist.scope === 'recommendation';
+    const title = (
+      gear ? (typeOnly ? gear.gearType.name : gear.title) : (dto.title ?? '')
+    ).trim();
     if (title.length === 0) {
       throw new BadRequestException(
         'Пункт — свободный текст или вещь из снаряжения',
@@ -184,7 +222,7 @@ export class ChecklistsService {
       manager.create(ChecklistItem, {
         checklistId: checklist.id,
         title,
-        gearItemId: gear?.id ?? null,
+        gearItemId: gear && !typeOnly ? gear.id : null,
         isDone: false,
         doneByUserId: null,
         doneAt: null,
@@ -198,9 +236,10 @@ export class ChecklistsService {
   /**
    * Отметка, правка текста и привязка вещи.
    *
-   * Три поля — три права. В общем списке похода отметку ставит любой
-   * участник («Ваня взял газ» — это факт, а не административное решение),
-   * а переименовать пункт и сменить вещь может только организатор.
+   * Три поля — три права. В общем списке похода и правку, и отметку делает
+   * ведущий «Снаряжения» (05.11.2026: «не имеющие доступа только видят»);
+   * у рекомендации отметку через этот роут поставить нельзя вовсе — она
+   * хранится у каждого участника отдельно (`setRecommendationMark`).
    * Прислали несколько полей — проверяются все права: частично применить
    * запрос было бы нельзя, иначе ответ соврал бы о том, что сохранилось.
    *
@@ -227,11 +266,21 @@ export class ChecklistsService {
 
     if (dto.gearItemId !== undefined && dto.gearItemId !== null) {
       const gear = await this.findOwnedGear(manager, userId, dto.gearItemId);
-      // Связь и колонку — вместе: `item` пришёл с загруженным `gearItem`
-      // прежней вещи, и при сохранении TypeORM взял бы её, а не колонку.
-      item.gearItemId = gear.id;
-      item.gearItem = gear;
-      item.title = gear.title;
+      const typeOnly =
+        checklist.scope === 'trip' || checklist.scope === 'recommendation';
+
+      if (typeOnly) {
+        // Общий список и рекомендация хранят тип, а не экземпляр.
+        item.gearItemId = null;
+        item.gearItem = null;
+        item.title = gear.gearType.name;
+      } else {
+        // Связь и колонку — вместе: `item` пришёл с загруженным `gearItem`
+        // прежней вещи, и при сохранении TypeORM взял бы её, а не колонку.
+        item.gearItemId = gear.id;
+        item.gearItem = gear;
+        item.title = gear.title;
+      }
     } else {
       if (dto.gearItemId === null) {
         item.gearItemId = null;
@@ -275,12 +324,16 @@ export class ChecklistsService {
   // ───────────────────────── поход ─────────────────────────
 
   /**
-   * Чек-листы похода: общий и мой личный.
+   * Чек-листы похода: общий, мой личный и рекомендация организатора.
    *
-   * Оба `null`, пока их не завели: «списка ещё нет» и «список пустой» —
+   * Все три `null`, пока их не завели: «списка ещё нет» и «список пустой» —
    * разные вещи, и вкладка должна предложить создать первый, а не показать
-   * пустой блок. Личный список ищется по паре «поход + я», общий — по
-   * походу: он один.
+   * пустой блок. Личный список ищется по паре «поход + я», общий
+   * и рекомендация — по походу: они одни.
+   *
+   * У рекомендации `isDone` **смотрящего**, а не пункта: отметки хранятся
+   * отдельно (`withRecommendationMarks`), поэтому ответ зависит от того,
+   * кто спросил.
    */
   async listForTrip(
     userId: string,
@@ -297,10 +350,166 @@ export class ChecklistsService {
     const personal = await manager.findOne(Checklist, {
       where: { scope: 'personal', tripId: String(tripId), ownerUserId: userId },
     });
+    const recommendation = await manager.findOne(Checklist, {
+      where: { scope: 'recommendation', tripId: String(tripId) },
+    });
 
     return {
       shared: shared ? await this.one(manager, shared) : null,
       personal: personal ? await this.one(manager, personal) : null,
+      recommendation: recommendation
+        ? await this.withRecommendationMarks(manager, recommendation, userId)
+        : null,
+    };
+  }
+
+  /**
+   * Добавить пункты из моих шаблонов в список похода (05.11.2026).
+   *
+   * Заказчик: «Чек-листы можно заполнять с нуля, а можно взять значения
+   * из личных чек-листов». В отличие от `createForTrip` с `fromTemplateId`,
+   * здесь копируется **не весь шаблон**, а выбранные пункты: из «Кострового
+   * для малых групп» можно взять топор и пилу, а спички не брать.
+   *
+   * **Конкретная вещь превращается в тип, но не всегда.** В личный список
+   * она переносится экземпляром («Топор Fixars 1243») и сохраняет ссылку
+   * на каталог; в общий список и в рекомендацию — названием типа («Топор»),
+   * без ссылки. Это ровно слова заказчика: «в чек-лист личных вещей похода
+   * она переносится, а в чек-лист общественных вещей похода переносится
+   * как тип».
+   *
+   * Повторный импорт не плодит одинаковые строки: пара «название + вещь»
+   * проверяется по уже имеющимся пунктам. Два разных топора в личном списке
+   * останутся двумя (у них разные ссылки), а «Топор» в общем — одним.
+   */
+  async importItems(
+    userId: string,
+    tripId: number,
+    dto: ImportChecklistItemsDto,
+  ): Promise<ChecklistDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+
+    await this.assertCanManageScope(manager, trip, dto.scope, userId);
+
+    const target = await manager.findOne(Checklist, {
+      where: this.scopeWhere(String(trip.id), dto.scope, userId),
+    });
+    if (!target) {
+      throw new NotFoundException('Сначала заведите список в этом походе');
+    }
+
+    /**
+     * Источник — только свои шаблоны. Чужой пункт отвечает 404, как чужой
+     * шаблон: иначе перебором id можно было бы узнать, что у людей есть.
+     */
+    const source = await manager.find(ChecklistItem, {
+      where: { id: In(dto.itemIds.map(String)) },
+      relations: { gearItem: { gearType: true }, checklist: true },
+    });
+    const byId = new Map(source.map((item) => [item.id, item]));
+
+    const ordered = dto.itemIds.map((id) => byId.get(String(id)));
+    if (ordered.some((item) => item === undefined)) {
+      throw new NotFoundException('Пункт не найден');
+    }
+
+    const existing = await manager.find(ChecklistItem, {
+      where: { checklistId: target.id },
+    });
+    const seen = new Set(
+      existing.map((item) => `${item.gearItemId ?? ''}|${item.title}`),
+    );
+
+    const typeOnly =
+      dto.scope === 'trip' || dto.scope === 'recommendation';
+    const rows: Array<Partial<ChecklistItem>> = [];
+
+    for (const item of ordered as ChecklistItem[]) {
+      if (
+        item.checklist.scope !== 'template' ||
+        item.checklist.ownerUserId !== userId
+      ) {
+        throw new NotFoundException('Пункт не найден');
+      }
+
+      const title = typeOnly
+        ? (item.gearItem?.gearType.name ?? item.title)
+        : (item.gearItem?.title ?? item.title);
+      const gearItemId = typeOnly ? null : item.gearItemId;
+      const key = `${gearItemId ?? ''}|${title}`;
+
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      rows.push({
+        checklistId: target.id,
+        title,
+        gearItemId,
+        isDone: false,
+        createdByUserId: userId,
+      });
+    }
+
+    if (rows.length > 0) {
+      await manager.insert(ChecklistItem, rows);
+    }
+
+    return this.one(manager, target);
+  }
+
+  /**
+   * Своя отметка на пункте рекомендации организатора (05.11.2026).
+   *
+   * Рекомендация одна на поход, отметки — у каждого свои. Отдельная ручка
+   * нужна потому, что `PATCH /api/checklists/items/:id` пишет `isDone`
+   * в сам пункт: в рекомендации это означало бы «отметил за всех».
+   */
+  async setRecommendationMark(
+    userId: string,
+    tripId: number,
+    itemId: number,
+    dto: SetRecommendationMarkDto,
+  ): Promise<RecommendationMarkDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, String(trip.id), userId);
+
+    const recommendation = await manager.findOne(Checklist, {
+      where: { scope: 'recommendation', tripId: String(trip.id) },
+    });
+    if (!recommendation) {
+      throw new NotFoundException('Рекомендация в этом походе не заведена');
+    }
+
+    const item = await this.findItem(manager, itemId);
+    if (item.checklistId !== recommendation.id) {
+      throw new NotFoundException('Пункт не найден');
+    }
+
+    const key = { itemId: item.id, userId };
+
+    if (dto.isDone) {
+      // Повторная галочка не должна падать: `ON CONFLICT DO NOTHING`.
+      await manager
+        .createQueryBuilder()
+        .insert()
+        .into(ChecklistRecommendationMark)
+        .values({ ...key, doneAt: new Date() })
+        .orIgnore()
+        .execute();
+    } else {
+      await manager.delete(ChecklistRecommendationMark, key);
+    }
+
+    const mark = await manager.findOne(ChecklistRecommendationMark, {
+      where: key,
+    });
+
+    return {
+      itemId: item.id,
+      isDone: mark !== null,
+      doneAt: mark?.doneAt.toISOString() ?? null,
     };
   }
 
@@ -321,10 +530,13 @@ export class ChecklistsService {
   /**
    * Завести список в походе.
    *
-   * Общий — только организатор: это список похода, и второй («я тоже
-   * завёл») запрещён уникальным индексом, поэтому повтор даёт 409,
-   * а не молчаливое «вернуть существующий»: человек должен знать,
-   * что его список не создан.
+   * Общий список и рекомендацию заводит **ведущий «Снаряжения»** —
+   * организатор или тот, кому матрица дала правку вкладки `gear`:
+   * заказчик 05.11.2026 сказал «пользователь, имеющий доступ».
+   *
+   * Второй общий список («я тоже завёл») запрещён уникальным индексом,
+   * поэтому повтор даёт 409, а не молчаливое «вернуть существующий»:
+   * человек должен знать, что его список не создан.
    */
   async createForTrip(
     userId: string,
@@ -334,26 +546,13 @@ export class ChecklistsService {
     const manager = this.dataSource.manager;
     const trip = await this.trips.getVisibleTrip(userId, tripId);
 
-    if (dto.scope === 'trip') {
-      if (trip.organizerUserId !== userId) {
-        throw new ForbiddenException('Общий чек-лист заводит организатор похода');
-      }
-    } else {
-      await this.assertParticipant(manager, trip.id, userId);
-    }
+    await this.assertCanManageScope(manager, trip, dto.scope, userId);
 
     const existing = await manager.findOne(Checklist, {
-      where:
-        dto.scope === 'trip'
-          ? { scope: 'trip', tripId: trip.id }
-          : { scope: 'personal', tripId: trip.id, ownerUserId: userId },
+      where: this.scopeWhere(String(trip.id), dto.scope, userId),
     });
     if (existing) {
-      throw new ConflictException(
-        dto.scope === 'trip'
-          ? 'У похода уже есть общий чек-лист'
-          : 'У вас уже есть личный чек-лист в этом походе',
-      );
+      throw new ConflictException(this.duplicateMessage(dto.scope));
     }
 
     /**
@@ -369,8 +568,16 @@ export class ChecklistsService {
       ? await manager.find(ChecklistItem, {
           where: { checklistId: template.id },
           order: { id: 'ASC' },
+          relations: { gearItem: { gearType: true } },
         })
       : [];
+
+    /**
+     * В личный список вещь едет экземпляром, в общий и рекомендацию —
+     * типом (`ImportChecklistItemsDto`). Шаблон чужой скопировать нельзя,
+     * поэтому вещь в копии принадлежит тому же человеку.
+     */
+    const typeOnly = dto.scope !== 'personal';
 
     return this.dataSource.transaction(async (tx) => {
       const checklist = await tx.save(
@@ -387,11 +594,10 @@ export class ChecklistsService {
           ChecklistItem,
           templateItems.map((item) => ({
             checklistId: checklist.id,
-            title: item.title,
-            // Ссылка на вещь копируется вместе с пунктом: походу нужен
-            // экземпляр, а не его название. Вещь принадлежит тому же
-            // человеку — шаблон чужой скопировать нельзя.
-            gearItemId: item.gearItemId,
+            title: typeOnly
+              ? (item.gearItem?.gearType.name ?? item.title)
+              : (item.gearItem?.title ?? item.title),
+            gearItemId: typeOnly ? null : item.gearItemId,
             isDone: false,
             createdByUserId: userId,
           })),
@@ -480,14 +686,18 @@ export class ChecklistsService {
 
   /**
    * Чтение: шаблон и личный список — только владельцу (404, чтобы id
-   * чужих списков нельзя было перебирать), общий — всем, кому виден поход.
+   * чужих списков нельзя было перебирать), общий список и рекомендация —
+   * всем, кому виден поход.
    */
   private async assertCanRead(
     _manager: EntityManager,
     checklist: Checklist,
     userId: string,
   ): Promise<void> {
-    if (checklist.scope === 'trip') {
+    if (
+      checklist.scope === 'trip' ||
+      checklist.scope === 'recommendation'
+    ) {
       await this.trips.getVisibleTrip(userId, Number(checklist.tripId));
       return;
     }
@@ -498,22 +708,32 @@ export class ChecklistsService {
   }
 
   /**
-   * Правка списка и пунктов: владелец — у шаблона и личного, организатор
-   * похода — у общего. Участнику править общий список нечего: его дело —
-   * ставить отметки, а состав списка — решение организатора.
+   * Правка списка и пунктов: владелец — у шаблона и личного, **ведущий
+   * «Снаряжения»** — у общего списка и рекомендации (05.11.2026).
+   *
+   * Раньше общий список правил только организатор. Заказчик сказал:
+   * «Пользователь (имеющий доступ) создаёт там чек-лист снаряжения…
+   * Не имеющие доступа только видят», и матрица прав вкладки `gear` —
+   * ровно этот «доступ». Участнику без роли править нечего: он видит
+   * список, но галочек и кнопок у него нет.
    */
   private async assertCanEdit(
-    manager: EntityManager,
+    _manager: EntityManager,
     checklist: Checklist,
     userId: string,
   ): Promise<void> {
-    if (checklist.scope === 'trip') {
+    if (
+      checklist.scope === 'trip' ||
+      checklist.scope === 'recommendation'
+    ) {
       const trip = await this.trips.getVisibleTrip(
         userId,
         Number(checklist.tripId),
       );
-      if (trip.organizerUserId !== userId) {
-        throw new ForbiddenException('Общий чек-лист правит организатор похода');
+      if (!(await this.trips.canEditTab(userId, trip, 'gear'))) {
+        throw new ForbiddenException(
+          'Список снаряжения правит тот, кому доступна вкладка «Снаряжение»',
+        );
       }
       return;
     }
@@ -524,24 +744,86 @@ export class ChecklistsService {
   }
 
   /**
-   * Отметка исполнения: в общем списке — любому участнику похода
-   * (`declined` не считается: он в подготовке не участвует), в личном
-   * и шаблонном — только владельцу.
+   * Отметка исполнения: в общем списке — ведущему «Снаряжения» (он же его
+   * и заполняет), в личном и шаблонном — владельцу.
+   *
+   * **У рекомендации отметок в пункте нет вовсе**: пункт общий, а «взял»
+   * у каждого своё (`setRecommendationMark`). Прямой `PATCH` с `isDone`
+   * отвечает 400, а не тихо пишет чужую галочку в общий пункт.
    */
   private async assertCanTick(
-    manager: EntityManager,
+    _manager: EntityManager,
     checklist: Checklist,
     userId: string,
   ): Promise<void> {
     if (checklist.scope === 'trip') {
-      await this.trips.getVisibleTrip(userId, Number(checklist.tripId));
-      await this.assertParticipant(manager, checklist.tripId!, userId);
+      const trip = await this.trips.getVisibleTrip(
+        userId,
+        Number(checklist.tripId),
+      );
+      if (!(await this.trips.canEditTab(userId, trip, 'gear'))) {
+        throw new ForbiddenException(
+          'Отметки в списке снаряжения ставит тот, кому доступна вкладка «Снаряжение»',
+        );
+      }
       return;
+    }
+
+    if (checklist.scope === 'recommendation') {
+      throw new BadRequestException(
+        'Отметки рекомендации хранятся у каждого участника отдельно',
+      );
     }
 
     if (checklist.ownerUserId !== userId) {
       throw new NotFoundException('Чек-лист не найден');
     }
+  }
+
+  /**
+   * Может ли человек заводить и править список этой области.
+   *
+   * Личный — участнику похода, общий и рекомендация — ведущему вкладки
+   * «Снаряжение». Одно правило и на создание, и на импорт, чтобы две
+   * ручки не разошлись в правах.
+   */
+  private async assertCanManageScope(
+    manager: EntityManager,
+    trip: Trip,
+    scope: TripChecklistScope,
+    userId: string,
+  ): Promise<void> {
+    if (scope === 'personal') {
+      await this.assertParticipant(manager, trip.id, userId);
+      return;
+    }
+
+    if (!(await this.trips.canEditTab(userId, trip, 'gear'))) {
+      throw new ForbiddenException(
+        'Список снаряжения заводит и правит тот, кому доступна вкладка «Снаряжение»',
+      );
+    }
+  }
+
+  /** Условие поиска единственного списка этой области в походе. */
+  private scopeWhere(
+    tripId: string,
+    scope: TripChecklistScope,
+    userId: string,
+  ): FindOptionsWhere<Checklist> {
+    return scope === 'personal'
+      ? { scope, tripId, ownerUserId: userId }
+      : { scope, tripId };
+  }
+
+  /** Почему второй такой список завести нельзя — словами для человека. */
+  private duplicateMessage(scope: TripChecklistScope): string {
+    if (scope === 'trip') return 'У похода уже есть общий чек-лист';
+    if (scope === 'recommendation') {
+      return 'В походе уже есть рекомендация личных вещей';
+    }
+
+    return 'У вас уже есть личный чек-лист в этом походе';
   }
 
   /** Участник похода: в составе и не отказался. */
@@ -588,5 +870,44 @@ export class ChecklistsService {
     checklist: Checklist,
   ): Promise<ChecklistDto> {
     return (await this.withItems(manager, [checklist]))[0];
+  }
+
+  /**
+   * Рекомендация с **моими** отметками (05.11.2026).
+   *
+   * `isDone` пункта рекомендации — не свойство общего пункта, а состояние
+   * смотрящего. Поэтому ответ собирается из двух источников: пункты
+   * рекомендации и строки отметок этого человека. У организатора отметок
+   * в этом ответе не будет, даже если участники уже всё взяли: ровно того
+   * и просил заказчик.
+   */
+  private async withRecommendationMarks(
+    manager: EntityManager,
+    checklist: Checklist,
+    userId: string,
+  ): Promise<ChecklistDto> {
+    const dto = await this.one(manager, checklist);
+    if (dto.items.length === 0) return dto;
+
+    const marks = await manager.find(ChecklistRecommendationMark, {
+      where: {
+        itemId: In(dto.items.map((item) => item.id)),
+        userId,
+      },
+    });
+    const byItem = new Map(marks.map((mark) => [mark.itemId, mark]));
+
+    dto.items = dto.items.map((item) => {
+      const mark = byItem.get(item.id);
+
+      return {
+        ...item,
+        isDone: mark !== undefined,
+        doneByUserId: mark ? userId : null,
+        doneAt: mark?.doneAt.toISOString() ?? null,
+      };
+    });
+
+    return dto;
   }
 }

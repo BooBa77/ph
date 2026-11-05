@@ -6,7 +6,12 @@
  * только здесь: бэкенд отдаёт значения, а как их назвать — дело интерфейса.
  */
 
-export const CHECKLIST_SCOPES = ['template', 'trip', 'personal'] as const
+export const CHECKLIST_SCOPES = [
+  'template',
+  'trip',
+  'personal',
+  'recommendation',
+] as const
 export type ChecklistScope = (typeof CHECKLIST_SCOPES)[number]
 
 /** Пункт списка: текст, отметка и её автор. */
@@ -64,4 +69,25 @@ export interface Checklist {
   items: ChecklistItem[]
   createdAt: string
   updatedAt: string
+}
+
+/**
+ * Чек-листы похода глазами смотрящего (05.11.2026).
+ *
+ * - `shared` — список общественного снаряжения, его ведёт вкладка;
+ * - `personal` — личный список участника, его видит только владелец;
+ * - `recommendation` — совет организатора всем участникам. Пункты общие,
+ *   а `isDone` — **свой у каждого**: сервер подмешивает отметки смотрящего.
+ */
+export interface TripChecklists {
+  shared: Checklist | null
+  personal: Checklist | null
+  recommendation: Checklist | null
+}
+
+/** Отметка участника на пункте рекомендации. */
+export interface RecommendationMark {
+  itemId: string
+  isDone: boolean
+  doneAt: string | null
 }

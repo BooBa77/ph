@@ -6,6 +6,7 @@ import { TripsModule } from '../trips/trips.module';
 import { ChecklistsController } from './checklists.controller';
 import { ChecklistsService } from './checklists.service';
 import { ChecklistItem } from './entities/checklist-item.entity';
+import { ChecklistRecommendationMark } from './entities/checklist-recommendation-mark.entity';
 import { Checklist } from './entities/checklist.entity';
 import { TripChecklistsController } from './trip-checklists.controller';
 
@@ -24,7 +25,12 @@ import { TripChecklistsController } from './trip-checklists.controller';
  */
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Checklist, ChecklistItem, TripParticipant]),
+    TypeOrmModule.forFeature([
+      Checklist,
+      ChecklistItem,
+      ChecklistRecommendationMark,
+      TripParticipant,
+    ]),
     TripsModule,
   ],
   controllers: [ChecklistsController, TripChecklistsController],

@@ -4,6 +4,7 @@ import {
   Get,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
 } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
@@ -14,6 +15,9 @@ import { ChecklistsService } from './checklists.service';
 import {
   ChecklistDto,
   CreateTripChecklistDto,
+  ImportChecklistItemsDto,
+  RecommendationMarkDto,
+  SetRecommendationMarkDto,
   TripChecklistListDto,
 } from './dto/checklist.dto';
 
@@ -65,5 +69,45 @@ export class TripChecklistsController {
     @Body() dto: CreateTripChecklistDto,
   ): Promise<ChecklistDto> {
     return this.checklistsService.createForTrip(authUser.id, id, dto);
+  }
+
+  /**
+   * Добавить в список похода выбранные пункты моих шаблонов.
+   *
+   * Преобразование зависит от цели: в личный список — конкретный экземпляр,
+   * в общий и в рекомендацию — тип (`ImportChecklistItemsDto`).
+   */
+  @Post(':id/checklists/import')
+  @ApiOperation({ summary: 'Добавить пункты из личных чек-листов' })
+  @ApiCreatedResponse({ type: ChecklistDto })
+  async importItems(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: ImportChecklistItemsDto,
+  ): Promise<ChecklistDto> {
+    return this.checklistsService.importItems(authUser.id, id, dto);
+  }
+
+  /**
+   * Своя отметка на пункте рекомендации организатора.
+   *
+   * Отдельная ручка, потому что `PATCH /api/checklists/items/:id` пишет
+   * `isDone` в сам пункт: в рекомендации это отметило бы вещь за всех.
+   */
+  @Patch(':id/checklists/recommendation/items/:itemId')
+  @ApiOperation({ summary: 'Отметить пункт рекомендации для себя' })
+  @ApiOkResponse({ type: RecommendationMarkDto })
+  async markRecommendationItem(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('itemId', ParseIntPipe) itemId: number,
+    @Body() dto: SetRecommendationMarkDto,
+  ): Promise<RecommendationMarkDto> {
+    return this.checklistsService.setRecommendationMark(
+      authUser.id,
+      id,
+      itemId,
+      dto,
+    );
   }
 }

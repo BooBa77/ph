@@ -28,15 +28,19 @@ import type { ChecklistScope } from '../checklist.types';
  * - `trip` — общий список похода: `trip_id` есть, владельца нет (он
  *   принадлежит походу, а не человеку: организатор уйдёт — список
  *   останется);
- * - `personal` — личный список участника: есть и поход, и владелец.
+ * - `personal` — личный список участника: есть и поход, и владелец;
+ * - `recommendation` — рекомендация личных вещей от организатора: поход
+ *   есть, владельца нет. Отметки участников живут отдельно
+ *   (`checklist_recommendation_marks`), потому что «взял» у каждого своё.
  *
  * **Шаблон — это шаблон, а не ссылка.** В поход попадает копия: правка
  * шаблона не должна переписывать прошедший поход, а удаление шаблона —
  * обнулять чек-лист, по которому уже ходили.
  *
- * Уникальность: один общий список на поход и один личный на пару
- * «поход + человек». Два общих списка означали бы два места, где отмечают
- * одно и то же (частичные уникальные индексы в миграции `Checklists`).
+ * Уникальность: один общий список на поход, одна рекомендация на поход
+ * и один личный на пару «поход + человек». Два общих списка означали бы
+ * два места, где отмечают одно и то же (частичные уникальные индексы
+ * в миграциях `Checklists` и `TripGearChecklists`).
  */
 @Entity('checklists')
 @Index('UQ_checklists_trip_shared', ['tripId'], {
@@ -47,12 +51,17 @@ import type { ChecklistScope } from '../checklist.types';
   unique: true,
   where: `"scope" = 'personal'`,
 })
+@Index('UQ_checklists_trip_recommendation', ['tripId'], {
+  unique: true,
+  where: `"scope" = 'recommendation'`,
+})
 @Index('IDX_checklists_owner', ['ownerUserId'])
 @Check(
   'chk_checklists_scope',
   `("scope" = 'template' AND "trip_id" IS NULL AND "owner_user_id" IS NOT NULL)
    OR ("scope" = 'trip' AND "trip_id" IS NOT NULL AND "owner_user_id" IS NULL)
-   OR ("scope" = 'personal' AND "trip_id" IS NOT NULL AND "owner_user_id" IS NOT NULL)`,
+   OR ("scope" = 'personal' AND "trip_id" IS NOT NULL AND "owner_user_id" IS NOT NULL)
+   OR ("scope" = 'recommendation' AND "trip_id" IS NOT NULL AND "owner_user_id" IS NULL)`,
 )
 export class Checklist {
   @PrimaryGeneratedColumn({ type: 'bigint' })

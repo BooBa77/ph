@@ -2134,6 +2134,105 @@ rows.push([
   checklistItemsLeft === 0 ? '' : `осталось ${checklistItemsLeft}`,
 ]);
 
+// ─── Чек-листы: рекомендация и личные отметки (05.11.2026) ───
+/**
+ * «Список» вкладки «Снаряжение»: рекомендация принадлежит походу
+ * (scope = 'recommendation'), она одна на поход, а отметки участников
+ * живут отдельными строками «пункт + человек». Проверяется форма схемы
+ * и то, что видно только в базе: частичный уникальный индекс и каскад
+ * отметок при удалении пункта.
+ */
+const recommendationShape = await client.query(
+  `SELECT
+     (SELECT pg_get_constraintdef(oid) FROM pg_constraint
+       WHERE conname = 'chk_checklists_scope') AS scope_check,
+     (SELECT 1 FROM pg_indexes
+       WHERE indexname = 'UQ_checklists_trip_recommendation') AS has_unique,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_checklist_recommendation_marks_item') AS mark_delete_action`,
+);
+
+const recommendationShapeRow = recommendationShape.rows[0];
+const recommendationShapeOk =
+  String(recommendationShapeRow.scope_check).includes("'recommendation'") &&
+  recommendationShapeRow.has_unique === 1 &&
+  // «c» — ON DELETE CASCADE: убрали совет — ушли галочки на него.
+  recommendationShapeRow.mark_delete_action === 'c';
+
+if (!recommendationShapeOk) failed += 1;
+rows.push([
+  recommendationShapeOk ? 'ok' : 'НЕТ СХЕМЫ',
+  'чек-листы: рекомендация в CHECK, одна на поход, отметки каскадом',
+  recommendationShapeOk
+    ? ''
+    : `check=${recommendationShapeRow.scope_check}, index=${recommendationShapeRow.has_unique}, marks=${recommendationShapeRow.mark_delete_action}`,
+]);
+
+await check(
+  'чек-листы: рекомендация без похода запрещена',
+  'fail',
+  `INSERT INTO checklists (scope, owner_user_id, title)
+   VALUES ('recommendation', $1, 'Рекомендация без похода')`,
+  [user1],
+);
+
+const recommendationListId = (
+  await client.query(
+    `INSERT INTO checklists (scope, trip_id, title)
+     VALUES ('recommendation', $1, 'Рекомендация') RETURNING id`,
+    [tripId],
+  )
+).rows[0].id;
+
+await check(
+  'чек-листы: вторая рекомендация в походе запрещена',
+  'fail',
+  `INSERT INTO checklists (scope, trip_id, title)
+   VALUES ('recommendation', $1, 'Ещё одна')`,
+  [tripId],
+);
+
+const recommendationItemId = (
+  await client.query(
+    `INSERT INTO checklist_items (checklist_id, title)
+     VALUES ($1, 'Рюкзак') RETURNING id`,
+    [recommendationListId],
+  )
+).rows[0].id;
+
+await client.query(
+  `INSERT INTO checklist_recommendation_marks (item_id, user_id)
+   VALUES ($1, $2)`,
+  [recommendationItemId, user1],
+);
+
+await check(
+  'чек-листы: одна отметка на пункт и человека',
+  'fail',
+  `INSERT INTO checklist_recommendation_marks (item_id, user_id)
+   VALUES ($1, $2)`,
+  [recommendationItemId, user1],
+);
+
+await client.query(`DELETE FROM checklist_items WHERE id = $1`, [
+  recommendationItemId,
+]);
+
+const recommendationMarksLeft = (
+  await client.query(
+    `SELECT count(*)::int AS count FROM checklist_recommendation_marks
+      WHERE item_id = $1`,
+    [recommendationItemId],
+  )
+).rows[0].count;
+
+if (recommendationMarksLeft !== 0) failed += 1;
+rows.push([
+  recommendationMarksLeft === 0 ? 'ok' : 'ОСТАЛИСЬ ОТМЕТКИ',
+  'чек-листы: удалили пункт рекомендации — ушли его отметки',
+  recommendationMarksLeft === 0 ? '' : `осталось ${recommendationMarksLeft}`,
+]);
+
 await client.query('ROLLBACK');
 await client.end();
 

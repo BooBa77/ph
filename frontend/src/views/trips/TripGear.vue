@@ -8,11 +8,14 @@ import {
   removeTripGear,
   updateTripGear,
 } from '@/api/gear'
+import { listTripChecklists } from '@/api/tripChecklists'
 import { listParticipants } from '@/api/trips'
 import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
+import TripGearChecklist from '@/components/gear/TripGearChecklist.vue'
 import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
 import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
+import type { Checklist, TripChecklists } from '@/types/checklists'
 import type { GearItem, TripGearItem, TripGearStatus } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
 import {
@@ -29,10 +32,14 @@ import {
  * склоняется к красно-коричневому) и личное (синее, как у «Питания»
  * и «Спальника»). Внутри — вложенные секции, каждая со своим сворачиванием.
  *
- * **«Список» этого шага не рисуем.** План ставит его первым в обеих
- * больших секциях, но логику чек-листов заказчик ещё не описал: «Логику
- * «Списка» заказчик расскажет позже». Придумать её сейчас значило бы
- * сделать экран, который потом переделывать.
+ * **«Список» — с 05.11.2026.** Заказчик описал логику: в общественной
+ * секции список общественного снаряжения и второй — рекомендация личных
+ * вещей участникам; в личной секции свой список, где рекомендация стоит
+ * отдельным зелёным блоком над личными пунктами, удалить её нельзя,
+ * а отметки организатору не возвращаются. Список правит и отмечает тот,
+ * кому доступна вкладка; остальные только видят. Пункты можно заводить
+ * с нуля или брать из личных чек-листов профиля — конкретная вещь едет
+ * экземпляром в личный список и типом в общий и рекомендацию.
  *
  * **Что уже работает на настоящих данных:**
  * - «Берём» — снаряжение похода (`GET /api/trips/:id/gear`). Предложенные
@@ -86,6 +93,47 @@ const peopleError = ref<string | null>(null)
 /** Вещь, по которой идёт запрос: её поля блокируются до ответа. */
 const busyId = ref<string | null>(null)
 const removingId = ref<string | null>(null)
+
+// ───────────────────────────── «Список»: чек-листы ─────────────────────────────
+
+/**
+ * Три списка похода: общественное снаряжение, мой личный и рекомендация
+ * организатора. `null` — не загрузились или ещё не заведены; различает
+ * это `checklistsLoading`/`checklistsError`.
+ */
+const checklists = ref<TripChecklists | null>(null)
+const checklistsLoading = ref(true)
+const checklistsError = ref<string | null>(null)
+
+/** Рекомендация показывается в личной секции, только если в ней что-то есть. */
+const hasRecommendation = computed(
+  () => (checklists.value?.recommendation?.items.length ?? 0) > 0,
+)
+
+/** Сколько пунктов у списка — для заголовка «Список · 3». */
+function itemsCount(checklist: Checklist | null | undefined): number {
+  return checklist?.items.length ?? 0
+}
+
+/**
+ * Компонент вернул изменённый список — кладём его на место.
+ *
+ * Списки живут одним объектом, потому что приходят одним ответом и
+ * перерисовываются вместе; отдельные `ref` на каждый означали бы три
+ * способа забыть обновить один из них.
+ */
+function applyChecklist(
+  key: 'shared' | 'personal' | 'recommendation',
+  checklist: Checklist | null,
+): void {
+  checklists.value = {
+    shared: null,
+    personal: null,
+    recommendation: null,
+    ...(checklists.value ?? {}),
+    [key]: checklist,
+  }
+}
 
 // ───────────────────────────── личный каталог и модалки ─────────────────────────────
 
@@ -188,15 +236,35 @@ let requestId = 0
 async function load(): Promise<void> {
   const current = ++requestId
   isLoading.value = true
+  checklistsLoading.value = true
   error.value = null
   actionError.value = null
   peopleError.value = null
+  checklistsError.value = null
 
   try {
     const list = await listTripGear(props.trip.id)
     if (current !== requestId) return
 
     items.value = list.items
+
+    /**
+     * Чек-листы — отдельным запросом: у них свой домен и своя ошибка.
+     * Не загрузились — «Берём» и «Распределение» продолжают работать,
+     * а на месте «Списка» будет честная подпись.
+     */
+    try {
+      const lists = await listTripChecklists(props.trip.id)
+      if (current === requestId) checklists.value = lists
+    } catch (problem) {
+      if (current === requestId) {
+        checklists.value = null
+        checklistsError.value =
+          problem instanceof ApiError
+            ? problem.message
+            : 'Чек-листы похода не загрузились'
+      }
+    }
 
     // Состав нужен только подписям и плиткам рюкзаков: его падение экран
     // не закрывает — снаряжение важнее имён.
@@ -214,7 +282,10 @@ async function load(): Promise<void> {
     error.value =
       problem instanceof ApiError ? problem.message : 'Не удалось загрузить снаряжение похода'
   } finally {
-    if (current === requestId) isLoading.value = false
+    if (current === requestId) {
+      isLoading.value = false
+      checklistsLoading.value = false
+    }
   }
 }
 
@@ -396,6 +467,86 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
         <summary class="cursor-pointer select-none text-sm font-medium text-orange-900">
           Общественное снаряжение
         </summary>
+
+        <!--
+          «Список»: что взять вообще, до распределения по людям. Список
+          ведёт тот, кому доступна вкладка; остальные только видят его.
+        -->
+        <details
+          open
+          class="rounded-xl border border-border bg-white p-3"
+          data-test="gear-shared-checklist"
+        >
+          <summary class="cursor-pointer select-none text-sm font-medium text-text">
+            Список<template v-if="checklists"> · {{ itemsCount(checklists.shared) }}</template>
+          </summary>
+
+          <div class="mt-2">
+            <TripGearChecklist
+              v-if="checklists"
+              :trip-id="trip.id"
+              :checklist="checklists.shared"
+              scope="trip"
+              heading="Что берём в поход"
+              subtitle="Список общественного снаряжения. Правки и отметки — у того, кому доступна вкладка; остальные его видят."
+              empty-text="Список общественного снаряжения ещё не завели."
+              add-placeholder="Добавить в список: «Котёл»"
+              import-note="В общий список вещи из шаблона попадут названиями типов: «Топор», а не «Топор Fixars»."
+              :can-manage="canEdit"
+              :can-mark="canEdit"
+              :can-import="canEdit"
+              @updated="applyChecklist('shared', $event)"
+            />
+
+            <p v-else-if="checklistsLoading" class="text-sm text-muted" data-test="gear-checklists-loading">
+              Загружаем чек-листы…
+            </p>
+            <p v-else class="text-sm text-muted" data-test="gear-checklists-error">
+              {{ checklistsError ?? 'Чек-листы похода не загрузились' }}
+            </p>
+          </div>
+        </details>
+
+        <!--
+          Второй список общественной секции — рекомендация личных вещей
+          участникам. Его ведёт организатор, участники получают пункты
+          в свой список ниже, а отметки остаются у каждого.
+        -->
+        <details
+          v-if="isOrganizer"
+          open
+          class="rounded-xl border border-border bg-white p-3"
+          data-test="gear-recommendation-checklist"
+        >
+          <summary class="cursor-pointer select-none text-sm font-medium text-text">
+            Личные вещи участников<template v-if="checklists"> · {{ itemsCount(checklists.recommendation) }}</template>
+          </summary>
+
+          <div class="mt-2">
+            <TripGearChecklist
+              v-if="checklists"
+              :trip-id="trip.id"
+              :checklist="checklists.recommendation"
+              scope="recommendation"
+              variant="recommended"
+              heading="Что взять каждому"
+              subtitle="Рекомендация попадёт каждому участнику в личный список. Удалить её участник не сможет, а его отметки вам не видны."
+              empty-text="Рекомендации личных вещей ещё нет."
+              add-placeholder="Добавить в рекомендацию: «Рюкзак»"
+              import-note="В рекомендацию вещи из шаблона попадут названиями типов: «Топор», а не «Топор Fixars»."
+              :can-manage="true"
+              :can-import="true"
+              @updated="applyChecklist('recommendation', $event)"
+            />
+
+            <p v-else-if="checklistsLoading" class="text-sm text-muted" data-test="gear-checklists-loading">
+              Загружаем чек-листы…
+            </p>
+            <p v-else class="text-sm text-muted" data-test="gear-checklists-error">
+              {{ checklistsError ?? 'Чек-листы похода не загрузились' }}
+            </p>
+          </div>
+        </details>
 
         <!-- «Берём»: пул вещей похода и решение «берём / не берём» -->
         <details
@@ -669,6 +820,59 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
         <summary class="cursor-pointer select-none text-sm font-medium text-blue-900">
           Личное снаряжение
         </summary>
+
+        <!--
+          «Список» личной секции: сверху рекомендация организатора
+          отдельным зелёным блоком, ниже — свои пункты. Рекомендацию
+          нельзя убрать, отметки у каждого свои.
+        -->
+        <details
+          open
+          class="rounded-xl border border-border bg-white p-3"
+          data-test="gear-personal-checklist"
+        >
+          <summary class="cursor-pointer select-none text-sm font-medium text-text">
+            Список<template v-if="checklists"> · {{ itemsCount(checklists.personal) }}</template>
+          </summary>
+
+          <div class="mt-2 flex flex-col gap-3">
+            <template v-if="checklists">
+              <TripGearChecklist
+                v-if="hasRecommendation"
+                :trip-id="trip.id"
+                :checklist="checklists.recommendation"
+                scope="recommendation"
+                variant="recommended"
+                heading="Рекомендовано организатором"
+                subtitle="Не удаляется: это совет, а не ваш личный пункт. Отметку видите только вы — организатору она не возвращается."
+                :can-mark="true"
+                @updated="applyChecklist('recommendation', $event)"
+              />
+
+              <TripGearChecklist
+                :trip-id="trip.id"
+                :checklist="checklists.personal"
+                scope="personal"
+                heading="Мои личные вещи"
+                subtitle="Этот список видите только вы. Можно добавить пункты или взять их из своих чек-листов."
+                empty-text="Личного списка ещё нет — заведите его и добавьте вещи."
+                add-placeholder="Добавить личное: «Спальник»"
+                import-note="В личный список вещи из шаблона попадут конкретными экземплярами — как они записаны в каталоге."
+                :can-manage="true"
+                :can-mark="true"
+                :can-import="true"
+                @updated="applyChecklist('personal', $event)"
+              />
+            </template>
+
+            <p v-else-if="checklistsLoading" class="text-sm text-muted" data-test="gear-checklists-loading">
+              Загружаем чек-листы…
+            </p>
+            <p v-else class="text-sm text-muted" data-test="gear-checklists-error">
+              {{ checklistsError ?? 'Чек-листы похода не загрузились' }}
+            </p>
+          </div>
+        </details>
 
         <!-- «Взял»: то, что назначено на меня -->
         <details
