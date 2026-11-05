@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { listTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
 import { fetchTripRoute, saveRouteNights } from '@/api/trips'
+import { useAuthStore } from '@/stores/auth'
 import type { TripGearItem } from '@/types/gear'
 import type {
   CookingKind,
@@ -455,11 +456,27 @@ const hasStove = computed(() => rows.value.some((row) => isStoveCooking(row.cook
  * Спальник и коврик нужны при палатке, избе и машине. Заказчик 01.11.2026:
  * секция видна «при всех вариантах ночёвки кроме „Гостиница“, „Идём всю
  * ночь“ и „В пути“».
+ *
+ * **И только тому, кто идёт на 100%** (03.11.2026): «секция Спальник должна
+ * быть видна только если участник 100% идёт». Идущие приходят в ответе
+ * вкладки (`travelers`), поэтому правило не считается по статусу на фронте:
+ * сервер и так не даст «пока не решил» добавить вещь, и секция не должна
+ * предлагать то, что закончится отказом.
  */
-const sleepingVisible = computed(() =>
-  rows.value.some(
-    (row) => row.kind !== '' && SLEEPING_NIGHT_KINDS.includes(row.kind),
-  ),
+const auth = useAuthStore()
+
+const amGoing = computed(() => {
+  const id = auth.user?.id
+
+  return id !== undefined && (plan.value?.travelers ?? []).some((person) => person.userId === id)
+})
+
+const sleepingVisible = computed(
+  () =>
+    amGoing.value &&
+    rows.value.some(
+      (row) => row.kind !== '' && SLEEPING_NIGHT_KINDS.includes(row.kind),
+    ),
 )
 
 /**

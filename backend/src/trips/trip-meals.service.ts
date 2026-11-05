@@ -109,6 +109,12 @@ export class TripMealsService {
     if (owner !== null && owner !== userId) {
       throw new ForbiddenException('Личная еда участника видна только ему');
     }
+    // И только у того, кто идёт на 100% (03.11.2026): «добавлять личные
+    // блюда и продукты могут только 100% иду». Не идущий личный слой
+    // не читает — тогда и интерфейса личных полей у него не будет.
+    if (owner !== null) {
+      await this.assertGoing(manager, trip.id, userId);
+    }
 
     if (trip.status === 'idea') {
       throw new BadRequestException(
@@ -1216,6 +1222,30 @@ export class TripMealsService {
   }
 
   /**
+   * Личная еда — только у того, кто **идёт на 100%** (03.11.2026).
+   *
+   * Слова заказчика: «добавлять личные блюда и продукты могут только „100%
+   * иду“». «Пока не решил» и «приглашён» ещё не едят с группой, а их личный
+   * рюкзак никому не виден — заводить его им незачем. Общественная раскладка
+   * этим правилом не ограничена: её ведёт завхоз, и роль важнее статуса.
+   */
+  private async assertGoing(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+  ): Promise<void> {
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId, userId },
+    });
+
+    if (participant === null || participant.status !== 'going') {
+      throw new BadRequestException(
+        'Личная еда — только у того, кто идёт в поход на 100%',
+      );
+    }
+  }
+
+  /**
    * Правка слоя.
    *
    * Общую раскладку правит тот, кому роль дала «Питание» (завхоз,
@@ -1244,6 +1274,11 @@ export class TripMealsService {
     await this.dataSource.transaction(async (manager) => {
       if (owner !== null) {
         await this.assertParticipant(manager, userId, trip);
+        // Личные блюда и продукты — только у 100% идущего (03.11.2026).
+        // Общая раскладка этим не ограничена: её ведёт завхоз с любым
+        // статусом готовности, включая приглашённого, — ему право даёт роль,
+        // а не участие.
+        await this.assertGoing(manager, trip.id, userId);
       }
       await work(manager, trip);
     });

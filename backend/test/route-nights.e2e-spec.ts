@@ -57,6 +57,7 @@ describe('Ночёвки похода (e2e)', () => {
   let moderatorId: string;
   let moderatorToken: string;
   let maybeId: string;
+  let maybeToken: string;
   let strangerToken: string;
 
   let objectId: string;
@@ -271,6 +272,7 @@ describe('Ночёвки похода (e2e)', () => {
 
     const maybe = await login(maybeEmail);
     maybeId = maybe.id;
+    maybeToken = maybe.token;
 
     const stranger = await login(strangerEmail);
     strangerToken = stranger.token;
@@ -640,6 +642,24 @@ describe('Ночёвки похода (e2e)', () => {
   it('чужая вещь — 400: личное берут только из своего каталога', async () => {
     // Спальник Петра: своё только своему.
     await addSleeping(annaToken, petrBagId).expect(400);
+  });
+
+  /**
+   * «Спальник» — секция только 100% идущего (03.11.2026). Заказчик: «секция
+   * Спальник должна быть видна только если участник 100% идёт». Фронт её
+   * прячет, а сервер обязан отказать и в записи: иначе «пока не решил»
+   * завёл бы вещь, которую ему некому показать.
+   */
+  it('«пока не решил» спальник в ночёвку не добавляет', async () => {
+    const response = await addSleeping(maybeToken, annaBagId).expect(400);
+
+    expect(String(response.body.message)).toContain('идёт в поход');
+    // Место в палатке по тому же правилу — 400, а не 403: он участник.
+    await request(app.getHttpServer())
+      .put(`/api/trips/${tripId}/route/lodgers/${maybeId}`)
+      .set('Authorization', `Bearer ${maybeToken}`)
+      .send({ tentGearId: petrTentId })
+      .expect(400);
   });
 
   /**

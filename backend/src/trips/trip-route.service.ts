@@ -150,6 +150,15 @@ export class TripRouteService {
     const manager = this.dataSource.manager;
     const trip = await this.trips.getVisibleTrip(userId, tripId);
     await this.assertParticipant(manager, trip.id, userId);
+    // Секция личная и видна только тому, кто идёт на 100% (03.11.2026).
+    // «Пока не решил» и «приглашён» спальник не заявляют: их вещей в ночёвке
+    // нет, а показать секцию всё равно некому.
+    await this.assertGoing(
+      manager,
+      trip.id,
+      userId,
+      'Спальник в ночёвку добавляет только тот, кто идёт в поход',
+    );
     await this.assertSleepingItem(manager, userId, dto.gearItemId);
 
     await manager
@@ -580,21 +589,41 @@ export class TripRouteService {
     return place;
   }
 
-  /** Место жительства занимает только тот, кто идёт. */
-  private async assertTraveler(
+  /**
+   * Место жительства и личные вещи занимает только тот, кто **идёт**.
+   *
+   * Заказчик 03.11.2026: секция «Спальник» должна быть видна только при
+   * 100% участии, поэтому «пока не решил» и «приглашён» личных вещей
+   * в ночёвку не добавляют. Правило одно для места в палатке и для
+   * спальника: текст отказа приходит снаружи, потому что действие разное.
+   */
+  private async assertGoing(
     manager: EntityManager,
     tripId: string,
     userId: string,
+    message: string,
   ): Promise<void> {
     const participant = await manager.findOne(TripParticipant, {
       where: { tripId, userId },
     });
 
     if (participant === null || participant.status !== 'going') {
-      throw new BadRequestException(
-        'Жить в палатке может только тот, кто идёт в поход',
-      );
+      throw new BadRequestException(message);
     }
+  }
+
+  /** Место жительства занимает только тот, кто идёт. */
+  private async assertTraveler(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+  ): Promise<void> {
+    await this.assertGoing(
+      manager,
+      tripId,
+      userId,
+      'Жить в палатке может только тот, кто идёт в поход',
+    );
   }
 
   /**

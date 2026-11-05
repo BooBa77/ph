@@ -42,6 +42,7 @@ describe('Снаряжение похода (e2e)', () => {
   let memberId: string;
   let memberToken: string;
   let maybeId: string;
+  let maybeToken: string;
   let strangerId: string;
   let strangerToken: string;
 
@@ -150,6 +151,7 @@ describe('Снаряжение похода (e2e)', () => {
 
     const maybe = await login(maybeEmail);
     maybeId = maybe.id;
+    maybeToken = maybe.token;
 
     const stranger = await login(strangerEmail);
     strangerToken = stranger.token;
@@ -319,6 +321,34 @@ describe('Снаряжение похода (e2e)', () => {
 
   it('чужой предмет в свой поход не предложить: 404', async () => {
     await propose(organizerToken, potId).expect(404);
+  });
+
+  /**
+   * Ответ заказчику 03.11.2026: «могут ли не100%-участники предлагать своё
+   * снаряжение?» — **да**. Владелец палатки может взять её на группу, сам
+   * не идти, и тогда «пока не решил» — ещё не повод отбирать предложение.
+   * Но несущим он не становится: вещь ложится в «нераспределённые».
+   */
+  it('«пока не решил» предлагает своё снаряжение, но не становится несущим', async () => {
+    const item = await addGear(maybeToken, {
+      typeId: tentTypeId,
+      title: 'Палатка «пока не решил»',
+      weightGrams: 2000,
+    });
+
+    const response = await propose(maybeToken, item).expect(201);
+
+    expect(response.body.ownerUserId).toBe(maybeId);
+    expect(response.body.assignedUserId).toBeNull();
+    expect(response.body.status).toBe('proposed');
+
+    // Убираем за собой: следующие проверки ждут прежний список вещей.
+    await call(
+      'delete',
+      `/api/trips/${tripId}/gear/${response.body.id}`,
+      maybeToken,
+    ).expect(204);
+    await call('delete', `/api/gear/${item}`, maybeToken).expect(204);
   });
 
   it('повторное предложение того же предмета — 409', async () => {

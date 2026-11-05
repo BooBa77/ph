@@ -3,6 +3,8 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api/errors'
+import { useAuthStore } from '@/stores/auth'
+import type { User } from '@/api/types'
 import type { TripGearItem } from '@/types/gear'
 import type { RouteNight, RouteNightInput, Trip, TripRoute } from '@/types/trips'
 import TripRouteNights from '@/views/trips/TripRouteNights.vue'
@@ -68,6 +70,25 @@ vi.mock('@/api/gearTypes', () => ({
 const ME = 'demo-me'
 const ANNA = 'demo-anna'
 
+/**
+ * Смотрящий — идёт на 100%. «Спальник» виден только такому человеку
+ * (03.11.2026), а идущие приходят в ответе вкладки (`travelers`), поэтому
+ * фейк вкладки по умолчанию содержит его.
+ */
+function meUser(): User {
+  return {
+    id: ME,
+    displayName: 'Олег',
+    location: null,
+    avatarUrl: null,
+    gender: 'm',
+    isVegetarian: false,
+    allergies: null,
+    sportExperience: null,
+    isAdmin: false,
+  }
+}
+
 function trip(dates: Partial<Pick<Trip, 'startsAt' | 'endsAt'>> = {}): Trip {
   return { id: '1', organizerUserId: ME, ...dates } as Trip
 }
@@ -85,7 +106,7 @@ function emptyRoute(overrides: Partial<TripRoute> = {}): TripRoute {
     nights: [],
     sleeping: [],
     lodgers: [],
-    travelers: [],
+    travelers: [{ userId: ME, displayName: 'Олег' }],
     ...overrides,
   }
 }
@@ -204,6 +225,7 @@ describe('плашки ночёвок', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
+    useAuthStore().setAuth(meUser(), 'token')
     mocks.listParticipants.mockResolvedValue([])
     mocks.listTripGear.mockResolvedValue(gearList([]))
     mocks.saveRouteNights.mockImplementation((_: string, nights: RouteNightInput[]) =>
@@ -372,6 +394,17 @@ describe('плашки ночёвок', () => {
     const section = wrapper.get('[data-test="route-sleeping-section"]')
     expect(section.classes()).toContain('bg-blue-100')
     expect(section.get('summary').classes()).toContain('text-blue-900')
+  })
+
+  it('«Спальник» не виден тому, кто идёт не на 100%', async () => {
+    // Палатка есть, но смотрящего нет среди идущих: личная секция не его.
+    const wrapper = await mounted(
+      trip(),
+      emptyRoute({ nights: [routeNight({ kind: 'tent' })], travelers: [] }),
+    )
+
+    expect(wrapper.find('[data-test="route-tents-section"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="route-sleeping-section"]').exists()).toBe(false)
   })
 
   it('«Палатки» подписаны словами заказчика, а в «Готовке» лишнего текста нет', async () => {
@@ -593,6 +626,7 @@ describe('один вариант на ночь', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
+    useAuthStore().setAuth(meUser(), 'token')
     mocks.listParticipants.mockResolvedValue([])
     mocks.listTripGear.mockResolvedValue(gearList([]))
     mocks.saveRouteNights.mockImplementation((_: string, nights: RouteNightInput[]) =>
@@ -625,6 +659,7 @@ describe('сохранение на лету', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
+    useAuthStore().setAuth(meUser(), 'token')
     mocks.listParticipants.mockResolvedValue([])
     mocks.listTripGear.mockResolvedValue(gearList([]))
     mocks.saveRouteNights.mockImplementation((_: string, nights: RouteNightInput[]) =>

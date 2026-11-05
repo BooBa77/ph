@@ -502,6 +502,44 @@ describe('Питание похода (e2e)', () => {
       .expect(403);
   });
 
+  /**
+   * Заказчик 03.11.2026: «общественную раскладку может составлять завхоз
+   * с любым статусом готовности, он может быть приглашённым». Право даёт
+   * роль, а не участие, поэтому «пока не решил» общий котёл ведёт. Личная
+   * еда — наоборот, только у 100% идущего.
+   */
+  it('завхоз со статусом «пока не решил» ведёт общую раскладку, но не личную', async () => {
+    await call('patch', `/api/trips/${tripId}/participants/me`, memberToken)
+      .send({ status: 'maybe' })
+      .expect(200);
+
+    // Общая раскладка: роль завхоза в силе. Блюдо своё, поэтому 201.
+    await call('post', `/api/trips/${tripId}/meals/1/dinner/dishes`, memberToken)
+      .send({ dishId: memberDishId })
+      .expect(201);
+    // Убираем за собой: следующие проверки считают общий вес.
+    await call(
+      'delete',
+      `/api/trips/${tripId}/meals/1/dinner/dishes/${memberDishId}`,
+      memberToken,
+    ).expect(200);
+
+    // Личная еда недоступна: «пока не решил» ещё не едок.
+    await call('get', `/api/trips/${tripId}/my-meal-plan`, memberToken).expect(400);
+    await call(
+      'post',
+      `/api/trips/${tripId}/my-meals/1/dinner/lines`,
+      memberToken,
+    )
+      .send({ amount: 1, name: 'e2e-личное-в-пути' })
+      .expect(400);
+
+    // Возвращаем статус для следующих проверок.
+    await call('patch', `/api/trips/${tripId}/participants/me`, memberToken)
+      .send({ status: 'going' })
+      .expect(200);
+  });
+
   it('отдельное питание выключает человека из едоков', async () => {
     await call(
       'patch',

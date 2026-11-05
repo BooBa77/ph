@@ -1,3 +1,4 @@
+import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -54,6 +55,9 @@ describe('вкладка «Ночёвки»', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // «Ночёвки» спрашивают, идёт ли смотрящий (секция «Спальник»), — это
+    // Pinia-стор авторизации, поэтому он нужен и здесь.
+    setActivePinia(createPinia())
     mocks.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
     mocks.fetchTripRoute.mockResolvedValue({
       canEdit: true,
