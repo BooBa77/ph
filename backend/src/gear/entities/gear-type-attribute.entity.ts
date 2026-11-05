@@ -68,6 +68,10 @@ import { GearType } from './gear-type.entity';
   `"unit" IS NULL OR (btrim("unit") <> '' AND char_length("unit") <= 20)`,
 )
 @Check(
+  'chk_gear_type_attributes_placeholder',
+  `"placeholder" IS NULL OR (btrim("placeholder") <> '' AND char_length("placeholder") <= 100)`,
+)
+@Check(
   'chk_gear_type_attributes_allow_custom',
   `"allow_custom_value" = false OR "value_kind" = 'select'`,
 )
@@ -103,6 +107,15 @@ export class GearTypeAttribute {
   /** Единица: «мест», «см», «л». Только для показа рядом со значением. */
   @Column({ type: 'text', nullable: true })
   unit: string | null;
+
+  /**
+   * Подсказка внутри поля значения: «например, 3», «резьбовой / цанговый».
+   *
+   * `NULL` — подсказки нет. Пишет её админ в карточке характеристики: набор
+   * характеристик у каждого типа свой, и универсальная подсказка врала бы.
+   */
+  @Column({ type: 'text', nullable: true })
+  placeholder: string | null;
 
   /**
    * Разрешить своё значение вместо выбора из списка.

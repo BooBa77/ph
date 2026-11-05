@@ -738,6 +738,22 @@ await check(
 );
 
 await check(
+  'характеристика: пустой placeholder запрещён (btrim)',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind, placeholder)
+   VALUES ($1, 'empty_hint', 'Пустая подсказка', 'text', '')`,
+  [gearTentId],
+);
+
+await check(
+  'характеристика: placeholder длиннее 100 символов запрещён',
+  'fail',
+  `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind, placeholder)
+   VALUES ($1, 'long_hint', 'Длинная подсказка', 'text', repeat('я', 101))`,
+  [gearTentId],
+);
+
+await check(
   'характеристика: код повторно у того же типа запрещён',
   'fail',
   `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)

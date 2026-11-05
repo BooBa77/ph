@@ -18,6 +18,7 @@ import {
   GearAdminTypeListDto,
   GearTypeDto,
   GearTypeListDto,
+  SaveGearAttributeOptionDto,
   UpdateGearAttributeOptionDto,
   UpdateGearTypeAttributeDto,
   UpdateGearTypeDto,
@@ -260,6 +261,7 @@ export class GearTypesService {
             name,
             valueKind: dto.valueKind,
             unit: this.normalizeUnit(dto.unit),
+            placeholder: this.normalizePlaceholder(dto.placeholder),
             allowCustomValue,
             isRequired,
             isActive: true,
@@ -313,13 +315,20 @@ export class GearTypesService {
   }
 
   /**
-   * Правка характеристики: имя, единица, обязательность, порядок, архив,
-   * «разрешить своё значение».
+   * Правка характеристики: имя, единица, плейсхолдер, обязательность,
+   * порядок, архив, «разрешить своё значение» и варианты списка.
    *
    * `valueKind` не меняется даже на «тот же самый»: 409. Смена вида
    * означала бы перенос уже записанных в Stage B значений, а правило
-   * ставят сразу, чтобы контракт не менялся между шагами. Варианты правятся
-   * отдельными ручками (`options` в теле — 400).
+   * ставят сразу, чтобы контракт не менялся между шагами.
+   *
+   * **Варианты — полным набором** (03.11.2026). Заказчик: «редактирование
+   * характеристики не даёт изменять варианты… не удобно. Есть ещё варианты
+   * кроме „по-новой“?» — теперь в карточке характеристики правятся и они:
+   * добавить, переименовать, переставить и убрать в архив одним сохранением,
+   * в той же транзакции. Отдельные ручки вариантов продолжают работать:
+   * ими пользуются чипы в строке. Существующий вариант, которого нет в теле,
+   * не трогается — архивирует только явный `isActive: false`.
    */
   async updateAttribute(
     userId: string,
@@ -339,20 +348,25 @@ export class GearTypesService {
         'Вид характеристики менять нельзя: заведите в архив и новую характеристику с новым кодом',
       );
     }
-    if (dto.options !== undefined) {
-      throw new BadRequestException(
-        'Варианты списка меняются отдельными ручками: добавьте вариант, переименуйте или уберите его в архив',
-      );
-    }
 
     const manager = this.dataSource.manager;
     await this.findType(manager, typeId);
     const attribute = await this.findAttribute(manager, typeId, attributeId);
 
-    const activeOptionNames = await this.activeOptionNames(
-      manager,
-      attribute.id,
-    );
+    if (
+      dto.options !== undefined &&
+      dto.options.length > 0 &&
+      attribute.valueKind !== 'select'
+    ) {
+      throw new BadRequestException(
+        'Варианты бывают только у характеристики-списка',
+      );
+    }
+
+    const activeOptionNames =
+      dto.options === undefined
+        ? await this.activeOptionNames(manager, attribute.id)
+        : await this.optionNamesAfter(manager, attribute.id, dto.options);
     const allowCustomValue =
       dto.allowCustomValue ?? attribute.allowCustomValue;
 
@@ -363,7 +377,11 @@ export class GearTypesService {
     }
     // Запретить своё значение, не оставив ни одного варианта, — значит
     // сделать характеристику невыбираемой. Разрешаем только при живом списке.
+    // Если в этом же запросе пришёл набор вариантов, проверку сделает
+    // `replaceOptions` по итоговому состоянию — иначе она смотрела бы
+    // на старый список и запрещала бы законную правку.
     if (
+      dto.options === undefined &&
       dto.allowCustomValue === false &&
       attribute.valueKind === 'select' &&
       activeOptionNames.length === 0
@@ -389,6 +407,9 @@ export class GearTypesService {
 
     if (dto.name !== undefined) attribute.name = this.normalizeName(dto.name);
     if (dto.unit !== undefined) attribute.unit = this.normalizeUnit(dto.unit);
+    if (dto.placeholder !== undefined) {
+      attribute.placeholder = this.normalizePlaceholder(dto.placeholder);
+    }
     if (dto.allowCustomValue !== undefined) {
       attribute.allowCustomValue = dto.allowCustomValue;
     }
@@ -396,11 +417,14 @@ export class GearTypesService {
     if (dto.isActive !== undefined) attribute.isActive = dto.isActive;
     if (dto.sortOrder !== undefined) attribute.sortOrder = dto.sortOrder;
 
-    // Обязательность и замещающее значение пишутся вместе: включили
-    // обязательность — пустые значения у существующих вещей заполнились,
-    // иначе «обязательная» характеристика осталась бы с дырой.
+    // Характеристика, её варианты и замещающее значение пишутся вместе:
+    // один запрос — одно состояние справочника.
     await this.dataSource.transaction(async (tx) => {
       await tx.save(attribute);
+
+      if (dto.options !== undefined) {
+        await this.replaceOptions(tx, attribute, dto.options);
+      }
 
       if (
         attribute.isRequired &&
@@ -492,9 +516,9 @@ export class GearTypesService {
    * Правка варианта: имя, порядок, архив.
    *
    * `code` неизменяем (400), как у типов и характеристик: на него будут
-   * опираться фильтры, а имя переименовывается свободно. В Stage B это
-   * переименование обязано одной транзакцией обновить и сохранённые значения
-   * (`text_value` хранит имя варианта) — правило записано в документации.
+   * опираться фильтры, а имя переименовывается свободно. Переименование
+   * одной транзакцией обновляет и сохранённые значения вещей: в Stage B
+   * `text_value` хранит **имя** варианта.
    */
   async updateOption(
     userId: string,
@@ -516,9 +540,12 @@ export class GearTypesService {
     const attribute = await this.findAttribute(manager, typeId, attributeId);
     const option = await this.findOption(manager, attributeId, optionId);
 
+    let renamedFrom: string | null = null;
+
     if (dto.name !== undefined) {
       const name = this.normalizeName(dto.name);
       await this.assertOptionNameFree(manager, attribute.id, name, option.id);
+      if (name !== option.name) renamedFrom = option.name;
       option.name = name;
     }
     if (dto.sortOrder !== undefined) option.sortOrder = dto.sortOrder;
@@ -527,7 +554,17 @@ export class GearTypesService {
     }
     if (dto.isActive !== undefined) option.isActive = dto.isActive;
 
-    return GearAdminAttributeOptionDto.fromAdmin(await manager.save(option));
+    const saved = await manager.save(option);
+    if (renamedFrom !== null) {
+      await this.renameOptionValues(
+        manager,
+        attribute.id,
+        renamedFrom,
+        option.name,
+      );
+    }
+
+    return GearAdminAttributeOptionDto.fromAdmin(saved);
   }
 
   /**
@@ -555,6 +592,200 @@ export class GearTypesService {
     await this.assertNotLastOption(manager, attribute);
     option.isActive = false;
     await manager.save(option);
+  }
+
+  /**
+   * Полный набор вариантов из карточки характеристики (03.11.2026).
+   *
+   * Пришедшие строки — это то, что админ видит в форме: у существующего
+   * варианта есть `id`, новый приходит без него. Существующий, которого нет
+   * в списке, остаётся как был: убрать вариант можно только явной снятой
+   * галочкой (`isActive: false`), поэтому «полная замена» никого не теряет
+   * молча. Так же, как у отдельных ручек: код неизменяем, имена не
+   * повторяются, а последний активный вариант у списка без своего значения
+   * убрать нельзя — иначе выбирать станет не из чего.
+   *
+   * **Переименование правит и значения вещей.** В Stage B имя варианта
+   * лежит в `gear_item_attributes.text_value`, поэтому переименование
+   * одной транзакцией обновляет и старые значения. Раньше это было записано
+   * в документации, но не сделано; правка набора сделала ошибку легкодостижимой
+   * — теперь она закрыта и здесь, и в одиночной ручке (`updateOption`).
+   */
+  private async replaceOptions(
+    manager: EntityManager,
+    attribute: GearTypeAttribute,
+    incoming: SaveGearAttributeOptionDto[],
+  ): Promise<void> {
+    if (attribute.valueKind !== 'select') {
+      if (incoming.length === 0) return;
+
+      throw new BadRequestException(
+        'Варианты бывают только у характеристики-списка',
+      );
+    }
+
+    const existing = await manager.find(GearAttributeOption, {
+      where: { gearTypeAttributeId: attribute.id },
+    });
+    const byId = new Map(existing.map((option) => [option.id, option]));
+    const touched = new Set<number>();
+
+    // Имена занятых вариантов, которых нет в теле: они не меняются и своё
+    // имя держат. Коды тоже заняты все — включая архивные.
+    const names = new Set(
+      existing
+        .filter((option) => !incoming.some((row) => row.id === option.id))
+        .map((option) => option.name.toLowerCase()),
+    );
+    const codes = new Set(existing.map((option) => option.code));
+
+    /** Что делать по каждой строке: правка существующего или новый вариант. */
+    const plan: Array<{
+      option: GearAttributeOption | null;
+      code: string;
+      name: string;
+      sortOrder?: number;
+      isActive?: boolean;
+    }> = [];
+
+    for (const row of incoming) {
+      if (row.id !== undefined) {
+        const option = byId.get(row.id);
+        if (option === undefined) {
+          throw new BadRequestException(
+            'Такого варианта у характеристики нет',
+          );
+        }
+        if (touched.has(row.id)) {
+          throw new BadRequestException('Вариант указан в списке дважды');
+        }
+        if (row.code !== undefined && row.code.trim() !== option.code) {
+          throw new BadRequestException(
+            'Код варианта менять нельзя: ошибку исправляют архивом и новым вариантом с новым кодом',
+          );
+        }
+
+        // Имя можно не повторять: пришёл только архив — вариант его сохраняет.
+        const name =
+          row.name === undefined ? option.name : this.normalizeName(row.name);
+
+        if (names.has(name.toLowerCase())) {
+          throw new ConflictException(
+            `Вариант с названием «${name}» повторяется: значения хранятся текстом, два одинаковых имени неразличимы`,
+          );
+        }
+
+        names.add(name.toLowerCase());
+        touched.add(row.id);
+        plan.push({
+          option,
+          code: option.code,
+          name,
+          sortOrder: row.sortOrder,
+          isActive: row.isActive,
+        });
+      } else {
+        if (row.code === undefined || row.name === undefined) {
+          throw new BadRequestException(
+            'Новому варианту нужны код и название: код — латиница, начиная с буквы',
+          );
+        }
+
+        const code = this.normalizeCode(row.code);
+        const name = this.normalizeName(row.name);
+        if (codes.has(code)) throw this.duplicateOption(code);
+        if (names.has(name.toLowerCase())) {
+          throw new ConflictException(
+            `Вариант с названием «${name}» повторяется: значения хранятся текстом, два одинаковых имени неразличимы`,
+          );
+        }
+
+        codes.add(code);
+        names.add(name.toLowerCase());
+        plan.push({
+          option: null,
+          code,
+          name,
+          sortOrder: row.sortOrder,
+          isActive: row.isActive,
+        });
+      }
+    }
+
+    // Итоговое число активных: нетронутые + пришедшие со своим состоянием.
+    let active = existing.filter(
+      (option) => option.isActive && !touched.has(option.id),
+    ).length;
+    for (const item of plan) {
+      const state = item.isActive ?? item.option?.isActive ?? true;
+      if (state) active += 1;
+    }
+
+    if (active > GEAR_OPTIONS_MAX) {
+      throw new BadRequestException(
+        `Вариантов не может быть больше ${GEAR_OPTIONS_MAX}`,
+      );
+    }
+    if (attribute.isActive && !attribute.allowCustomValue && active === 0) {
+      throw new ConflictException(
+        'Нельзя убрать последний вариант: выбирать будет не из чего. Разрешите своё значение или уберите характеристику в архив',
+      );
+    }
+
+    for (const item of plan) {
+      const option = item.option;
+
+      if (option === null) {
+        await manager.save(
+          manager.create(GearAttributeOption, {
+            gearTypeAttributeId: attribute.id,
+            code: item.code,
+            name: item.name,
+            isActive: item.isActive ?? true,
+            sortOrder: item.sortOrder ?? 0,
+          }),
+        );
+
+        continue;
+      }
+
+      const oldName = option.name;
+      option.name = item.name;
+      if (item.sortOrder !== undefined) option.sortOrder = item.sortOrder;
+      if (item.isActive !== undefined) option.isActive = item.isActive;
+
+      await manager.save(option);
+
+      if (oldName !== option.name) {
+        await this.renameOptionValues(
+          manager,
+          attribute.id,
+          oldName,
+          option.name,
+        );
+      }
+    }
+  }
+
+  /**
+   * Переименование варианта догоняет значения вещей.
+   *
+   * У списка в `text_value` лежит **имя**, а не код: без этого `UPDATE`
+   * старая вещь осталась бы со снятым с учёта именем и выпала из фильтра.
+   */
+  private async renameOptionValues(
+    manager: EntityManager,
+    attributeId: number,
+    from: string,
+    to: string,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE gear_item_attributes
+          SET text_value = $1
+        WHERE gear_type_attribute_id = $2
+          AND text_value = $3`,
+      [to, attributeId, from],
+    );
   }
 
   /**
@@ -766,6 +997,22 @@ export class GearTypesService {
     if (unit === undefined || unit === null) return null;
 
     const trimmed = unit.trim();
+
+    return trimmed.length === 0 ? null : trimmed;
+  }
+
+  /**
+   * Плейсхолдер: как единица — пустое значение это «нет подсказки», а не `''`.
+   *
+   * Длина ограничена CHECK-ом в базе и DTO: это короткий пример в поле,
+   * а не описание характеристики.
+   */
+  private normalizePlaceholder(
+    placeholder: string | null | undefined,
+  ): string | null {
+    if (placeholder === undefined || placeholder === null) return null;
+
+    const trimmed = placeholder.trim();
 
     return trimmed.length === 0 ? null : trimmed;
   }
@@ -993,6 +1240,43 @@ export class GearTypesService {
     });
 
     return options.map((option) => option.name);
+  }
+
+  /**
+   * Названия активных вариантов **после** правки набора из того же запроса.
+   *
+   * Замещающее значение проверяется по новому списку, а не по старому:
+   * иначе переименование варианта и включение обязательности одним
+   * сохранением упирались бы в 400 «такого варианта нет». Сами варианты
+   * проверит `replaceOptions` — здесь нужны только их имена.
+   */
+  private async optionNamesAfter(
+    manager: EntityManager,
+    attributeId: number,
+    incoming: SaveGearAttributeOptionDto[],
+  ): Promise<string[]> {
+    const existing = await manager.find(GearAttributeOption, {
+      where: { gearTypeAttributeId: attributeId },
+      order: { sortOrder: 'ASC', id: 'ASC' },
+    });
+    const touched = new Set(
+      incoming
+        .map((row) => row.id)
+        .filter((id): id is number => id !== undefined),
+    );
+
+    const names = existing
+      .filter((option) => option.isActive && !touched.has(option.id))
+      .map((option) => option.name);
+
+    for (const row of incoming) {
+      const previous = existing.find((option) => option.id === row.id);
+      const active = row.isActive ?? previous?.isActive ?? true;
+      const name = (row.name ?? previous?.name ?? '').trim();
+      if (active && name !== '') names.push(name);
+    }
+
+    return names;
   }
 
   /** Два варианта с одинаковым именем сделали бы значение неоднозначным. */

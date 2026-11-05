@@ -114,6 +114,13 @@ export interface GearTypeAttribute {
   /** Единица измерения: «мест», «см», «л». `null` — без единицы. */
   unit: string | null
   /**
+   * Подсказка в пустом поле значения (03.11.2026): «например, 3»,
+   * «резьбовой / цанговый». `null` — подсказки нет. Необязательное поле
+   * в типе, чтобы старые фейки тестов не пришлось учить: сервер его всегда
+   * присылает.
+   */
+  placeholder?: string | null
+  /**
    * Разрешить своё значение вместо выбора из списка.
    *
    * Только у `valueKind = 'select'`: у числа, строки и галочки бэкенд
@@ -196,6 +203,8 @@ export interface CreateGearAttributeInput {
   name: string
   valueKind: GearValueKind
   unit?: string | null
+  /** Подсказка в пустом поле значения: «например, 3». */
+  placeholder?: string | null
   isRequired?: boolean
   /** Только при `valueKind: 'select'`; с числом и галочкой сервер — 400. */
   allowCustomValue?: boolean
@@ -211,17 +220,36 @@ export interface CreateGearAttributeInput {
  *
  * `code` и `valueKind` не входят: код неизменяем (400), вид — 409, даже если
  * прислать тот же самый. Исправление — архив и новая характеристика.
- * Варианты тоже не входят: у них отдельные ручки, `options` в теле — 400.
+ * **Варианты входят полным набором** (03.11.2026): в карточке характеристики
+ * их можно добавить, переименовать, переставить и убрать в архив одним
+ * сохранением. Существующий вариант, которого нет в списке, не меняется;
+ * архивирует только явный `isActive: false`.
  */
 export interface UpdateGearAttributeInput {
   name?: string
   unit?: string | null
+  placeholder?: string | null
   isRequired?: boolean
   allowCustomValue?: boolean
   isActive?: boolean
   sortOrder?: number
   /** Нужен при включении обязательности (`false → true`). */
   fillMissing?: number | string | boolean | null
+  options?: SaveGearAttributeOptionInput[]
+}
+
+/**
+ * Вариант в полной замене набора: `id` — существующий, без `id` — новый.
+ *
+ * `code` нужен только новому: код существующего варианта не меняется (400),
+ * он контракт для фильтров, как у типов и характеристик.
+ */
+export interface SaveGearAttributeOptionInput {
+  id?: number
+  code?: string
+  name: string
+  sortOrder?: number
+  isActive?: boolean
 }
 
 /**

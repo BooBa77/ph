@@ -137,7 +137,7 @@ function setChecked(code: string, event: Event): void {
           :data-test="`${prefix}-${attribute.code}`"
           @change="setText(attribute.code, $event)"
         >
-          <option value="">—</option>
+          <option value="">{{ attribute.placeholder || '—' }}</option>
           <option v-for="option in attribute.options" :key="option.id" :value="option.name">
             {{ option.name }}
           </option>
@@ -149,6 +149,7 @@ function setChecked(code: string, event: Event): void {
           :type="attribute.valueKind === 'number' ? 'number' : 'text'"
           :value="text(attribute.code)"
           :disabled="disabled"
+          :placeholder="attribute.placeholder ?? undefined"
           :inputmode="attribute.valueKind === 'number' ? 'decimal' : undefined"
           class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors hover:border-primary focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
           :data-test="`${prefix}-${attribute.code}`"
@@ -164,7 +165,7 @@ function setChecked(code: string, event: Event): void {
           type="text"
           :value="text(attribute.code)"
           :disabled="disabled"
-          placeholder="или своё значение"
+          :placeholder="attribute.placeholder ?? 'или своё значение'"
           class="w-full rounded-xl border border-dashed border-border bg-field px-3 py-2 text-base text-text transition-colors hover:border-primary focus:border-primary focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
           :data-test="`${prefix}-${attribute.code}-custom`"
           @input="setText(attribute.code, $event)"

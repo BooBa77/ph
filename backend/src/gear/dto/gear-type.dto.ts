@@ -111,6 +111,14 @@ export class GearTypeAttributeDto {
 
   @ApiProperty({
     description:
+      'Подсказка в пустом поле значения: «например, 3». null — подсказки нет',
+    example: 'например, 3',
+    nullable: true,
+  })
+  placeholder: string | null;
+
+  @ApiProperty({
+    description:
       'Разрешить своё значение вместо выбора из списка. Только у valueKind = select',
     example: false,
   })
@@ -135,6 +143,7 @@ export class GearTypeAttributeDto {
       name: attribute.name,
       valueKind: attribute.valueKind,
       unit: attribute.unit,
+      placeholder: attribute.placeholder,
       allowCustomValue: attribute.allowCustomValue,
       isRequired: attribute.isRequired,
       sortOrder: attribute.sortOrder,
@@ -440,6 +449,19 @@ export class CreateGearTypeAttributeDto {
 
   @ApiProperty({
     description:
+      'Подсказка в пустом поле значения: «например, 3». null — подсказки нет',
+    example: 'например, 3',
+    maxLength: 100,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsString({ message: 'Плейсхолдер должен быть строкой' })
+  @MaxLength(100, { message: 'Плейсхолдер не должен превышать 100 символов' })
+  placeholder?: string | null;
+
+  @ApiProperty({
+    description:
       'Обязательная характеристика. При true нужен fillMissing — замещающее значение',
     example: true,
     required: false,
@@ -513,6 +535,69 @@ export class CreateGearTypeAttributeDto {
 }
 
 /**
+ * Вариант в полной замене набора при правке характеристики (03.11.2026).
+ *
+ * `id` — существующий вариант: меняются имя, порядок и архив, код остаётся
+ * контрактом. Без `id` — новый: код обязателен и после создания не меняется,
+ * как и у отдельной ручки.
+ *
+ * Существующий вариант, которого нет в списке, **не трогается**: архивировать
+ * можно только явным `isActive: false`. Иначе полная замена молча унесла бы
+ * в архив всё, чего не оказалось в теле, — ровно та причина, по которой
+ * раньше «варианты меняются отдельными ручками».
+ */
+export class SaveGearAttributeOptionDto {
+  @ApiProperty({
+    description: 'Id существующего варианта; нет — новый',
+    required: false,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Id варианта должен быть числом' })
+  @Min(1, { message: 'Некорректный id варианта' })
+  id?: number;
+
+  @ApiProperty({
+    description: `${CODE_HINT}. Нужен только новому варианту`,
+    maxLength: GEAR_CODE_MAX_LENGTH,
+    required: false,
+  })
+  @IsOptional()
+  @IsString({ message: 'Код варианта должен быть строкой' })
+  @Matches(GEAR_CODE_PATTERN, { message: CODE_HINT })
+  @MaxLength(GEAR_CODE_MAX_LENGTH, {
+    message: `Код варианта не должен превышать ${GEAR_CODE_MAX_LENGTH} символов`,
+  })
+  code?: string;
+
+  @ApiProperty({
+    description:
+      'Название варианта: «резьбовой». У существующего можно не повторять — тогда оно не меняется',
+    maxLength: 100,
+    required: false,
+  })
+  @IsOptional()
+  @IsString({ message: 'Название варианта должно быть строкой' })
+  @MaxLength(100, {
+    message: 'Название варианта не должно превышать 100 символов',
+  })
+  name?: string;
+
+  @ApiProperty({ description: 'Порядок в списке', required: false })
+  @IsOptional()
+  @IsInt({ message: 'Порядок варианта должен быть целым числом' })
+  @Min(0, { message: 'Порядок варианта не может быть отрицательным' })
+  sortOrder?: number;
+
+  @ApiProperty({
+    description: 'true — активен, false — в архив',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Активность варианта должна быть boolean' })
+  isActive?: boolean;
+}
+
+/**
  * Тело `PATCH /api/gear/admin/types/:id/attributes/:attrId`.
  *
  * `code` и `valueKind` объявлены намеренно, как и в типе: код — 400,
@@ -552,9 +637,16 @@ export class UpdateGearTypeAttributeDto {
   unit?: string | null;
 
   @ApiProperty({
-    description: 'Обязательность. При включении (false → true) нужен fillMissing',
+    description:
+      'Подсказка в пустом поле значения. null — стереть подсказку',
+    maxLength: 100,
     required: false,
+    nullable: true,
   })
+  @IsOptional()
+  @IsString({ message: 'Плейсхолдер должен быть строкой' })
+  @MaxLength(100, { message: 'Плейсхолдер не должен превышать 100 символов' })
+  placeholder?: string | null;
   @IsOptional()
   @IsBoolean({ message: 'Обязательность должна быть boolean' })
   isRequired?: boolean;
@@ -569,20 +661,24 @@ export class UpdateGearTypeAttributeDto {
   allowCustomValue?: boolean;
 
   /**
-   * Варианты здесь не меняются.
+   * Варианты списка — полным набором, в одной транзакции с характеристикой.
    *
-   * Поле объявлено, чтобы админка получила причину («варианты меняются
-   * отдельными ручками»), а не общий отказ whitelist. Вариант добавляют,
-   * переименовывают и архивируют по одному — тогда каждое действие видно
-   * в ответе и в журнале, а замена «набора» целиком молча архивировала бы
-   * всё, чего не оказалось в теле.
+   * Админка правит их в карточке характеристики: добавить, переименовать,
+   * переставить и убрать в архив удобнее одним сохранением, чем тремя
+   * отдельными ручками. Отдельные ручки (`options` в админке вариантов)
+   * остаются: ими пользуются чипы в строке характеристики.
    */
   @ApiProperty({
-    description: 'Только для понятной ошибки: варианты меняются отдельными ручками',
+    description:
+      'Полный набор вариантов: существующие по id, новые без id. Отсутствующие существующие не меняются',
+    type: [SaveGearAttributeOptionDto],
     required: false,
   })
   @IsOptional()
-  options?: unknown;
+  @IsArray({ message: 'Варианты должны быть списком' })
+  @ValidateNested({ each: true })
+  @Type(() => SaveGearAttributeOptionDto)
+  options?: SaveGearAttributeOptionDto[];
 
   @ApiProperty({
     description: 'true — вернуть из архива, false — в архив',

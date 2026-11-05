@@ -574,13 +574,124 @@ describe('Варианты характеристик-списков (e2e)', () 
     expect(options.every((option) => !option.isActive)).toBe(true);
   });
 
-  it('варианты в PATCH характеристики — 400: у них отдельные ручки', async () => {
+  it('варианты в PATCH характеристики: полный набор — переименование, архив и новый', async () => {
+    const created = await createAttribute({
+      code: 'mount',
+      name: 'Крепление',
+      valueKind: 'select',
+      options: [
+        { code: 'left', name: 'левое', sortOrder: 10 },
+        { code: 'right', name: 'правое', sortOrder: 20 },
+      ],
+    });
+
+    const left = created.options.find((option) => option.code === 'left');
+    const right = created.options.find((option) => option.code === 'right');
+    if (!left || !right) throw new Error('Варианты не создались');
+
+    const patched = await call(
+      'patch',
+      `/api/gear/admin/types/${typeId}/attributes/${created.id}`,
+      adminToken,
+      {
+        options: [
+          { id: left.id, name: 'левое-крайнее' },
+          { id: right.id, isActive: false },
+          { code: 'center', name: 'центральное', sortOrder: 5 },
+        ],
+      },
+    ).expect(200);
+
+    const options = (patched.body as AttributeRow).options;
+    expect(
+      options.map((option) => [option.code, option.name, option.isActive]),
+    ).toEqual([
+      ['center', 'центральное', true],
+      ['left', 'левое-крайнее', true],
+      ['right', 'правое', false],
+    ]);
+  });
+
+  it('варианты в PATCH: последний активный убрать нельзя, у не-списка — 400', async () => {
+    const created = await createAttribute({
+      code: 'mount2',
+      name: 'Крепление 2',
+      valueKind: 'select',
+      options: [{ code: 'only', name: 'единственное' }],
+    });
+    const only = created.options[0];
+
+    if (!only) throw new Error('Вариант не создался');
+
     await call(
       'patch',
-      `/api/gear/admin/types/${typeId}/attributes/${listId}`,
+      `/api/gear/admin/types/${typeId}/attributes/${created.id}`,
       adminToken,
-      { options: [] },
+      { options: [{ id: only.id, name: 'единственное', isActive: false }] },
+    ).expect(409);
+
+    const number = await createAttribute({
+      code: 'mass2',
+      name: 'Масса 2',
+      valueKind: 'number',
+    });
+
+    await call(
+      'patch',
+      `/api/gear/admin/types/${typeId}/attributes/${number.id}`,
+      adminToken,
+      { options: [{ code: 'heavy', name: 'тяжёлая' }] },
     ).expect(400);
+  });
+
+  it('переименование варианта догоняет записанные значения вещей', async () => {
+    const created = await createAttribute({
+      code: 'finish',
+      name: 'Отделка',
+      valueKind: 'select',
+      options: [{ code: 'smooth', name: 'гладкая' }],
+    });
+    const smooth = created.options[0];
+
+    if (!smooth) throw new Error('Вариант не создался');
+
+    // Вещь типа «Отделка» со значением «гладкая»: так значение и выглядит
+    // в базе — текстом имени варианта.
+    const ownerId = (
+      await dataSource.query(
+        `INSERT INTO users (display_name) VALUES ('e2e отделка') RETURNING id`,
+      )
+    )[0].id;
+    const itemId = (
+      await dataSource.query(
+        `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+         VALUES ($1, $2, 'e2e отделка') RETURNING id`,
+        [ownerId, typeId],
+      )
+    )[0].id;
+    await dataSource.query(
+      `INSERT INTO gear_item_attributes
+         (gear_item_id, gear_type_attribute_id, text_value)
+       VALUES ($1, $2, 'гладкая')`,
+      [itemId, created.id],
+    );
+
+    await call(
+      'patch',
+      `/api/gear/admin/types/${typeId}/attributes/${created.id}`,
+      adminToken,
+      { options: [{ id: smooth.id, name: 'ровная' }] },
+    ).expect(200);
+
+    const stored = await dataSource.query(
+      `SELECT text_value FROM gear_item_attributes
+        WHERE gear_item_id = $1 AND gear_type_attribute_id = $2`,
+      [itemId, created.id],
+    );
+    expect(stored[0].text_value).toBe('ровная');
+
+    await dataSource.query('DELETE FROM gear_items WHERE id = $1', [itemId]);
+    await dataSource.query('DELETE FROM users WHERE id = $1', [ownerId]);
   });
 
   // ─────────────────────── вложенность и 404 ───────────────────────

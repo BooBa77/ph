@@ -272,6 +272,57 @@ describe('Типы снаряжения (e2e)', () => {
     expect(response.body.unit).toBeNull();
   });
 
+  /**
+   * Плейсхолдер (03.11.2026): админ пишет подсказку сам, потому что набор
+   * характеристик у каждого типа свой. Пустая строка — это «стереть»,
+   * а не пустая подсказка в базе: CHECK её не пропустит.
+   */
+  it('плейсхолдер создаётся, правится и стирается пустым', async () => {
+    const created = await call(
+      'post',
+      `/api/gear/admin/types/${typeId}/attributes`,
+      adminToken,
+      {
+        code: 'volume',
+        name: 'Объём',
+        valueKind: 'number',
+        placeholder: 'например, 3',
+      },
+    ).expect(201);
+
+    expect(created.body.placeholder).toBe('например, 3');
+
+    const patched = await call(
+      'patch',
+      `/api/gear/admin/types/${typeId}/attributes/${created.body.id}`,
+      adminToken,
+      { placeholder: 'например, 5' },
+    ).expect(200);
+
+    expect(patched.body.placeholder).toBe('например, 5');
+
+    const cleared = await call(
+      'patch',
+      `/api/gear/admin/types/${typeId}/attributes/${created.body.id}`,
+      adminToken,
+      { placeholder: '   ' },
+    ).expect(200);
+
+    expect(cleared.body.placeholder).toBeNull();
+
+    await call(
+      'post',
+      `/api/gear/admin/types/${typeId}/attributes`,
+      adminToken,
+      {
+        code: 'long_hint',
+        name: 'Длинная подсказка',
+        valueKind: 'text',
+        placeholder: 'x'.repeat(101),
+      },
+    ).expect(400);
+  });
+
   it('вид значения вне number/text/bool — 400', async () => {
     await call(
       'post',

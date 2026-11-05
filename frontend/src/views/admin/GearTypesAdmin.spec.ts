@@ -314,6 +314,7 @@ describe('GearTypesAdmin', () => {
       name: 'Объём',
       valueKind: 'number',
       unit: 'л',
+      placeholder: null,
       isRequired: true,
       sortOrder: 0,
       fillMissing: 5,
@@ -355,6 +356,7 @@ describe('GearTypesAdmin', () => {
     expect(mocked.updateGearTypeAttribute).toHaveBeenCalledWith(1, 1, {
       name: 'Вместимость мест',
       unit: 'мест',
+      placeholder: null,
       isRequired: true,
       sortOrder: 0,
       isActive: true,
@@ -390,6 +392,7 @@ describe('GearTypesAdmin', () => {
     expect(mocked.updateGearTypeAttribute).toHaveBeenCalledWith(1, 3, {
       name: 'Длина',
       unit: null,
+      placeholder: null,
       isRequired: true,
       sortOrder: 0,
       isActive: true,
@@ -526,6 +529,7 @@ describe('GearTypesAdmin', () => {
       name: 'Соединение',
       valueKind: 'select',
       unit: null,
+      placeholder: null,
       isRequired: false,
       sortOrder: 0,
       allowCustomValue: false,
@@ -554,6 +558,7 @@ describe('GearTypesAdmin', () => {
       name: 'Топливо',
       valueKind: 'select',
       unit: null,
+      placeholder: null,
       isRequired: false,
       sortOrder: 0,
       allowCustomValue: true,
@@ -616,6 +621,96 @@ describe('GearTypesAdmin', () => {
     expect(mocked.createGearTypeAttribute).toHaveBeenCalledWith(
       1,
       expect.objectContaining({ fillMissing: 'прямой', isRequired: true }),
+    )
+  })
+
+  it('в правке характеристики варианты правятся полным набором', async () => {
+    const wrapper = await mountAdmin([makeType({ attributes: [makeListAttribute()] })])
+
+    await wrapper.find('[data-test="attribute-edit"]').trigger('click')
+
+    // В форме видны оба варианта, включая архивный: строка и код не теряются.
+    const rows = wrapper.findAll('[data-test="option-draft"]')
+    expect(rows).toHaveLength(2)
+    expect(
+      (rows[0]!.find('[data-test="option-draft-code"]').element as HTMLInputElement).disabled,
+    ).toBe(true)
+    expect(
+      (rows[1]!.find('[data-test="option-draft-active"]').element as HTMLInputElement).checked,
+    ).toBe(false)
+
+    // Переименовали существующий и добавили новый — одним сохранением.
+    await rows[0]!.find('[data-test="option-draft-name"]').setValue('резьбовое')
+    await wrapper.find('[data-test="option-draft-add"]').trigger('click')
+
+    const added = wrapper.findAll('[data-test="option-draft"]')[2]!
+    await added.find('[data-test="option-draft-code"]').setValue(' gravity ')
+    await added.find('[data-test="option-draft-name"]').setValue(' гравитационный ')
+    await wrapper.find('[data-test="attr-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(mocked.updateGearTypeAttribute).toHaveBeenCalledWith(
+      1,
+      2,
+      expect.objectContaining({
+        options: [
+          { id: 11, name: 'резьбовое', sortOrder: 10, isActive: true },
+          { id: 12, name: 'цанговый', sortOrder: 20, isActive: false },
+          { code: 'gravity', name: 'гравитационный', sortOrder: 0, isActive: true },
+        ],
+      }),
+    )
+    expect(wrapper.find('[data-test="attr-form"]').exists()).toBe(false)
+  })
+
+  it('в правке нельзя оставить список без активных вариантов', async () => {
+    const wrapper = await mountAdmin([
+      makeType({
+        attributes: [
+          makeListAttribute({
+            options: [
+              { id: 11, code: 'thread', name: 'резьбовой', sortOrder: 10, isActive: true },
+            ],
+          }),
+        ],
+      }),
+    ])
+
+    await wrapper.find('[data-test="attribute-edit"]').trigger('click')
+    await wrapper.find('[data-test="option-draft-active"]').setValue(false)
+    await wrapper.find('[data-test="attr-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(mocked.updateGearTypeAttribute).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="attr-form-error"]').text()).toContain('выбирать будет не из чего')
+  })
+
+  it('плейсхолдер уходит в API при создании и при правке', async () => {
+    const wrapper = await mountAdmin()
+
+    await wrapper.find('[data-test="type-add-attribute"]').trigger('click')
+    await wrapper.find('[data-test="attr-form-code"]').setValue('volume')
+    await wrapper.find('[data-test="attr-form-name"]').setValue('Объём')
+    await wrapper.find('[data-test="attr-form-placeholder"]').setValue(' например, 3 ')
+    await wrapper.find('[data-test="attr-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(mocked.createGearTypeAttribute).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ placeholder: 'например, 3' }),
+    )
+
+    mocked.updateGearTypeAttribute.mockClear()
+    await wrapper.find('[data-test="attribute-edit"]').trigger('click')
+    await wrapper.find('[data-test="attr-form-placeholder"]').setValue('  ')
+    await wrapper.find('[data-test="attr-form"]').trigger('submit')
+    await flushPromises()
+
+    // Пустое поле — это «стереть подсказку», а не пустая строка в базе.
+    expect(mocked.updateGearTypeAttribute).toHaveBeenCalledWith(
+      1,
+      1,
+      expect.objectContaining({ placeholder: null }),
     )
   })
 
