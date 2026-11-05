@@ -336,19 +336,29 @@ async function toggleRecruitment() {
         </p>
       </header>
 
-      <!-- Вкладки: на десктопе сверху, в строку с переносом -->
-      <nav class="hidden flex-wrap gap-1 border-b border-border md:flex" aria-label="Разделы похода">
+      <!--
+        Вкладки: на десктопе сверху. Раньше это были подчёркнутые слова,
+        и заказчик 05.11.2026 сказал: «сделай кнопки закладок в виде
+        закладок или кнопок, а то сливается с текстом». Теперь это
+        сегментированная панель: у каждой вкладки рамка и фон, у активной —
+        заливка темой.
+      -->
+      <nav
+        class="hidden flex-wrap gap-1.5 rounded-2xl border border-border bg-surface p-1.5 md:flex"
+        aria-label="Разделы похода"
+      >
         <button
           v-for="item in displayTabs"
           :key="item.code"
           type="button"
-          class="-mb-px flex cursor-pointer items-center gap-1.5 border-b-2 bg-transparent px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+          class="flex cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2 text-sm transition-colors disabled:cursor-not-allowed disabled:opacity-50"
           :class="
             activeTab === item.code
-              ? 'border-primary font-medium text-primary'
-              : 'border-transparent text-muted hover:text-text'
+              ? 'border-primary bg-primary font-medium text-white shadow-sm'
+              : 'border-border bg-field text-text hover:border-primary hover:text-primary'
           "
           :disabled="!item.available"
+          :aria-current="activeTab === item.code ? 'page' : undefined"
           :title="item.available ? undefined : 'Вкладка ещё не готова'"
           :data-test="`tab-${item.code}`"
           @click="activeTab = item.code"
