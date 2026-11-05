@@ -8,6 +8,7 @@ import type {
   TripGearItem,
   TripGearList,
   TripGearRouteSection,
+  TripGearStatus,
 } from '@/types/gear'
 
 /**
@@ -258,6 +259,32 @@ export async function addManualTripGear(
 ): Promise<TripGearItem> {
   return apiFetch<TripGearItem>(`/trips/${tripId}/gear/manual`, {
     method: 'POST',
+    body: JSON.stringify(body),
+  })
+}
+
+/**
+ * Тело `PATCH /api/trips/:id/gear/:gearId` — «берём / не берём» и несущий.
+ *
+ * Два поля — два разных права (решение заказчика 21.10.2026): статус меняет
+ * тот, кто ведёт снаряжение (роль даёт вкладку), а несущего может поменять
+ * **любой участник** — перетаскивание вещи между рюкзаками он разрешил всем.
+ * `assignedUserId: null` освобождает вещь: «нераспределённая» — законное
+ * состояние, а не потерянная.
+ */
+export interface UpdateTripGearRequest {
+  status?: TripGearStatus
+  assignedUserId?: string | null
+}
+
+/** PATCH /api/trips/:id/gear/:gearId — статус и/или несущий. */
+export async function updateTripGear(
+  tripId: string,
+  gearId: string,
+  body: UpdateTripGearRequest,
+): Promise<TripGearItem> {
+  return apiFetch<TripGearItem>(`/trips/${tripId}/gear/${gearId}`, {
+    method: 'PATCH',
     body: JSON.stringify(body),
   })
 }

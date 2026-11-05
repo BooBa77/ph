@@ -120,6 +120,7 @@ async function mountTrip() {
         TripMeals: { template: '<div data-test="meals-stub" />' },
         TripTransfer: { template: '<div data-test="transfer-stub" />' },
         TripRoute: { template: '<div data-test="route-stub" />' },
+        TripGear: { template: '<div data-test="gear-stub" />' },
       },
     },
   })
@@ -177,6 +178,7 @@ describe('TripView и мобильное меню', () => {
     expect(items.find((item) => item.key === 'meals')?.available).toBe(true)
     expect(items.find((item) => item.key === 'transfer')?.available).toBe(true)
     expect(items.find((item) => item.key === 'route')?.available).toBe(true)
+    expect(items.find((item) => item.key === 'gear')?.available).toBe(true)
     expect(items.find((item) => item.key === 'sport')?.available).toBe(false)
   })
 
@@ -191,6 +193,17 @@ describe('TripView и мобильное меню', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="route-stub"]').exists()).toBe(true)
+  })
+
+  it('вкладка «Снаряжение» активна и показывает экран снаряжения', async () => {
+    const { wrapper } = await mountTrip()
+
+    useMobileMenuStore()
+      .context?.items.find((item) => item.key === 'gear')
+      ?.onSelect?.()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="gear-stub"]').exists()).toBe(true)
   })
 
   it('переключение из меню меняет вкладку на странице', async () => {

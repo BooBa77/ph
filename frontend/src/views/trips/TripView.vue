@@ -8,6 +8,7 @@ import { getPublicUser, type PublicUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
+import TripGear from '@/views/trips/TripGear.vue'
 import TripMeals from '@/views/trips/TripMeals.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
 import TripRoute from '@/views/trips/TripRoute.vue'
@@ -88,7 +89,7 @@ const organizer = ref<PublicUser | null>(null)
  * переименовал вкладку и попросил её активировать, таблица ночёвок —
  * следующий шаг.
  */
-const IMPLEMENTED: TripTabCode[] = ['guest', 'members', 'meals', 'transfer', 'route']
+const IMPLEMENTED: TripTabCode[] = ['guest', 'members', 'meals', 'transfer', 'route', 'gear']
 
 const permissions = ref<TripTabPermission[]>([])
 const activeTab = ref<TripTabCode>('guest')
@@ -113,6 +114,15 @@ const canManageRoles = computed(
 /** Править раскладку может завхоз или организатор: это же решает бэкенд. */
 const canEditMeals = computed(
   () => permissions.value.find((permission) => permission.code === 'meals')?.canEdit ?? false,
+)
+
+/**
+ * «Снаряжение» правит тот, кому роль дала вкладку (завхоз, ремонтник,
+ * организатор). Несущего при этом меняет любой участник — это решает
+ * не эта страница, а сервер (`PATCH .../gear/:gearId`, §5).
+ */
+const canEditGear = computed(
+  () => permissions.value.find((permission) => permission.code === 'gear')?.canEdit ?? false,
 )
 
 /**
@@ -367,9 +377,12 @@ async function toggleRecruitment() {
 
       <TripRoute v-else-if="activeTab === 'route'" :trip="trip" />
 
+      <TripGear v-else-if="activeTab === 'gear'" :trip="trip" :can-edit="canEditGear" />
+
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» ещё не готова:
-        сейчас работают «Гостевая», «Участники», «Ночёвки», «Питание» и «Трансфер».
+        сейчас работают «Гостевая», «Участники», «Ночёвки», «Питание», «Трансфер»
+        и «Снаряжение».
       </p>
 
       <!--
