@@ -6,7 +6,7 @@ import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 import TripGear from '@/views/trips/TripGear.vue'
 import type { Checklist, ChecklistItem, TripChecklists } from '@/types/checklists'
-import type { GearItem, TripGearItem } from '@/types/gear'
+import type { GearItem, TripGearItem, TripGearSection } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
 import type { User } from '@/api/types'
 
@@ -41,6 +41,9 @@ const mocks = vi.hoisted(() => ({
   updateChecklistItem: vi.fn(),
   deleteChecklistItem: vi.fn(),
   listTemplates: vi.fn(),
+  createTripGearSection: vi.fn(),
+  updateTripGearSection: vi.fn(),
+  removeTripGearSection: vi.fn(),
 }))
 
 vi.mock('@/api/gear', () => ({
@@ -51,6 +54,9 @@ vi.mock('@/api/gear', () => ({
   updateTripGear: mocks.updateTripGear,
   addManualTripGear: mocks.addManualTripGear,
   createGearItem: mocks.createGearItem,
+  createTripGearSection: mocks.createTripGearSection,
+  updateTripGearSection: mocks.updateTripGearSection,
+  removeTripGearSection: mocks.removeTripGearSection,
 }))
 
 vi.mock('@/api/tripChecklists', () => ({
@@ -149,16 +155,29 @@ function tripGearItem(
     isTripOnly: false,
     status: 'approved',
     routeSection: null,
+    sharedSectionId: null,
+    personalSectionId: null,
     assignedUserId: null,
     createdAt: '2026-10-29T10:00:00.000Z',
     ...overrides,
   }
 }
 
+function tripGearSection(
+  overrides: Partial<TripGearSection> & Pick<TripGearSection, 'id' | 'title'>,
+): TripGearSection {
+  return {
+    scope: 'shared',
+    ownerUserId: null,
+    parentId: null,
+    sortOrder: 10,
+    ...overrides,
+  }
+}
+
 function gearItem(
   overrides: Partial<GearItem> & Pick<GearItem, 'id' | 'typeCode' | 'typeName' | 'title'>,
-): GearItem {
-  return {
+): GearItem {  return {
     typeId: 1,
     groupId: 4,
     groupCode: 'other',
@@ -172,12 +191,16 @@ function gearItem(
   }
 }
 
-function tripGearList(items: TripGearItem[]): {
+function tripGearList(
+  items: TripGearItem[],
+  sections: TripGearSection[] = [],
+): {
   items: TripGearItem[]
+  sections: TripGearSection[]
   totalWeightGrams: number
   itemsWithoutWeight: number
 } {
-  return { items, totalWeightGrams: 0, itemsWithoutWeight: 0 }
+  return { items, sections, totalWeightGrams: 0, itemsWithoutWeight: 0 }
 }
 
 function checklistItem(
@@ -314,6 +337,30 @@ describe('вкладка «Снаряжение» похода', () => {
     mocks.listTripChecklists.mockResolvedValue(emptyChecklists())
     mocks.listTemplates.mockResolvedValue([])
     mocks.removeTripGear.mockResolvedValue(undefined)
+    mocks.createTripGearSection.mockImplementation(
+      async (
+        _tripId: string,
+        body: { scope: TripGearSection['scope']; title: string; parentId?: string | null },
+      ) =>
+        tripGearSection({
+          id: `new-${body.title}`,
+          title: body.title,
+          scope: body.scope,
+          ownerUserId: body.scope === 'personal' ? ME : null,
+          parentId: body.parentId ?? null,
+        }),
+    )
+    mocks.updateTripGearSection.mockImplementation(
+      async (
+        _tripId: string,
+        sectionId: string,
+        patch: { title?: string; sortOrder?: number; parentId?: string | null },
+      ) => ({
+        ...tripGearSection({ id: sectionId, title: 'Раздел' }),
+        ...patch,
+      }),
+    )
+    mocks.removeTripGearSection.mockResolvedValue(undefined)
     mocks.updateTripGear.mockImplementation(
       async (_tripId: string, gearId: string, body: Record<string, unknown>) => {
         const row = defaultItems().find((item) => item.id === gearId)
@@ -793,5 +840,153 @@ describe('вкладка «Снаряжение» похода', () => {
 
     expect(wrapper.find('[data-test="template-picker"]').exists()).toBe(true)
     expect(mocks.listTemplates).toHaveBeenCalled()
+  })
+
+  // ───────────────────────── разделы «Берём» и «Взял» (05.11.2026) ─────────────────────────
+
+  it('разделы из ответа показываются деревом, а вещи без раздела — в корне', async () => {
+    const items = defaultItems().map((item) =>
+      item.id === 'g2' ? { ...item, sharedSectionId: 's1' } : item,
+    )
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(items, [
+        tripGearSection({ id: 's1', title: 'Табор' }),
+        tripGearSection({ id: 's2', title: 'Альпинизм', sortOrder: 20 }),
+      ]),
+    )
+
+    const wrapper = await mounted(true)
+
+    const tabor = wrapper.get('[data-test="gear-section-s1"]')
+    expect(tabor.text()).toContain('Табор')
+    expect(tabor.find('[data-test="gear-taking-item-g2"]').exists()).toBe(true)
+    // Вещь без раздела осталась в корне, а не пропала.
+    expect(wrapper.find('[data-test="gear-taking-item-g1"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="gear-section-s2"]').text()).toContain('Альпинизм')
+  })
+
+  it('общественный раздел создаётся с корня и с подразделом', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(defaultItems(), [tripGearSection({ id: 's1', title: 'Пешка' })]),
+    )
+
+    const wrapper = await mounted(true)
+
+    await wrapper
+      .get('[data-test="gear-taking-sections"] [data-test="gear-section-add-root"]')
+      .trigger('click')
+    await wrapper.get('[data-test="gear-section-create-title"]').setValue('Альпинизм')
+    await wrapper.get('[data-test="gear-section-create-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.createTripGearSection).toHaveBeenCalledWith('1', {
+      scope: 'shared',
+      title: 'Альпинизм',
+      parentId: null,
+    })
+    expect(wrapper.text()).toContain('Альпинизм')
+
+    // Подраздел: «+ Подраздел» у раздела, родитель уходит в теле.
+    await wrapper.get('[data-test="gear-section-add-child-s1"]').trigger('click')
+    await wrapper.get('[data-test="gear-section-create-child-title-s1"]').setValue('Верёвки')
+    await wrapper
+      .get('[data-test="gear-section-create-child-form-s1"]')
+      .trigger('submit')
+    await flushPromises()
+
+    expect(mocks.createTripGearSection).toHaveBeenLastCalledWith('1', {
+      scope: 'shared',
+      title: 'Верёвки',
+      parentId: 's1',
+    })
+  })
+
+  it('личный раздел создаётся только в «Взял» и с личным видом', async () => {
+    const wrapper = await mounted()
+
+    await wrapper
+      .get('[data-test="gear-taken-sections"] [data-test="gear-section-add-root"]')
+      .trigger('click')
+    await wrapper.get('[data-test="gear-section-create-title"]').setValue('Обувь')
+    await wrapper.get('[data-test="gear-section-create-form"]').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.createTripGearSection).toHaveBeenCalledWith('1', {
+      scope: 'personal',
+      title: 'Обувь',
+      parentId: null,
+    })
+  })
+
+  it('раздел переименовывается и удаляется с экрана', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(defaultItems(), [tripGearSection({ id: 's1', title: 'Пешка' })]),
+    )
+
+    const wrapper = await mounted(true)
+    await wrapper.get('[data-test="gear-section-rename-open-s1"]').trigger('click')
+    await wrapper.get('[data-test="gear-section-rename-title-s1"]').setValue('Пешая часть')
+    await wrapper.get('[data-test="gear-section-rename-s1"]').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.updateTripGearSection).toHaveBeenCalledWith('1', 's1', {
+      title: 'Пешая часть',
+    })
+
+    await wrapper.get('[data-test="gear-section-remove-s1"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.removeTripGearSection).toHaveBeenCalledWith('1', 's1')
+    expect(wrapper.find('[data-test="gear-section-s1"]').exists()).toBe(false)
+  })
+
+  it('вещь переносится в раздел выпадающим списком — путь для телефона', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(defaultItems(), [tripGearSection({ id: 's1', title: 'Табор' })]),
+    )
+
+    const wrapper = await mounted(true)
+    await wrapper.get('[data-test="gear-taking-section-g1"]').setValue('s1')
+    await flushPromises()
+
+    expect(mocks.updateTripGear).toHaveBeenCalledWith('1', 'g1', { sharedSectionId: 's1' })
+  })
+
+  it('во «Взял» вещь раскладывается по своим личным разделам', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(defaultItems(), [
+        tripGearSection({
+          id: 'p1',
+          title: 'Одежда',
+          scope: 'personal',
+          ownerUserId: ME,
+        }),
+      ]),
+    )
+
+    const wrapper = await mounted()
+    await wrapper.get('[data-test="gear-taken-section-g1"]').setValue('p1')
+    await flushPromises()
+
+    expect(mocks.updateTripGear).toHaveBeenCalledWith('1', 'g1', {
+      personalSectionId: 'p1',
+    })
+  })
+
+  it('без прав на вкладку разделы «Берём» только читаются', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(defaultItems(), [tripGearSection({ id: 's1', title: 'Табор' })]),
+    )
+
+    const wrapper = await mounted(false)
+    const taking = wrapper.get('[data-test="gear-taking-sections"]')
+
+    expect(taking.find('[data-test="gear-section-s1"]').exists()).toBe(true)
+    expect(taking.find('[data-test="gear-section-add-root"]').exists()).toBe(false)
+    expect(taking.find('[data-test="gear-section-add-child-s1"]').exists()).toBe(false)
+    expect(taking.find('[data-test="gear-section-rename-open-s1"]').exists()).toBe(false)
+    expect(taking.find('[data-test="gear-section-remove-s1"]').exists()).toBe(false)
+    // И списка разделов у пилюли нет: раскладка — право вкладки.
+    expect(taking.find('[data-test="gear-taking-section-g1"]').exists()).toBe(false)
   })
 })

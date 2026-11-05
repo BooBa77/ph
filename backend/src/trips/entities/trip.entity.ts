@@ -292,6 +292,19 @@ export class Trip {
   @Column({ name: 'cancelled_at', type: 'timestamptz', nullable: true })
   cancelledAt: Date | null;
 
+  /**
+   * Когда общественные разделы вкладки «Снаряжение» засеяли шаблонами
+   * (05.11.2026).
+   *
+   * Шаблоны («Табор», «к Велосипедам») — стартовый набор, а не правило:
+   * заказчик просил, чтобы их можно было переименовать и удалить. Без
+   * отметки удалённый шаблон возвращался бы при каждом открытии вкладки,
+   * и «удалить» означало бы «удалить до перезагрузки». `NULL` — ещё
+   * не сеяли.
+   */
+  @Column({ name: 'gear_sections_seeded_at', type: 'timestamptz', nullable: true })
+  gearSectionsSeededAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

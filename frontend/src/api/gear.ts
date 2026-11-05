@@ -8,6 +8,8 @@ import type {
   TripGearItem,
   TripGearList,
   TripGearRouteSection,
+  TripGearSection,
+  TripGearSectionScope,
   TripGearStatus,
 } from '@/types/gear'
 
@@ -275,9 +277,13 @@ export async function addManualTripGear(
 export interface UpdateTripGearRequest {
   status?: TripGearStatus
   assignedUserId?: string | null
+  /** Общественный раздел «Берём»; `null` — вернуть в корень. */
+  sharedSectionId?: string | null
+  /** Мой личный раздел «Взял»; `null` — вернуть в корень. */
+  personalSectionId?: string | null
 }
 
-/** PATCH /api/trips/:id/gear/:gearId — статус и/или несущий. */
+/** PATCH /api/trips/:id/gear/:gearId — статус, несущий и/или раздел. */
 export async function updateTripGear(
   tripId: string,
   gearId: string,
@@ -285,7 +291,76 @@ export async function updateTripGear(
 ): Promise<TripGearItem> {
   return apiFetch<TripGearItem>(`/trips/${tripId}/gear/${gearId}`, {
     method: 'PATCH',
-    body: JSON.stringify(body),
+    body: JSON.stringify({
+      ...body,
+      // В API разделы — числа; фронт держит id строками, как у всего
+      // bigint. `null` — осознанный корень, а не «поле не прислали».
+      ...(body.sharedSectionId !== undefined
+        ? {
+            sharedSectionId:
+              body.sharedSectionId === null ? null : Number(body.sharedSectionId),
+          }
+        : {}),
+      ...(body.personalSectionId !== undefined
+        ? {
+            personalSectionId:
+              body.personalSectionId === null ? null : Number(body.personalSectionId),
+          }
+        : {}),
+    }),
+  })
+}
+
+/**
+ * POST /api/trips/:id/gear/sections — новый раздел (05.11.2026).
+ *
+ * `scope` выбирает большую секцию: `shared` — «Берём», `personal` — «Взял».
+ * Общественный раздел создаёт тот, кому дали вкладку; личный — любой
+ * участник, и владельцем становится он сам. `parentId` — вложенность.
+ */
+export async function createTripGearSection(
+  tripId: string,
+  body: { scope: TripGearSectionScope; title: string; parentId?: string | null },
+): Promise<TripGearSection> {
+  return apiFetch<TripGearSection>(`/trips/${tripId}/gear/sections`, {
+    method: 'POST',
+    body: JSON.stringify({
+      scope: body.scope,
+      title: body.title,
+      ...(body.parentId !== undefined
+        ? { parentId: body.parentId === null ? null : Number(body.parentId) }
+        : {}),
+    }),
+  })
+}
+
+/** PATCH /api/trips/:id/gear/sections/:sectionId — имя, порядок, родитель. */
+export async function updateTripGearSection(
+  tripId: string,
+  sectionId: string,
+  patch: { title?: string; sortOrder?: number; parentId?: string | null },
+): Promise<TripGearSection> {
+  return apiFetch<TripGearSection>(
+    `/trips/${tripId}/gear/sections/${sectionId}`,
+    {
+      method: 'PATCH',
+      body: JSON.stringify({
+        ...patch,
+        ...(patch.parentId !== undefined
+          ? { parentId: patch.parentId === null ? null : Number(patch.parentId) }
+          : {}),
+      }),
+    },
+  )
+}
+
+/** DELETE /api/trips/:id/gear/sections/:sectionId — вещи остаются в корне. */
+export async function removeTripGearSection(
+  tripId: string,
+  sectionId: string,
+): Promise<void> {
+  await apiFetch<void>(`/trips/${tripId}/gear/sections/${sectionId}`, {
+    method: 'DELETE',
   })
 }
 

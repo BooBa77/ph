@@ -9,15 +9,19 @@ import {
   IsUUID,
   MaxLength,
   Min,
+  MinLength,
 } from 'class-validator';
 
 import {
   TRIP_GEAR_ROUTE_SECTIONS,
+  TRIP_GEAR_SECTION_SCOPES,
   TRIP_GEAR_STATUSES,
   type TripGearRouteSection,
+  type TripGearSectionScope,
   type TripGearStatus,
 } from '../trip-gear.types';
 import type { TripGear } from '../entities/trip-gear.entity';
+import type { TripGearSection } from '../entities/trip-gear-section.entity';
 import { GearItemAttributeDto } from './gear.dto';
 
 /**
@@ -126,6 +130,29 @@ export class TripGearItemDto {
   })
   routeSection: TripGearRouteSection | null;
 
+  /**
+   * Общественный раздел «Берём» (05.11.2026): «Пешая часть», «Альпинизм».
+   * `null` — вещь лежит в корне секции.
+   */
+  @ApiProperty({
+    description: 'Общественный раздел «Берём». null — корень',
+    nullable: true,
+    example: '12',
+  })
+  sharedSectionId: string | null;
+
+  /**
+   * Личный раздел «Взял» **смотрящего**. У чужой вещи здесь `null`:
+   * личный раздел принадлежит человеку, и показывать его id остальным
+   * незачем.
+   */
+  @ApiProperty({
+    description: 'Мой личный раздел «Взял» у этой вещи. null — корень или чужая вещь',
+    nullable: true,
+    example: null,
+  })
+  personalSectionId: string | null;
+
   @ApiProperty({
     description: 'Владелец предмета — участник похода',
     example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
@@ -142,7 +169,12 @@ export class TripGearItemDto {
   @ApiProperty({ description: 'Когда вещь предложили в поход' })
   createdAt: string;
 
-  static from(row: TripGear): TripGearItemDto {
+  /**
+   * `viewerId` нужен личному разделу: он виден только своему владельцу,
+   * и чужой id в ответе был бы утечкой чужой раскладки. У остальных
+   * полей от смотрящего ничего не зависит.
+   */
+  static from(row: TripGear, viewerId?: string): TripGearItemDto {
     const values = [...(row.gearItem.attributes ?? [])].sort((left, right) => {
       const leftAttribute = left.gearTypeAttribute;
       const rightAttribute = right.gearTypeAttribute;
@@ -166,9 +198,64 @@ export class TripGearItemDto {
       isTripOnly: row.gearItem.isTripOnly,
       status: row.status,
       routeSection: row.routeSection,
+      sharedSectionId: row.sharedSectionId,
+      personalSectionId:
+        viewerId === undefined || row.assignedUserId === viewerId
+          ? row.personalSectionId
+          : null,
       ownerUserId: row.ownerUserId,
       assignedUserId: row.assignedUserId,
       createdAt: row.createdAt.toISOString(),
+    };
+  }
+}
+
+/**
+ * Раздел «Берём» или «Взял» (05.11.2026).
+ *
+ * `parentId` — вложенность: «Альпинизм» → «Верёвки». Личные разделы
+ * в ответе только свои: `ownerUserId` у них равен смотрящему, чужих
+ * в списке нет.
+ */
+export class TripGearSectionDto {
+  @ApiProperty({ description: 'Id раздела', example: '12' })
+  id: string;
+
+  @ApiProperty({
+    description: 'Вид раздела: общий или личный',
+    enum: TRIP_GEAR_SECTION_SCOPES,
+    example: 'shared',
+  })
+  scope: TripGearSectionScope;
+
+  @ApiProperty({
+    description: 'Владелец личного раздела. null у общественного',
+    nullable: true,
+    example: null,
+  })
+  ownerUserId: string | null;
+
+  @ApiProperty({
+    description: 'Родительский раздел. null — корень большой секции',
+    nullable: true,
+    example: null,
+  })
+  parentId: string | null;
+
+  @ApiProperty({ description: 'Название раздела', example: 'Альпинизм' })
+  title: string;
+
+  @ApiProperty({ description: 'Порядок среди соседей', example: 10 })
+  sortOrder: number;
+
+  static from(row: TripGearSection): TripGearSectionDto {
+    return {
+      id: row.id,
+      scope: row.scope,
+      ownerUserId: row.ownerUserId,
+      parentId: row.parentId,
+      title: row.title,
+      sortOrder: row.sortOrder,
     };
   }
 }
@@ -184,6 +271,15 @@ export class TripGearItemDto {
 export class TripGearListDto {
   @ApiProperty({ description: 'Вещи похода', type: [TripGearItemDto] })
   items: TripGearItemDto[];
+
+  /**
+   * Разделы, которые видит смотрящий: все общественные и свои личные.
+   * Приходят одним ответом с вещами: разделы без вещей нужны экрану
+   * (пустой раздел — законное состояние), а второй запрос ради них
+   * означал бы два состояния загрузки на одной секции.
+   */
+  @ApiProperty({ description: 'Разделы «Берём» и «Взял»', type: [TripGearSectionDto] })
+  sections: TripGearSectionDto[];
 
   @ApiProperty({
     description: 'Сумма известных весов утверждённых вещей, граммы',
@@ -263,6 +359,38 @@ export class UpdateTripGearDto {
   @IsOptional()
   @IsUUID('4', { message: 'Назначенному нужен корректный UUID пользователя' })
   assignedUserId?: string | null;
+
+  /**
+   * Общественный раздел «Берём» (05.11.2026). `null` — вернуть в корень.
+   * Право — как у статуса: тот, кому роль дала вкладку. Разложить
+   * снаряжение по разделам — часть решения по составу, а не «перетащил
+   * и ладно»: несущего и так меняет любой участник.
+   */
+  @ApiProperty({
+    description: 'Общественный раздел «Берём». null — корень',
+    nullable: true,
+    required: false,
+    example: 12,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Раздел должен быть указан числом' })
+  @Min(1, { message: 'Некорректный раздел' })
+  sharedSectionId?: number | null;
+
+  /**
+   * Личный раздел «Взял» (05.11.2026). Меняет только тот, кому вещь
+   * назначена: чужой «Взял» — не моя раскладка. `null` — корень.
+   */
+  @ApiProperty({
+    description: 'Мой личный раздел «Взял». null — корень',
+    nullable: true,
+    required: false,
+    example: 15,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Раздел должен быть указан числом' })
+  @Min(1, { message: 'Некорректный раздел' })
+  personalSectionId?: number | null;
 }
 
 /**
@@ -364,4 +492,76 @@ export class AddManualTripGearDto {
   @IsOptional()
   @IsIn(TRIP_GEAR_ROUTE_SECTIONS, { message: 'Недопустимая секция снаряжения' })
   routeSection?: TripGearRouteSection | null;
+}
+
+/**
+ * Тело `POST /api/trips/:id/gear/sections` — новый раздел (05.11.2026).
+ *
+ * `scope` выбирает большую секцию: `shared` — «Берём», `personal` —
+ * «Взял» (тогда владельцем становится автор запроса). У общественного
+ * раздела права проверяются как у статуса — по вкладке «Снаряжение».
+ *
+ * `parentId` — вложенный раздел. Не указан — раздел в корне.
+ */
+export class CreateTripGearSectionDto {
+  @ApiProperty({
+    description: 'Вид раздела: общий или личный',
+    enum: TRIP_GEAR_SECTION_SCOPES,
+    example: 'shared',
+  })
+  @IsIn(TRIP_GEAR_SECTION_SCOPES, {
+    message: 'Раздел бывает только общественным или личным',
+  })
+  scope: TripGearSectionScope;
+
+  @ApiProperty({ description: 'Название раздела', example: 'Альпинизм' })
+  @IsString({ message: 'Название раздела должно быть строкой' })
+  @MinLength(1, { message: 'Название раздела не может быть пустым' })
+  @MaxLength(60, { message: 'Название раздела не должно превышать 60 символов' })
+  title: string;
+
+  @ApiProperty({
+    description: 'Родительский раздел. Не указан — корень',
+    nullable: true,
+    required: false,
+    example: null,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Родительский раздел должен быть указан числом' })
+  @Min(1, { message: 'Некорректный родительский раздел' })
+  parentId?: number | null;
+}
+
+/**
+ * Тело `PATCH /api/trips/:id/gear/sections/:sectionId`.
+ *
+ * Три поля, и все необязательные: переименовать, переставить среди
+ * соседей, перенести в другой родитель. `parentId: null` — вернуть
+ * раздел в корень. Вложенность произвольная, цикл («раздел внутри себя»)
+ * отбивает сервис — SQL-ом цепочку не проверить.
+ */
+export class UpdateTripGearSectionDto {
+  @ApiProperty({ description: 'Новое название', example: 'Пешка', required: false })
+  @IsOptional()
+  @IsString({ message: 'Название раздела должно быть строкой' })
+  @MinLength(1, { message: 'Название раздела не может быть пустым' })
+  @MaxLength(60, { message: 'Название раздела не должно превышать 60 символов' })
+  title?: string;
+
+  @ApiProperty({ description: 'Порядок среди соседей', example: 20, required: false })
+  @IsOptional()
+  @IsInt({ message: 'Порядок должен быть целым числом' })
+  @Min(0, { message: 'Порядок не может быть отрицательным' })
+  sortOrder?: number;
+
+  @ApiProperty({
+    description: 'Новый родитель. null — вернуть в корень',
+    nullable: true,
+    required: false,
+    example: null,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Родительский раздел должен быть указан числом' })
+  @Min(1, { message: 'Некорректный родительский раздел' })
+  parentId?: number | null;
 }

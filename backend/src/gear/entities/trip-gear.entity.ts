@@ -13,6 +13,7 @@ import {
 import { sqlValues } from '../../users/sport-experience.types';
 import { TripParticipant } from '../../trips/entities/trip-participant.entity';
 import { GearItem } from './gear-item.entity';
+import { TripGearSection } from './trip-gear-section.entity';
 import {
   TRIP_GEAR_ROUTE_SECTIONS,
   TRIP_GEAR_STATUSES,
@@ -67,6 +68,8 @@ import {
  * молча.
  */
 @Index('UQ_trip_gear_trip_id', ['tripId', 'id'], { unique: true })
+@Index('IDX_trip_gear_shared_section', ['sharedSectionId'])
+@Index('IDX_trip_gear_personal_section', ['personalSectionId'])
 @Check(
   'chk_trip_gear_status',
   `"status" IN (${sqlValues(TRIP_GEAR_STATUSES)})`,
@@ -147,6 +150,43 @@ export class TripGear {
    */
   @Column({ name: 'route_section', type: 'varchar', length: 20, nullable: true })
   routeSection: TripGearRouteSection | null;
+
+  /**
+   * Общественный раздел «Берём» (05.11.2026): «Пешая часть», «Альпинизм».
+   *
+   * `NULL` — вещь лежит в корне секции. Раздел необязателен: разделы —
+   * способ разложить снаряжение, а не обязательный атрибут вещи.
+   *
+   * Удаление раздела обнуляет ссылку (`ON DELETE SET NULL`) — вещь
+   * «высыпается в корень», как просил заказчик.
+   */
+  @Column({ name: 'shared_section_id', type: 'bigint', nullable: true })
+  sharedSectionId: string | null;
+
+  @ManyToOne(() => TripGearSection, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({
+    name: 'shared_section_id',
+    foreignKeyConstraintName: 'FK_trip_gear_shared_section',
+  })
+  sharedSection: TripGearSection | null;
+
+  /**
+   * Личный раздел «Взял» этого человека: «Снаряга», «Одежда».
+   *
+   * Отдельная колонка, а не общая с общественным разделом: вещь может
+   * одновременно лежать в общественном «Таборе» и в моём личном
+   * «Снаряга» — это два разных ответа на два разных вопроса. При смене
+   * несущего ссылка обнуляется: чужой раздел вещи не принадлежит.
+   */
+  @Column({ name: 'personal_section_id', type: 'bigint', nullable: true })
+  personalSectionId: string | null;
+
+  @ManyToOne(() => TripGearSection, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({
+    name: 'personal_section_id',
+    foreignKeyConstraintName: 'FK_trip_gear_personal_section',
+  })
+  personalSection: TripGearSection | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

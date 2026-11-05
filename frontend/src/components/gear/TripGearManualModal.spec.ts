@@ -116,6 +116,8 @@ function manualItem(overrides: Partial<TripGearItem> = {}): TripGearItem {
     isTripOnly: true,
     status: 'proposed',
     routeSection: null,
+    sharedSectionId: null,
+    personalSectionId: null,
     ownerUserId: ME,
     assignedUserId: null,
     createdAt: '2026-10-31T10:00:00.000Z',

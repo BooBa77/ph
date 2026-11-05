@@ -2,11 +2,14 @@
 import { computed, ref, watch } from 'vue'
 
 import {
+  createTripGearSection,
   listGear,
   listTripGear,
   proposeTripGear,
   removeTripGear,
+  removeTripGearSection,
   updateTripGear,
+  updateTripGearSection,
 } from '@/api/gear'
 import { listTripChecklists } from '@/api/tripChecklists'
 import { listParticipants } from '@/api/trips'
@@ -15,8 +18,14 @@ import { useAuthStore } from '@/stores/auth'
 import TripGearChecklist from '@/components/gear/TripGearChecklist.vue'
 import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
 import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
+import TripGearSectionList from '@/components/gear/TripGearSectionList.vue'
 import type { Checklist, TripChecklists } from '@/types/checklists'
-import type { GearItem, TripGearItem, TripGearStatus } from '@/types/gear'
+import type {
+  GearItem,
+  TripGearItem,
+  TripGearSection,
+  TripGearStatus,
+} from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
 import {
   formatWeightTotal,
@@ -84,6 +93,15 @@ const meId = computed(() => auth.user?.id ?? '')
 
 const items = ref<TripGearItem[]>([])
 const participants = ref<TripParticipant[]>([])
+
+/**
+ * Разделы «Берём» и «Взял» (05.11.2026).
+ *
+ * Приходят одним ответом с вещами: пустой раздел — законное состояние,
+ * а второй запрос ради заголовков дал бы секции два состояния загрузки.
+ * Личные разделы сервер отдаёт только свои — чужих в массиве нет.
+ */
+const sections = ref<TripGearSection[]>([])
 
 const isLoading = ref(true)
 const error = ref<string | null>(null)
@@ -171,6 +189,48 @@ const isAdding = ref(false)
 const approved = computed(() => items.value.filter((item) => item.status === 'approved'))
 const proposed = computed(() => items.value.filter((item) => item.status === 'proposed'))
 const declined = computed(() => items.value.filter((item) => item.status === 'declined'))
+
+/**
+ * Разделы по большим секциям. Общественные видит весь состав, личные
+ * сервер отдаёт только свои — поэтому фильтра по владельцу здесь нет.
+ */
+const sharedSections = computed(() =>
+  sections.value.filter((section) => section.scope === 'shared'),
+)
+const personalSections = computed(() =>
+  sections.value.filter((section) => section.scope === 'personal'),
+)
+
+/**
+ * Плоский список разделов в порядке дерева — для выпадающего «Раздел»
+ * в пилюле. На телефоне HTML5-drag не работает, а перенести вещь между
+ * разделами человек должен с любого устройства.
+ */
+function sectionChoices(list: TripGearSection[]): { id: string; label: string }[] {
+  const result: { id: string; label: string }[] = []
+
+  const walk = (parentId: string | null, depth: number): void => {
+    const siblings = list
+      .filter((section) => section.parentId === parentId)
+      .slice()
+      .sort((left, right) => left.sortOrder - right.sortOrder || Number(left.id) - Number(right.id))
+
+    for (const section of siblings) {
+      result.push({
+        id: section.id,
+        label: `${'— '.repeat(depth)}${section.title}`,
+      })
+      walk(section.id, depth + 1)
+    }
+  }
+
+  walk(null, 0)
+
+  return result
+}
+
+const sharedSectionChoices = computed(() => sectionChoices(sharedSections.value))
+const personalSectionChoices = computed(() => sectionChoices(personalSections.value))
 
 /** «Берём»: сначала утверждённое, потом ожидающее решения. */
 const taking = computed(() => [...approved.value, ...proposed.value])
@@ -268,6 +328,7 @@ async function load(): Promise<void> {
     if (current !== requestId) return
 
     items.value = list.items
+    sections.value = list.sections
 
     /**
      * Чек-листы — отдельным запросом: у них свой домен и своя ошибка.
@@ -321,7 +382,15 @@ watch(() => props.trip.id, load, { immediate: true })
  * показал выбранное значение, и без перерисовки экран врал бы, что изменение
  * сохранилось.
  */
-async function patchItem(item: TripGearItem, body: { status?: TripGearStatus; assignedUserId?: string | null }): Promise<void> {
+/** Что можно поменять одной правкой: права у полей разные, решает сервер. */
+interface GearPatch {
+  status?: TripGearStatus
+  assignedUserId?: string | null
+  sharedSectionId?: string | null
+  personalSectionId?: string | null
+}
+
+async function patchItem(item: TripGearItem, body: GearPatch): Promise<void> {
   if (busyId.value !== null) return
 
   busyId.value = item.id
@@ -351,6 +420,18 @@ async function onAssigneeChange(item: TripGearItem, event: Event): Promise<void>
   await patchItem(item, { assignedUserId: value === '' ? null : value })
 }
 
+/** Раздел «Берём» выбрали списком — путь для телефона, где drag не работает. */
+async function onSharedSectionChange(item: TripGearItem, event: Event): Promise<void> {
+  const value = (event.target as HTMLSelectElement).value
+  await patchItem(item, { sharedSectionId: value === '' ? null : value })
+}
+
+/** Раздел «Взял» выбрали списком. */
+async function onPersonalSectionChange(item: TripGearItem, event: Event): Promise<void> {
+  const value = (event.target as HTMLSelectElement).value
+  await patchItem(item, { personalSectionId: value === '' ? null : value })
+}
+
 /**
  * Перетаскивание пилюли между рюкзаками.
  *
@@ -359,8 +440,16 @@ async function onAssigneeChange(item: TripGearItem, event: Event): Promise<void>
  */
 const draggingId = ref<string | null>(null)
 
-function startDrag(item: TripGearItem, event: DragEvent): void {
+/**
+ * Что тащим: вещь между рюкзаками (`assign`) или между разделами (`section`).
+ * У одного и того же набора пилюль два разных смысла перетаскивания,
+ * и без пометки падение в чужую зону сделало бы не то, что ждали.
+ */
+const draggingKind = ref<'assign' | 'section' | null>(null)
+
+function startDrag(item: TripGearItem, event: DragEvent, kind: 'assign' | 'section' = 'assign'): void {
   draggingId.value = item.id
+  draggingKind.value = kind
 
   // Firefox без setData не начинает перетаскивание, даже у draggable-элемента.
   // Данные не читаем: важен сам факт «тащим эту пилюлю».
@@ -368,13 +457,186 @@ function startDrag(item: TripGearItem, event: DragEvent): void {
   if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
 }
 
+/** Перетаскивание бросили мимо цели — состояние не должно залипнуть. */
+function endDrag(): void {
+  draggingId.value = null
+  draggingKind.value = null
+}
+
 async function dropOn(userId: string | null): Promise<void> {
   const item = items.value.find((row) => row.id === draggingId.value)
   draggingId.value = null
+  draggingKind.value = null
 
   if (!item || item.assignedUserId === userId) return
 
   await patchItem(item, { assignedUserId: userId })
+}
+
+// ───────────────────────────── разделы «Берём» и «Взял» ─────────────────────────────
+
+/** Ошибка действия с разделом: показываем рядом, список не закрываем. */
+const sectionBusy = ref(false)
+
+/**
+ * Раздел, в который положат следующую добавленную вещь. `null` — корень
+ * «Берём». `undefined` — добавление начато не из раздела.
+ */
+const addTargetSection = ref<string | null | undefined>(undefined)
+
+function replaceSection(updated: TripGearSection): void {
+  sections.value = sections.value.map((section) =>
+    section.id === updated.id ? updated : section,
+  )
+}
+
+/**
+ * Новый раздел. Общий создаёт тот, кому дали вкладку, личный — любой
+ * участник; права всё равно проверяет сервер, а ошибку показываем текстом.
+ */
+async function onCreateSection(
+  scope: 'shared' | 'personal',
+  payload: { parentId: string | null; title: string },
+): Promise<void> {
+  if (sectionBusy.value) return
+
+  sectionBusy.value = true
+  actionError.value = null
+
+  try {
+    const created = await createTripGearSection(props.trip.id, {
+      scope,
+      title: payload.title,
+      parentId: payload.parentId,
+    })
+    sections.value = [...sections.value, created]
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось создать раздел'
+  } finally {
+    sectionBusy.value = false
+  }
+}
+
+async function onRenameSection(payload: {
+  section: TripGearSection
+  title: string
+}): Promise<void> {
+  if (sectionBusy.value) return
+
+  sectionBusy.value = true
+  actionError.value = null
+
+  try {
+    replaceSection(
+      await updateTripGearSection(props.trip.id, payload.section.id, {
+        title: payload.title,
+      }),
+    )
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось переименовать раздел'
+  } finally {
+    sectionBusy.value = false
+  }
+}
+
+/**
+ * Удаление раздела. Вещи не пропадают: сервер оставляет их в походе,
+ * а ссылка на раздел обнуляется — вещь оказывается в корне секции.
+ * Поэтому здесь достаточно убрать раздел из памяти.
+ */
+async function onRemoveSection(section: TripGearSection): Promise<void> {
+  if (sectionBusy.value) return
+
+  sectionBusy.value = true
+  actionError.value = null
+
+  try {
+    await removeTripGearSection(props.trip.id, section.id)
+
+    // Дочерние разделы сервер удаляет каскадом, их вещи высыпаются
+    // в корень. Убираем удалённое поддерево и здесь, иначе на экране
+    // остались бы разделы, которых уже нет.
+    const removed = new Set<string>([section.id])
+    let grew = true
+    while (grew) {
+      grew = false
+      for (const row of sections.value) {
+        if (row.parentId !== null && removed.has(row.parentId) && !removed.has(row.id)) {
+          removed.add(row.id)
+          grew = true
+        }
+      }
+    }
+
+    sections.value = sections.value.filter((row) => !removed.has(row.id))
+
+    // Вещи удалённых разделов остались в походе — показываем их в корне,
+    // как это сделала база.
+    items.value = items.value.map((item) => ({
+      ...item,
+      sharedSectionId:
+        item.sharedSectionId !== null && removed.has(item.sharedSectionId)
+          ? null
+          : item.sharedSectionId,
+      personalSectionId:
+        item.personalSectionId !== null && removed.has(item.personalSectionId)
+          ? null
+          : item.personalSectionId,
+    }))
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось удалить раздел'
+  } finally {
+    sectionBusy.value = false
+  }
+}
+
+/** Перенесли вещь в общественный раздел («Берём») или в его корень. */
+async function moveToSharedSection(sectionId: string | null): Promise<void> {
+  if (draggingKind.value !== 'section') return
+
+  const item = items.value.find((row) => row.id === draggingId.value)
+  draggingId.value = null
+  draggingKind.value = null
+
+  if (!item || item.sharedSectionId === sectionId) return
+
+  await patchItem(item, { sharedSectionId: sectionId })
+}
+
+/** Перенесли вещь в личный раздел («Взял») или в его корень. */
+async function moveToPersonalSection(sectionId: string | null): Promise<void> {
+  if (draggingKind.value !== 'section') return
+
+  const item = items.value.find((row) => row.id === draggingId.value)
+  draggingId.value = null
+  draggingKind.value = null
+
+  if (!item || item.personalSectionId === sectionId) return
+
+  await patchItem(item, { personalSectionId: sectionId })
+}
+
+/**
+ * Вещь добавили из раздела — кладём её в этот раздел. Пока вещь едет
+ * предложением, раздел ей уже назначен: иначе после добавления она
+ * прыгала бы в корень и человек искал бы её глазами.
+ */
+async function placeCreated(item: TripGearItem): Promise<TripGearItem> {
+  const target = addTargetSection.value
+
+  if (target === undefined || target === null) return item
+
+  try {
+    return await updateTripGear(props.trip.id, item.id, { sharedSectionId: target })
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Вещь добавлена, но в раздел не попала'
+
+    return item
+  }
 }
 
 /** Убрать вещь из похода: строка `trip_gear` уходит, каталог владельца цел. */
@@ -400,8 +662,11 @@ async function remove(item: TripGearItem): Promise<void> {
  *
  * Пустой каталог не мешает: в модалке остаётся «Добавить вручную» — так
  * в поход попадает вещь, которой дома ещё нет.
+ *
+ * Кнопка есть и в корне, и в каждом разделе: куда именно положат вещь,
+ * помнит `addTargetSection`. Корневая кнопка кладёт в корень.
  */
-async function openPicker(): Promise<void> {
+async function openPickerBase(): Promise<void> {
   isPickerOpen.value = true
   catalogError.value = null
 
@@ -424,6 +689,16 @@ async function openPicker(): Promise<void> {
   }
 }
 
+async function openPicker(): Promise<void> {
+  addTargetSection.value = null
+  await openPickerBase()
+}
+
+async function openPickerForSection(sectionId: string | null): Promise<void> {
+  addTargetSection.value = sectionId
+  await openPickerBase()
+}
+
 /** Выбрали вещь каталога: она уходит в поход предложением, как и раньше. */
 async function onPick(item: GearItem): Promise<void> {
   if (isAdding.value) return
@@ -433,8 +708,10 @@ async function onPick(item: GearItem): Promise<void> {
 
   try {
     const created = await proposeTripGear(props.trip.id, item.id)
-    items.value = [...items.value, created]
+    const placed = await placeCreated(created)
+    items.value = [...items.value, placed]
     isPickerOpen.value = false
+    addTargetSection.value = undefined
   } catch (problem) {
     actionError.value =
       problem instanceof ApiError ? problem.message : 'Не удалось добавить вещь в поход'
@@ -448,10 +725,13 @@ function openManual(): void {
   isManualOpen.value = true
 }
 
-function onManualCreated(item: TripGearItem): void {
-  items.value = [...items.value, item]
+async function onManualCreated(item: TripGearItem): Promise<void> {
+  const placed = await placeCreated(item)
+
+  items.value = [...items.value, placed]
   isManualOpen.value = false
   isPickerOpen.value = false
+  addTargetSection.value = undefined
 }
 
 /** Каталог, из которого нельзя предложить: то, что уже в походе. */
@@ -544,7 +824,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
 
           <div class="mt-2 flex flex-col gap-2">
             <p
-              v-if="taking.length === 0"
+              v-if="taking.length === 0 && sharedSections.length === 0"
               class="text-sm text-muted"
               data-test="gear-taking-empty"
             >
@@ -552,64 +832,107 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               вещь появится здесь.
             </p>
 
-            <ul v-else class="flex flex-wrap gap-1.5">
-              <li
-                v-for="item in taking"
-                :key="item.id"
-                class="flex flex-wrap items-center gap-1 rounded-xl border px-2 py-1 text-sm"
-                :class="
-                  item.status === 'approved'
-                    ? 'border-orange-300 bg-orange-50 text-text'
-                    : 'border-dashed border-border bg-surface text-muted'
-                "
-                :data-test="`gear-taking-item-${item.id}`"
-              >
-                <span class="font-medium">{{ item.title }}</span>
-                <span v-if="weightInGrams(item.weightGrams)" class="text-xs text-muted">
-                  {{ weightInGrams(item.weightGrams) }}
-                </span>
-                <span class="text-xs text-muted">· {{ personName(item.ownerUserId) }}</span>
-
-                <!--
-                  Статус меняет только тот, кому роль дала вкладку. Остальные
-                  видят «ждёт решения»: права считает сервер, экран не спорит.
-                -->
-                <div class="ml-auto flex items-center gap-1">
-                  <select
-                    v-if="canEdit"
-                    :value="item.status"
-                    :disabled="busyId === item.id"
-                    class="cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-base text-text focus:border-primary focus:outline-none disabled:opacity-50 md:px-1 md:py-0.5 md:text-xs"
-                    aria-label="Статус вещи: предложена, берём или не берём"
-                    :data-test="`gear-taking-status-${item.id}`"
-                    @change="onStatusChange(item, $event)"
-                  >
-                    <option value="proposed">Предложено</option>
-                    <option value="approved">Берём</option>
-                    <option value="declined">Не берём</option>
-                  </select>
-                  <span
-                    v-else-if="item.status === 'proposed'"
-                    class="text-xs italic text-muted"
-                    :data-test="`gear-taking-pending-${item.id}`"
-                  >
-                    ждёт решения
+            <!--
+              Разделы «Берём» — вложенные, произвольной глубины. Пилюля
+              приходит слотом: у «Берём» и «Взял» она разная, и компонент
+              дерева не должен знать, что именно в ней стоит.
+            -->
+            <TripGearSectionList
+              :sections="sharedSections"
+              :items="taking"
+              :parent-id="null"
+              scope="shared"
+              :can-manage="canEdit"
+              :can-place="canEdit"
+              :can-add="canEdit"
+              class="rounded-xl border border-dashed p-2 transition-colors"
+              :class="draggingKind === 'section' ? 'border-primary bg-primary/5' : 'border-border bg-surface'"
+              data-test="gear-taking-sections"
+              @create="onCreateSection('shared', $event)"
+              @rename="onRenameSection"
+              @remove="onRemoveSection"
+              @move="moveToSharedSection"
+              @add-to="openPickerForSection"
+            >
+              <template #item="{ item }">
+                <li
+                  class="flex flex-wrap items-center gap-1 rounded-xl border px-2 py-1 text-sm"
+                  :class="
+                    item.status === 'approved'
+                      ? 'border-orange-300 bg-orange-50 text-text'
+                      : 'border-dashed border-border bg-surface text-muted'
+                  "
+                  :draggable="canEdit"
+                  :data-test="`gear-taking-item-${item.id}`"
+                  @dragstart="startDrag(item, $event, 'section')"
+                  @dragend="endDrag"
+                >
+                  <span class="font-medium">{{ item.title }}</span>
+                  <span v-if="weightInGrams(item.weightGrams)" class="text-xs text-muted">
+                    {{ weightInGrams(item.weightGrams) }}
                   </span>
+                  <span class="text-xs text-muted">· {{ personName(item.ownerUserId) }}</span>
 
-                  <button
-                    v-if="canRemove(item)"
-                    type="button"
-                    class="cursor-pointer border-0 bg-transparent px-1 py-1 text-base text-muted transition-colors hover:text-red-600 disabled:opacity-40 md:py-0 md:text-xs"
-                    title="Убрать вещь из похода"
-                    :disabled="removingId === item.id"
-                    :data-test="`gear-taking-remove-${item.id}`"
-                    @click="remove(item)"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </li>
-            </ul>
+                  <!--
+                    Статус и раздел меняет только тот, кому роль дала вкладку.
+                    Остальные видят «ждёт решения»: права считает сервер,
+                    экран не спорит.
+                  -->
+                  <div class="ml-auto flex flex-wrap items-center gap-1">
+                    <select
+                      v-if="canEdit"
+                      :value="item.sharedSectionId ?? ''"
+                      :disabled="busyId === item.id"
+                      class="cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-base text-text focus:border-primary focus:outline-none disabled:opacity-50 md:px-1 md:py-0.5 md:text-xs"
+                      aria-label="Раздел в «Берём»"
+                      :data-test="`gear-taking-section-${item.id}`"
+                      @change="onSharedSectionChange(item, $event)"
+                    >
+                      <option value="">Без раздела</option>
+                      <option
+                        v-for="choice in sharedSectionChoices"
+                        :key="choice.id"
+                        :value="choice.id"
+                      >
+                        {{ choice.label }}
+                      </option>
+                    </select>
+                    <select
+                      v-if="canEdit"
+                      :value="item.status"
+                      :disabled="busyId === item.id"
+                      class="cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-base text-text focus:border-primary focus:outline-none disabled:opacity-50 md:px-1 md:py-0.5 md:text-xs"
+                      aria-label="Статус вещи: предложена, берём или не берём"
+                      :data-test="`gear-taking-status-${item.id}`"
+                      @change="onStatusChange(item, $event)"
+                    >
+                      <option value="proposed">Предложено</option>
+                      <option value="approved">Берём</option>
+                      <option value="declined">Не берём</option>
+                    </select>
+                    <span
+                      v-else-if="item.status === 'proposed'"
+                      class="text-xs italic text-muted"
+                      :data-test="`gear-taking-pending-${item.id}`"
+                    >
+                      ждёт решения
+                    </span>
+
+                    <button
+                      v-if="canRemove(item)"
+                      type="button"
+                      class="cursor-pointer border-0 bg-transparent px-1 py-1 text-base text-muted transition-colors hover:text-red-600 disabled:opacity-40 md:py-0 md:text-xs"
+                      title="Убрать вещь из похода"
+                      :disabled="removingId === item.id"
+                      :data-test="`gear-taking-remove-${item.id}`"
+                      @click="remove(item)"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                </li>
+              </template>
+            </TripGearSectionList>
 
             <p v-if="catalogError" class="text-xs text-red-600" data-test="gear-catalog-error">
               {{ catalogError }}
@@ -619,7 +942,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               type="button"
               class="cursor-pointer self-start rounded-xl border border-orange-900 bg-orange-900 px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90"
               data-test="gear-add"
-              @click="openPicker"
+              @click="openPicker()"
             >
               Добавить снаряжение
             </button>
@@ -706,6 +1029,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                     draggable="true"
                     :data-test="`gear-unassigned-item-${item.id}`"
                     @dragstart="startDrag(item, $event)"
+                    @dragend="endDrag"
                   >
                     <span class="font-medium">{{ item.title }}</span>
                     <span v-if="weightInGrams(item.weightGrams)" class="text-xs text-muted">
@@ -765,6 +1089,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                       draggable="true"
                       :data-test="`gear-bag-item-${item.id}`"
                       @dragstart="startDrag(item, $event)"
+                      @dragend="endDrag"
                     >
                       <span class="min-w-0 truncate">{{ item.title }}</span>
                       <span v-if="weightInGrams(item.weightGrams)" class="text-xs text-muted">
@@ -918,24 +1243,69 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           </summary>
 
           <div class="mt-2 flex flex-col gap-2">
-            <p v-if="myItems.length === 0" class="text-sm text-muted" data-test="gear-taken-empty">
+            <p
+              v-if="myItems.length === 0 && personalSections.length === 0"
+              class="text-sm text-muted"
+              data-test="gear-taken-empty"
+            >
               Вы пока ничего не несёте: вещи назначаются в «Распределении».
             </p>
 
-            <ul v-else class="flex flex-wrap gap-1.5">
-              <li
-                v-for="item in myItems"
-                :key="item.id"
-                class="flex flex-wrap items-center gap-1 rounded-full border border-blue-300 bg-blue-50 px-2 py-1 text-sm text-blue-900"
-                :data-test="`gear-taken-item-${item.id}`"
-              >
-                <span>{{ item.title }}</span>
-                <span v-if="weightInGrams(item.weightGrams)" class="text-xs">
-                  · {{ weightInGrams(item.weightGrams) }}
-                </span>
-                <span class="text-xs text-blue-700">· {{ item.typeName }}</span>
-              </li>
-            </ul>
+            <!--
+              Личные разделы «Взял»: «Снаряга», «Одежда» и что человек
+              добавит сам. Остальным они не видны — сервер их не отдаёт.
+              Кнопки добавления здесь нет: содержимое «Взял» определяет
+              «Распределение», а личные вещи ждут своей модели.
+            -->
+            <TripGearSectionList
+              :sections="personalSections"
+              :items="myItems"
+              :parent-id="null"
+              scope="personal"
+              :can-manage="true"
+              :can-place="true"
+              class="rounded-xl border border-dashed p-2 transition-colors"
+              :class="draggingKind === 'section' ? 'border-primary bg-primary/5' : 'border-blue-200 bg-blue-50'"
+              data-test="gear-taken-sections"
+              @create="onCreateSection('personal', $event)"
+              @rename="onRenameSection"
+              @remove="onRemoveSection"
+              @move="moveToPersonalSection"
+            >
+              <template #item="{ item }">
+                <li
+                  class="flex flex-wrap items-center gap-1 rounded-full border border-blue-300 bg-white px-2 py-1 text-sm text-blue-900"
+                  draggable="true"
+                  :data-test="`gear-taken-item-${item.id}`"
+                  @dragstart="startDrag(item, $event, 'section')"
+                  @dragend="endDrag"
+                >
+                  <span>{{ item.title }}</span>
+                  <span v-if="weightInGrams(item.weightGrams)" class="text-xs">
+                    · {{ weightInGrams(item.weightGrams) }}
+                  </span>
+                  <span class="text-xs text-blue-700">· {{ item.typeName }}</span>
+
+                  <select
+                    :value="item.personalSectionId ?? ''"
+                    :disabled="busyId === item.id"
+                    class="ml-auto cursor-pointer rounded-lg border border-blue-200 bg-white px-2 py-1 text-base text-blue-900 focus:border-primary focus:outline-none disabled:opacity-50 md:px-1 md:py-0.5 md:text-xs"
+                    aria-label="Раздел во «Взял»"
+                    :data-test="`gear-taken-section-${item.id}`"
+                    @change="onPersonalSectionChange(item, $event)"
+                  >
+                    <option value="">Без раздела</option>
+                    <option
+                      v-for="choice in personalSectionChoices"
+                      :key="choice.id"
+                      :value="choice.id"
+                    >
+                      {{ choice.label }}
+                    </option>
+                  </select>
+                </li>
+              </template>
+            </TripGearSectionList>
           </div>
         </details>
 

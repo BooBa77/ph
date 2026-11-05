@@ -137,6 +137,8 @@ function tripGearItem(overrides: Partial<TripGearItem> = {}): TripGearItem {
     isTripOnly: false,
     status: 'approved',
     routeSection: null,
+    sharedSectionId: null,
+    personalSectionId: null,
     assignedUserId: null,
     ownerUserId: ANNA,
     createdAt: '2026-10-29T10:00:00.000Z',

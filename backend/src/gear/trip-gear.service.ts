@@ -12,19 +12,43 @@ import { Trip } from '../trips/entities/trip.entity';
 import type { TripTab } from '../trips/trip-tabs';
 import { TripsService } from '../trips/trips.service';
 import { User } from '../users/entities/user.entity';
+import { sqlValues } from '../users/sport-experience.types';
 import {
   AddManualTripGearDto,
+  CreateTripGearSectionDto,
   ProposeTripGearDto,
   TripGearItemDto,
   TripGearListDto,
+  TripGearSectionDto,
   UpdateTripGearDto,
+  UpdateTripGearSectionDto,
 } from './dto/trip-gear.dto';
 import { GearItem } from './entities/gear-item.entity';
 import { TripGear } from './entities/trip-gear.entity';
+import { TripGearSection } from './entities/trip-gear-section.entity';
 import { GearService } from './gear.service';
 
 /** Вкладка, право на правку которой открывает «Берём / Не берём». */
 const GEAR_TAB: TripTab = 'gear';
+
+/**
+ * Личные разделы «Взял» по шаблону (05.11.2026).
+ *
+ * Заказчик назвал их в плане вкладки (`docs/ph/gear-tab.md` §3): «Снаряга»
+ * и «Одежда». Это стартовый набор, а не ограничение: человек переименует,
+ * удалит или добавит свои — «Альпинизм», «Пешка».
+ */
+const PERSONAL_SECTION_TEMPLATES = ['Снаряга', 'Одежда'] as const;
+
+/**
+ * Общественные шаблоны. «Табор» — если в «Ночёвках» есть стоянка или
+ * готовка либо в походе есть палатка/тент: заказчик просил именно так.
+ */
+const TENT_TYPE_CODES = ['tent', 'shelter'] as const;
+
+/** Коды типов похода, под которые план вкладки просил раздел. */
+const CYCLING_TYPE_CODE = 'trip_cycling';
+const WATER_TYPE_CODES = ['trip_water', 'trip_kayak', 'trip_rafting'] as const;
 
 /**
  * Общественное снаряжение похода — вкладка «Снаряжение» (Ф7).
@@ -74,11 +98,18 @@ export class TripGearService {
     private readonly gear: GearService,
   ) {}
 
-  /** Весь список вещей похода и вес утверждённых. Видят участники. */
+  /** Весь список вещей похода и разделы. Видят участники. */
   async list(userId: string, tripId: number): Promise<TripGearListDto> {
     const manager = this.dataSource.manager;
     const trip = await this.trips.getVisibleTrip(userId, tripId);
-    await this.assertParticipant(manager, trip.id, userId);
+    const participant = await this.assertParticipant(manager, trip.id, userId);
+
+    /**
+     * Шаблоны разделов заводятся при первом открытии вкладки — как группы
+     * каталога, а не отдельной кнопкой. Отметка «уже сеяли» лежит в походе
+     * и в участии, поэтому удалённый шаблон не возвращается.
+     */
+    await this.ensureSections(trip, participant, userId);
 
     const rows = await manager.find(TripGear, {
       where: { tripId: trip.id },
@@ -86,7 +117,15 @@ export class TripGearService {
       order: { id: 'ASC' },
     });
 
-    return this.toList(rows);
+    const sections = await manager.find(TripGearSection, {
+      where: [
+        { tripId: trip.id, scope: 'shared' },
+        { tripId: trip.id, scope: 'personal', ownerUserId: userId },
+      ],
+      order: { sortOrder: 'ASC', id: 'ASC' },
+    });
+
+    return this.toList(rows, sections, userId);
   }
 
   /**
@@ -139,16 +178,22 @@ export class TripGearService {
     );
     saved.gearItem = item;
 
-    return TripGearItemDto.from(saved);
+    return TripGearItemDto.from(saved, userId);
   }
 
   /**
-   * Правка вещи: статус и/или несущий.
+   * Правка вещи: статус, несущий и разделы.
    *
-   * Два поля — два права, и проверяются они оба: частично применить
-   * запрос было бы нельзя, иначе ответ соврал бы о том, что сохранилось.
+   * Поля — разные права, и проверяются они все: частично применить запрос
+   * было бы нельзя, иначе ответ соврал бы о том, что сохранилось.
    * Присваиваем только присланное: `PATCH` без поля не меняет его,
    * а `assignedUserId: null` — осознанное «освободить».
+   *
+   * **Разделы (05.11.2026).** Общественный раздел — право вкладки, как
+   * у статуса: разложить снаряжение по разделам — часть решения по составу.
+   * Личный раздел — только тому, кому вещь назначена: чужой «Взял» —
+   * не моя раскладка. При смене несущего личный раздел обнуляется: вещь
+   * уехала в чужой рюкзак и там начнёт с корня.
    */
   async update(
     userId: string,
@@ -177,10 +222,60 @@ export class TripGearService {
 
     if (dto.assignedUserId !== undefined) {
       await this.assertCarrier(manager, trip.id, dto.assignedUserId);
+
+      if (row.assignedUserId !== dto.assignedUserId) {
+        // Вещь уехала другому — её место в моём «Взял» больше не моё.
+        row.personalSectionId = null;
+      }
       row.assignedUserId = dto.assignedUserId;
     }
 
-    return TripGearItemDto.from(await manager.save(row));
+    if (dto.sharedSectionId !== undefined) {
+      if (!(await this.trips.canEditTab(userId, trip, GEAR_TAB))) {
+        throw new ForbiddenException(
+          'Разделы общественного снаряжения раскладывает тот, кто ведёт снаряжение похода',
+        );
+      }
+
+      if (dto.sharedSectionId === null) {
+        row.sharedSectionId = null;
+      } else {
+        const section = await this.findSection(manager, trip.id, dto.sharedSectionId);
+        if (section.scope !== 'shared') {
+          throw new BadRequestException(
+            'В «Берём» можно положить вещь только в общественный раздел',
+          );
+        }
+        row.sharedSectionId = section.id;
+      }
+    }
+
+    if (dto.personalSectionId !== undefined) {
+      if (dto.personalSectionId === null) {
+        row.personalSectionId = null;
+      } else {
+        const section = await this.findSection(
+          manager,
+          trip.id,
+          dto.personalSectionId,
+        );
+
+        // Чужой личный раздел не существует (404): перебирать чужие
+        // раскладки через эту ручку нечего.
+        if (section.scope !== 'personal' || section.ownerUserId !== userId) {
+          throw new NotFoundException('Раздел снаряжения не найден');
+        }
+
+        if (row.assignedUserId !== userId) {
+          throw new ForbiddenException(
+            'В личный раздел кладут только вещь, которая едет в моём рюкзаке',
+          );
+        }
+        row.personalSectionId = section.id;
+      }
+    }
+
+    return TripGearItemDto.from(await manager.save(row), userId);
   }
 
   /**
@@ -263,7 +358,7 @@ export class TripGearService {
       return saved;
     });
 
-    return TripGearItemDto.from(row);
+    return TripGearItemDto.from(row, userId);
   }
 
   /**
@@ -306,6 +401,142 @@ export class TripGearService {
         await tx.delete(GearItem, { id: row.gearItemId });
       }
     });
+  }
+
+  // ───────────────────────── разделы «Берём» и «Взял» ─────────────────────────
+
+  /**
+   * Новый раздел (05.11.2026).
+   *
+   * Общественный создаёт тот, кому дали вкладку: «Пешая часть» — структура
+   * похода, а не личная полка. Личный — любой участник, и владельцем
+   * становится он сам: остальным этот раздел не виден.
+   *
+   * `parentId` — вложенность. Родитель обязан быть из того же похода,
+   * того же вида и с тем же владельцем: личный раздел не должен оказаться
+   * внутри общественного, иначе один человек правил бы общую структуру.
+   */
+  async createSection(
+    userId: string,
+    tripId: number,
+    dto: CreateTripGearSectionDto,
+  ): Promise<TripGearSectionDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+
+    const title = dto.title.trim();
+    if (title.length === 0) {
+      throw new BadRequestException('Название раздела не может быть пустым');
+    }
+
+    const ownerUserId = dto.scope === 'personal' ? userId : null;
+
+    if (dto.scope === 'shared' && !(await this.trips.canEditTab(userId, trip, GEAR_TAB))) {
+      throw new ForbiddenException(
+        'Общественные разделы создаёт тот, кто ведёт снаряжение похода',
+      );
+    }
+
+    const parent = await this.resolveParent(
+      manager,
+      trip.id,
+      dto.parentId ?? null,
+      dto.scope,
+      ownerUserId,
+    );
+
+    const sortOrder = await this.nextSortOrder(
+      manager,
+      trip.id,
+      dto.scope,
+      ownerUserId,
+      parent?.id ?? null,
+    );
+
+    const saved = await manager.save(
+      manager.create(TripGearSection, {
+        tripId: trip.id,
+        scope: dto.scope,
+        ownerUserId,
+        parentId: parent?.id ?? null,
+        title,
+        sortOrder,
+      }),
+    );
+
+    return TripGearSectionDto.from(saved);
+  }
+
+  /**
+   * Переименовать, переставить или переложить раздел.
+   *
+   * Перенос в себя или в своего потомка — 400: иначе раздел исчез бы
+   * из дерева, и вернуть его было бы нечем.
+   */
+  async updateSection(
+    userId: string,
+    tripId: number,
+    sectionId: number,
+    dto: UpdateTripGearSectionDto,
+  ): Promise<TripGearSectionDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+
+    const section = await this.findSection(manager, trip.id, sectionId);
+    await this.assertSectionManage(trip, section, userId);
+
+    if (dto.title !== undefined) {
+      const title = dto.title.trim();
+      if (title.length === 0) {
+        throw new BadRequestException('Название раздела не может быть пустым');
+      }
+      section.title = title;
+    }
+
+    if (dto.sortOrder !== undefined) {
+      section.sortOrder = dto.sortOrder;
+    }
+
+    if (dto.parentId !== undefined) {
+      const parent = await this.resolveParent(
+        manager,
+        trip.id,
+        dto.parentId,
+        section.scope,
+        section.ownerUserId,
+      );
+
+      if (parent?.id === section.id) {
+        throw new BadRequestException('Раздел не может быть вложен в себя');
+      }
+
+      await this.assertNotDescendant(manager, section, parent?.id ?? null);
+      section.parentId = parent?.id ?? null;
+    }
+
+    return TripGearSectionDto.from(await manager.save(section));
+  }
+
+  /**
+   * Удалить раздел. Вещи не теряются: они остаются в походе и оказываются
+   * в корне большой секции — за это отвечает `ON DELETE SET NULL`.
+   * Дочерние разделы уходят каскадом, и их вещи освобождаются так же.
+   */
+  async removeSection(
+    userId: string,
+    tripId: number,
+    sectionId: number,
+  ): Promise<void> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+
+    const section = await this.findSection(manager, trip.id, sectionId);
+    await this.assertSectionManage(trip, section, userId);
+
+    await manager.delete(TripGearSection, { id: section.id });
   }
 
   // ───────────────────────── внутреннее ─────────────────────────
@@ -415,8 +646,273 @@ export class TripGearService {
     }
   }
 
+  // ───────────────────────── разделы: шаблоны и проверки ─────────────────────────
+
+  /**
+   * Шаблоны разделов при первом открытии вкладки (05.11.2026).
+   *
+   * Отметки живут в `trips.gear_sections_seeded_at` и
+   * `trip_participants.gear_sections_seeded_at`. Второй раз не сеем:
+   * удалённый «Табор» иначе возвращался бы при каждом открытии, а заказчик
+   * просил именно возможность удалять.
+   *
+   * Строки похода блокируются на время засева: два первых открытия
+   * одновременно иначе завели бы по два «Табора». Случай редкий, но
+   * дубликат шаблона — это не «два раздела», а ошибка, которую человек
+   * увидит сразу.
+   */
+  private async ensureSections(
+    trip: Trip,
+    participant: TripParticipant,
+    userId: string,
+  ): Promise<void> {
+    if (trip.gearSectionsSeededAt && participant.gearSectionsSeededAt) return;
+
+    await this.dataSource.transaction(async (tx) => {
+      const lockedTrip = await tx.findOne(Trip, {
+        where: { id: trip.id },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!lockedTrip) throw new NotFoundException('Поход не найден');
+
+      if (!lockedTrip.gearSectionsSeededAt) {
+        // Разделы могли остаться от прошлой жизни похода (шаблон завели
+        // до сброса отметки) — второй «Табор» не нужен.
+        const existing = await tx.count(TripGearSection, {
+          where: { tripId: trip.id, scope: 'shared' },
+        });
+        if (existing === 0) {
+          const titles = await this.sharedTemplateTitles(tx, trip.id);
+          await this.insertSections(tx, trip.id, 'shared', null, titles);
+        }
+
+        await tx.update(
+          Trip,
+          { id: trip.id },
+          { gearSectionsSeededAt: new Date() },
+        );
+      }
+
+      const lockedParticipant = await tx.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (lockedParticipant && !lockedParticipant.gearSectionsSeededAt) {
+        // Участник мог выйти и вернуться: его личные разделы остались
+        // (владелец — пользователь, а не участие), и второй «Снаряга»
+        // рядом с первым был бы мусором.
+        const existing = await tx.count(TripGearSection, {
+          where: { tripId: trip.id, scope: 'personal', ownerUserId: userId },
+        });
+        if (existing === 0) {
+          await this.insertSections(
+            tx,
+            trip.id,
+            'personal',
+            userId,
+            [...PERSONAL_SECTION_TEMPLATES],
+          );
+        }
+
+        await tx.update(
+          TripParticipant,
+          { tripId: trip.id, userId },
+          { gearSectionsSeededAt: new Date() },
+        );
+      }
+    });
+  }
+
+  /**
+   * Какие общественные разделы положены походу по его данным.
+   *
+   * «Табор» — если в «Ночёвках» есть стоянка (палатка, изба, машина) или
+   * готовка, либо в снаряжении похода есть палатка/тент: слова заказчика —
+   * «если есть ночёвки и/или Готовка». «к Велосипедам» и «Вода» — по типу
+   * похода; водного типа в справочнике пока нет, но список кодов готов,
+   * чтобы раздел появился сам, когда тип заведут.
+   */
+  private async sharedTemplateTitles(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<string[]> {
+    const camping = await manager.query(
+      `SELECT 1
+         FROM "trip_route_nights" n
+        WHERE n."trip_id" = $1
+          AND (n."kind" IN ('tent', 'hut', 'car') OR n."cooking" IS NOT NULL)
+        UNION ALL
+       SELECT 1
+         FROM "trip_gear" tg
+         JOIN "gear_items" gi ON gi."id" = tg."gear_item_id"
+         JOIN "gear_types" gt ON gt."id" = gi."gear_type_id"
+        WHERE tg."trip_id" = $1
+          AND gt."code" IN (${sqlValues(TENT_TYPE_CODES)})
+        LIMIT 1`,
+      [tripId],
+    );
+
+    const typeCodes: string[] = (
+      await manager.query(
+        `SELECT a."code"
+           FROM "trip_types" tt
+           JOIN "calendar_activity_types" a ON a."id" = tt."activity_type_id"
+          WHERE tt."trip_id" = $1`,
+        [tripId],
+      )
+    ).map((row: { code: string }) => row.code);
+
+    const titles: string[] = [];
+    if (camping.length > 0) titles.push('Табор');
+    if (typeCodes.includes(CYCLING_TYPE_CODE)) titles.push('к Велосипедам');
+    if (typeCodes.some((code) => (WATER_TYPE_CODES as readonly string[]).includes(code))) {
+      titles.push('Вода');
+    }
+
+    return titles;
+  }
+
+  /** Шаблоны одного вида — корневыми разделами с шагом порядка 10. */
+  private async insertSections(
+    manager: EntityManager,
+    tripId: string,
+    scope: 'shared' | 'personal',
+    ownerUserId: string | null,
+    titles: string[],
+  ): Promise<void> {
+    if (titles.length === 0) return;
+
+    await manager.insert(
+      TripGearSection,
+      titles.map((title, index) => ({
+        tripId,
+        scope,
+        ownerUserId,
+        parentId: null,
+        title,
+        sortOrder: (index + 1) * 10,
+      })),
+    );
+  }
+
+  /** Следующий порядок среди соседей: новый раздел встаёт последним. */
+  private async nextSortOrder(
+    manager: EntityManager,
+    tripId: string,
+    scope: 'shared' | 'personal',
+    ownerUserId: string | null,
+    parentId: string | null,
+  ): Promise<number> {
+    const rows: Array<{ max: number | string | null }> = await manager.query(
+      `SELECT COALESCE(MAX("sort_order"), 0) AS "max"
+         FROM "trip_gear_sections"
+        WHERE "trip_id" = $1
+          AND "scope" = $2
+          AND "owner_user_id" IS NOT DISTINCT FROM $3
+          AND "parent_id" IS NOT DISTINCT FROM $4`,
+      [tripId, scope, ownerUserId, parentId],
+    );
+
+    return Number(rows[0]?.max ?? 0) + 10;
+  }
+
+  /** Раздел этого похода или 404. */
+  private async findSection(
+    manager: EntityManager,
+    tripId: string,
+    sectionId: number | string,
+  ): Promise<TripGearSection> {
+    const section = await manager.findOne(TripGearSection, {
+      where: { id: String(sectionId), tripId },
+    });
+    if (!section) throw new NotFoundException('Раздел снаряжения не найден');
+
+    return section;
+  }
+
+  /**
+   * Родитель для раздела: из этого же похода, того же вида и с тем же
+   * владельцем. `null` — корень большой секции.
+   */
+  private async resolveParent(
+    manager: EntityManager,
+    tripId: string,
+    parentId: number | null,
+    scope: 'shared' | 'personal',
+    ownerUserId: string | null,
+  ): Promise<TripGearSection | null> {
+    if (parentId === null) return null;
+
+    const parent = await this.findSection(manager, tripId, parentId);
+
+    if (parent.scope !== scope || parent.ownerUserId !== ownerUserId) {
+      throw new BadRequestException(
+        'Родительский раздел должен быть того же вида и владельца',
+      );
+    }
+
+    return parent;
+  }
+
+  /**
+   * Нельзя переложить раздел в собственного потомка: дерево потеряло бы
+   * корень. Идём от нового родителя вверх до корня — цепочка короткая,
+   * глубина разделов измеряется единицами.
+   */
+  private async assertNotDescendant(
+    manager: EntityManager,
+    section: TripGearSection,
+    parentId: string | null,
+  ): Promise<void> {
+    let currentId = parentId;
+    let depth = 0;
+
+    while (currentId !== null) {
+      if (currentId === section.id) {
+        throw new BadRequestException(
+          'Раздел нельзя вложить в себя или в свой подраздел',
+        );
+      }
+
+      if (++depth > 100) break;
+
+      const current = await manager.findOne(TripGearSection, {
+        where: { id: currentId, tripId: section.tripId },
+      });
+      currentId = current?.parentId ?? null;
+    }
+  }
+
+  /**
+   * Право на правку раздела. Личный — только владельцу, и чужой личный
+   * раздел не существует (404): остальным он не виден даже по id.
+   * Общественный — тому, кому роль дала вкладку.
+   */
+  private async assertSectionManage(
+    trip: Trip,
+    section: TripGearSection,
+    userId: string,
+  ): Promise<void> {
+    if (section.scope === 'personal') {
+      if (section.ownerUserId !== userId) {
+        throw new NotFoundException('Раздел снаряжения не найден');
+      }
+      return;
+    }
+
+    if (!(await this.trips.canEditTab(userId, trip, GEAR_TAB))) {
+      throw new ForbiddenException(
+        'Общественные разделы правит тот, кто ведёт снаряжение похода',
+      );
+    }
+  }
+
   /** Список с итогом: сумма только утверждённых весов. */
-  private toList(rows: TripGear[]): TripGearListDto {
+  private toList(
+    rows: TripGear[],
+    sections: TripGearSection[],
+    viewerId: string,
+  ): TripGearListDto {
     let totalWeightGrams = 0;
     let itemsWithoutWeight = 0;
 
@@ -428,7 +924,8 @@ export class TripGearService {
     }
 
     return {
-      items: rows.map((row) => TripGearItemDto.from(row)),
+      items: rows.map((row) => TripGearItemDto.from(row, viewerId)),
+      sections: sections.map((section) => TripGearSectionDto.from(section)),
       totalWeightGrams,
       itemsWithoutWeight,
     };

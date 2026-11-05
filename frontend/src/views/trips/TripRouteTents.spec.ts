@@ -230,6 +230,8 @@ function tripGearItem(
     isTripOnly: false,
     status: 'approved',
     routeSection: null,
+    sharedSectionId: null,
+    personalSectionId: null,
     assignedUserId: null,
     createdAt: '2026-10-29T10:00:00.000Z',
     ...overrides,

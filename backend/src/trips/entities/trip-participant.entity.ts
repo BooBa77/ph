@@ -71,6 +71,17 @@ export class TripParticipant {
   @Column({ name: 'eats_separately', type: 'boolean', default: false })
   eatsSeparately: boolean;
 
+  /**
+   * Когда личные разделы «Взял» этого человека засеяли шаблонами
+   * («Снаряга», «Одежда»), 05.11.2026.
+   *
+   * Отметка живёт на участии, а не на пользователе: шаблоны относятся
+   * к походу, и в другом походе человек начнёт с чистого листа. `NULL` —
+   * ещё не сеяли; удалённый шаблон не возвращается.
+   */
+  @Column({ name: 'gear_sections_seeded_at', type: 'timestamptz', nullable: true })
+  gearSectionsSeededAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

@@ -42,3 +42,14 @@ export const TRIP_GEAR_ROUTE_SECTIONS = [
 ] as const;
 
 export type TripGearRouteSection = (typeof TRIP_GEAR_ROUTE_SECTIONS)[number];
+
+/**
+ * Вид раздела внутри «Берём» / «Взял» (05.11.2026).
+ *
+ * `shared` — раздел общественного снаряжения: видит весь состав, правит
+ * тот, кому дали вкладку. `personal` — раздел человека в «Взял»: остальным
+ * он не виден вовсе. Разделы живут в `trip_gear_sections`.
+ */
+export const TRIP_GEAR_SECTION_SCOPES = ['shared', 'personal'] as const;
+
+export type TripGearSectionScope = (typeof TRIP_GEAR_SECTION_SCOPES)[number];

@@ -2233,6 +2233,196 @@ rows.push([
   recommendationMarksLeft === 0 ? '' : `осталось ${recommendationMarksLeft}`,
 ]);
 
+// ─── Разделы «Берём» и «Взял» (05.11.2026) ───
+/**
+ * Инварианты `trip_gear_sections` и двух ссылок на них из `trip_gear`.
+ *
+ * Проверяется то, чего не видно в e2e: **форма схемы** (согласие `scope`
+ * с владельцем, длина названия, отметки засева шаблонов) и **поведение
+ * базы**: удаление раздела обнуляет ссылку у вещи («высыпается в корень»),
+ * дочерние разделы уходят каскадом, а раздел из чужого похода или другого
+ * вида в вещь не попадает — это держит триггер, а не только сервис.
+ */
+const sectionShape = await client.query(
+  `SELECT
+     (SELECT is_nullable FROM information_schema.columns
+       WHERE table_name = 'trips' AND column_name = 'gear_sections_seeded_at') AS trip_seed,
+     (SELECT is_nullable FROM information_schema.columns
+       WHERE table_name = 'trip_participants'
+         AND column_name = 'gear_sections_seeded_at') AS participant_seed,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_trip_gear_shared_section') AS shared_delete_action,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_trip_gear_personal_section') AS personal_delete_action,
+     (SELECT 1 FROM pg_trigger
+       WHERE tgname = 'trg_trip_gear_section_scope') AS has_trigger`,
+);
+
+const sectionShapeRow = sectionShape.rows[0];
+const sectionShapeOk =
+  sectionShapeRow.trip_seed === 'YES' &&
+  sectionShapeRow.participant_seed === 'YES' &&
+  // «n» — ON DELETE SET NULL: раздел убрали, вещь осталась в корне.
+  sectionShapeRow.shared_delete_action === 'n' &&
+  sectionShapeRow.personal_delete_action === 'n' &&
+  sectionShapeRow.has_trigger === 1;
+
+if (!sectionShapeOk) failed += 1;
+rows.push([
+  sectionShapeOk ? 'ok' : 'НЕТ СХЕМЫ',
+  'разделы: отметки шаблонов, SET NULL у вещей, триггер похода и вида',
+  sectionShapeOk
+    ? ''
+    : `seed=${sectionShapeRow.trip_seed}/${sectionShapeRow.participant_seed}, delete=${sectionShapeRow.shared_delete_action}/${sectionShapeRow.personal_delete_action}, trigger=${sectionShapeRow.has_trigger}`,
+]);
+
+await check(
+  'разделы: общественный раздел с владельцем запрещён',
+  'fail',
+  `INSERT INTO trip_gear_sections (trip_id, scope, owner_user_id, title)
+   VALUES ($1, 'shared', $2, 'Лишний владелец')`,
+  [tripId, user1],
+);
+
+await check(
+  'разделы: личный раздел без владельца запрещён',
+  'fail',
+  `INSERT INTO trip_gear_sections (trip_id, scope, title)
+   VALUES ($1, 'personal', 'Ничей')`,
+  [tripId],
+);
+
+await check(
+  'разделы: пустое название запрещено',
+  'fail',
+  `INSERT INTO trip_gear_sections (trip_id, scope, title)
+   VALUES ($1, 'shared', '   ')`,
+  [tripId],
+);
+
+await check(
+  'разделы: название длиннее 60 знаков запрещено',
+  'fail',
+  `INSERT INTO trip_gear_sections (trip_id, scope, title)
+   VALUES ($1, 'shared', repeat('я', 61))`,
+  [tripId],
+);
+
+const sectionGearRow = (
+  await client.query(
+    `SELECT id FROM trip_gear WHERE trip_id = $1 AND gear_item_id = $2 LIMIT 1`,
+    [tripId, routeExtraItemId],
+  )
+).rows[0].id;
+
+const sharedSectionId = (
+  await client.query(
+    `INSERT INTO trip_gear_sections (trip_id, scope, title)
+     VALUES ($1, 'shared', 'Пешая часть') RETURNING id`,
+    [tripId],
+  )
+).rows[0].id;
+
+const personalSectionId = (
+  await client.query(
+    `INSERT INTO trip_gear_sections (trip_id, scope, owner_user_id, title)
+     VALUES ($1, 'personal', $2, 'Одежда') RETURNING id`,
+    [tripId, user1],
+  )
+).rows[0].id;
+
+// Второй поход: раздел из него не должен связаться с вещью первого.
+// Цель заводим свою: объект `objectId` выше уже удалён проверкой каскада.
+const sectionObjectId = (
+  await client.query(
+    `INSERT INTO objects (name, type) VALUES ('Вершина разделов', 'вершина') RETURNING id`,
+  )
+).rows[0].id;
+const otherTripId = (
+  await client.query(
+    `INSERT INTO trips (organizer_user_id, goal_object_id)
+     VALUES ($1, $2) RETURNING id`,
+    [user1, sectionObjectId],
+  )
+).rows[0].id;
+const foreignSectionId = (
+  await client.query(
+    `INSERT INTO trip_gear_sections (trip_id, scope, title)
+     VALUES ($1, 'shared', 'Чужой поход') RETURNING id`,
+    [otherTripId],
+  )
+).rows[0].id;
+
+await check(
+  'разделы: раздел из чужого похода к вещи не привязать',
+  'fail',
+  `UPDATE trip_gear SET shared_section_id = $1 WHERE id = $2`,
+  [foreignSectionId, sectionGearRow],
+);
+
+await check(
+  'разделы: личный раздел не встаёт в общественное поле вещи',
+  'fail',
+  `UPDATE trip_gear SET shared_section_id = $1 WHERE id = $2`,
+  [personalSectionId, sectionGearRow],
+);
+
+await check(
+  'разделы: общественный раздел встаёт в своё поле вещи',
+  'ok',
+  `UPDATE trip_gear SET shared_section_id = $1 WHERE id = $2`,
+  [sharedSectionId, sectionGearRow],
+);
+
+// Удаление раздела высыпает вещь в корень — это и есть SET NULL.
+await client.query(`DELETE FROM trip_gear_sections WHERE id = $1`, [sharedSectionId]);
+
+const sectionSpilled = (
+  await client.query(
+    `SELECT shared_section_id FROM trip_gear WHERE id = $1`,
+    [sectionGearRow],
+  )
+).rows[0].shared_section_id;
+
+if (sectionSpilled !== null) failed += 1;
+rows.push([
+  sectionSpilled === null ? 'ok' : 'ВЕЩЬ ПОТЕРЯЛАСЬ',
+  'разделы: удалили раздел — вещь осталась и высыпалась в корень',
+  sectionSpilled === null ? '' : `shared_section_id=${sectionSpilled}`,
+]);
+
+// Удаление родителя уносит подраздел: дерево не оставляет сирот.
+const parentSectionId = (
+  await client.query(
+    `INSERT INTO trip_gear_sections (trip_id, scope, title)
+     VALUES ($1, 'shared', 'Родитель') RETURNING id`,
+    [tripId],
+  )
+).rows[0].id;
+const childSectionId = (
+  await client.query(
+    `INSERT INTO trip_gear_sections (trip_id, scope, parent_id, title)
+     VALUES ($1, 'shared', $2, 'Ребёнок') RETURNING id`,
+    [tripId, parentSectionId],
+  )
+).rows[0].id;
+
+await client.query(`DELETE FROM trip_gear_sections WHERE id = $1`, [parentSectionId]);
+
+const sectionChildLeft = (
+  await client.query(
+    `SELECT count(*)::int AS count FROM trip_gear_sections WHERE id = $1`,
+    [childSectionId],
+  )
+).rows[0].count;
+
+if (sectionChildLeft !== 0) failed += 1;
+rows.push([
+  sectionChildLeft === 0 ? 'ok' : 'ПОДРАЗДЕЛ ОСТАЛСЯ',
+  'разделы: удалили родителя — подраздел ушёл каскадом',
+  sectionChildLeft === 0 ? '' : `осталось ${sectionChildLeft}`,
+]);
+
 await client.query('ROLLBACK');
 await client.end();
 

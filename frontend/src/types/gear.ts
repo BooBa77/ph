@@ -263,6 +263,33 @@ export const TRIP_GEAR_STATUSES = ['proposed', 'approved', 'declined'] as const
 export type TripGearStatus = (typeof TRIP_GEAR_STATUSES)[number]
 
 /**
+ * Вид раздела «Берём» / «Взял» (05.11.2026).
+ *
+ * `shared` — раздел общественного снаряжения, его видит весь состав;
+ * `personal` — раздел человека в «Взял», остальным он не виден вовсе.
+ */
+export const TRIP_GEAR_SECTION_SCOPES = ['shared', 'personal'] as const
+export type TripGearSectionScope = (typeof TRIP_GEAR_SECTION_SCOPES)[number]
+
+/**
+ * Раздел внутри «Берём» или «Взял».
+ *
+ * Вложенность — `parentId`: «Альпинизм» → «Верёвки». Разделы приходят
+ * тем же ответом, что и вещи: пустой раздел — законное состояние, и второй
+ * запрос ради заголовков означал бы два состояния загрузки на одной секции.
+ */
+export interface TripGearSection {
+  id: string
+  scope: TripGearSectionScope
+  /** Владелец личного раздела. `null` у общественного. */
+  ownerUserId: string | null
+  /** Родительский раздел. `null` — корень большой секции. */
+  parentId: string | null
+  title: string
+  sortOrder: number
+}
+
+/**
  * Вещь в снаряжении похода — ссылка на предмет личного каталога.
  *
  * Тип, название, значения и вес приходят из `gear_items`: палатку взвешивают
@@ -306,6 +333,10 @@ export interface TripGearItem {
    * не привязан, — «хоть лодку».
    */
   routeSection: TripGearRouteSection | null
+  /** Общественный раздел «Берём». `null` — корень секции. */
+  sharedSectionId: string | null
+  /** Мой личный раздел «Взял». У чужой вещи — `null`. */
+  personalSectionId: string | null
   ownerUserId: string
   /** Кто несёт. `null` — ещё не распределена. */
   assignedUserId: string | null
@@ -315,6 +346,8 @@ export interface TripGearItem {
 /** Ответ `GET /api/trips/:id/gear` (вес считает бэкенд по утверждённым). */
 export interface TripGearList {
   items: TripGearItem[]
+  /** Все общественные разделы и свои личные. */
+  sections: TripGearSection[]
   totalWeightGrams: number
   itemsWithoutWeight: number
 }

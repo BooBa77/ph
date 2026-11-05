@@ -22,10 +22,13 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
   AddManualTripGearDto,
+  CreateTripGearSectionDto,
   ProposeTripGearDto,
   TripGearItemDto,
   TripGearListDto,
+  TripGearSectionDto,
   UpdateTripGearDto,
+  UpdateTripGearSectionDto,
 } from './dto/trip-gear.dto';
 import { TripGearService } from './trip-gear.service';
 
@@ -89,6 +92,47 @@ export class TripGearController {
     @Body() dto: AddManualTripGearDto,
   ): Promise<TripGearItemDto> {
     return this.tripGearService.addManual(authUser.id, id, dto);
+  }
+
+  /**
+   * Разделы «Берём» и «Взял» (05.11.2026). Ручки стоят **до**
+   * `PATCH :id/gear/:gearId`: `sections` — статический сегмент, но Nest
+   * матчит маршруты в порядке объявления, и `ParseIntPipe` у `:gearId`
+   * иначе ответил бы 400 на «sections».
+   */
+  @Post(':id/gear/sections')
+  @ApiOperation({ summary: 'Создать раздел «Берём» или «Взял»' })
+  @ApiCreatedResponse({ type: TripGearSectionDto })
+  async createSection(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateTripGearSectionDto,
+  ): Promise<TripGearSectionDto> {
+    return this.tripGearService.createSection(authUser.id, id, dto);
+  }
+
+  @Patch(':id/gear/sections/:sectionId')
+  @ApiOperation({ summary: 'Переименовать, переставить или переложить раздел' })
+  @ApiOkResponse({ type: TripGearSectionDto })
+  async updateSection(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('sectionId', ParseIntPipe) sectionId: number,
+    @Body() dto: UpdateTripGearSectionDto,
+  ): Promise<TripGearSectionDto> {
+    return this.tripGearService.updateSection(authUser.id, id, sectionId, dto);
+  }
+
+  @Delete(':id/gear/sections/:sectionId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Удалить раздел — вещи остаются в корне' })
+  @ApiNoContentResponse({ description: 'Раздел удалён, вещи высыпались в корень' })
+  async removeSection(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('sectionId', ParseIntPipe) sectionId: number,
+  ): Promise<void> {
+    return this.tripGearService.removeSection(authUser.id, id, sectionId);
   }
 
   /**
