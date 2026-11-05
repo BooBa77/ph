@@ -603,6 +603,14 @@ describe('UserGear', () => {
     expect(wrapper.get('[data-test="gear-note"]').attributes('placeholder')).toBe('любой текст')
   })
 
+  it('у названия стоит звёздочка: это обязательное поле', async () => {
+    const wrapper = await mountSection([])
+    await wrapper.find('[data-test="gear-add-toggle"]').trigger('click')
+
+    const label = wrapper.get('[data-test="gear-title"]').element.closest('label')
+    expect(label?.textContent).toContain('Название*')
+  })
+
   it('без веса и местоположения добавить можно', async () => {
     const wrapper = await mountSection([])
     await wrapper.find('[data-test="gear-add-toggle"]').trigger('click')

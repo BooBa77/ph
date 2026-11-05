@@ -389,7 +389,7 @@ describe('личные вещи ночёвки', () => {
     ).toBe('грелка')
   })
 
-  it('«Указать вручную» из «Добавить ещё» заводит вещь в личном каталоге', async () => {
+  it('«Добавить вручную» из «Добавить ещё» заводит вещь в личном каталоге', async () => {
     mocks.createGearItem.mockResolvedValue(gearItem({ id: '99', title: 'Грелка' }))
 
     const wrapper = mounted()

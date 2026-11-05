@@ -248,6 +248,8 @@ describe('TripGearExtraPicker («Добавить ещё»)', () => {
     await wrapper.get('[data-test="route-extra-manual"]').trigger('click')
     expect(wrapper.emitted('manual')).toHaveLength(1)
 
+    expect(wrapper.get('[data-test="route-extra-manual"]').text()).toBe('Добавить вручную')
+
     await wrapper.get('[data-test="route-extra-cancel"]').trigger('click')
     expect(wrapper.emitted('close')).toHaveLength(1)
   })

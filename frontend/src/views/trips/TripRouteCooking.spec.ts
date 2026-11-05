@@ -817,7 +817,7 @@ describe('секция «Готовка»', () => {
     expect(wrapper.get('[data-test="route-cooking-add-axe"]').classes()).toContain('bg-red-600')
   })
 
-  it('«Указать вручную» из «Добавить ещё»: любой тип и пометка группы', async () => {
+  it('«Добавить вручную» из «Добавить ещё»: любой тип и пометка группы', async () => {
     mocks.addManualTripGear.mockResolvedValue(
       tripGearItem({
         id: 'g-manual',

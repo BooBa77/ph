@@ -868,7 +868,12 @@ async function removeVehicleById(vehicle: Vehicle) {
         </p>
       </div>
 
-      <div class="grid gap-2 sm:grid-cols-2 sm:items-end">
+      <!--
+        Тип уже, чем название (05.11.2026): заказчик попросил уменьшить
+        выбор типа на треть, а место отдать названию — названия у вещей
+        длиннее, а список типов и так читается с третьей части строки.
+      -->
+      <div class="grid gap-2 sm:grid-cols-[1fr_2fr] sm:items-end">
         <label class="flex flex-col gap-1">
           <span class="text-xs text-muted">Тип</span>
           <select
@@ -886,7 +891,9 @@ async function removeVehicleById(vehicle: Vehicle) {
         </label>
 
         <label class="flex flex-col gap-1">
-          <span class="text-xs text-muted">Название</span>
+          <span class="text-xs text-muted">
+            Название<span class="text-red-600" title="обязательно">*</span>
+          </span>
           <input
             v-model="newTitle"
             type="text"
