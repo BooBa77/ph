@@ -18,8 +18,10 @@ import type { User } from '@/api/types'
  * «Взял» / «Мой рюкзак». Права на статус — из пропа `canEdit`, как и на
  * остальных вкладках: их считает сервер.
  *
- * «Список» этого шага не рисуется: логику чек-листов заказчик ещё не
- * описал (`docs/ph/gear-tab.md` §2), и придумывать её в тестах нечего.
+ * «Список» проверяется здесь же: прогресс в `<summary>` свёрнутой секции,
+ * «Рекомендация по личным вещам» отдельной секцией между общественной
+ * и личной (05.11.2026, `docs/ph/gear-tab.md` §2), а сами чек-листы
+ * и их ручки — в `TripGearChecklist.spec.ts`.
  */
 const mocks = vi.hoisted(() => ({
   listTripGear: vi.fn(),
@@ -337,7 +339,7 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-backpack"]').exists()).toBe(true)
   })
 
-  it('в заголовках секций количеств нет, а у списков — прогресс «1/3»', async () => {
+  it('в заголовках секций количеств нет, а у списков — прогресс в свёрнутой секции', async () => {
     mocks.listTripChecklists.mockResolvedValue({
       ...emptyChecklists(),
       shared: checklist('c1', 'trip', [
@@ -352,10 +354,13 @@ describe('вкладка «Снаряжение» похода', () => {
 
     // Заказчик: «убирай количества в заголовках секций… у „Личных вещей
     // участников“, „Берём“ — вообще не нужно количество».
-    expect(wrapper.get('[data-test="gear-shared-checklist"] > summary').text()).toBe('Список')
-    expect(wrapper.get('[data-test="gear-personal-checklist"] > summary').text()).toBe('Список')
-    expect(wrapper.get('[data-test="gear-recommendation-checklist"] > summary').text()).toBe(
-      'Личные вещи участников',
+    const sharedSummary = wrapper.get('[data-test="gear-shared-checklist"] > summary')
+    expect(sharedSummary.text()).toContain('Список')
+    expect(wrapper.get('[data-test="gear-personal-checklist"] > summary').text()).toContain(
+      'Список',
+    )
+    expect(wrapper.get('[data-test="gear-recommendation-section"] > summary').text()).toBe(
+      'Рекомендация по личным вещам',
     )
     expect(wrapper.get('[data-test="gear-taking"] > summary').text()).toBe('Берём')
     expect(wrapper.get('[data-test="gear-distribution"] > summary').text()).toBe('Распределение')
@@ -364,13 +369,34 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.get('[data-test="gear-taken"] > summary').text()).toBe('Взял')
     expect(wrapper.get('[data-test="gear-backpack"] > summary').text()).toBe('Мой рюкзак')
 
-    // А у самого списка закрытые пункты обозначены прогрессом «1/3».
+    // Прогресс стоит в `<summary>`: в свёрнутой секции только он и виден.
     expect(
-      wrapper.get('[data-test="gear-shared-checklist"] [data-test="checklist-progress"]').text(),
+      sharedSummary.get('[data-test="gear-shared-progress"]').text(),
     ).toBe('1/3')
   })
 
-  it('подписи списков — словами заказчика, а у личных вещей есть скрытие инструментов', async () => {
+  it('дробь личного списка складывается из рекомендации и своих пунктов', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      recommendation: checklist('r1', 'recommendation', [
+        checklistItem('ri1', 'Рюкзак', { isDone: true }),
+        checklistItem('ri2', 'Спальник'),
+      ]),
+      personal: checklist('p1', 'personal', [
+        checklistItem('pi1', 'Коврик', { isDone: true }),
+        checklistItem('pi2', 'Кружка'),
+        checklistItem('pi3', 'Фонарь'),
+      ]),
+    })
+
+    const wrapper = await mounted(false, ANNA)
+    const personalSummary = wrapper.get('[data-test="gear-personal-checklist"] > summary')
+
+    // Два закрытых из пяти: одна рекомендация и один свой пункт.
+    expect(personalSummary.get('[data-test="gear-personal-progress"]').text()).toBe('2/5')
+  })
+
+  it('подписи списков — словами заказчика, а инструменты скрываются в обоих списках', async () => {
     mocks.listTripChecklists.mockResolvedValue({
       ...emptyChecklists(),
       shared: checklist('c1', 'trip', []),
@@ -383,17 +409,29 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).toContain(
       'Список общественного снаряжения. Редактируют только организаторы.',
     )
-    expect(wrapper.get('[data-test="gear-recommendation-checklist"]').text()).toContain(
+    expect(wrapper.get('[data-test="gear-recommendation-section"]').text()).toContain(
       'Рекомендация добавляется каждому участнику в личный список. Выполнение на его совести.',
     )
 
-    // Кнопка скрытия инструментов — только у «Мои личные вещи».
+    // «Что берём в поход» над общим списком заказчик убрал: и так понятно.
+    expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).not.toContain(
+      'Что берём в поход',
+    )
+
+    // Кнопка скрытия инструментов есть у обоих списков, которые можно править.
     expect(
       wrapper.find('[data-test="gear-personal-checklist"] [data-test="checklist-tools-toggle"]')
         .exists(),
     ).toBe(true)
     expect(
       wrapper.find('[data-test="gear-shared-checklist"] [data-test="checklist-tools-toggle"]')
+        .exists(),
+    ).toBe(true)
+
+    // А у участника без прав инструментов нет — значит, и кнопки нет.
+    const readOnly = await mounted(false, ANNA)
+    expect(
+      readOnly.find('[data-test="gear-shared-checklist"] [data-test="checklist-tools-toggle"]')
         .exists(),
     ).toBe(false)
 
@@ -642,7 +680,7 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).toContain('Котёл')
   })
 
-  it('рекомендация организатора видна ему и стоит над личным списком', async () => {
+  it('рекомендация организатора — отдельная секция между общественной и личной', async () => {
     const recommendation = checklist('r1', 'recommendation', [
       checklistItem('ri1', 'Рюкзак'),
       checklistItem('ri2', 'Спальник'),
@@ -654,8 +692,29 @@ describe('вкладка «Снаряжение» похода', () => {
 
     const organizer = await mounted(true)
 
-    // Редактор рекомендации — во второй подсекции общественного снаряжения.
-    expect(organizer.find('[data-test="gear-recommendation-checklist"]').exists()).toBe(true)
+    // Заказчик: «секция „Личные вещи участников“ некорректно смотрится
+    // в Общественном снаряжении… Вынеси её отдельно между „Общественное
+    // снаряжение“ и „Личное снаряжение“».
+    const html = organizer.html()
+    expect(html.indexOf('data-test="gear-public-section"')).toBeLessThan(
+      html.indexOf('data-test="gear-recommendation-section"'),
+    )
+    expect(html.indexOf('data-test="gear-recommendation-section"')).toBeLessThan(
+      html.indexOf('data-test="gear-personal-section"'),
+    )
+    expect(
+      organizer
+        .get('[data-test="gear-public-section"]')
+        .find('[data-test="gear-recommendation-section"]')
+        .exists(),
+    ).toBe(false)
+
+    // Название — словами заказчика; внутренние подпись и бейдж не дублируют его.
+    const editor = organizer.get('[data-test="gear-recommendation-section"]')
+    expect(editor.get('summary').text()).toBe('Рекомендация по личным вещам')
+    expect(editor.text()).not.toContain('Что взять каждому')
+    expect(editor.find('[data-test="checklist-recommended-badge"]').exists()).toBe(false)
+    expect(editor.find('[data-test="checklist-heading"]').exists()).toBe(false)
 
     // В личной секции рекомендация — над своим списком, отдельным блоком.
     const personal = organizer.get('[data-test="gear-personal-checklist"]')
@@ -674,7 +733,7 @@ describe('вкладка «Снаряжение» похода', () => {
 
     const wrapper = await mounted(false, ANNA)
 
-    expect(wrapper.find('[data-test="gear-recommendation-checklist"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="gear-recommendation-section"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="gear-personal-checklist"]').text()).toContain('Рюкзак')
   })
 

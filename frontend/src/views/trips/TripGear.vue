@@ -33,13 +33,15 @@ import {
  * и «Спальника»). Внутри — вложенные секции, каждая со своим сворачиванием.
  *
  * **«Список» — с 05.11.2026.** Заказчик описал логику: в общественной
- * секции список общественного снаряжения и второй — рекомендация личных
- * вещей участникам; в личной секции свой список, где рекомендация стоит
- * отдельным зелёным блоком над личными пунктами, удалить её нельзя,
- * а отметки организатору не возвращаются. Список правит и отмечает тот,
- * кому доступна вкладка; остальные только видят. Пункты можно заводить
- * с нуля или брать из личных чек-листов профиля — конкретная вещь едет
- * экземпляром в личный список и типом в общий и рекомендацию.
+ * секции список общественного снаряжения, между секциями — отдельная
+ * «Рекомендация по личным вещам» организатора (внутри общественной она,
+ * по словам заказчика, «смотрится некорректно»), в личной секции свой
+ * список, где рекомендация стоит отдельным зелёным блоком над личными
+ * пунктами, удалить её нельзя, а отметки организатору не возвращаются.
+ * Список правит и отмечает тот, кому доступна вкладка; остальные только
+ * видят. Пункты можно заводить с нуля или брать из личных чек-листов
+ * профиля — конкретная вещь едет экземпляром в личный список и типом
+ * в общий и рекомендацию.
  *
  * **Что уже работает на настоящих данных:**
  * - «Берём» — снаряжение похода (`GET /api/trips/:id/gear`). Предложенные
@@ -108,6 +110,30 @@ const checklistsError = ref<string | null>(null)
 /** Рекомендация показывается в личной секции, только если в ней что-то есть. */
 const hasRecommendation = computed(
   () => (checklists.value?.recommendation?.items.length ?? 0) > 0,
+)
+
+/**
+ * Прогресс списка для свёрнутой секции (05.11.2026). Заказчик: «в списках
+ * частичное выполнение пунктов должно быть видно в свёрнутом виде».
+ *
+ * Считает родитель, а не `TripGearChecklist`: свёрнутая секция — это
+ * внешние `<details>`, и до своего заголовка компонент не дотягивается.
+ * В личном списке дробь складывается из рекомендации и своих пунктов —
+ * это тоже знание экрана, а не одного чек-листа.
+ */
+function doneProgress(...lists: (Checklist | null)[]): string {
+  const items = lists.flatMap((list) => list?.items ?? [])
+  const done = items.filter((item) => item.isDone).length
+
+  return done > 0 ? `${done}/${items.length}` : ''
+}
+
+/** Общий список общественного снаряжения. */
+const sharedProgress = computed(() => doneProgress(checklists.value?.shared ?? null))
+
+/** Личный список: рекомендация организатора плюс свои пункты. */
+const personalProgress = computed(() =>
+  doneProgress(checklists.value?.recommendation ?? null, checklists.value?.personal ?? null),
 )
 
 /**
@@ -473,7 +499,11 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           data-test="gear-shared-checklist"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Список
+            Список<span
+              v-if="sharedProgress"
+              class="ml-1 text-xs font-normal text-muted"
+              data-test="gear-shared-progress"
+            >{{ sharedProgress }}</span>
           </summary>
 
           <div class="mt-2">
@@ -482,7 +512,6 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               :trip-id="trip.id"
               :checklist="checklists.shared"
               scope="trip"
-              heading="Что берём в поход"
               subtitle="Список общественного снаряжения. Редактируют только организаторы."
               empty-text="Список общественного снаряжения ещё не завели."
               add-placeholder="Добавить в список: «Котёл»"
@@ -490,48 +519,8 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               :can-manage="canEdit"
               :can-mark="canEdit"
               :can-import="canEdit"
+              tools-toggle
               @updated="applyChecklist('shared', $event)"
-            />
-
-            <p v-else-if="checklistsLoading" class="text-sm text-muted" data-test="gear-checklists-loading">
-              Загружаем чек-листы…
-            </p>
-            <p v-else class="text-sm text-muted" data-test="gear-checklists-error">
-              {{ checklistsError ?? 'Чек-листы похода не загрузились' }}
-            </p>
-          </div>
-        </details>
-
-        <!--
-          Второй список общественной секции — рекомендация личных вещей
-          участникам. Его ведёт организатор, участники получают пункты
-          в свой список ниже, а отметки остаются у каждого.
-        -->
-        <details
-          v-if="isOrganizer"
-          open
-          class="rounded-xl border border-border bg-white p-3"
-          data-test="gear-recommendation-checklist"
-        >
-          <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Личные вещи участников
-          </summary>
-
-          <div class="mt-2">
-            <TripGearChecklist
-              v-if="checklists"
-              :trip-id="trip.id"
-              :checklist="checklists.recommendation"
-              scope="recommendation"
-              variant="recommended"
-              heading="Что взять каждому"
-              subtitle="Рекомендация добавляется каждому участнику в личный список. Выполнение на его совести."
-              empty-text="Рекомендации личных вещей ещё нет."
-              add-placeholder="Добавить в рекомендацию: «Рюкзак»"
-              import-note="В рекомендацию вещи из шаблона попадут названиями типов: «Топор», а не «Топор Fixars»."
-              :can-manage="true"
-              :can-import="true"
-              @updated="applyChecklist('recommendation', $event)"
             />
 
             <p v-else-if="checklistsLoading" class="text-sm text-muted" data-test="gear-checklists-loading">
@@ -806,6 +795,48 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
         </details>
       </details>
 
+      <!--
+        «Рекомендация по личным вещам» — отдельная секция между
+        общественным и личным снаряжением (05.11.2026). Заказчик: внутри
+        «Общественного снаряжения» она «смотрится некорректно», хотя её
+        и видит только организатор. Пункты попадают участнику в личный
+        «Список» зелёным блоком, отметки у каждого свои и организатору
+        не возвращаются.
+      -->
+      <details
+        v-if="isOrganizer"
+        open
+        class="flex flex-col gap-3 rounded-2xl border border-emerald-300 bg-emerald-100 p-3"
+        data-test="gear-recommendation-section"
+      >
+        <summary class="cursor-pointer select-none text-sm font-medium text-emerald-900">
+          Рекомендация по личным вещам
+        </summary>
+
+        <div class="rounded-xl border border-border bg-white p-3">
+          <TripGearChecklist
+            v-if="checklists"
+            :trip-id="trip.id"
+            :checklist="checklists.recommendation"
+            scope="recommendation"
+            subtitle="Рекомендация добавляется каждому участнику в личный список. Выполнение на его совести."
+            empty-text="Рекомендации личных вещей ещё нет."
+            add-placeholder="Добавить в рекомендацию: «Рюкзак»"
+            import-note="В рекомендацию вещи из шаблона попадут названиями типов: «Топор», а не «Топор Fixars»."
+            :can-manage="true"
+            :can-import="true"
+            @updated="applyChecklist('recommendation', $event)"
+          />
+
+          <p v-else-if="checklistsLoading" class="text-sm text-muted" data-test="gear-checklists-loading">
+            Загружаем чек-листы…
+          </p>
+          <p v-else class="text-sm text-muted" data-test="gear-checklists-error">
+            {{ checklistsError ?? 'Чек-листы похода не загрузились' }}
+          </p>
+        </div>
+      </details>
+
       <!-- Личное снаряжение — синее, как «Питание» и «Спальник» -->
       <details
         open
@@ -819,7 +850,9 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
         <!--
           «Список» личной секции: сверху рекомендация организатора
           отдельным зелёным блоком, ниже — свои пункты. Рекомендацию
-          нельзя убрать, отметки у каждого свои.
+          нельзя убрать, отметки у каждого свои, а прогресс в свёрнутой
+          секции считает обе части вместе — так видно, как идут сборы
+          по всем личным вещам, а не только по своим.
         -->
         <details
           open
@@ -827,7 +860,11 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           data-test="gear-personal-checklist"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Список
+            Список<span
+              v-if="personalProgress"
+              class="ml-1 text-xs font-normal text-muted"
+              data-test="gear-personal-progress"
+            >{{ personalProgress }}</span>
           </summary>
 
           <div class="mt-2 flex flex-col gap-3">
