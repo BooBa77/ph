@@ -1,5 +1,5 @@
 import { enableAutoUnmount, mount } from '@vue/test-utils'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
 import type { GearItem } from '@/types/gear'
@@ -16,7 +16,9 @@ import type { GearItem } from '@/types/gear'
  * - вещь, которая уже в походе, не предлагается; поиск ищет по названию,
  *   типу и полке;
  * - рядом с поиском — **список-фильтр по группам** (03.11.2026): он сужает
- *   набор полкой и складывается с поиском.
+ *   набор полкой и складывается с поиском;
+ * - группы **свёрнуты при первом открытии и помнят состояние** (05.11.2026):
+ *   развернули «Кухню» — она осталась развёрнутой при следующем открытии.
  */
 function gearItem(
   overrides: Partial<GearItem> & Pick<GearItem, 'id' | 'title'>,
@@ -55,27 +57,51 @@ function filterChipsText(wrapper: ReturnType<typeof mount>): string[] {
     .map((node) => node.text())
 }
 
-function mounted(props: Record<string, unknown> = {}): ReturnType<typeof mount> {
+const STORAGE_KEY = 'ph.tripExtraPicker.expandedGroups'
+
+const DEFAULT_ITEMS: GearItem[] = [
+  gearItem({
+    id: '1',
+    title: 'Котёл 5 л',
+    typeCode: 'kettle',
+    typeName: 'Котёл',
+    groupCode: 'kitchen',
+    groupName: 'Кухня',
+  }),
+  gearItem({ id: '2', title: 'Лодка надувная' }),
+]
+
+/** Ключи всех групп набора: тест сам решает, что «уже развёрнуто». */
+function expandedKeyFor(items: readonly GearItem[]): string[] {
+  return [...new Set(items.map((item) => item.groupCode))]
+}
+
+/** Голое монтирование: состояние групп берётся из localStorage, как в жизни. */
+function render(props: Record<string, unknown> = {}): ReturnType<typeof mount> {
   return mount(TripGearExtraPicker, {
     props: {
-      items: [
-        gearItem({
-          id: '1',
-          title: 'Котёл 5 л',
-          typeCode: 'kettle',
-          typeName: 'Котёл',
-          groupCode: 'kitchen',
-          groupName: 'Кухня',
-        }),
-        gearItem({ id: '2', title: 'Лодка надувная' }),
-      ],
+      items: DEFAULT_ITEMS,
       ...props,
     },
   })
 }
 
+function mounted(props: Record<string, unknown> = {}): ReturnType<typeof mount> {
+  const items = (props.items as GearItem[] | undefined) ?? DEFAULT_ITEMS
+
+  // Старые проверки — про порядок и поиск, а не про сворачивание: пусть
+  // группы будут развёрнуты, как после нажатия «Развернуть все группы».
+  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(expandedKeyFor(items)))
+
+  return render(props)
+}
+
 describe('TripGearExtraPicker («Добавить ещё»)', () => {
   enableAutoUnmount(afterEach)
+
+  beforeEach(() => {
+    window.localStorage.clear()
+  })
 
   it('полка секции идёт первой, остальные — после', () => {
     const wrapper = mounted({ preferredGroupCodes: ['kitchen'] })
@@ -231,5 +257,100 @@ describe('TripGearExtraPicker («Добавить ещё»)', () => {
 
     expect(wrapper.get('[data-test="route-extra-loading"]').text()).toContain('Загружаем')
     expect(wrapper.find('[data-test^="route-extra-group-"]').exists()).toBe(false)
+  })
+
+  // ─────────────────────── свёрнутые группы ───────────────────────
+
+  it('подпись — слова заказчика: «любую вещь… или создать новую»', () => {
+    const wrapper = mounted()
+
+    expect(wrapper.get('[data-test="route-extra-subtitle"]').text()).toBe(
+      'Любую вещь из личного снаряжения или создать новую.',
+    )
+  })
+
+  it('при первом открытии группы свёрнуты: видны заголовки, а не вещи', () => {
+    const wrapper = render()
+
+    expect(itemsText(wrapper)).toEqual([])
+    expect(groupsText(wrapper)).toEqual(['Кухня', 'Прочее'])
+
+    const toggle = wrapper.get('[data-test="route-extra-toggle-kitchen"]')
+    expect(toggle.text()).toBe('Развернуть группу')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+  })
+
+  it('разворачивает группу и запоминает это в localStorage', async () => {
+    const wrapper = render()
+
+    await wrapper.get('[data-test="route-extra-toggle-kitchen"]').trigger('click')
+
+    expect(itemsText(wrapper)).toEqual(['Котёл 5 л · Котёл'])
+    expect(
+      wrapper.get('[data-test="route-extra-toggle-kitchen"]').attributes('aria-expanded'),
+    ).toBe('true')
+    expect(JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '[]')).toEqual(['kitchen'])
+  })
+
+  it('поиск показывает найденное, даже если группа была свёрнута', async () => {
+    const wrapper = render()
+
+    await wrapper.get('[data-test="route-extra-search"]').setValue('лодка')
+
+    expect(groupsText(wrapper)).toEqual(['Прочее'])
+    expect(itemsText(wrapper)).toEqual(['Лодка надувная · Прочее'])
+
+    // Состояние групп не трогали: сняли поиск — снова свёрнуто.
+    await wrapper.get('[data-test="route-extra-search"]').setValue('')
+    expect(itemsText(wrapper)).toEqual([])
+    expect(wrapper.find('[data-test="route-extra-toggle-other"]').exists()).toBe(true)
+  })
+
+  it('повторное открытие восстанавливает последнее состояние', async () => {
+    const first = render()
+    await first.get('[data-test="route-extra-toggle-kitchen"]').trigger('click')
+    first.unmount()
+
+    const second = render()
+
+    expect(itemsText(second)).toEqual(['Котёл 5 л · Котёл'])
+    expect(second.get('[data-test="route-extra-toggle-other"]').text()).toBe(
+      'Развернуть группу',
+    )
+  })
+
+  it('фильтр по группе разворачивает её: сузили список — увидели вещи', async () => {
+    const wrapper = render()
+
+    await wrapper.get('[data-test="route-extra-filter-group-kitchen"]').trigger('click')
+
+    expect(itemsText(wrapper)).toEqual(['Котёл 5 л · Котёл'])
+    expect(wrapper.get('[data-test="route-extra-toggle-kitchen"]').attributes('aria-expanded')).toBe(
+      'true',
+    )
+  })
+
+  it('общая кнопка разворачивает и сворачивает все группы', async () => {
+    const wrapper = render()
+    const all = () => wrapper.get('[data-test="route-extra-collapse-all"]')
+
+    expect(all().text()).toBe('Развернуть все группы')
+
+    await all().trigger('click')
+    expect(itemsText(wrapper)).toHaveLength(2)
+    expect(all().text()).toBe('Свернуть все группы')
+
+    await all().trigger('click')
+    expect(itemsText(wrapper)).toEqual([])
+    expect(all().text()).toBe('Развернуть все группы')
+  })
+
+  it('мусор в localStorage — те же свёрнутые группы, а не пустая модалка', () => {
+    window.localStorage.setItem(STORAGE_KEY, '{не json')
+
+    const wrapper = render()
+
+    expect(groupsText(wrapper)).toEqual(['Кухня', 'Прочее'])
+    expect(itemsText(wrapper)).toEqual([])
   })
 })

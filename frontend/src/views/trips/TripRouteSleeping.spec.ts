@@ -102,6 +102,15 @@ describe('личные вещи ночёвки', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
+
+    // «Добавить ещё» при первом открытии показывает группы свёрнутыми
+    // (05.11.2026). Здесь проверяется выбор вещи, а не сворачивание:
+    // считаем, что человек уже раскрыл нужные группы.
+    window.localStorage.setItem(
+      'ph.tripExtraPicker.expandedGroups',
+      JSON.stringify(['other', 'roof', 'kitchen']),
+    )
+
     useAuthStore().setAuth(
       {
         id: 'me',

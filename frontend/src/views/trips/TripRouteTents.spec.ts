@@ -368,6 +368,13 @@ describe('секция «Палатки»', () => {
     setActivePinia(createPinia())
     useAuthStore().setAuth(makeUser(), 'token')
 
+    // «Добавить ещё» при первом открытии показывает группы свёрнутыми
+    // (05.11.2026). Здесь проверяется выбор вещи, а не сворачивание.
+    window.localStorage.setItem(
+      'ph.tripExtraPicker.expandedGroups',
+      JSON.stringify(['other', 'roof', 'kitchen']),
+    )
+
     setPeople()
     mocks.listGear.mockResolvedValue(gearList([]))
     mocks.removeTripGear.mockResolvedValue(undefined)

@@ -82,6 +82,14 @@ import { formatWeight, parseWeightGrams } from '@/utils/gearWeight'
  * **Группы сворачиваются** — как в «Питании»: у каждой секции своя кнопка,
  * а одна общая сворачивает все.
  *
+ * **Группа в форме — фильтр типов (05.11.2026).** Заказчик: «Поле Группа
+ * нужно вводить явно, а не подписью „Попадёт в группу…“. Расположи над
+ * выбором типа, должно фильтровать типы, есть значение „все“». Группа
+ * по-прежнему **не сохраняется у вещи**: она следует из типа, поэтому поле
+ * только сужает список типов до выбранной группы. Заодно форма разложена
+ * по строкам: тип и название, вес и местоположение, заметка отдельно —
+ * в одну строку даже на десктопе было тесно.
+ *
  * **Вес показывается один раз (03.11.2026).** Заказчик: «Два раза вес,
  * зачем?» — поэтому в плашке одна подпись «2,6 кг», а граммы спрашиваются
  * только в правке: по нажатию на вес поле раскрывается, по потере фокуса
@@ -127,19 +135,34 @@ const newAttributes = computed<readonly GearTypeAttribute[]>(
 )
 
 /**
- * Группа, в которую попадёт новая вещь: она следует из типа.
+ * Группа в форме — только фильтр списка типов (05.11.2026).
  *
- * Это подсказка, а не выбор: заказчик просил группировать типы, поэтому
- * «полка» вещи задаётся настройкой группировки.
+ * Пустая строка — «Все». Сама вещь группы не хранит: группа выводится
+ * из типа, поэтому выбор здесь ничего не отправляет на сервер.
  */
-const newTypeGroup = computed<GearGroup | null>(() => {
-  if (newTypeId.value === null) return null
+const newGroupId = ref<number | ''>('')
 
-  return (
-    groupsList.value.find((group) =>
-      group.types.some((type) => type.id === newTypeId.value),
-    ) ?? null
-  )
+/** Типы выбранной группы; «Все» — весь справочник. */
+const filteredTypes = computed<GearType[]>(() => {
+  if (newGroupId.value === '') return types.value
+
+  const group = groupsList.value.find((row) => row.id === newGroupId.value)
+  if (group === undefined) return types.value
+
+  const ids = new Set(group.types.map((type) => type.id))
+
+  return types.value.filter((type) => ids.has(type.id))
+})
+
+/**
+ * Смена фильтра не должна оставлять выбранным тип из другой группы:
+ * иначе в поле стоял бы тип, которого в списке нет.
+ */
+watch(filteredTypes, (next) => {
+  if (next.some((type) => type.id === newTypeId.value)) return
+
+  newTypeId.value = next[0]?.id ?? null
+  newDrafts.value = {}
 })
 
 /** Что сейчас сохраняется: id предмета, чтобы не дёргать его дважды. */
@@ -821,18 +844,44 @@ async function removeVehicleById(vehicle: Vehicle) {
       data-test="gear-add-form"
       @submit.prevent="add"
     >
-      <div class="grid gap-2 sm:grid-cols-[9rem_1fr_5rem_1fr_auto] sm:items-end">
+      <!--
+        Группа — фильтр типов (05.11.2026), а не поле вещи: группа следует
+        из типа. Подпись справа говорит, где группы настраивают.
+      -->
+      <div class="grid gap-2 sm:grid-cols-[14rem_1fr] sm:items-end">
+        <label class="flex flex-col gap-1">
+          <span class="text-xs text-muted">Группа</span>
+          <select
+            v-model="newGroupId"
+            class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+            data-test="gear-new-group"
+          >
+            <option value="">Все</option>
+            <option v-for="group in groupsList" :key="group.id" :value="group.id">
+              {{ group.name }}
+            </option>
+          </select>
+        </label>
+
+        <p class="text-xs text-muted sm:pb-2.5" data-test="gear-new-group-hint">
+          Группы можно настроить через кнопку «Настройка группировки снаряжения» (см. выше).
+        </p>
+      </div>
+
+      <div class="grid gap-2 sm:grid-cols-2 sm:items-end">
         <label class="flex flex-col gap-1">
           <span class="text-xs text-muted">Тип</span>
           <select
             v-model="newTypeId"
-            :disabled="types.length === 0"
+            :disabled="filteredTypes.length === 0"
             class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-60"
             data-test="gear-type"
             @change="newDrafts = {}"
           >
-            <option v-if="types.length === 0" :value="null">—</option>
-            <option v-for="type in types" :key="type.id" :value="type.id">{{ type.name }}</option>
+            <option v-if="filteredTypes.length === 0" :value="null">—</option>
+            <option v-for="type in filteredTypes" :key="type.id" :value="type.id">
+              {{ type.name }}
+            </option>
           </select>
         </label>
 
@@ -842,12 +891,14 @@ async function removeVehicleById(vehicle: Vehicle) {
             v-model="newTitle"
             type="text"
             maxlength="120"
-            placeholder="Палатка на четверых"
+            placeholder="например, Старый рюкзак, это видишь только ты"
             class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
             data-test="gear-title"
           />
         </label>
+      </div>
 
+      <div class="grid gap-2 sm:grid-cols-[10rem_1fr] sm:items-end">
         <label class="flex flex-col gap-1">
           <span class="text-xs text-muted">Вес, г</span>
           <input
@@ -873,29 +924,19 @@ async function removeVehicleById(vehicle: Vehicle) {
             data-test="gear-location"
           />
         </label>
-
-        <label class="flex flex-col gap-1">
-          <span class="text-xs text-muted">Заметка</span>
-          <input
-            v-model="newNote"
-            type="text"
-            maxlength="500"
-            placeholder="проклеена, течёт по шву"
-            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-            data-test="gear-note"
-          />
-        </label>
       </div>
 
-      <p class="text-xs text-muted" data-test="gear-new-group-hint">
-        <template v-if="newTypeGroup">
-          Попадёт в группу «{{ newTypeGroup.name }}» — группу типа меняют в «Настройке
-          группировки».
-        </template>
-        <template v-else>
-          Тип задаёт характеристики и группу вещи: группу меняют в «Настройке группировки».
-        </template>
-      </p>
+      <label class="flex flex-col gap-1">
+        <span class="text-xs text-muted">Заметка</span>
+        <input
+          v-model="newNote"
+          type="text"
+          maxlength="500"
+          placeholder="любой текст"
+          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+          data-test="gear-note"
+        />
+      </label>
 
       <button
         type="submit"

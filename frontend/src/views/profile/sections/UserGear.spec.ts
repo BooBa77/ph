@@ -23,7 +23,8 @@ import UserGear from '@/views/profile/sections/UserGear.vue'
  *   нажатию), а группы в подписи вещи нет: она стоит заголовком секции
  *   (заказчик 03.11.2026);
  * - итога по всему каталогу больше нет: «Сколько снаряги дома хранится?»;
- * - вещь заводится без выбора группы — группа следует из типа;
+ * - вещь заводится без выбора группы — группа следует из типа, а поле
+ *   «Группа» в форме только фильтрует типы (05.11.2026);
  * - местоположение правится на месте и уходит `null`-ом, когда поле пустое;
  * - «Настройка группировки» открывается диалогом.
  *
@@ -519,7 +520,7 @@ describe('UserGear', () => {
     expect(wrapper.find('[data-test="gear-add-form"]').exists()).toBe(true)
   })
 
-  it('добавляет предмет без группы: группа следует из типа, местоположение — полем', async () => {
+  it('добавляет предмет: тип задаёт группу, местоположение — полем', async () => {
     const wrapper = await mountSection([])
     await wrapper.find('[data-test="gear-add-toggle"]').trigger('click')
 
@@ -534,9 +535,6 @@ describe('UserGear', () => {
     await wrapper.find('[data-test="new-seats"]').setValue('4')
     await wrapper.find('[data-test="new-model"]').setValue('MSR')
 
-    // Группу не выбирают — экран подсказывает, куда тип её положит.
-    expect(wrapper.find('[data-test="gear-new-group-hint"]').text()).toContain('Кров')
-
     await wrapper.find('form').trigger('submit')
     await flushPromises()
 
@@ -549,6 +547,60 @@ describe('UserGear', () => {
       attributes: { seats: 4, model: 'MSR' },
     })
     expect(wrapper.find('[data-test="gear-add-form"]').exists()).toBe(false)
+  })
+
+  it('группа в форме — фильтр типов, а не поле вещи', async () => {
+    const wrapper = await mountSection([])
+    await wrapper.find('[data-test="gear-add-toggle"]').trigger('click')
+
+    const group = wrapper.get('[data-test="gear-new-group"]')
+    expect(group.findAll('option').map((option) => option.text())).toEqual([
+      'Все',
+      'Кров',
+      'Костровое',
+      'Кухня',
+      'Прочее',
+    ])
+
+    const types = (): string[] =>
+      wrapper
+        .get('[data-test="gear-type"]')
+        .findAll('option')
+        .map((option) => option.text())
+
+    expect(types()).toEqual(['Палатка', 'Топор', 'Газовый баллон', 'Горелка'])
+
+    // «Кухня»: остались только её типы, выбранный тип переехал в список.
+    await group.setValue(3)
+    expect(types()).toEqual(['Газовый баллон', 'Горелка'])
+    expect((wrapper.get('[data-test="gear-type"]').element as HTMLSelectElement).value).toBe('2')
+
+    // В «Прочем» типов нет — выбирать нечего, честное «—».
+    await group.setValue(4)
+    expect(types()).toEqual(['—'])
+
+    // «Все» возвращает справочник целиком.
+    await group.setValue('')
+    expect(types()).toEqual(['Палатка', 'Топор', 'Газовый баллон', 'Горелка'])
+  })
+
+  it('подсказка у группы ведёт к настройке группировки', async () => {
+    const wrapper = await mountSection([])
+    await wrapper.find('[data-test="gear-add-toggle"]').trigger('click')
+
+    const hint = wrapper.get('[data-test="gear-new-group-hint"]').text()
+    expect(hint).toContain('Настройка группировки снаряжения')
+    expect(hint).toContain('(см. выше)')
+  })
+
+  it('плейсхолдеры названия и заметки — слова заказчика', async () => {
+    const wrapper = await mountSection([])
+    await wrapper.find('[data-test="gear-add-toggle"]').trigger('click')
+
+    expect(wrapper.get('[data-test="gear-title"]').attributes('placeholder')).toBe(
+      'например, Старый рюкзак, это видишь только ты',
+    )
+    expect(wrapper.get('[data-test="gear-note"]').attributes('placeholder')).toBe('любой текст')
   })
 
   it('без веса и местоположения добавить можно', async () => {
