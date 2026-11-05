@@ -27,7 +27,7 @@ import type {
   TripParticipant,
   TripRoute,
 } from '@/types/trips'
-import { weightInGrams } from '@/utils/gearWeight'
+import { formatWeight, weightInGrams } from '@/utils/gearWeight'
 
 /**
  * «Палатки» — распределение участников по палаткам (29.10.2026).
@@ -73,9 +73,13 @@ import { weightInGrams } from '@/utils/gearWeight'
  * живут +1 человек». Поэтому здесь нет «мест нет»: есть строка
  * «живут 2 (Пётр, Анна)» и тихая пометка «сверх вместимости».
  *
- * **Заголовок плашки** — «{хозяин} {seats}-х местная {вес}гр.», например
- * «Анна 3-х местная 2400 гр.». Веса нет — нет и «гр.»; вместимости нет —
- * нет и числа.
+ * **Заголовок плашки** — «{хозяин}, {seats}-х местная, {вес}», например
+ * «Анна, 3-х местная, 2,4 кг» (03.11.2026). Заказчик дважды поправил формат:
+ * «подпись к палатке в граммах „Трегубов Сергей 2-х местная 2600 гр.“, для
+ * палаток удобнее килограммы» и «вставь запятые». Поэтому вес палатки идёт
+ * человеческим весом (`formatWeight`: до килограмма граммы, дальше
+ * килограммы с запятой), а части подписи разделены запятыми. Веса нет — нет
+ * и веса; вместимости нет — нет и числа.
  *
  * **Права.** Правят распределение хозяин палатки и тот, кто ведёт вкладку
  * (`canEdit` из ответа сервера, а не догадка фронта). Но **попроситься
@@ -276,6 +280,41 @@ function lodgersOf(tent: TentCard): RouteLodger[] {
   return props.lodgers.filter((lodger) => lodger.tentGearId === tent.tripGearId)
 }
 
+/**
+ * Где человек уже устроен, если не в этой палатке.
+ *
+ * Переезд — законное действие (`PUT /route/lodgers/:userId` правит ту же
+ * строку), поэтому люди из других палаток в списке остаются. Но молча
+ * предлагать их второй раз нельзя, и эта функция даёт подпись к пункту.
+ */
+function otherTentOf(userId: string): { tent: TentCard; status: RouteLodgerStatus } | null {
+  const lodger = props.lodgers.find((row) => row.userId === userId)
+
+  if (lodger === undefined) return null
+
+  const tent = tents.value.find((row) => row.tripGearId === lodger.tentGearId)
+
+  return tent === undefined ? null : { tent, status: lodger.status }
+}
+
+/**
+ * Пометка к человеку, который уже устроен в другой палатке.
+ *
+ * Слова заказчика 03.11.2026: «вижу, что можно взять к себе в палатку уже
+ * устроенного участника — нужно как-то помечать в списке уже устроенных».
+ * Пометка говорит, где человек сейчас, а решает всё равно тот, кто зовёт:
+ * переезд остаётся возможным.
+ */
+function placeSuffix(userId: string): string {
+  const place = otherTentOf(userId)
+
+  if (place === null) return ''
+
+  return place.status === 'accepted'
+    ? ` — уже в палатке «${place.tent.ownerName}»`
+    : ` — просится в палатку «${place.tent.ownerName}»`
+}
+
 function acceptedOf(tent: TentCard): TentPerson[] {
   return lodgersOf(tent).filter((lodger) => lodger.status === 'accepted')
 }
@@ -285,10 +324,12 @@ function requestedOf(tent: TentCard): TentPerson[] {
 }
 
 /**
- * Заголовок плашки — формат заказчика 29.10.2026:
- * **«{хозяин} {основная характеристика} {вес}гр.»** — «Анна 3-х местная
- * 2400 гр.». Чего нет, того в заголовке нет: «Анна 2400 гр.» честнее, чем
- * «Анна 3-х местная» у палатки без заполненной вместимости.
+ * Заголовок плашки — формат заказчика 03.11.2026:
+ * **«{хозяин}, {основная характеристика}, {вес}»** — «Анна, 3-х местная,
+ * 2,4 кг». Первым был «Анна 3-х местная 2400 гр.», но для палатки заказчик
+ * просил килограммы и запятые между словами. Чего нет, того в заголовке нет:
+ * «Анна, 2,4 кг» честнее, чем «Анна, 3-х местная» у палатки без заполненной
+ * вместимости.
  */
 function capacityText(capacity: number): string {
   if (capacity === 1) return 'одноместная'
@@ -301,11 +342,9 @@ function tentTitle(tent: TentCard): string {
   const parts = [tent.ownerName]
 
   if (tent.capacity !== null) parts.push(capacityText(tent.capacity))
+  if (tent.weightGrams !== null) parts.push(formatWeight(tent.weightGrams))
 
-  const weight = weightInGrams(tent.weightGrams)
-  if (weight !== null) parts.push(weight)
-
-  return parts.join(' ')
+  return parts.join(', ')
 }
 
 /** Сколько в палатке живёт и кто — словами, как «занято 4 из 4» у рейса. */
@@ -459,12 +498,13 @@ function acceptRequest(person: TentPerson): void {
 
 /**
  * Убирать человека из палатки может он сам, хозяин палатки и тот, кто ведёт
- * вкладку. Хозяина из его собственной палатки не убираем: палатка уходит
- * из похода вместе с ним.
+ * вкладку. **Хозяин палатки — тоже из своей** (03.11.2026). Заказчик:
+ * «владелец палатки не может исключить себя. Он владелец палатки, а не
+ * водитель автомобиля, он может взять несколько палат на всю группу, а сам
+ * даже не участвовать в походе, добавь ему крестик». Уходит только место:
+ * сама палатка остаётся в снаряжении похода.
  */
 function canRemoveMember(tent: TentCard, person: TentPerson): boolean {
-  if (person.userId === tent.ownerUserId) return false
-
   return isMine(person) || canManage(tent)
 }
 
@@ -933,7 +973,7 @@ async function pickExtra(item: GearItem): Promise<void> {
             {{ person.displayName }}
             <span v-if="isMine(person)" class="text-xs text-amber-700">(вы)</span>
 
-            <!-- Владельца из его палатки не убрать: палатка уходит вместе с ним. -->
+            <!-- Владелец тоже уходит из палатки: палатка остаётся в походе. -->
             <button
               v-if="canRemoveMember(tent, person)"
               type="button"
@@ -1043,7 +1083,7 @@ async function pickExtra(item: GearItem): Promise<void> {
               :key="person.userId"
               :value="person.userId"
             >
-              {{ person.displayName }}
+              {{ person.displayName }}{{ placeSuffix(person.userId) }}
             </option>
           </select>
         </div>

@@ -34,8 +34,9 @@ import TripRouteTents from '@/views/trips/TripRouteTents.vue'
  *
  * - **вместимость не блокирует**: палатка на троих спокойно принимает
  *   четвёртого — «производитель рекомендует, а живут +1»;
- * - **заголовок плашки** — «{хозяин} {seats}-х местная {вес}гр.», и число
- *   мест берётся **из значения характеристики `seats`** (30.10.2026);
+ * - **заголовок плашки** — «{хозяин}, {seats}-х местная, {вес}» с весом
+ *   в килограммах, и число мест берётся **из значения характеристики `seats`**
+ *   (30.10.2026);
  * - **тип вместо слова в названии**: палатки — вещи типа `tent`, тенты —
  *   `shelter`; «Добавить тент» уходит на сервер, как и палатка;
  * - **распределяем только «идёт»**: «пока не решил», «приглашён» и «не идёт»
@@ -440,20 +441,20 @@ describe('секция «Палатки»', () => {
       ],
     })
 
-    expect(tentTitles(wrapper)).toEqual(['Анна 3-х местная 2400 гр.'])
+    expect(tentTitles(wrapper)).toEqual(['Анна, 3-х местная, 2,4 кг'])
   })
 
-  it('без веса в заголовке нет «гр.»: «Анна 3-х местная»', async () => {
+  it('без веса в заголовке нет веса: «Анна, 3-х местная»', async () => {
     const wrapper = await mounted({ gear: [{ ...annaTent(), weightGrams: null }] })
 
-    expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe('Анна 3-х местная')
+    expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe('Анна, 3-х местная')
   })
 
-  it('заголовок плашки — «{хозяин} {seats}-х местная {вес}гр.»', async () => {
+  it('заголовок плашки — «{хозяин}, {seats}-х местная, {вес}»', async () => {
     const wrapper = await mounted()
 
     expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe(
-      'Анна 3-х местная 2400 гр.',
+      'Анна, 3-х местная, 2,4 кг',
     )
   })
 
@@ -470,7 +471,7 @@ describe('секция «Палатки»', () => {
     expect(wrapper.get('[data-test="route-tent-requests"]').text()).toContain('Олег')
   })
 
-  it('вместимость не заполнена — не выдумываем: «Анна 2400 гр.» и никакой пометки', async () => {
+  it('вместимость не заполнена — не выдумываем: «Анна, 2,4 кг» и никакой пометки', async () => {
     setPeople([
       ...makePeople(),
       participant('demo-vasya', 'Вася'),
@@ -479,7 +480,7 @@ describe('секция «Палатки»', () => {
 
     const wrapper = await mounted({ gear: [{ ...annaTent(), attributes: [] }] })
 
-    expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe('Анна 2400 гр.')
+    expect(wrapper.get('[data-test="route-tent-title"]').text()).toBe('Анна, 2,4 кг')
 
     // Вместимости нет — «сверх вместимости» сказать нечего, и не говорим.
     await wrapper.get('[data-test="route-tent-add-member"]').setValue('demo-vasya')
@@ -704,21 +705,77 @@ describe('секция «Палатки»', () => {
     ])
   })
 
-  it('владельца из палатки не убрать, остальных — можно', async () => {
+  it('владельца тоже можно убрать из его палатки — крестик есть у всех', async () => {
     const wrapper = await mounted()
 
     await wrapper.get('[data-test="route-tent-add-member"]').setValue(ME)
     await flushPromises()
 
-    // У Анны крестика нет: палатка уходит из похода вместе с ней.
-    expect(wrapper.find(`[data-test="route-tent-leave-${ANNA}"]`).exists()).toBe(false)
+    // Владелец палатки — не водитель: уйти из своей палатки он может.
+    expect(wrapper.find(`[data-test="route-tent-leave-${ANNA}"]`).exists()).toBe(true)
 
-    await wrapper.get(`[data-test="route-tent-leave-${ME}"]`).trigger('click')
+    await wrapper.get(`[data-test="route-tent-leave-${ANNA}"]`).trigger('click')
     await flushPromises()
 
-    expect(mocks.releaseRouteLodger).toHaveBeenCalledWith('1', ME)
-    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живёт 1 (Анна)')
-    expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Олег')
+    expect(mocks.releaseRouteLodger).toHaveBeenCalledWith('1', ANNA)
+    expect(wrapper.get('[data-test="route-tent-summary"]').text()).toBe('живёт 1 (Олег)')
+    expect(wrapper.get('[data-test="route-tents-unassigned"]').text()).toContain('Анна')
+  })
+
+  it('«взять в палатку» помечает уже устроенных: где человек живёт сейчас', async () => {
+    const wrapper = await mounted({
+      gear: [
+        annaTent(),
+        tripGearItem({
+          id: 'g2',
+          gearItemId: '11',
+          typeCode: 'tent',
+          typeName: 'Палатка',
+          title: 'Палатка Петра',
+          ownerUserId: PETR,
+        }),
+      ],
+      lodgers: [
+        annaLodger(),
+        { userId: ME, displayName: ME_NAME, tentGearId: 'g2', status: 'accepted' },
+      ],
+    })
+
+    const options = wrapper
+      .findAll('[data-test="route-tent-add-member"]')[0]!
+      .findAll('option')
+      .map((option) => option.text())
+
+    // Олег уже живёт у Петра: в списке Анны он подписан, а не спрятан —
+    // переезд остаётся возможным, но выбор теперь осознанный.
+    expect(options).toEqual(['взять в палатку…', 'Олег — уже в палатке «Пётр»'])
+  })
+
+  it('заявка в чужую палатку тоже подписана: «просится в палатку»', async () => {
+    const wrapper = await mounted({
+      gear: [
+        annaTent(),
+        tripGearItem({
+          id: 'g2',
+          gearItemId: '11',
+          typeCode: 'tent',
+          typeName: 'Палатка',
+          title: 'Палатка Петра',
+          ownerUserId: PETR,
+        }),
+      ],
+      lodgers: [
+        annaLodger(),
+        { userId: ME, displayName: ME_NAME, tentGearId: 'g2', status: 'requested' },
+      ],
+    })
+
+    const options = wrapper
+      .findAll('[data-test="route-tent-add-member"]')[0]!
+      .findAll('option')
+      .map((option) => option.text())
+
+    expect(options).toEqual(['взять в палатку…', 'Олег — просится в палатку «Пётр»'])
   })
 
   it('в чужую палатку просятся, а не входят сразу; заявку можно отменить', async () => {
@@ -857,14 +914,14 @@ describe('секция «Палатки»', () => {
 
     expect(mocks.proposeTripGear).toHaveBeenCalledWith('1', '20')
     expect(wrapper.find('[data-test="route-tent-dialog"]').exists()).toBe(false)
-    expect(tentTitles(wrapper)).toContain('Олег 5-местная 1000 гр.')
+    expect(tentTitles(wrapper)).toContain('Олег, 5-местная, 1 кг')
 
     // Палатку берут, чтобы в ней спать: место занимает та же цепочка действий.
     expect(mocks.lodgeRoute).toHaveBeenCalledWith('1', ME, 'g20')
     expect(tentSummaries(wrapper)).toContain('живёт 1 (Олег)')
 
     // Вторая палатка — на одного и без веса: «одноместная», а не «1-х
-    // местная», и без «гр.», которого не из чего взять.
+    // местная», и без веса, которого не из чего взять.
     await wrapper.get('[data-test="route-tent-add"]').trigger('click')
     await flushPromises()
 
@@ -872,7 +929,7 @@ describe('секция «Палатки»', () => {
     await wrapper.get('[data-test="route-tent-save"]').trigger('click')
     await flushPromises()
 
-    expect(tentTitles(wrapper)).toContain('Олег одноместная')
+    expect(tentTitles(wrapper)).toContain('Олег, одноместная')
   })
 
   it('своя палатка без вместимости: подсказка в диалоге, заголовок без числа', async () => {
@@ -903,7 +960,7 @@ describe('секция «Палатки»', () => {
     await wrapper.get('[data-test="route-tent-save"]').trigger('click')
     await flushPromises()
 
-    expect(tentTitles(wrapper)).toEqual(['Анна 3-х местная 2400 гр.', 'Олег 1800 гр.'])
+    expect(tentTitles(wrapper)).toEqual(['Анна, 3-х местная, 2,4 кг', 'Олег, 1,8 кг'])
   })
 
   it('в списке нет палаток, которые уже взяли в поход', async () => {
@@ -983,7 +1040,7 @@ describe('секция «Палатки»', () => {
       '1',
       expect.objectContaining({ typeId: 1, addToCatalog: false }),
     )
-    expect(tentTitles(wrapper)).toContain('Олег 2-х местная 2400 гр.')
+    expect(tentTitles(wrapper)).toContain('Олег, 2-х местная, 2,4 кг')
   })
 
   /**
@@ -1119,7 +1176,7 @@ describe('секция «Палатки»', () => {
 
     expect(wrapper.get('[data-test="route-tent-extras"]').text()).toContain('Лодка надувная')
     // Палатка осталась плашкой распределения: пометка вещи этим не мешает.
-    expect(tentTitles(wrapper)).toEqual(['Анна 3-х местная'])
+    expect(tentTitles(wrapper)).toEqual(['Анна, 3-х местная'])
   })
 
   it('«Отмена» в ручной форме возвращает к тому же выбору, сохраняя поиск', async () => {
