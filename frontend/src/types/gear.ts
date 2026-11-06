@@ -263,6 +263,20 @@ export const TRIP_GEAR_STATUSES = ['proposed', 'approved', 'declined'] as const
 export type TripGearStatus = (typeof TRIP_GEAR_STATUSES)[number]
 
 /**
+ * Статус словами — для карточки вещи и подсказок пилюли (06.11.2026).
+ *
+ * Заказчик: «А статусы „Берём/не берём/предложено“ отображать оформлением».
+ * Сама пилюля статус больше не подписывает, но слова остаются в `title`,
+ * `aria-label` и в карточке: цвет и пунктир без подписи не читаются ни
+ * скринридером, ни новичком.
+ */
+export const TRIP_GEAR_STATUS_LABELS: Record<TripGearStatus, string> = {
+  proposed: 'Предложено',
+  approved: 'Берём',
+  declined: 'Не берём',
+}
+
+/**
  * Вид раздела «Берём» / «Взял» (05.11.2026).
  *
  * `shared` — раздел общественного снаряжения, его видит весь состав;

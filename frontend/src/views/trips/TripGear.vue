@@ -17,17 +17,21 @@ import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 import TripGearChecklist from '@/components/gear/TripGearChecklist.vue'
 import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
+import TripGearItemModal from '@/components/gear/TripGearItemModal.vue'
 import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
 import TripGearSectionList from '@/components/gear/TripGearSectionList.vue'
+import { TRIP_GEAR_STATUS_LABELS } from '@/types/gear'
 import type { Checklist, TripChecklists } from '@/types/checklists'
 import type {
   GearItem,
   TripGearItem,
   TripGearSection,
+  TripGearSectionScope,
   TripGearStatus,
 } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
 import {
+  formatWeight,
   formatWeightTotal,
   weightInGrams,
 } from '@/utils/gearWeight'
@@ -200,6 +204,88 @@ const sharedSections = computed(() =>
 const personalSections = computed(() =>
   sections.value.filter((section) => section.scope === 'personal'),
 )
+
+// ───────────────────────────── карточка вещи ─────────────────────────────
+
+/**
+ * Пилюля открывает карточку (06.11.2026).
+ *
+ * Заказчик: «В пилюле отображение полей выбора раздела и выбор
+ * „Берём/не берём“ это лишнее, особенно в мобилке. Предлагаю модалку,
+ * в которой отображаются все характеристики объекта и эти два поля».
+ * Поэтому в списке у вещи остались название, вес и владелец, а решения
+ * переехали в `TripGearItemModal` — и заодно перестали быть двумя `select`
+ * в каждой строке.
+ *
+ * Храним id, а не объект: после `PATCH` родитель заменяет строку в `items`,
+ * и карточка обязана показать свежую вещь, а не копию, открытую когда-то.
+ */
+const openedItemId = ref<string | null>(null)
+/** Из какой большой секции открыли карточку: от этого зависит поле «Раздел». */
+const openedScope = ref<TripGearSectionScope>('shared')
+
+const openedItem = computed(
+  () => items.value.find((row) => row.id === openedItemId.value) ?? null,
+)
+
+function openItem(item: TripGearItem, scope: TripGearSectionScope): void {
+  openedItemId.value = item.id
+  openedScope.value = scope
+}
+
+function closeItem(): void {
+  openedItemId.value = null
+}
+
+/**
+ * Статус выбрали в карточке. Правку делает `patchItem`: он же держит
+ * защиту от двойного нажатия и показывает текст ошибки сервера.
+ */
+async function onItemStatus(status: TripGearStatus): Promise<void> {
+  const item = openedItem.value
+  if (!item) return
+
+  await patchItem(item, { status })
+}
+
+/** Раздел выбрали в карточке — путь переноса для телефона, где drag не работает. */
+async function onItemSection(sectionId: string | null): Promise<void> {
+  const item = openedItem.value
+  if (!item) return
+
+  await patchItem(
+    item,
+    openedScope.value === 'shared'
+      ? { sharedSectionId: sectionId }
+      : { personalSectionId: sectionId },
+  )
+}
+
+async function onItemRemove(): Promise<void> {
+  const item = openedItem.value
+  if (!item) return
+
+  await remove(item)
+}
+
+/**
+ * Указатель грубый (палец) — HTML5-drag&drop на нём не работает и не нужен
+ * (06.11.2026). Тот же размен, что в «Распределении»: перенос вещи между
+ * разделами на телефоне делает поле «Раздел» в карточке.
+ *
+ * Проверка на `matchMedia` обязательна: в jsdom его нет, а в старых
+ * браузерах он не гарантирован — см. `usePwaInstall`.
+ */
+const isCoarsePointer = ref(
+  typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(pointer: coarse)').matches,
+)
+
+/** «Берём» тянет только тот, кому роль дала вкладку. */
+const canDragShared = computed(() => props.canEdit && !isCoarsePointer.value)
+/** «Взял» — своя раскладка, но и её на телефоне тянут полем в карточке. */
+const canDragPersonal = computed(() => !isCoarsePointer.value)
 
 /**
  * Плоский список разделов в порядке дерева — для выпадающего «Раздел»
@@ -408,28 +494,10 @@ async function patchItem(item: TripGearItem, body: GearPatch): Promise<void> {
   }
 }
 
-/** Статус выбрали в «Берём»: «Предложено / Берём / Не берём». */
-async function onStatusChange(item: TripGearItem, event: Event): Promise<void> {
-  const status = (event.target as HTMLSelectElement).value as TripGearStatus
-  await patchItem(item, { status })
-}
-
 /** Несущего меняли перетаскиванием или списком. */
 async function onAssigneeChange(item: TripGearItem, event: Event): Promise<void> {
   const value = (event.target as HTMLSelectElement).value
   await patchItem(item, { assignedUserId: value === '' ? null : value })
-}
-
-/** Раздел «Берём» выбрали списком — путь для телефона, где drag не работает. */
-async function onSharedSectionChange(item: TripGearItem, event: Event): Promise<void> {
-  const value = (event.target as HTMLSelectElement).value
-  await patchItem(item, { sharedSectionId: value === '' ? null : value })
-}
-
-/** Раздел «Взял» выбрали списком. */
-async function onPersonalSectionChange(item: TripGearItem, event: Event): Promise<void> {
-  const value = (event.target as HTMLSelectElement).value
-  await patchItem(item, { personalSectionId: value === '' ? null : value })
 }
 
 /**
@@ -649,6 +717,8 @@ async function remove(item: TripGearItem): Promise<void> {
   try {
     await removeTripGear(props.trip.id, item.id)
     items.value = items.value.filter((row) => row.id !== item.id)
+    // Карточка этой вещи больше нечего показывать: закрываем её вместе с вещью.
+    if (openedItemId.value === item.id) openedItemId.value = null
   } catch (problem) {
     actionError.value =
       problem instanceof ApiError ? problem.message : 'Не удалось убрать вещь из похода'
@@ -855,81 +925,38 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               @add-to="openPickerForSection"
             >
               <template #item="{ item }">
+                <!--
+                  Пилюля — строка списка, а не форма (06.11.2026): название,
+                  вес и владелец. Статус виден оформлением — сплошная
+                  «берём», пунктир и курсив «предложено», — а решения
+                  «берём / не берём» и раздел переехали в карточку вещи,
+                  которая открывается нажатием.
+                -->
                 <li
-                  class="flex flex-wrap items-center gap-1 rounded-xl border px-2 py-1 text-sm"
+                  class="flex cursor-pointer flex-wrap items-center gap-1 rounded-xl border px-2 py-1 text-sm transition-colors hover:border-orange-500"
                   :class="
                     item.status === 'approved'
-                      ? 'border-orange-300 bg-orange-50 text-text'
-                      : 'border-dashed border-border bg-surface text-muted'
+                      ? 'border-orange-300 bg-orange-100 text-text'
+                      : 'border-dashed border-orange-300 bg-white italic text-muted'
                   "
-                  :draggable="canEdit"
+                  role="button"
+                  tabindex="0"
+                  :draggable="canDragShared"
+                  :aria-label="`${item.title}: ${TRIP_GEAR_STATUS_LABELS[item.status]}. Открыть карточку вещи`"
+                  :title="TRIP_GEAR_STATUS_LABELS[item.status]"
+                  :data-status="item.status"
                   :data-test="`gear-taking-item-${item.id}`"
+                  @click="openItem(item, 'shared')"
+                  @keydown.enter.prevent="openItem(item, 'shared')"
+                  @keydown.space.prevent="openItem(item, 'shared')"
                   @dragstart="startDrag(item, $event, 'section')"
                   @dragend="endDrag"
                 >
                   <span class="font-medium">{{ item.title }}</span>
-                  <span v-if="weightInGrams(item.weightGrams)" class="text-xs text-muted">
-                    {{ weightInGrams(item.weightGrams) }}
+                  <span v-if="item.weightGrams !== null" class="text-xs text-muted">
+                    {{ formatWeight(item.weightGrams) }}
                   </span>
                   <span class="text-xs text-muted">· {{ personName(item.ownerUserId) }}</span>
-
-                  <!--
-                    Статус и раздел меняет только тот, кому роль дала вкладку.
-                    Остальные видят «ждёт решения»: права считает сервер,
-                    экран не спорит.
-                  -->
-                  <div class="ml-auto flex flex-wrap items-center gap-1">
-                    <select
-                      v-if="canEdit"
-                      :value="item.sharedSectionId ?? ''"
-                      :disabled="busyId === item.id"
-                      class="cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-base text-text focus:border-primary focus:outline-none disabled:opacity-50 md:px-1 md:py-0.5 md:text-xs"
-                      aria-label="Раздел в «Берём»"
-                      :data-test="`gear-taking-section-${item.id}`"
-                      @change="onSharedSectionChange(item, $event)"
-                    >
-                      <option value="">Без раздела</option>
-                      <option
-                        v-for="choice in sharedSectionChoices"
-                        :key="choice.id"
-                        :value="choice.id"
-                      >
-                        {{ choice.label }}
-                      </option>
-                    </select>
-                    <select
-                      v-if="canEdit"
-                      :value="item.status"
-                      :disabled="busyId === item.id"
-                      class="cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-base text-text focus:border-primary focus:outline-none disabled:opacity-50 md:px-1 md:py-0.5 md:text-xs"
-                      aria-label="Статус вещи: предложена, берём или не берём"
-                      :data-test="`gear-taking-status-${item.id}`"
-                      @change="onStatusChange(item, $event)"
-                    >
-                      <option value="proposed">Предложено</option>
-                      <option value="approved">Берём</option>
-                      <option value="declined">Не берём</option>
-                    </select>
-                    <span
-                      v-else-if="item.status === 'proposed'"
-                      class="text-xs italic text-muted"
-                      :data-test="`gear-taking-pending-${item.id}`"
-                    >
-                      ждёт решения
-                    </span>
-
-                    <button
-                      v-if="canRemove(item)"
-                      type="button"
-                      class="cursor-pointer border-0 bg-transparent px-1 py-1 text-base text-muted transition-colors hover:text-red-600 disabled:opacity-40 md:py-0 md:text-xs"
-                      title="Убрать вещь из похода"
-                      :disabled="removingId === item.id"
-                      :data-test="`gear-taking-remove-${item.id}`"
-                      @click="remove(item)"
-                    >
-                      ✕
-                    </button>
-                  </div>
                 </li>
               </template>
             </TripGearSectionList>
@@ -1273,36 +1300,29 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               @move="moveToPersonalSection"
             >
               <template #item="{ item }">
+                <!--
+                  Та же пилюля, что в «Берём», и та же карточка: во «Взял»
+                  поле «Раздел» ведёт в личные разделы. Статуса здесь нет —
+                  сюда попадают только вещи, которые человек уже несёт.
+                -->
                 <li
-                  class="flex flex-wrap items-center gap-1 rounded-full border border-blue-300 bg-white px-2 py-1 text-sm text-blue-900"
-                  draggable="true"
+                  class="flex cursor-pointer flex-wrap items-center gap-1 rounded-full border border-blue-300 bg-white px-2 py-1 text-sm text-blue-900 transition-colors hover:border-blue-500"
+                  role="button"
+                  tabindex="0"
+                  :draggable="canDragPersonal"
+                  :aria-label="`${item.title}. Открыть карточку вещи`"
                   :data-test="`gear-taken-item-${item.id}`"
+                  @click="openItem(item, 'personal')"
+                  @keydown.enter.prevent="openItem(item, 'personal')"
+                  @keydown.space.prevent="openItem(item, 'personal')"
                   @dragstart="startDrag(item, $event, 'section')"
                   @dragend="endDrag"
                 >
                   <span>{{ item.title }}</span>
-                  <span v-if="weightInGrams(item.weightGrams)" class="text-xs">
-                    · {{ weightInGrams(item.weightGrams) }}
+                  <span v-if="item.weightGrams !== null" class="text-xs">
+                    · {{ formatWeight(item.weightGrams) }}
                   </span>
                   <span class="text-xs text-blue-700">· {{ item.typeName }}</span>
-
-                  <select
-                    :value="item.personalSectionId ?? ''"
-                    :disabled="busyId === item.id"
-                    class="ml-auto cursor-pointer rounded-lg border border-blue-200 bg-white px-2 py-1 text-base text-blue-900 focus:border-primary focus:outline-none disabled:opacity-50 md:px-1 md:py-0.5 md:text-xs"
-                    aria-label="Раздел во «Взял»"
-                    :data-test="`gear-taken-section-${item.id}`"
-                    @change="onPersonalSectionChange(item, $event)"
-                  >
-                    <option value="">Без раздела</option>
-                    <option
-                      v-for="choice in personalSectionChoices"
-                      :key="choice.id"
-                      :value="choice.id"
-                    >
-                      {{ choice.label }}
-                    </option>
-                  </select>
                 </li>
               </template>
             </TripGearSectionList>
@@ -1351,6 +1371,30 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
         </details>
       </details>
     </template>
+
+    <!--
+      Карточка вещи: всё, что известно о вещи, плюс два решения — раздел
+      и «берём / не берём». Одна на «Берём» и «Взял»; `scope` выбирает,
+      какой раздел показывать.
+    -->
+    <TripGearItemModal
+      v-if="openedItem"
+      :item="openedItem"
+      :scope="openedScope"
+      :section-choices="
+        openedScope === 'shared' ? sharedSectionChoices : personalSectionChoices
+      "
+      :owner-name="personName(openedItem.ownerUserId)"
+      :assignee-name="openedItem.assignedUserId ? personName(openedItem.assignedUserId) : null"
+      :can-decide="canEdit && openedScope === 'shared'"
+      :can-place="openedScope === 'shared' ? canEdit : true"
+      :can-remove="canRemove(openedItem)"
+      :busy="busyId === openedItem.id || removingId === openedItem.id"
+      @status="onItemStatus"
+      @section="onItemSection"
+      @remove="onItemRemove"
+      @close="closeItem"
+    />
 
     <TripGearExtraPicker
       v-if="isPickerOpen"

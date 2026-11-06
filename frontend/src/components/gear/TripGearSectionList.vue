@@ -108,6 +108,38 @@ function hasContent(sectionId: string): boolean {
   )
 }
 
+// ───────────────────────────── инструменты раздела ─────────────────────────────
+
+/**
+ * Инструменты раздела спрятаны за кнопкой в заголовке (06.11.2026).
+ *
+ * Заказчик: «Инструменты „+ Подраздел / Переименовать / Удалить“ нужно прятать
+ * кнопкой в заголовке раздела». Три кнопки под каждым заголовком — это девять
+ * строк управления на три раздела, и в свёрнутом виде они видны всегда, хотя
+ * нужны раз в жизни. Кнопка «⋯» стоит в самом `<summary>`: раздел остаётся
+ * одной строкой, а инструменты раскрываются под ним.
+ *
+ * Список, а не одно id: инструменты двух разных разделов не обязаны
+ * закрывать друг друга — человек может держать открытыми те, с которыми
+ * работает.
+ */
+const toolsOpen = ref<string[]>([])
+
+function isToolsOpen(sectionId: string): boolean {
+  return toolsOpen.value.includes(sectionId)
+}
+
+function toggleTools(sectionId: string): void {
+  toolsOpen.value = isToolsOpen(sectionId)
+    ? toolsOpen.value.filter((id) => id !== sectionId)
+    : [...toolsOpen.value, sectionId]
+}
+
+/** Действие начали — панель инструментов больше не нужна. */
+function closeTools(sectionId: string): void {
+  toolsOpen.value = toolsOpen.value.filter((id) => id !== sectionId)
+}
+
 // ───────────────────────────── создание и переименование ─────────────────────────────
 
 /**
@@ -120,6 +152,7 @@ const newTitle = ref('')
 function startCreate(parentId: string | null): void {
   creatingIn.value = parentId
   newTitle.value = ''
+  if (parentId !== null) closeTools(parentId)
 }
 
 function submitCreate(): void {
@@ -143,6 +176,7 @@ const draftTitle = ref('')
 function startRename(section: TripGearSection): void {
   editingId.value = section.id
   draftTitle.value = section.title
+  closeTools(section.id)
 }
 
 function submitRename(section: TripGearSection): void {
@@ -245,8 +279,33 @@ function onRootDrop(): void {
       @drop.stop.prevent="onDrop(section.id)"
     >
       <details open>
+        <!--
+          Гибкая строка внутри `<summary>`, а не `display: flex` на нём самом:
+          у `<summary>` с `display: flex` пропадает треугольник раскрытия —
+          раздел перестаёт выглядеть сворачиваемым.
+        -->
         <summary class="cursor-pointer select-none text-sm font-medium text-text">
-          {{ section.title }}
+          <span class="flex items-center gap-2">
+            <span class="min-w-0 truncate">{{ section.title }}</span>
+
+            <!--
+              Инструменты раздела: «+ Подраздел», «Переименовать», «Удалить»
+              прячутся за этой кнопкой. `prevent` не даёт клику заодно
+              свернуть раздел, `stop` — не пускает его к обработчикам выше.
+            -->
+            <button
+              v-if="canManage"
+              type="button"
+              class="ml-auto shrink-0 cursor-pointer rounded-lg border border-border bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+              :aria-expanded="isToolsOpen(section.id)"
+              :aria-label="`Инструменты раздела «${section.title}»`"
+              :title="`Инструменты раздела «${section.title}»`"
+              :data-test="`gear-section-tools-${section.id}`"
+              @click.prevent.stop="toggleTools(section.id)"
+            >
+              ⋯
+            </button>
+          </span>
         </summary>
 
         <div class="mt-2 flex flex-col gap-2">
@@ -282,7 +341,11 @@ function onRootDrop(): void {
             </button>
           </form>
 
-          <div v-else-if="canManage" class="flex flex-wrap items-center gap-1">
+          <div
+            v-else-if="canManage && isToolsOpen(section.id)"
+            class="flex flex-wrap items-center gap-1"
+            :data-test="`gear-section-tools-panel-${section.id}`"
+          >
             <button
               type="button"
               class="cursor-pointer rounded-lg border border-border bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text"

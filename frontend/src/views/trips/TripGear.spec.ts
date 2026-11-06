@@ -493,32 +493,42 @@ describe('вкладка «Снаряжение» похода', () => {
     )
   })
 
-  it('«Берём»: утверждённое и предложенное, без прав — подпись «ждёт решения»', async () => {
+  it('«Берём»: утверждённое и предложенное, а статус виден оформлением', async () => {
     const wrapper = await mounted()
     const pills = wrapper.findAll('[data-test^="gear-taking-item-"]')
     expect(pills.map((pill) => pill.text())).toHaveLength(4)
     expect(wrapper.find('[data-test="gear-taking-item-g1"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="gear-taking-item-g3"]').exists()).toBe(true)
 
-    expect(wrapper.find('[data-test="gear-taking-pending-g3"]').text()).toContain(
-      'ждёт решения',
+    // Статус — оформлением, а не полем: сплошная «берём», пунктир «предложено».
+    expect(wrapper.get('[data-test="gear-taking-item-g1"]').attributes('data-status')).toBe(
+      'approved',
     )
-    // Без права вкладки статус не поменять: списка выбора нет вовсе.
+    expect(wrapper.get('[data-test="gear-taking-item-g3"]').attributes('data-status')).toBe(
+      'proposed',
+    )
+    expect(wrapper.get('[data-test="gear-taking-item-g1"]').classes()).toContain('bg-orange-100')
+    expect(wrapper.get('[data-test="gear-taking-item-g3"]').classes()).toContain('border-dashed')
+    expect(wrapper.get('[data-test="gear-taking-item-g3"]').attributes('title')).toBe('Предложено')
+
+    // Полей в пилюле нет вовсе: решения переехали в карточку вещи.
     expect(wrapper.find('[data-test="gear-taking-status-g3"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="gear-taking-section-g3"]').exists()).toBe(false)
   })
 
-  it('«Берём»: ведущий меняет статус, и вещь переезжает в утверждённые', async () => {
+  it('«Берём»: ведущий меняет статус в карточке, и вещь переезжает в утверждённые', async () => {
     const wrapper = await mounted(true)
 
-    const status = wrapper.get('[data-test="gear-taking-status-g3"]')
-    await status.setValue('approved')
+    await wrapper.get('[data-test="gear-taking-item-g3"]').trigger('click')
+    expect(wrapper.find('[data-test="gear-item-dialog"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="gear-item-status-approved"]').trigger('click')
     await flushPromises()
 
     expect(mocks.updateTripGear).toHaveBeenCalledWith('1', 'g3', { status: 'approved' })
-    expect(wrapper.find('[data-test="gear-taking-pending-g3"]').exists()).toBe(false)
-    expect(
-      (wrapper.get('[data-test="gear-taking-status-g3"]').element as HTMLSelectElement).value,
-    ).toBe('approved')
+    expect(wrapper.get('[data-test="gear-taking-item-g3"]').attributes('data-status')).toBe(
+      'approved',
+    )
   })
 
   it('отклонённое уходит в «Не берём» и возвращается решением ведущего', async () => {
@@ -633,16 +643,59 @@ describe('вкладка «Снаряжение» похода', () => {
   it('своя вещь убирается из похода, чужая — только с правом вкладки', async () => {
     const wrapper = await mounted()
 
-    // Топор мой — крестик есть и без права вкладки.
-    expect(wrapper.find('[data-test="gear-taking-remove-g2"]').exists()).toBe(true)
-    // Палатка Анны — без права вкладки крестика нет.
-    expect(wrapper.find('[data-test="gear-taking-remove-g1"]').exists()).toBe(false)
+    // Топор мой — «Убрать из похода» есть и без права вкладки.
+    await wrapper.get('[data-test="gear-taking-item-g2"]').trigger('click')
+    expect(wrapper.find('[data-test="gear-item-remove"]').exists()).toBe(true)
 
-    await wrapper.get('[data-test="gear-taking-remove-g2"]').trigger('click')
+    // Палатка Анны — без права вкладки убрать нечем: кнопки нет.
+    await wrapper.get('[data-test="gear-item-done"]').trigger('click')
+    await wrapper.get('[data-test="gear-taking-item-g1"]').trigger('click')
+    expect(wrapper.find('[data-test="gear-item-remove"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="gear-item-done"]').trigger('click')
+    await wrapper.get('[data-test="gear-taking-item-g2"]').trigger('click')
+    await wrapper.get('[data-test="gear-item-remove"]').trigger('click')
     await flushPromises()
 
     expect(mocks.removeTripGear).toHaveBeenCalledWith('1', 'g2')
     expect(wrapper.find('[data-test="gear-taking-item-g2"]').exists()).toBe(false)
+    // Карточка убранной вещи закрылась вместе с ней.
+    expect(wrapper.find('[data-test="gear-item-dialog"]').exists()).toBe(false)
+  })
+
+  it('карточка вещи показывает характеристики, владельца и «кому едет»', async () => {
+    const items = defaultItems().map((item) =>
+      item.id === 'g1'
+        ? {
+            ...item,
+            note: 'Тент отдельно',
+            attributes: [
+              {
+                attributeId: 1,
+                code: 'seats',
+                name: 'Вместимость',
+                valueKind: 'number' as const,
+                unit: 'мест',
+                value: 3,
+              },
+            ],
+          }
+        : item,
+    )
+    mocks.listTripGear.mockResolvedValue(tripGearList(items))
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="gear-taking-item-g1"]').trigger('click')
+
+    const card = wrapper.get('[data-test="gear-item-dialog"]')
+    expect(card.get('[data-test="gear-item-title"]').text()).toBe('Палатка')
+    expect(card.text()).toContain('2,6 кг')
+    expect(card.text()).toContain('Вместимость')
+    expect(card.text()).toContain('3 мест')
+    expect(card.text()).toContain('Тент отдельно')
+    expect(card.get('[data-test="gear-item-owner"]').text()).toBe('Анна')
+    expect(card.get('[data-test="gear-item-assignee"]').text()).toBe('Олег')
   })
 
   it('ошибку правки показывает словами сервера', async () => {
@@ -652,7 +705,8 @@ describe('вкладка «Снаряжение» похода', () => {
 
     const wrapper = await mounted(true)
 
-    await wrapper.get('[data-test="gear-taking-status-g3"]').setValue('declined')
+    await wrapper.get('[data-test="gear-taking-item-g3"]').trigger('click')
+    await wrapper.get('[data-test="gear-item-status-declined"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('[data-test="gear-action-error"]').text()).toContain(
@@ -886,7 +940,8 @@ describe('вкладка «Снаряжение» похода', () => {
     })
     expect(wrapper.text()).toContain('Альпинизм')
 
-    // Подраздел: «+ Подраздел» у раздела, родитель уходит в теле.
+    // Подраздел: «+ Подраздел» живёт в инструментах раздела, за кнопкой «⋯».
+    await wrapper.get('[data-test="gear-section-tools-s1"]').trigger('click')
     await wrapper.get('[data-test="gear-section-add-child-s1"]').trigger('click')
     await wrapper.get('[data-test="gear-section-create-child-title-s1"]').setValue('Верёвки')
     await wrapper
@@ -918,12 +973,40 @@ describe('вкладка «Снаряжение» похода', () => {
     })
   })
 
+  it('инструменты раздела прячутся за кнопкой в заголовке', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(defaultItems(), [tripGearSection({ id: 's1', title: 'Пешка' })]),
+    )
+
+    const wrapper = await mounted(true)
+    const section = wrapper.get('[data-test="gear-section-s1"]')
+
+    expect(section.find('[data-test="gear-section-add-child-s1"]').exists()).toBe(false)
+    expect(section.find('[data-test="gear-section-rename-open-s1"]').exists()).toBe(false)
+    expect(section.find('[data-test="gear-section-remove-s1"]').exists()).toBe(false)
+
+    const tools = section.get('[data-test="gear-section-tools-s1"]')
+    expect(tools.attributes('aria-expanded')).toBe('false')
+
+    await tools.trigger('click')
+
+    expect(tools.attributes('aria-expanded')).toBe('true')
+    expect(section.find('[data-test="gear-section-add-child-s1"]').exists()).toBe(true)
+    expect(section.find('[data-test="gear-section-rename-open-s1"]').exists()).toBe(true)
+    expect(section.find('[data-test="gear-section-remove-s1"]').exists()).toBe(true)
+
+    await tools.trigger('click')
+
+    expect(section.find('[data-test="gear-section-tools-panel-s1"]').exists()).toBe(false)
+  })
+
   it('раздел переименовывается и удаляется с экрана', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList(defaultItems(), [tripGearSection({ id: 's1', title: 'Пешка' })]),
     )
 
     const wrapper = await mounted(true)
+    await wrapper.get('[data-test="gear-section-tools-s1"]').trigger('click')
     await wrapper.get('[data-test="gear-section-rename-open-s1"]').trigger('click')
     await wrapper.get('[data-test="gear-section-rename-title-s1"]').setValue('Пешая часть')
     await wrapper.get('[data-test="gear-section-rename-s1"]').trigger('submit')
@@ -933,6 +1016,7 @@ describe('вкладка «Снаряжение» похода', () => {
       title: 'Пешая часть',
     })
 
+    await wrapper.get('[data-test="gear-section-tools-s1"]').trigger('click')
     await wrapper.get('[data-test="gear-section-remove-s1"]').trigger('click')
     await flushPromises()
 
@@ -940,13 +1024,14 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-section-s1"]').exists()).toBe(false)
   })
 
-  it('вещь переносится в раздел выпадающим списком — путь для телефона', async () => {
+  it('вещь переносится в раздел из карточки — путь для телефона', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList(defaultItems(), [tripGearSection({ id: 's1', title: 'Табор' })]),
     )
 
     const wrapper = await mounted(true)
-    await wrapper.get('[data-test="gear-taking-section-g1"]').setValue('s1')
+    await wrapper.get('[data-test="gear-taking-item-g1"]').trigger('click')
+    await wrapper.get('[data-test="gear-item-section"]').setValue('s1')
     await flushPromises()
 
     expect(mocks.updateTripGear).toHaveBeenCalledWith('1', 'g1', { sharedSectionId: 's1' })
@@ -965,7 +1050,8 @@ describe('вкладка «Снаряжение» похода', () => {
     )
 
     const wrapper = await mounted()
-    await wrapper.get('[data-test="gear-taken-section-g1"]').setValue('p1')
+    await wrapper.get('[data-test="gear-taken-item-g1"]').trigger('click')
+    await wrapper.get('[data-test="gear-item-section"]').setValue('p1')
     await flushPromises()
 
     expect(mocks.updateTripGear).toHaveBeenCalledWith('1', 'g1', {
@@ -982,11 +1068,13 @@ describe('вкладка «Снаряжение» похода', () => {
     const taking = wrapper.get('[data-test="gear-taking-sections"]')
 
     expect(taking.find('[data-test="gear-section-s1"]').exists()).toBe(true)
+    expect(taking.find('[data-test="gear-section-tools-s1"]').exists()).toBe(false)
     expect(taking.find('[data-test="gear-section-add-root"]').exists()).toBe(false)
-    expect(taking.find('[data-test="gear-section-add-child-s1"]').exists()).toBe(false)
-    expect(taking.find('[data-test="gear-section-rename-open-s1"]').exists()).toBe(false)
-    expect(taking.find('[data-test="gear-section-remove-s1"]').exists()).toBe(false)
-    // И списка разделов у пилюли нет: раскладка — право вкладки.
-    expect(taking.find('[data-test="gear-taking-section-g1"]').exists()).toBe(false)
+
+    // И в карточке нет ни раздела, ни статуса: раскладка и решение — право вкладки.
+    await wrapper.get('[data-test="gear-taking-item-g1"]').trigger('click')
+    expect(wrapper.find('[data-test="gear-item-section"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="gear-item-status-field"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="gear-item-status-words"]').text()).toContain('Берём')
   })
 })
