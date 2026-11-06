@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
   createTripGearSection,
@@ -11,10 +11,13 @@ import {
   updateTripGear,
   updateTripGearSection,
 } from '@/api/gear'
+import { subscribeTripEvents } from '@/api/events'
+import type { TripEvent } from '@/api/events'
 import { listTripChecklists } from '@/api/tripChecklists'
 import { listParticipants } from '@/api/trips'
 import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
+import TripChat from '@/views/trips/TripChat.vue'
 import TripGearChecklist from '@/components/gear/TripGearChecklist.vue'
 import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
 import TripGearItemModal from '@/components/gear/TripGearItemModal.vue'
@@ -80,6 +83,19 @@ import {
  * вручную» — общую `TripGearManualModal`. Копий форм здесь нет: у вкладки
  * свои заголовок, память свёрнутых групп и подпись, а сохранение остаётся
  * этому экрану.
+ *
+ * **Чат снаряжения — внизу вкладки** (06.11.2026). Как у «Питания»,
+ * «Трансфера» и «Ночёвок»: чат — тема вкладки, отдельной закладки «Чаты»
+ * в проекте нет (`docs/ph/tabs.md` §7). Вид чата — `trip_gear`, он же
+ * заведён миграцией у существующих походов.
+ *
+ * **Живые обновления — SSE** (06.11.2026). Участники перетасовывают вещи
+ * одновременно, и перезагрузка страницы после каждого чужого действия —
+ * не ответ. Поток открыт, пока вкладка на экране; событие — сигнал
+ * **перечитать** снаряжение или чек-листы, а не готовые данные (ответ
+ * зависит от смотрящего: чужие личные разделы в нём обнулены). Своё
+ * действие пропускаем по `actorId`: ответ `PATCH` уже применил изменение,
+ * а повторный запрос мог бы перетереть более новое локальное состояние.
  *
  * **Цвет общественной секции — временный.** Заказчик ещё не выбрал
  * окончательный оттенок; когда выберет, цвет переедет в тему
@@ -501,8 +517,21 @@ async function crossItem(item: TripGearItem): Promise<void> {
  */
 let requestId = 0
 
+/**
+ * Версии «тихих» ответов (06.11.2026). Полная загрузка и ответ чужого
+ * события идут параллельно: без версии поздний ответ мог бы перетереть
+ * более свежий. Растёт при каждой загрузке — старые ответы отбрасываются.
+ */
+let gearVersion = 0
+let checklistVersion = 0
+
 async function load(): Promise<void> {
   const current = ++requestId
+
+  // Полная загрузка отменяет ответы тихих обновлений: их данные старше.
+  gearVersion += 1
+  checklistVersion += 1
+
   isLoading.value = true
   checklistsLoading.value = true
   error.value = null
@@ -559,6 +588,126 @@ async function load(): Promise<void> {
 }
 
 watch(() => props.trip.id, load, { immediate: true })
+
+// ───────────────────────────── живые обновления (SSE) ─────────────────────────────
+
+/**
+ * Перетасовка идёт пачкой: одно перетаскивание — один `PATCH`, но человек
+ * двигает вещи подряд, и на каждое событие ходить на сервер незачем.
+ * Пауза склеивает серию в один запрос.
+ */
+const LIVE_REFRESH_DELAY = 300
+
+let stopLiveEvents: (() => void) | null = null
+let gearRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let checklistRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Событие из потока (06.11.2026).
+ *
+ * Своё действие пропускаем: `PATCH` уже вернул изменённую строку, а
+ * повторный запрос гоняет лишний круг и может перетереть более новое
+ * локальное состояние. Чужое — повод перечитать: данные поменялись
+ * не на этом экране.
+ */
+function onLiveEvent(event: TripEvent): void {
+  if (event.actorId === meId.value) return
+
+  if (event.scope === 'gear') scheduleGearRefresh()
+  else scheduleChecklistRefresh()
+}
+
+function scheduleGearRefresh(): void {
+  if (gearRefreshTimer !== null) return
+
+  gearRefreshTimer = setTimeout(() => {
+    gearRefreshTimer = null
+    void refreshGearQuietly()
+  }, LIVE_REFRESH_DELAY)
+}
+
+function scheduleChecklistRefresh(): void {
+  if (checklistRefreshTimer !== null) return
+
+  checklistRefreshTimer = setTimeout(() => {
+    checklistRefreshTimer = null
+    void refreshChecklistsQuietly()
+  }, LIVE_REFRESH_DELAY)
+}
+
+/**
+ * Перечитать вещи и разделы, не показывая «Загружаем снаряжение…».
+ *
+ * Ошибку глотаем: живые обновления — удобство, а не данные. Следующее
+ * событие или перезагрузка страницы попробует снова, а красная плашка
+ * посреди работы из-за чужого перетаскивания только мешала бы.
+ */
+async function refreshGearQuietly(): Promise<void> {
+  if (isLoading.value) return
+
+  const tripId = props.trip.id
+  const version = ++gearVersion
+
+  try {
+    const list = await listTripGear(tripId)
+
+    // Пока ответ ехал, могли переключить поход или начать полную загрузку.
+    if (version !== gearVersion || tripId !== props.trip.id || isLoading.value) return
+
+    items.value = list.items
+    sections.value = list.sections
+    // Снаряжение пришло — значит связь с сервером есть, и прежняя ошибка
+    // загрузки больше не правда.
+    error.value = null
+  } catch {
+    // Молча: экран уже показан, поток переподключится сам.
+  }
+}
+
+/** То же для трёх чек-листов: общий, мой личный и рекомендация. */
+async function refreshChecklistsQuietly(): Promise<void> {
+  if (checklistsLoading.value) return
+
+  const tripId = props.trip.id
+  const version = ++checklistVersion
+
+  try {
+    const lists = await listTripChecklists(tripId)
+
+    if (version !== checklistVersion || tripId !== props.trip.id || checklistsLoading.value) {
+      return
+    }
+
+    checklists.value = lists
+    checklistsError.value = null
+  } catch {
+    // Молча — по той же причине, что и у снаряжения.
+  }
+}
+
+/**
+ * Поток живёт, пока вкладка на экране. Переключили поход — старый поток
+ * закрываем: события чужого похода к этому экрану не относятся.
+ */
+watch(
+  () => props.trip.id,
+  (tripId) => {
+    stopLiveEvents?.()
+    stopLiveEvents = subscribeTripEvents(tripId, onLiveEvent)
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  stopLiveEvents?.()
+  stopLiveEvents = null
+
+  if (gearRefreshTimer !== null) clearTimeout(gearRefreshTimer)
+  if (checklistRefreshTimer !== null) clearTimeout(checklistRefreshTimer)
+  gearRefreshTimer = null
+  checklistRefreshTimer = null
+})
+
 
 // ───────────────────────────── действия ─────────────────────────────
 
@@ -1487,6 +1636,14 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
         </details>
       </details>
     </template>
+
+    <!--
+      Чат снаряжения — тема вкладки, как у «Питания», «Трансфера»
+      и «Ночёвок» (06.11.2026). Отдельной закладки «Чаты» в проекте нет,
+      поэтому обсуждение вещей живёт здесь, внизу страницы, и не
+      перекрывает работу: сначала список и рюкзаки, потом разговор о них.
+    -->
+    <TripChat :trip-id="trip.id" kind="trip_gear" />
 
     <!--
       Карточка вещи: всё, что известно о вещи, плюс решения — несущий,

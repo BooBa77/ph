@@ -16,6 +16,7 @@ import {
 import { GearItem } from '../gear/entities/gear-item.entity';
 import { TripParticipant } from '../trips/entities/trip-participant.entity';
 import type { Trip } from '../trips/entities/trip.entity';
+import { TripEventsService } from '../trips/trip-events.service';
 import { TripsService } from '../trips/trips.service';
 import type { TripChecklistScope } from './checklist.types';
 import {
@@ -104,6 +105,13 @@ export class ChecklistsService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
+    /**
+     * «Список вкладки изменился» (06.11.2026). Список — часть «Снаряжения»,
+     * и правка чужого пункта должна доезжать до второго участника так же,
+     * как перетащенная вещь. Пока домен у чек-листов один; появится
+     * «Питание» — событие получит ещё и домен.
+     */
+    private readonly events: TripEventsService,
   ) {}
 
   // ───────────────────────── шаблоны ─────────────────────────
@@ -230,6 +238,8 @@ export class ChecklistsService {
       }),
     );
 
+    this.notifyTripChecklist(checklist, userId);
+
     return ChecklistItemDto.from(await this.findItem(manager, saved.id));
   }
 
@@ -305,6 +315,7 @@ export class ChecklistsService {
     }
 
     const saved = await manager.save(item);
+    this.notifyTripChecklist(checklist, userId);
 
     return ChecklistItemDto.from(await this.findItem(manager, saved.id));
   }
@@ -319,6 +330,7 @@ export class ChecklistsService {
     await this.assertCanEdit(manager, checklist, userId);
 
     await manager.delete(ChecklistItem, { id: item.id });
+    this.notifyTripChecklist(checklist, userId);
   }
 
   // ───────────────────────── поход ─────────────────────────
@@ -455,6 +467,8 @@ export class ChecklistsService {
       await manager.insert(ChecklistItem, rows);
     }
 
+    this.notifyTripChecklist(target, userId);
+
     return this.one(manager, target);
   }
 
@@ -579,7 +593,7 @@ export class ChecklistsService {
      */
     const typeOnly = dto.scope !== 'personal';
 
-    return this.dataSource.transaction(async (tx) => {
+    const created = await this.dataSource.transaction(async (tx) => {
       const checklist = await tx.save(
         tx.create(Checklist, {
           scope: dto.scope,
@@ -588,7 +602,6 @@ export class ChecklistsService {
           title: dto.title?.trim() ?? template?.title ?? '',
         }),
       );
-
       if (templateItems.length > 0) {
         await tx.insert(
           ChecklistItem,
@@ -612,9 +625,29 @@ export class ChecklistsService {
 
       return ChecklistDto.from(checklist, items);
     });
+
+    // Список появился — вкладка у второго участника должна показать его тоже.
+    this.events.emitChecklist(trip.id, userId);
+
+    return created;
   }
 
   // ───────────────────────── внутреннее ─────────────────────────
+
+  /**
+   * «Список похода изменился» (06.11.2026).
+   *
+   * Шаблоны профиля сюда не попадают: у них нет `tripId`, и вкладке похода
+   * нечего перечитывать. Отметки рекомендации событие не шлют намеренно:
+   * они у каждого свои, и чужая галочка на экране смотрящего ничего
+   * не меняет — перечитывать список ради неё значило бы дёргать вкладку
+   * впустую.
+   */
+  private notifyTripChecklist(checklist: Checklist, userId: string): void {
+    if (checklist.tripId === null) return;
+
+    this.events.emitChecklist(checklist.tripId, userId);
+  }
 
   /** Список по id или 404 — «не существует» и «не твой» неразличимы. */
   private async findChecklist(

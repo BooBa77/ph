@@ -435,7 +435,8 @@ export interface RoleOption {
  *
  * Чат — тема вкладки (решение 21.10.2026): гостевой живёт на «Гостевой»,
  * членский — на «Участниках», питания — в «Питании», трансфера —
- * в «Трансфере», табора — в «Ночёвках» (29.10.2026).
+ * в «Трансфере», табора — в «Ночёвках» (29.10.2026), снаряжения —
+ * в «Снаряжении» (06.11.2026).
  */
 export const CHAT_KINDS = [
   'trip_guest',
@@ -443,6 +444,7 @@ export const CHAT_KINDS = [
   'trip_meals',
   'trip_transfer',
   'trip_route',
+  'trip_gear',
 ] as const
 export type ChatKind = (typeof CHAT_KINDS)[number]
 
@@ -452,6 +454,7 @@ export const CHAT_KIND_LABELS: Record<ChatKind, string> = {
   trip_meals: 'Чат питания',
   trip_transfer: 'Чат трансфера',
   trip_route: 'Чат табора',
+  trip_gear: 'Чат снаряжения',
 }
 
 /** Сообщение чата похода. `senderId === null` — системное. */

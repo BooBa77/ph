@@ -32,6 +32,7 @@ import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { Vehicle } from './entities/vehicle.entity';
 import { TripsController } from './trips.controller';
+import { TripEventsService } from './trip-events.service';
 import { TripsService } from './trips.service';
 import { TripMealsController } from './trip-meals.controller';
 import { TripMealsService } from './trip-meals.service';
@@ -112,6 +113,7 @@ import { ObjectsService } from './objects.service';
   ],
   providers: [
     TripsService,
+    TripEventsService,
     TripMealsService,
     TripRouteService,
     TripTransferService,
@@ -122,6 +124,7 @@ import { ObjectsService } from './objects.service';
   ],
   exports: [
     TripsService,
+    TripEventsService,
     TripMealsService,
     TripRouteService,
     TripTransferService,

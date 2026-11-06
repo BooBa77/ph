@@ -22,6 +22,7 @@ import { GearService } from './gear.service';
 import { GearTypesController } from './gear-types.controller';
 import { GearTypesService } from './gear-types.service';
 import { TripGearController } from './trip-gear.controller';
+import { TripGearEventsController } from './trip-gear-events.controller';
 import { TripGearService } from './trip-gear.service';
 
 /**
@@ -66,6 +67,7 @@ import { TripGearService } from './trip-gear.service';
   controllers: [
     GearController,
     TripGearController,
+    TripGearEventsController,
     GearTypesController,
     GearAdminTypesController,
     GearGroupsController,

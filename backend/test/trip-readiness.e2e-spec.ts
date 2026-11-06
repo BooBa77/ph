@@ -198,6 +198,7 @@ describe('Готовность похода (e2e)', () => {
     expect(participant[0]?.status).toBe('going');
     expect(role[0]?.code).toBe(ORGANIZER_ROLE_CODE);
     expect(chats.map((row: { kind: string }) => row.kind).sort()).toEqual([
+      'trip_gear',
       'trip_guest',
       'trip_meals',
       'trip_members',

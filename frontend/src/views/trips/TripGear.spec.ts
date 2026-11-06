@@ -8,6 +8,7 @@ import TripGear from '@/views/trips/TripGear.vue'
 import type { Checklist, ChecklistItem, TripChecklists } from '@/types/checklists'
 import type { GearItem, TripGearItem, TripGearSection } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
+import type { TripEvent } from '@/api/events'
 import type { User } from '@/api/types'
 
 /**
@@ -44,6 +45,7 @@ const mocks = vi.hoisted(() => ({
   createTripGearSection: vi.fn(),
   updateTripGearSection: vi.fn(),
   removeTripGearSection: vi.fn(),
+  subscribeTripEvents: vi.fn(),
 }))
 
 vi.mock('@/api/gear', () => ({
@@ -75,6 +77,21 @@ vi.mock('@/api/checklists', () => ({
 
 vi.mock('@/api/trips', () => ({ listParticipants: mocks.listParticipants }))
 vi.mock('@/api/gearTypes', () => ({ fetchGearTypes: mocks.fetchGearTypes }))
+
+/**
+ * Поток живых изменений подменяем целиком: настоящий `fetch`-стрим —
+ * забота `api/events.spec.ts`, а здесь важно, что вкладка на событие делает.
+ */
+vi.mock('@/api/events', () => ({ subscribeTripEvents: mocks.subscribeTripEvents }))
+
+/** Чат проверяется своим файлом; здесь он только должен стоять внизу. */
+vi.mock('@/views/trips/TripChat.vue', () => ({
+  default: {
+    name: 'TripChat',
+    props: ['tripId', 'kind'],
+    template: '<section data-test="trip-chat" />',
+  },
+}))
 
 const ME = 'demo-me'
 const ANNA = 'demo-anna'
@@ -326,6 +343,10 @@ describe('вкладка «Снаряжение» похода', () => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     useAuthStore().setAuth(makeUser(), 'token')
+
+    // Поток событий по умолчанию молчит: большинство тестов живут без него.
+    mocks.subscribeTripEvents.mockReset()
+    mocks.subscribeTripEvents.mockReturnValue(() => {})
 
     mocks.listTripGear.mockResolvedValue(tripGearList(defaultItems()))
     mocks.listParticipants.mockResolvedValue([
@@ -1275,5 +1296,84 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-item-section"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="gear-item-status-field"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="gear-item-status-words"]').text()).toContain('Берём')
+  })
+
+  // ───────────────────── чат и живые обновления (06.11.2026) ─────────────────────
+
+  /** Обработчик, который вкладка отдала потоку событий, — после монтирования. */
+  function liveHandler(): (event: TripEvent) => void {
+    const call = mocks.subscribeTripEvents.mock.calls[0]
+    if (!call) throw new Error('вкладка не подписалась на поток событий')
+
+    return call[1] as (event: TripEvent) => void
+  }
+
+  /** Ждём склейку событий (300 мс) и доехавший ответ «тихого» запроса. */
+  async function settleLive(): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, 350))
+    await flushPromises()
+  }
+
+  it('чат снаряжения стоит на вкладке внизу и открывает свой вид чата', async () => {
+    const wrapper = await mounted()
+
+    // Чат — тема вкладки, как у «Питания» и «Ночёвок»: отдельной закладки
+    // «Чаты» в проекте нет.
+    const chat = wrapper.getComponent({ name: 'TripChat' })
+    expect(chat.props('tripId')).toBe('1')
+    expect(chat.props('kind')).toBe('trip_gear')
+
+    // Внизу страницы: после «Личного снаряжения», а не перед работой.
+    const children = Array.from(wrapper.get('[data-test="trip-gear"]').element.children)
+    const personal = wrapper.get('[data-test="gear-personal-section"]').element
+    const chatElement = wrapper.get('[data-test="trip-chat"]').element
+
+    expect(children.indexOf(personal)).toBeLessThan(children.indexOf(chatElement))
+  })
+
+  it('чужое изменение перечитывает снаряжение само, без перезагрузки', async () => {
+    const wrapper = await mounted()
+
+    // Второй ответ сервера уже с перетащенным топором.
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(
+        defaultItems().map((item) =>
+          item.id === 'g2' ? { ...item, assignedUserId: ANNA } : item,
+        ),
+      ),
+    )
+
+    liveHandler()({ scope: 'gear', actorId: ANNA, at: new Date().toISOString() })
+    await settleLive()
+
+    expect(mocks.listTripGear).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-test="gear-bag-item-g2"]').exists()).toBe(true)
+    // Экран не мигал «Загружаем снаряжение…»: тихое обновление не поднимает
+    // общий флаг загрузки.
+    expect(wrapper.find('[data-test="gear-loading"]').exists()).toBe(false)
+  })
+
+  it('чужое изменение чек-листа тоже доезжает', async () => {
+    const wrapper = await mounted()
+
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      shared: checklist('c9', 'trip', [checklistItem('n1', 'Пила')]),
+    })
+
+    liveHandler()({ scope: 'checklist', actorId: ANNA, at: new Date().toISOString() })
+    await settleLive()
+
+    expect(mocks.listTripChecklists).toHaveBeenCalledTimes(2)
+    expect(wrapper.text()).toContain('Пила')
+  })
+
+  it('своё действие не перечитывает вкладку — ответ PATCH уже применён', async () => {
+    await mounted()
+
+    liveHandler()({ scope: 'gear', actorId: ME, at: new Date().toISOString() })
+    await settleLive()
+
+    expect(mocks.listTripGear).toHaveBeenCalledTimes(1)
   })
 })

@@ -9,6 +9,7 @@ import { DataSource, EntityManager } from 'typeorm';
 
 import { TripParticipant } from '../trips/entities/trip-participant.entity';
 import { Trip } from '../trips/entities/trip.entity';
+import { TripEventsService } from '../trips/trip-events.service';
 import type { TripTab } from '../trips/trip-tabs';
 import { TripsService } from '../trips/trips.service';
 import { User } from '../users/entities/user.entity';
@@ -96,11 +97,31 @@ export class TripGearService {
      * одноразовая вещь заведётся без обязательного значения.
      */
     private readonly gear: GearService,
+    /**
+     * Канал «вкладка изменилась» (06.11.2026): второй участник видит
+     * перетасовку вещей без перезагрузки страницы. Событие — сигнал
+     * перечитать `GET /gear`; готовый DTO не рассылается, потому что он
+     * зависит от смотрящего (чужие личные разделы в нём обнулены).
+     */
+    private readonly events: TripEventsService,
   ) {}
 
+  /**
+   * Кто вправе слушать поток изменений вкладки (06.11.2026).
+   *
+   * Правило то же, что у `GET /gear`: участник похода, но не отказавшийся.
+   * Отдельный метод, а не проверка в контроллере: `declined` и приватность
+   * считаются здесь, и вторая копия условия однажды открыла бы поток
+   * постороннему. Разделы при этом не засеиваются — слушать можно и до
+   * первого открытия вкладки.
+   */
+  async assertCanWatch(userId: string, tripId: number): Promise<void> {
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(this.dataSource.manager, trip.id, userId);
+  }
+
   /** Весь список вещей похода и разделы. Видят участники. */
-  async list(userId: string, tripId: number): Promise<TripGearListDto> {
-    const manager = this.dataSource.manager;
+  async list(userId: string, tripId: number): Promise<TripGearListDto> {    const manager = this.dataSource.manager;
     const trip = await this.trips.getVisibleTrip(userId, tripId);
     const participant = await this.assertParticipant(manager, trip.id, userId);
 
@@ -177,6 +198,9 @@ export class TripGearService {
       }),
     );
     saved.gearItem = item;
+
+    // Второй участник должен увидеть вещь, не перезагружая вкладку.
+    this.events.emitGear(trip.id, userId);
 
     return TripGearItemDto.from(saved, userId);
   }
@@ -275,7 +299,10 @@ export class TripGearService {
       }
     }
 
-    return TripGearItemDto.from(await manager.save(row), userId);
+    const saved = await manager.save(row);
+    this.events.emitGear(trip.id, userId);
+
+    return TripGearItemDto.from(saved, userId);
   }
 
   /**
@@ -358,6 +385,8 @@ export class TripGearService {
       return saved;
     });
 
+    this.events.emitGear(trip.id, userId);
+
     return TripGearItemDto.from(row, userId);
   }
 
@@ -401,6 +430,8 @@ export class TripGearService {
         await tx.delete(GearItem, { id: row.gearItemId });
       }
     });
+
+    this.events.emitGear(trip.id, userId);
   }
 
   // ───────────────────────── разделы «Берём» и «Взял» ─────────────────────────
@@ -465,6 +496,8 @@ export class TripGearService {
       }),
     );
 
+    this.events.emitGear(trip.id, userId);
+
     return TripGearSectionDto.from(saved);
   }
 
@@ -516,7 +549,10 @@ export class TripGearService {
       section.parentId = parent?.id ?? null;
     }
 
-    return TripGearSectionDto.from(await manager.save(section));
+    const saved = await manager.save(section);
+    this.events.emitGear(trip.id, userId);
+
+    return TripGearSectionDto.from(saved);
   }
 
   /**
@@ -537,6 +573,7 @@ export class TripGearService {
     await this.assertSectionManage(trip, section, userId);
 
     await manager.delete(TripGearSection, { id: section.id });
+    this.events.emitGear(trip.id, userId);
   }
 
   // ───────────────────────── внутреннее ─────────────────────────
