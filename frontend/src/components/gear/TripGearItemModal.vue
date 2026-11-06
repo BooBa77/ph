@@ -25,15 +25,21 @@ import { formatWeight } from '@/utils/gearWeight'
  * рядом с характеристиками и заметкой — то есть там, где человек и так
  * смотрит на вещь.
  *
- * **Карточка одна на всё.** Её открывает пилюля «Берём» и пилюля «Взял»;
- * `scope` решает только одно: какой раздел показывать — общественный
- * или личный. Статус живёт у вещи похода, а не у секции, но во «Взял»
- * его не показываем: туда попадают только утверждённые вещи, и «не берём»
- * в этом списке означало бы «вещь пропала».
+ * **Карточка одна на всё.** Её открывает пилюля «Берём», пилюля «Взял»
+ * и пилюля рюкзака в «Распределении»; `scope` решает только одно: какой
+ * раздел показывать — общественный или личный. Статус живёт у вещи похода,
+ * а не у секции, но во «Взял» его не показываем: туда попадают только
+ * утверждённые вещи, и «не берём» в этом списке означало бы «вещь пропала».
  *
- * **Права не решает компонент.** `canDecide` (статус), `canPlace` (раздел)
- * и `canRemove` (крестик) приходят сверху: их считает сервер, а экран
- * только не рисует то, что всё равно ответит 403.
+ * **Права не решает компонент.** `canDecide` (статус), `canAssign` (несущий),
+ * `canPlace` (раздел) и `canRemove` (крестик) приходят сверху: их считает
+ * сервер, а экран только не рисует то, что всё равно ответит 403.
+ *
+ * **«Несёт» — выбор, а не подпись** (06.11.2026). Заказчик: «раз уж вставил
+ * „Несёт Трегубов Сергей“, то давай сразу это будет поле выбора несущего».
+ * Список — только идущие: сервер отбивает «пока не решил» и отказавшегося.
+ * Во «Взял» несущий остаётся строкой: вещь там уже в чьём-то рюкзаке,
+ * и менять это место — дело «Берём» и «Распределения».
  *
  * **Данные не копятся здесь.** Никакого черновика: выбор сразу уходит
  * наверх, родитель делает `PATCH`, а карточка показывает обновлённую вещь
@@ -51,6 +57,10 @@ const props = withDefaults(
     ownerName: string
     /** Кто несёт. `null` — ещё не распределена. */
     assigneeName?: string | null
+    /** Кого можно выбрать несущим: только идущие, как на сервере. */
+    assigneeChoices?: readonly { userId: string; label: string }[]
+    /** Менять несущего: любой участник, но только в «Берём» (06.11.2026). */
+    canAssign?: boolean
     /** Менять «предложено / берём / не берём». */
     canDecide?: boolean
     /** Менять раздел — путь переноса для телефона. */
@@ -63,6 +73,8 @@ const props = withDefaults(
   {
     sectionChoices: () => [],
     assigneeName: null,
+    assigneeChoices: () => [],
+    canAssign: false,
     canDecide: false,
     canPlace: false,
     canRemove: false,
@@ -72,6 +84,8 @@ const props = withDefaults(
 
 const emit = defineEmits<{
   status: [status: TripGearStatus]
+  /** `null` — освободить вещь: «не распределено». */
+  assignee: [userId: string | null]
   /** `null` — вернуть вещь в корень большой секции. */
   section: [sectionId: string | null]
   remove: []
@@ -126,10 +140,29 @@ const sectionFieldVisible = computed(
   () => props.canPlace && props.sectionChoices.length > 0,
 )
 
+/**
+ * Поле «Несёт» — выпадающий список, а не строка (06.11.2026).
+ *
+ * Заказчик: «раз уж вставил „Несёт Трегубов Сергей“, то давай сразу это
+ * будет поле выбора несущего». Список — только идущие: сервер отбивает
+ * назначение «пока не решил» и отказавшемуся, чтобы вещь не спряталась
+ * с экрана в чужом статусе. Пустых вариантов не бывает: пока никто не идёт,
+ * поле не рисуем — `select` из одного «не распределено» ничего не выбирает.
+ */
+const assigneeFieldVisible = computed(
+  () => props.canAssign && props.assigneeChoices.length > 0,
+)
+
 function changeStatus(status: TripGearStatus): void {
   if (props.busy || status === props.item.status) return
 
   emit('status', status)
+}
+
+function changeAssignee(event: Event): void {
+  const value = (event.target as HTMLSelectElement).value
+
+  emit('assignee', value === '' ? null : value)
 }
 
 function changeSection(event: Event): void {
@@ -185,9 +218,39 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <dt class="text-muted">Владелец</dt>
         <dd data-test="gear-item-owner">{{ ownerName }}</dd>
 
-        <dt class="text-muted">Несёт</dt>
-        <dd data-test="gear-item-assignee">{{ assigneeName ?? 'не распределено' }}</dd>
+        <!--
+          Без права менять несущего «Несёт» остаётся строкой: в «Взял»
+          вещь уже в чьём-то рюкзаке, и это факт, а не поле.
+        -->
+        <template v-if="!assigneeFieldVisible">
+          <dt class="text-muted">Несёт</dt>
+          <dd data-test="gear-item-assignee-words">{{ assigneeName ?? 'не распределено' }}</dd>
+        </template>
       </dl>
+
+      <!--
+        Поле несущего (06.11.2026): несущий — это выбор, а не подпись.
+        Список только из идущих — правило сервера, здесь оно просто
+        не предлагает заведомо запрещённое.
+      -->
+      <label
+        v-if="assigneeFieldVisible"
+        class="flex flex-col gap-1 text-xs text-muted"
+      >
+        Несёт
+        <select
+          :value="item.assignedUserId ?? ''"
+          :disabled="busy"
+          class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none disabled:opacity-50"
+          data-test="gear-item-assignee"
+          @change="changeAssignee"
+        >
+          <option value="">Не распределено</option>
+          <option v-for="person in assigneeChoices" :key="person.userId" :value="person.userId">
+            {{ person.label }}
+          </option>
+        </select>
+      </label>
 
       <!--
         «Берём / не берём» — в карточке, а не в пилюле. Участник без права
@@ -229,7 +292,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         v-if="sectionFieldVisible"
         class="flex flex-col gap-1 text-xs text-muted"
       >
-        {{ scope === 'shared' ? 'Раздел в «Берём»' : 'Раздел во «Взял»' }}
+        Раздел
         <select
           :value="currentSectionId ?? ''"
           :disabled="busy"
@@ -251,10 +314,16 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       >
         <h4 class="mb-1 text-xs font-medium text-muted">Характеристики</h4>
 
-        <dl class="grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
+        <!--
+          Характеристики — в одну строку и на телефоне: подпись и значение
+          умещаются рядом, а колонка значений переносится по словам.
+          Заказчик: «визуально характеристики на мобиле помещаются
+          в одну строку. Нет?»
+        -->
+        <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
           <template v-for="row in characteristics" :key="row.code">
             <dt class="text-muted">{{ row.name }}</dt>
-            <dd>{{ row.words }}</dd>
+            <dd class="min-w-0 break-words">{{ row.words }}</dd>
           </template>
         </dl>
       </div>

@@ -59,15 +59,16 @@ import {
  * **Что уже работает на настоящих данных:**
  * - «Берём» — снаряжение похода (`GET /api/trips/:id/gear`). Предложенные
  *   вещи ждут решения, утверждённые стоят сплошными пилюлями, отклонённые
- *   убираются в свёрнутый блок «Не берём» — «эту палатку обсуждали» тоже
- *   ответ. Статус меняет тот, кому роль дала вкладку (`canEdit`), остальные
- *   видят подпись «ждёт решения»: права считает сервер.
+ *   остаются в своих разделах зачёркнутыми (06.11.2026): решение
+ *   «не берём» — это отметка, а не удаление вещи. Статус меняет тот, кому
+ *   роль дала вкладку (`canEdit`), остальные видят статус словами: права
+ *   считает сервер.
  * - «Распределение» — плитки-рюкзаки участников со статусом «Идёт»
- *   (`docs/ph/gear-distribution.md` §5). Вещь перетаскивается мышью или
- *   переносится выпадающим списком (он же путь для телефона: HTML5-drag
- *   на касании не работает). Назначение — отдельное поле `assignedUserId`,
- *   а не смена владельца: вещь остаётся в каталоге владельца, как и решено
- *   в §5.
+ *   (`docs/ph/gear-distribution.md` §5). Вещь перетаскивается мышью, а
+ *   несущего меняют в карточке вещи тем же полем «Несёт», что и в «Берём»
+ *   (06.11.2026) — это путь для телефона, где HTML5-drag не работает.
+ *   Назначение — отдельное поле `assignedUserId`, а не смена владельца:
+ *   вещь остаётся в каталоге владельца, как и решено в §5.
  * - «Взял» — общественные вещи, назначенные на меня, и «Мой рюкзак» —
  *   то же с итоговым весом. Личные вещи и дополнительные рюкзаки ждут
  *   модели: в `trip_gear` их ещё нет, и придумывать её на экране рано.
@@ -261,6 +262,21 @@ async function onItemSection(sectionId: string | null): Promise<void> {
   )
 }
 
+/**
+ * Несущего выбрали в карточке (06.11.2026).
+ *
+ * Заказчик: «раз уж вставил „Несёт Трегубов Сергей“, то давай сразу это
+ * будет поле выбора несущего». Право — как у перетаскивания между
+ * рюкзаками: назначить вещь может **любой участник**, решает сервер.
+ * `null` — освободить вещь: «не распределено» — законное состояние.
+ */
+async function onItemAssignee(userId: string | null): Promise<void> {
+  const item = openedItem.value
+  if (!item) return
+
+  await patchItem(item, { assignedUserId: userId })
+}
+
 async function onItemRemove(): Promise<void> {
   const item = openedItem.value
   if (!item) return
@@ -318,8 +334,18 @@ function sectionChoices(list: TripGearSection[]): { id: string; label: string }[
 const sharedSectionChoices = computed(() => sectionChoices(sharedSections.value))
 const personalSectionChoices = computed(() => sectionChoices(personalSections.value))
 
-/** «Берём»: сначала утверждённое, потом ожидающее решения. */
-const taking = computed(() => [...approved.value, ...proposed.value])
+/**
+ * «Берём» — всё, что решали, включая отклонённое (06.11.2026).
+ *
+ * Заказчик: «снаряжение, помеченное как „Не берём“ нужно не удалять
+ * из секции, а помечать как отвергнутое, перечеркнуть или иной красивый
+ * вариант». Поэтому отклонённые вещи остаются на своём месте в разделе,
+ * а не уезжают в отдельный свёрнутый блок: организатор снял вещь,
+ * а участник должен видеть, где она и почему не едет, и сам решить,
+ * убирать ли её из похода. Решение принимает ведущий вкладку, но
+ * «не берём» — это отметка, а не удаление.
+ */
+const taking = computed(() => [...approved.value, ...proposed.value, ...declined.value])
 
 /** Утверждённое без несущего: его и перетаскивают в рюкзаки. */
 const unassigned = computed(() => approved.value.filter((item) => item.assignedUserId === null))
@@ -373,6 +399,37 @@ function personOptionLabel(person: TripParticipant): string {
     ? `${person.displayName} (я)`
     : person.displayName
 }
+
+/**
+ * Кого предложить в поле «Несёт» карточки (06.11.2026).
+ *
+ * Список — «идущие», как на сервере: назначение «пока не решил»
+ * отбивается 400, чтобы вещь не спряталась в чужом статусе. Текущего
+ * несущего добавляем, даже если он уже не идёт: иначе `select` показал бы
+ * пустое значение, и человек подумал бы, что вещь свободна.
+ */
+const assigneeChoices = computed(() => {
+  const current = openedItem.value?.assignedUserId ?? null
+  const people = [...going.value]
+
+  if (current !== null && !people.some((person) => person.userId === current)) {
+    const person = participants.value.find((row) => row.userId === current)
+    if (person) people.push(person)
+  }
+
+  const choices = people.map((person) => ({
+    userId: person.userId,
+    label: personOptionLabel(person),
+  }))
+
+  // Человек мог выйти из похода, а вещь за ним осталась: значение в списке
+  // должно быть, иначе `select` показал бы «не распределено» и соврал.
+  if (current !== null && !choices.some((choice) => choice.userId === current)) {
+    choices.push({ userId: current, label: personName(current) })
+  }
+
+  return choices
+})
 
 /**
  * Итог по набору вещей той же строкой, что в каталоге: «Всего: 3,2 кг ·
@@ -494,17 +551,11 @@ async function patchItem(item: TripGearItem, body: GearPatch): Promise<void> {
   }
 }
 
-/** Несущего меняли перетаскиванием или списком. */
-async function onAssigneeChange(item: TripGearItem, event: Event): Promise<void> {
-  const value = (event.target as HTMLSelectElement).value
-  await patchItem(item, { assignedUserId: value === '' ? null : value })
-}
-
 /**
  * Перетаскивание пилюли между рюкзаками.
  *
- * Мышь тянет пилюлю, плитка принимает её на `drop`; тот же выбор есть
- * в выпадающем списке пилюли, потому что HTML5-drag на телефоне не работает.
+ * Мышь тянет пилюлю, плитка принимает её на `drop`; на телефоне несущего
+ * меняют в карточке вещи — HTML5-drag на касании не работает.
  */
 const draggingId = ref<string | null>(null)
 
@@ -928,17 +979,19 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                 <!--
                   Пилюля — строка списка, а не форма (06.11.2026): название,
                   вес и владелец. Статус виден оформлением — сплошная
-                  «берём», пунктир и курсив «предложено», — а решения
-                  «берём / не берём» и раздел переехали в карточку вещи,
-                  которая открывается нажатием.
+                  «берём», пунктир и курсив «предложено», зачёркнутое
+                  «не берём», — а решения «берём / не берём» и раздел
+                  переехали в карточку вещи, которая открывается нажатием.
                 -->
                 <li
                   class="flex cursor-pointer flex-wrap items-center gap-1 rounded-xl border px-2 py-1 text-sm transition-colors hover:border-orange-500"
-                  :class="
-                    item.status === 'approved'
-                      ? 'border-orange-300 bg-orange-100 text-text'
-                      : 'border-dashed border-orange-300 bg-white italic text-muted'
-                  "
+                  :class="{
+                    'border-orange-300 bg-orange-100 text-text': item.status === 'approved',
+                    'border-dashed border-orange-300 bg-white italic text-muted':
+                      item.status === 'proposed',
+                    'border-orange-200 bg-white text-muted line-through opacity-70':
+                      item.status === 'declined',
+                  }"
                   role="button"
                   tabindex="0"
                   :draggable="canDragShared"
@@ -957,6 +1010,28 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                     {{ formatWeight(item.weightGrams) }}
                   </span>
                   <span class="text-xs text-muted">· {{ personName(item.ownerUserId) }}</span>
+
+                  <!--
+                    Крестик — владельцу и ведущему вкладку (06.11.2026).
+                    Заказчик: «увидев пометку об отказе он поймёт, что эта
+                    вещь не понадобится, и сам удалит крестиком или
+                    в модалке. Кстати, владельцам должен быть доступен
+                    крестик удаления вещи». `stop` не даёт крестику заодно
+                    открыть карточку.
+                  -->
+                  <button
+                    v-if="canRemove(item)"
+                    type="button"
+                    class="ml-auto shrink-0 cursor-pointer rounded-lg border border-orange-200 bg-white px-1.5 py-0.5 text-xs text-muted no-underline transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                    :disabled="removingId === item.id"
+                    :aria-label="`Убрать «${item.title}» из похода`"
+                    title="Убрать из похода"
+                    :data-test="`gear-taking-remove-${item.id}`"
+                    @click.stop="remove(item)"
+                    @keydown.stop
+                  >
+                    ✕
+                  </button>
                 </li>
               </template>
             </TripGearSectionList>
@@ -973,50 +1048,14 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
             >
               Добавить снаряжение
             </button>
-
-            <!--
-              «Не берём» — отдельным свёрнутым блоком: решение принято, но
-              вопрос обсуждали, и вещь не должна исчезать бесследно.
-            -->
-            <details
-              v-if="declined.length > 0"
-              class="rounded-xl border border-border bg-surface p-2"
-              data-test="gear-declined"
-            >
-              <summary class="cursor-pointer select-none text-xs text-muted">
-                Не берём
-              </summary>
-
-              <ul class="mt-2 flex flex-wrap gap-1.5">
-                <li
-                  v-for="item in declined"
-                  :key="item.id"
-                  class="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-white px-2 py-1 text-sm text-muted"
-                  :data-test="`gear-declined-item-${item.id}`"
-                >
-                  <span class="line-through">{{ item.title }}</span>
-                  <span class="text-xs">· {{ personName(item.ownerUserId) }}</span>
-
-                  <button
-                    v-if="canEdit"
-                    type="button"
-                    class="cursor-pointer rounded-lg border border-border px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text disabled:opacity-40"
-                    :disabled="busyId === item.id"
-                    :data-test="`gear-declined-restore-${item.id}`"
-                    @click="patchItem(item, { status: 'proposed' })"
-                  >
-                    Вернуть
-                  </button>
-                </li>
-              </ul>
-            </details>
           </div>
         </details>
 
         <!--
           «Распределение» — плитки-рюкзаки по «иду». Вещь перетаскивается
-          мышью или переносится списком: на телефоне drag&drop не бывает,
-          а назначить вещь человек вправе с любого устройства.
+          мышью, а несущий меняется в карточке вещи (06.11.2026): та же
+          модалка, что в «Берём», с полем «Несёт». На телефоне drag&drop
+          не бывает, а назначить вещь человек вправе с любого устройства.
         -->
         <details
           open
@@ -1052,9 +1091,16 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                   <li
                     v-for="item in unassigned"
                     :key="item.id"
-                    class="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-white px-2 py-1 text-sm"
+                    class="flex cursor-pointer flex-wrap items-center gap-1 rounded-xl border border-border bg-white px-2 py-1 text-sm transition-colors hover:border-primary"
+                    role="button"
+                    tabindex="0"
                     draggable="true"
+                    :aria-label="`${item.title}. Открыть карточку вещи и сменить несущего`"
+                    title="Открыть карточку вещи"
                     :data-test="`gear-unassigned-item-${item.id}`"
+                    @click="openItem(item, 'shared')"
+                    @keydown.enter.prevent="openItem(item, 'shared')"
+                    @keydown.space.prevent="openItem(item, 'shared')"
                     @dragstart="startDrag(item, $event)"
                     @dragend="endDrag"
                   >
@@ -1063,20 +1109,6 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                       {{ weightInGrams(item.weightGrams) }}
                     </span>
                     <span class="text-xs text-muted">· {{ personName(item.ownerUserId) }}</span>
-
-                    <select
-                      :value="item.assignedUserId ?? ''"
-                      :disabled="busyId === item.id"
-                      class="ml-auto cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-base text-text focus:border-primary focus:outline-none disabled:opacity-50 md:px-1 md:py-0.5 md:text-xs"
-                      aria-label="Кому едет вещь"
-                      :data-test="`gear-unassigned-assign-${item.id}`"
-                      @change="onAssigneeChange(item, $event)"
-                    >
-                      <option value="">Не распределено</option>
-                      <option v-for="person in going" :key="person.userId" :value="person.userId">
-                        {{ personOptionLabel(person) }}
-                      </option>
-                    </select>
                   </li>
                 </ul>
 
@@ -1112,9 +1144,16 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                     <li
                       v-for="item in bag.items"
                       :key="item.id"
-                      class="flex flex-wrap items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-sm"
+                      class="flex cursor-pointer flex-wrap items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-sm transition-colors hover:border-primary"
+                      role="button"
+                      tabindex="0"
                       draggable="true"
+                      :aria-label="`${item.title}. Открыть карточку вещи и сменить несущего`"
+                      title="Открыть карточку вещи"
                       :data-test="`gear-bag-item-${item.id}`"
+                      @click="openItem(item, 'shared')"
+                      @keydown.enter.prevent="openItem(item, 'shared')"
+                      @keydown.space.prevent="openItem(item, 'shared')"
                       @dragstart="startDrag(item, $event)"
                       @dragend="endDrag"
                     >
@@ -1122,20 +1161,6 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                       <span v-if="weightInGrams(item.weightGrams)" class="text-xs text-muted">
                         {{ weightInGrams(item.weightGrams) }}
                       </span>
-
-                      <select
-                        :value="item.assignedUserId ?? ''"
-                        :disabled="busyId === item.id"
-                        class="ml-auto cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-base text-text focus:border-primary focus:outline-none disabled:opacity-50 md:px-1 md:py-0.5 md:text-xs"
-                        aria-label="Кому едет вещь"
-                        :data-test="`gear-assign-${item.id}`"
-                        @change="onAssigneeChange(item, $event)"
-                      >
-                        <option value="">Не распределено</option>
-                        <option v-for="person in going" :key="person.userId" :value="person.userId">
-                          {{ personOptionLabel(person) }}
-                        </option>
-                      </select>
                     </li>
                   </ul>
 
@@ -1373,9 +1398,9 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
     </template>
 
     <!--
-      Карточка вещи: всё, что известно о вещи, плюс два решения — раздел
-      и «берём / не берём». Одна на «Берём» и «Взял»; `scope` выбирает,
-      какой раздел показывать.
+      Карточка вещи: всё, что известно о вещи, плюс решения — несущий,
+      раздел и «берём / не берём». Одна на «Берём», «Взял» и
+      «Распределение»; `scope` выбирает, какой раздел показывать.
     -->
     <TripGearItemModal
       v-if="openedItem"
@@ -1386,11 +1411,14 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
       "
       :owner-name="personName(openedItem.ownerUserId)"
       :assignee-name="openedItem.assignedUserId ? personName(openedItem.assignedUserId) : null"
+      :assignee-choices="assigneeChoices"
+      :can-assign="openedScope === 'shared'"
       :can-decide="canEdit && openedScope === 'shared'"
       :can-place="openedScope === 'shared' ? canEdit : true"
       :can-remove="canRemove(openedItem)"
       :busy="busyId === openedItem.id || removingId === openedItem.id"
       @status="onItemStatus"
+      @assignee="onItemAssignee"
       @section="onItemSection"
       @remove="onItemRemove"
       @close="closeItem"
