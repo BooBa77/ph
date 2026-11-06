@@ -309,9 +309,15 @@ const groups = computed<CookingGroupView[]>(() => [
  * Считаем по вещам группы, а не по всему походу: топор, добавленный
  * «Добавить ещё» в «Палатки», в «Костровом» не показывается, и кнопка
  * «Добавить топор» остаётся цветной — там его действительно нет.
+ *
+ * Отклонённая вещь (06.11.2026) в счёт не идёт: «не берём» — это решение
+ * не брать, и кнопка «Добавить топор» должна оставаться цветной, пока
+ * топора в группе нет по-настоящему.
  */
 function hasType(group: CookingGroupView, type: CookingType): boolean {
-  return group.rows.some((row) => row.item.typeCode === type.code)
+  return group.rows.some(
+    (row) => row.item.status !== 'declined' && row.item.typeCode === type.code,
+  )
 }
 
 function buttonClass(group: CookingGroupView, type: CookingType): string {

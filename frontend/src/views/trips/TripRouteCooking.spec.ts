@@ -443,6 +443,10 @@ describe('секция «Готовка»', () => {
     const stove = wrapper.get('[data-test="route-cooking-items-stove"]')
     expect(stove.text()).toContain('Горелка (Олег)')
     expect(stove.get('[data-test="route-cooking-item"]').classes()).toContain('line-through')
+    // Отклонённая горелка не делает кнопку «есть»: брать по-прежнему нечего.
+    expect(
+      wrapper.get('[data-test="route-cooking-add-stove"]').classes(),
+    ).toContain('bg-red-600')
   })
 
   it('пилюля открывает карточку вещи, организатор меняет статус', async () => {
