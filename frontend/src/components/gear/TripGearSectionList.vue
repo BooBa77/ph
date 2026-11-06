@@ -280,32 +280,35 @@ function onRootDrop(): void {
     >
       <details open>
         <!--
-          Гибкая строка внутри `<summary>`, а не `display: flex` на нём самом:
-          у `<summary>` с `display: flex` пропадает треугольник раскрытия —
-          раздел перестаёт выглядеть сворачиваемым.
+          Треугольник раскрытия — родной маркер `<summary>`, поэтому
+          содержимое остаётся строчным: `display: flex` на самом `<summary>`
+          или блочный `<span>` внутри него отрывают маркер на отдельную
+          строку. «⋯» лежит абсолютно справа — так заголовок, треугольник
+          и инструменты стоят в одной строке.
         -->
-        <summary class="cursor-pointer select-none text-sm font-medium text-text">
-          <span class="flex items-center gap-2">
-            <span class="min-w-0 truncate">{{ section.title }}</span>
+        <summary class="relative cursor-pointer select-none text-sm font-medium text-text">
+          <span
+            class="inline-block max-w-full truncate align-bottom"
+            :class="canManage ? 'pr-9' : ''"
+          >{{ section.title }}</span>
 
-            <!--
-              Инструменты раздела: «+ Подраздел», «Переименовать», «Удалить»
-              прячутся за этой кнопкой. `prevent` не даёт клику заодно
-              свернуть раздел, `stop` — не пускает его к обработчикам выше.
-            -->
-            <button
-              v-if="canManage"
-              type="button"
-              class="ml-auto shrink-0 cursor-pointer rounded-lg border border-border bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text"
-              :aria-expanded="isToolsOpen(section.id)"
-              :aria-label="`Инструменты раздела «${section.title}»`"
-              :title="`Инструменты раздела «${section.title}»`"
-              :data-test="`gear-section-tools-${section.id}`"
-              @click.prevent.stop="toggleTools(section.id)"
-            >
-              ⋯
-            </button>
-          </span>
+          <!--
+            Инструменты раздела: «+ Подраздел», «Переименовать», «Удалить»
+            прячутся за этой кнопкой. `prevent` не даёт клику заодно
+            свернуть раздел, `stop` — не пускает его к обработчикам выше.
+          -->
+          <button
+            v-if="canManage"
+            type="button"
+            class="absolute right-0 top-1/2 ml-auto shrink-0 -translate-y-1/2 cursor-pointer rounded-lg border border-border bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+            :aria-expanded="isToolsOpen(section.id)"
+            :aria-label="`Инструменты раздела «${section.title}»`"
+            :title="`Инструменты раздела «${section.title}»`"
+            :data-test="`gear-section-tools-${section.id}`"
+            @click.prevent.stop="toggleTools(section.id)"
+          >
+            ⋯
+          </button>
         </summary>
 
         <div class="mt-2 flex flex-col gap-2">
@@ -437,7 +440,7 @@ function onRootDrop(): void {
             :data-test="`gear-section-add-item-${section.id}`"
             @click="emit('addTo', section.id)"
           >
-            Добавить снаряжение
+            Добавить снаряжение в этот раздел
           </button>
         </div>
       </details>

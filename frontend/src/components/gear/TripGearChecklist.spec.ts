@@ -244,37 +244,43 @@ describe('чек-лист вкладки «Снаряжение» похода',
     expect(wrapper.get('[data-test="checklist-heading"]').text()).toBe('Что берём в поход')
   })
 
-  it('кнопка «Скрыть инструменты» убирает правку, оставляя галочки и чтение', async () => {
+  it('скрытые инструменты оставляют галочки и чтение, а правку убирают', async () => {
     const wrapper = mounted({
       heading: 'Мои личные вещи',
-      toolsToggle: true,
+      toolsHidden: true,
       checklist: checklist([item('i1', 'Котёл')]),
     })
     await flushPromises()
-
-    expect(wrapper.find('[data-test="checklist-new-item"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="checklist-import"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="checklist-item-remove"]').exists()).toBe(true)
-
-    await wrapper.get('[data-test="checklist-tools-toggle"]').trigger('click')
 
     expect(wrapper.find('[data-test="checklist-new-item"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="checklist-import"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="checklist-item-remove"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="checklist-item-check-i1"]').exists()).toBe(true)
-    expect(wrapper.get('[data-test="checklist-tools-toggle"]').text()).toContain(
-      'Показать инструменты',
-    )
-
-    await wrapper.get('[data-test="checklist-tools-toggle"]').trigger('click')
-
-    expect(wrapper.find('[data-test="checklist-new-item"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="checklist-item-title"]').exists()).toBe(true)
   })
 
-  it('кнопки скрытия инструментов нет там, где её не просили', async () => {
-    const wrapper = mounted({ heading: 'Что берём в поход' })
+  it('плейсхолдер по умолчанию — «Добавить в список» для любого списка', async () => {
+    for (const scope of ['trip', 'personal', 'recommendation'] as const) {
+      const wrapper = mounted({ scope, checklist: checklist([]) })
+      await flushPromises()
+
+      expect(wrapper.get('[data-test="checklist-new-item"]').attributes('placeholder')).toBe(
+        'Добавить в список',
+      )
+    }
+  })
+
+  it('импорт шаблона — отдельной строкой и словами «Взять из личного чек-листа»', async () => {
+    const wrapper = mounted({ checklist: checklist([]) })
     await flushPromises()
 
-    expect(wrapper.find('[data-test="checklist-tools-toggle"]').exists()).toBe(false)
+    const button = wrapper.get('[data-test="checklist-import"]')
+    expect(button.text()).toBe('Взять из личного чек-листа')
+
+    // Первая строка — поле и «Добавить», вторая — импорт: в одной строке
+    // на телефоне они делили ширину на три части.
+    const form = button.element.parentElement as HTMLFormElement
+    expect(form.className).toContain('flex-col')
+    expect(wrapper.get('[data-test="checklist-new-item"]').element.parentElement).not.toBe(form)
   })
 })

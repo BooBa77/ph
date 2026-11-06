@@ -407,7 +407,7 @@ describe('вкладка «Снаряжение» похода', () => {
       'Список',
     )
     expect(wrapper.get('[data-test="gear-recommendation-section"] > summary').text()).toBe(
-      'Рекомендация по личным вещам',
+      'Рекомендации участникам по личным вещам',
     )
     expect(wrapper.get('[data-test="gear-taking"] > summary').text()).toBe('Берём')
     expect(wrapper.get('[data-test="gear-distribution"] > summary').text()).toBe('Распределение')
@@ -453,7 +453,10 @@ describe('вкладка «Снаряжение» похода', () => {
     const wrapper = await mounted(true)
 
     expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).toContain(
-      'Список общественного снаряжения. Редактируют только организаторы.',
+      'Редактируют только организаторы.',
+    )
+    expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).not.toContain(
+      'Список общественного снаряжения.',
     )
     expect(wrapper.get('[data-test="gear-recommendation-section"]').text()).toContain(
       'Рекомендация добавляется каждому участнику в личный список. Выполнение на его совести.',
@@ -464,7 +467,7 @@ describe('вкладка «Снаряжение» похода', () => {
       'Что берём в поход',
     )
 
-    // Кнопка скрытия инструментов есть у обоих списков, которые можно править.
+    // «⋯» в заголовке есть у обоих списков, которые можно править.
     expect(
       wrapper.find('[data-test="gear-personal-checklist"] [data-test="checklist-tools-toggle"]')
         .exists(),
@@ -490,6 +493,63 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.get('[data-test="template-picker"]').text()).toContain(
       'В список общественного снаряжения вещи из шаблона попадут названиями типов: «Топор», а не «мой любимый Fixars».',
     )
+  })
+
+  it('«⋯» в заголовке списка скрывает инструменты, оставляя галочки', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      shared: checklist('c1', 'trip', [checklistItem('i1', 'Котёл')]),
+    })
+
+    const wrapper = await mounted(true)
+    const block = wrapper.get('[data-test="gear-shared-checklist"]')
+    const toggle = block.get('[data-test="checklist-tools-toggle"]')
+
+    // Заказчик: «у разделов кнопка скрытия в виде хлебных крошек… Установи
+    // спискам крошки». Текстовой ссылки «Скрыть инструменты» больше нет:
+    // те же слова живут в `aria-label` и подсказке, а на экране — «⋯».
+    expect(toggle.text()).toBe('⋯')
+    expect(toggle.text()).not.toContain('инструменты')
+    expect(toggle.attributes('title')).toBe('Скрыть инструменты')
+    expect(toggle.attributes('aria-expanded')).toBe('true')
+    expect(block.find('[data-test="checklist-new-item"]').exists()).toBe(true)
+
+    await toggle.trigger('click')
+
+    expect(block.find('[data-test="checklist-new-item"]').exists()).toBe(false)
+    expect(block.find('[data-test="checklist-import"]').exists()).toBe(false)
+    expect(block.find('[data-test="checklist-item-check-i1"]').exists()).toBe(true)
+    expect(toggle.attributes('title')).toBe('Показать инструменты')
+    expect(toggle.attributes('aria-expanded')).toBe('false')
+
+    // Кнопка в `<summary>` не сворачивает сам список.
+    expect(block.element.hasAttribute('open')).toBe(true)
+  })
+
+  it('у всех трёх списков один плейсхолдер и одно название импорта', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      shared: checklist('c1', 'trip', []),
+      personal: checklist('p1', 'personal', []),
+      recommendation: checklist('r1', 'recommendation', []),
+    })
+
+    const wrapper = await mounted(true)
+
+    // Заказчик: «измени все три плейсхолдера списков на „Добавить в список“,
+    // у всех одинаково».
+    const placeholders = wrapper
+      .findAll('[data-test="checklist-new-item"]')
+      .map((input) => input.attributes('placeholder'))
+
+    expect(placeholders).toHaveLength(3)
+    expect(new Set(placeholders)).toEqual(new Set(['Добавить в список']))
+
+    const imports = wrapper
+      .findAll('[data-test="checklist-import"]')
+      .map((button) => button.text())
+
+    expect(imports).toHaveLength(3)
+    expect(new Set(imports)).toEqual(new Set(['Взять из личного чек-листа']))
   })
 
   it('«Берём»: утверждённое, предложенное и отклонённое — в одном списке', async () => {
@@ -681,7 +741,7 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="manual-gear-dialog"]').exists()).toBe(true)
   })
 
-  it('своя вещь убирается из похода, чужая — только с правом вкладки', async () => {
+  it('«Убрать из похода» в карточке — только владельцу вещи', async () => {
     const wrapper = await mounted()
 
     // Топор мой — «Убрать из похода» есть и без права вкладки.
@@ -702,6 +762,41 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-taking-item-g2"]').exists()).toBe(false)
     // Карточка убранной вещи закрылась вместе с ней.
     expect(wrapper.find('[data-test="gear-item-dialog"]').exists()).toBe(false)
+  })
+
+  it('организатор не удаляет чужую вещь: его крестик ставит «не берём»', async () => {
+    const wrapper = await mounted(true)
+
+    // Палатка Анны: в карточке удаления нет даже у ведущего вкладку —
+    // заказчик: «удалить вещь из похода может только владелец».
+    await wrapper.get('[data-test="gear-taking-item-g1"]').trigger('click')
+    expect(wrapper.find('[data-test="gear-item-remove"]').exists()).toBe(false)
+    await wrapper.get('[data-test="gear-item-done"]').trigger('click')
+
+    await wrapper.get('[data-test="gear-taking-remove-g1"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.removeTripGear).not.toHaveBeenCalled()
+    expect(mocks.updateTripGear).toHaveBeenCalledWith('1', 'g1', { status: 'declined' })
+    // Крестик не открыл карточку.
+    expect(wrapper.find('[data-test="gear-item-dialog"]').exists()).toBe(false)
+  })
+
+  it('отклонённую чужую вещь организатор крестиком не помечает', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(
+        defaultItems().map((item) =>
+          item.id === 'g1' ? { ...item, status: 'declined' as const } : item,
+        ),
+      ),
+    )
+
+    const wrapper = await mounted(true)
+
+    // Отметка уже стоит — повторять нечего, а удалять организатор не вправе.
+    expect(wrapper.find('[data-test="gear-taking-remove-g1"]').exists()).toBe(false)
+    // Свою отклонённую лодку владелец по-прежнему убирает крестиком.
+    expect(wrapper.find('[data-test="gear-taking-remove-g4"]').exists()).toBe(true)
   })
 
   it('отклонённую вещь владелец убирает крестиком прямо в разделе', async () => {
@@ -877,7 +972,7 @@ describe('вкладка «Снаряжение» похода', () => {
 
     // Название — словами заказчика; внутренние подпись и бейдж не дублируют его.
     const editor = organizer.get('[data-test="gear-recommendation-section"]')
-    expect(editor.get('summary').text()).toBe('Рекомендация по личным вещам')
+    expect(editor.get('summary').text()).toBe('Рекомендации участникам по личным вещам')
     expect(editor.text()).not.toContain('Что взять каждому')
     expect(editor.find('[data-test="checklist-recommended-badge"]').exists()).toBe(false)
     expect(editor.find('[data-test="checklist-heading"]').exists()).toBe(false)
@@ -901,6 +996,24 @@ describe('вкладка «Снаряжение» похода', () => {
 
     expect(wrapper.find('[data-test="gear-recommendation-section"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="gear-personal-checklist"]').text()).toContain('Рюкзак')
+  })
+
+  it('пустая рекомендация не занимает строку в личном списке', async () => {
+    mocks.listTripChecklists.mockResolvedValue({
+      ...emptyChecklists(),
+      recommendation: checklist('r1', 'recommendation', []),
+      personal: checklist('p1', 'personal', [checklistItem('pi1', 'Спальник')]),
+    })
+
+    const wrapper = await mounted(true)
+    const personal = wrapper.get('[data-test="gear-personal-checklist"]')
+
+    // Заказчик: «Если их нет, то в Личном списке секцию рекомендаций
+    // от организатора тоже не отображать».
+    expect(personal.text()).not.toContain('Рекомендовано организатором')
+    expect(personal.text()).toContain('Спальник')
+    // А редактор рекомендации у организатора на месте: туда и добавляют.
+    expect(wrapper.find('[data-test="gear-recommendation-section"]').exists()).toBe(true)
   })
 
   it('отметка рекомендации уходит в отдельную ручку и остаётся личной', async () => {
@@ -982,6 +1095,20 @@ describe('вкладка «Снаряжение» похода', () => {
     // Вещь без раздела осталась в корне, а не пропала.
     expect(wrapper.find('[data-test="gear-taking-item-g1"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="gear-section-s2"]').text()).toContain('Альпинизм')
+  })
+
+  it('в разделе кнопка добавления говорит, куда именно добавит', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(defaultItems(), [tripGearSection({ id: 's1', title: 'Табор' })]),
+    )
+
+    const wrapper = await mounted(true)
+
+    // Заказчик: «измени текст кнопок в разделах с „Добавить снаряжение“
+    // на „Добавить снаряжение в этот раздел“».
+    expect(wrapper.get('[data-test="gear-section-add-item-s1"]').text()).toBe(
+      'Добавить снаряжение в этот раздел',
+    )
   })
 
   it('общественный раздел создаётся с корня и с подразделом', async () => {

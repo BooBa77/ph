@@ -32,9 +32,9 @@ import { formatWeight } from '@/utils/gearWeight'
  *   не возвращается.
  *
  * **«Заполнить с нуля или из личных чек-листов».** Пункт добавляется
- * текстом; кнопка «Из чек-листа» открывает выбор пунктов шаблонов профиля.
- * Сервер сам решает, станет вещь экземпляром или типом — см.
- * `ImportChecklistItemsDto`.
+ * текстом; кнопка «Взять из личного чек-листа» открывает выбор пунктов
+ * шаблонов профиля. Сервер сам решает, станет вещь экземпляром или типом —
+ * см. `ImportChecklistItemsDto`.
  *
  * **Список приходит пропом, а состояние живёт здесь.** Родителю не нужно
  * знать, как правится пункт: компонент меняет свой снимок и отдаёт новый
@@ -54,32 +54,35 @@ const props = withDefaults(
     canManage?: boolean
     /** Показывать галочки выполнения. */
     canMark?: boolean
-    /** Показывать кнопку «Из чек-листа». */
+    /** Показывать кнопку «Взять из личного чек-листа». */
     canImport?: boolean
     /** Зелёный блок рекомендации над личными пунктами. */
     variant?: 'default' | 'recommended'
     /** Что произойдёт с вещами из шаблона — подпись в модалке. */
     importNote?: string
     /**
-     * Кнопка «Скрыть инструменты»: свернуть правку, оставив только чтение
-     * и галочки. Заказчик 05.11.2026: «в „Мои личные вещи“ лучше бы добавить
-     * кнопку скрытия инструментов редактирования чек-листа», затем —
-     * «добавь кнопку „Показать инструменты“ и для списка общественного
-     * снаряжения». Поэтому флаг общий, а не привязан к личному списку.
+     * Инструменты правки скрыты (06.11.2026).
+     *
+     * Заказчик 05.11.2026: «в „Мои личные вещи“ лучше бы добавить кнопку
+     * скрытия инструментов редактирования чек-листа», затем — «добавь
+     * кнопку „Показать инструменты“ и для списка общественного снаряжения».
+     * С 06.11.2026 переключатель живёт в `<summary>` списка («⋯», как
+     * у разделов), поэтому состояние держит родитель, а компонент только
+     * показывает правку или чтение.
      */
-    toolsToggle?: boolean
+    toolsHidden?: boolean
   }>(),
   {
     heading: '',
     subtitle: '',
     emptyText: 'Список ещё не заведён.',
-    addPlaceholder: 'Добавить пункт',
+    addPlaceholder: 'Добавить в список',
     canManage: false,
     canMark: false,
     canImport: false,
     variant: 'default',
     importNote: '',
-    toolsToggle: false,
+    toolsHidden: false,
   },
 )
 
@@ -105,13 +108,20 @@ const titleDraft = ref('')
 const isPickerOpen = ref(false)
 
 /**
- * Инструменты правки скрыты кнопкой. Состояние живёт в компоненте,
- * а не в localStorage: это способ посмотреть список «как его видят люди»,
- * и при следующем открытии вкладки человек снова получает редактор.
+ * Инструменты правки скрыты кнопкой «⋯» в заголовке списка. Состояние
+ * живёт у родителя (см. проп `toolsHidden`): кнопка стоит в `<summary>`
+ * свёрнутой секции, до которого компонент не дотягивается.
  */
-const toolsHidden = ref(false)
+const editToolsVisible = computed(() => props.canManage && !props.toolsHidden)
 
-const editToolsVisible = computed(() => props.canManage && !toolsHidden.value)
+// Инструменты прячутся — незаконченная правка текста тоже уходит: иначе
+// поле осталось бы висеть без кнопок «Сохранить».
+watch(
+  () => props.toolsHidden,
+  (hidden) => {
+    if (hidden) cancelEdit()
+  },
+)
 
 const isRecommended = computed(() => props.variant === 'recommended')
 
@@ -129,24 +139,10 @@ const progress = computed(() => {
   return done > 0 ? `${done}/${items.length}` : ''
 })
 
-function toggleTools(): void {
-  toolsHidden.value = !toolsHidden.value
-
-  // Инструменты прячем — незаконченная правка текста тоже уходит:
-  // иначе поле осталось бы висеть без кнопок «Сохранить».
-  if (toolsHidden.value) cancelEdit()
-}
-
 const sectionClass = computed(() =>
   isRecommended.value
     ? 'flex flex-col gap-2 rounded-xl border border-emerald-300 bg-emerald-50 p-3'
     : 'flex flex-col gap-2',
-)
-
-const addPlaceholder = computed(
-  () =>
-    props.addPlaceholder ||
-    (props.scope === 'trip' ? 'Добавить в список: «Котёл»' : 'Добавить пункт'),
 )
 
 const createLabel = computed(() =>
@@ -316,10 +312,7 @@ async function onImport(itemIds: string[]): Promise<void> {
 
 <template>
   <section :class="sectionClass" data-test="trip-checklist" :data-scope="scope">
-    <div
-      v-if="heading || isRecommended || (toolsToggle && canManage)"
-      class="flex flex-wrap items-baseline gap-2"
-    >
+    <div v-if="heading || isRecommended" class="flex flex-wrap items-baseline gap-2">
       <h3
         v-if="heading"
         class="text-sm font-medium"
@@ -341,17 +334,6 @@ async function onImport(itemIds: string[]): Promise<void> {
       >
         рекомендация
       </span>
-
-      <button
-        v-if="toolsToggle && canManage"
-        type="button"
-        class="ml-auto cursor-pointer text-xs text-muted underline transition-colors hover:text-text"
-        :aria-pressed="toolsHidden"
-        data-test="checklist-tools-toggle"
-        @click="toggleTools"
-      >
-        {{ toolsHidden ? 'Показать инструменты' : 'Скрыть инструменты' }}
-      </button>
     </div>
 
     <p v-if="subtitle" class="text-xs" :class="isRecommended ? 'text-emerald-900' : 'text-muted'">
@@ -471,32 +453,40 @@ async function onImport(itemIds: string[]): Promise<void> {
         </li>
       </ul>
 
-      <form v-if="editToolsVisible" class="flex flex-wrap gap-2" @submit.prevent="addItem">
-        <input
-          v-model="draft"
-          type="text"
-          maxlength="200"
-          :placeholder="addPlaceholder"
-          class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
-          data-test="checklist-new-item"
-        />
-        <button
-          type="submit"
-          :disabled="busyId !== null || draft.trim().length === 0"
-          class="cursor-pointer rounded-xl border border-border px-3 py-2 text-sm text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-          data-test="checklist-add-item"
-        >
-          Добавить
-        </button>
+      <!--
+        Две строки (06.11.2026). Заказчик: «кнопку „Из чек-листа“ перенеси
+        на следующую строку и измени текст на „Взять из личного чек-листа“».
+        Поле с «Добавить» — первая строка, импорт шаблона — вторая: вместе
+        они делили ширину телефона на три части и лезли в один ряд.
+      -->
+      <form v-if="editToolsVisible" class="flex flex-col gap-2" @submit.prevent="addItem">
+        <div class="flex flex-wrap gap-2">
+          <input
+            v-model="draft"
+            type="text"
+            maxlength="200"
+            :placeholder="addPlaceholder"
+            class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+            data-test="checklist-new-item"
+          />
+          <button
+            type="submit"
+            :disabled="busyId !== null || draft.trim().length === 0"
+            class="cursor-pointer rounded-xl border border-border px-3 py-2 text-sm text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+            data-test="checklist-add-item"
+          >
+            Добавить
+          </button>
+        </div>
         <button
           v-if="canImport"
           type="button"
           :disabled="isImporting"
-          class="cursor-pointer rounded-xl border border-border px-3 py-2 text-sm text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+          class="cursor-pointer self-start rounded-xl border border-border px-3 py-2 text-sm text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
           data-test="checklist-import"
           @click="isPickerOpen = true"
         >
-          Из чек-листа
+          Взять из личного чек-листа
         </button>
       </form>
     </template>

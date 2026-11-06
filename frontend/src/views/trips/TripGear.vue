@@ -47,8 +47,9 @@ import {
  *
  * **«Список» — с 05.11.2026.** Заказчик описал логику: в общественной
  * секции список общественного снаряжения, между секциями — отдельная
- * «Рекомендация по личным вещам» организатора (внутри общественной она,
- * по словам заказчика, «смотрится некорректно»), в личной секции свой
+ * «Рекомендации участникам по личным вещам» организатора (внутри
+ * общественной она, по словам заказчика, «смотрится некорректно»),
+ * в личной секции свой
  * список, где рекомендация стоит отдельным зелёным блоком над личными
  * пунктами, удалить её нельзя, а отметки организатору не возвращаются.
  * Список правит и отмечает тот, кому доступна вкладка; остальные только
@@ -60,9 +61,10 @@ import {
  * - «Берём» — снаряжение похода (`GET /api/trips/:id/gear`). Предложенные
  *   вещи ждут решения, утверждённые стоят сплошными пилюлями, отклонённые
  *   остаются в своих разделах зачёркнутыми (06.11.2026): решение
- *   «не берём» — это отметка, а не удаление вещи. Статус меняет тот, кому
- *   роль дала вкладку (`canEdit`), остальные видят статус словами: права
- *   считает сервер.
+ *   «не берём» — это отметка, а не удаление вещи. Удалить вещь из похода
+ *   может только её владелец: у организатора крестик ставит «не берём»
+ *   (`crossItem`). Статус меняет тот, кому роль дала вкладку (`canEdit`),
+ *   остальные видят статус словами: права считает сервер.
  * - «Распределение» — плитки-рюкзаки участников со статусом «Идёт»
  *   (`docs/ph/gear-distribution.md` §5). Вещь перетаскивается мышью, а
  *   несущего меняют в карточке вещи тем же полем «Несёт», что и в «Берём»
@@ -134,6 +136,23 @@ const checklistsError = ref<string | null>(null)
 const hasRecommendation = computed(
   () => (checklists.value?.recommendation?.items.length ?? 0) > 0,
 )
+
+/**
+ * Инструменты списков спрятаны «⋯» в заголовке секции (06.11.2026).
+ *
+ * Заказчик: «У нас слишком много текста на экране, нужно ужиматься.
+ * Установи спискам крошки» — тот же «⋯», что у разделов в «Берём»,
+ * только теперь в `<summary>` самого списка. Свёрнутая строка «Список 1/4»
+ * несёт и прогресс, и переключатель, а текстовая ссылка «Скрыть инструменты»
+ * ушла: она занимала отдельную строку под заголовком.
+ *
+ * Состояние у родителя, потому что кнопка живёт в `<summary>` снаружи
+ * `TripGearChecklist`. Это способ посмотреть список «как его видят люди»;
+ * в localStorage не сохраняем — при следующем открытии вкладки человек
+ * снова получает редактор.
+ */
+const sharedToolsHidden = ref(false)
+const personalToolsHidden = ref(false)
 
 /**
  * Прогресс списка для свёрнутой секции (05.11.2026). Заказчик: «в списках
@@ -444,9 +463,34 @@ function weightTotalLabel(list: TripGearItem[]): string {
   return formatWeightTotal(total, list.length - withWeight.length)
 }
 
-/** Крестик «убрать из похода»: своя вещь — владельцу, чужая — ведущему. */
-function canRemove(item: TripGearItem): boolean {
-  return props.canEdit || item.ownerUserId === meId.value
+/** Моя вещь: только владелец удаляет её из похода (06.11.2026). */
+function isMyItem(item: TripGearItem): boolean {
+  return meId.value !== '' && item.ownerUserId === meId.value
+}
+
+/**
+ * Крестик в пилюле — владельцу и тому, кто ведёт снаряжение (06.11.2026).
+ *
+ * Заказчик: «удалить вещь из похода может только владелец. Организатор
+ * только предлагает убрать вещь через „не берём“. Крестик отображается
+ * владельцам и организаторам, но организаторы по крестику помечают на
+ * удаление, а владельцы сразу удаляют».
+ *
+ * Поэтому у чужой отклонённой вещи организатору крестик уже не нужен:
+ * повторная отметка ничего не меняет, а удалять он не вправе.
+ */
+function canCross(item: TripGearItem): boolean {
+  return isMyItem(item) || (props.canEdit && item.status !== 'declined')
+}
+
+/** Крестик: владелец удаляет строку, организатор ставит «не берём». */
+async function crossItem(item: TripGearItem): Promise<void> {
+  if (isMyItem(item)) {
+    await remove(item)
+    return
+  }
+
+  await patchItem(item, { status: 'declined' })
 }
 
 // ───────────────────────────── загрузка ─────────────────────────────
@@ -899,12 +943,39 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           class="rounded-xl border border-border bg-white p-3"
           data-test="gear-shared-checklist"
         >
-          <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Список<span
-              v-if="sharedProgress"
-              class="ml-1 text-xs font-normal text-muted"
-              data-test="gear-shared-progress"
-            >{{ sharedProgress }}</span>
+          <!--
+            Заголовок списка — одной строкой с родным треугольником:
+            строчное содержимое и «⋯» абсолютно справа. Блочная обёртка
+            внутри `<summary>` отрывала маркер на отдельную строку.
+          -->
+          <summary class="relative cursor-pointer select-none text-sm font-medium text-text">
+            <span
+              class="inline-block max-w-full truncate align-bottom"
+              :class="canEdit && checklists?.shared ? 'pr-9' : ''"
+            >
+              Список<span
+                v-if="sharedProgress"
+                class="ml-1 text-xs font-normal text-muted"
+                data-test="gear-shared-progress"
+              >{{ sharedProgress }}</span>
+            </span>
+
+            <!--
+              Инструменты списка — за «⋯», как у разделов «Берём».
+              `prevent` не даёт клику заодно свернуть секцию.
+            -->
+            <button
+              v-if="canEdit && checklists?.shared"
+              type="button"
+              class="absolute right-0 top-1/2 -translate-y-1/2 cursor-pointer rounded-lg border border-border bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+              :aria-expanded="!sharedToolsHidden"
+              :aria-label="sharedToolsHidden ? 'Показать инструменты' : 'Скрыть инструменты'"
+              :title="sharedToolsHidden ? 'Показать инструменты' : 'Скрыть инструменты'"
+              data-test="checklist-tools-toggle"
+              @click.prevent.stop="sharedToolsHidden = !sharedToolsHidden"
+            >
+              ⋯
+            </button>
           </summary>
 
           <div class="mt-2">
@@ -913,14 +984,13 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               :trip-id="trip.id"
               :checklist="checklists.shared"
               scope="trip"
-              subtitle="Список общественного снаряжения. Редактируют только организаторы."
+              subtitle="Редактируют только организаторы."
               empty-text="Список общественного снаряжения ещё не завели."
-              add-placeholder="Добавить в список: «Котёл»"
               import-note="В список общественного снаряжения вещи из шаблона попадут названиями типов: «Топор», а не «мой любимый Fixars»."
               :can-manage="canEdit"
               :can-mark="canEdit"
               :can-import="canEdit"
-              tools-toggle
+              :tools-hidden="sharedToolsHidden"
               @updated="applyChecklist('shared', $event)"
             />
 
@@ -1013,21 +1083,25 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
 
                   <!--
                     Крестик — владельцу и ведущему вкладку (06.11.2026).
-                    Заказчик: «увидев пометку об отказе он поймёт, что эта
-                    вещь не понадобится, и сам удалит крестиком или
-                    в модалке. Кстати, владельцам должен быть доступен
-                    крестик удаления вещи». `stop` не даёт крестику заодно
-                    открыть карточку.
+                    Заказчик: «удалить вещь из похода может только владелец.
+                    Организатор только предлагает убрать вещь через „не берём“».
+                    Поэтому действие разное: своя вещь уходит из похода,
+                    чужая — только зачёркивается отметкой `declined`.
+                    `stop` не даёт крестику заодно открыть карточку.
                   -->
                   <button
-                    v-if="canRemove(item)"
+                    v-if="canCross(item)"
                     type="button"
                     class="ml-auto shrink-0 cursor-pointer rounded-lg border border-orange-200 bg-white px-1.5 py-0.5 text-xs text-muted no-underline transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
-                    :disabled="removingId === item.id"
-                    :aria-label="`Убрать «${item.title}» из похода`"
-                    title="Убрать из похода"
+                    :disabled="removingId === item.id || busyId === item.id"
+                    :aria-label="
+                      isMyItem(item)
+                        ? `Убрать «${item.title}» из похода`
+                        : `Пометить «${item.title}» как «не берём»`
+                    "
+                    :title="isMyItem(item) ? 'Убрать из похода' : 'Не берём: вещь останется у владельца'"
                     :data-test="`gear-taking-remove-${item.id}`"
-                    @click.stop="remove(item)"
+                    @click.stop="crossItem(item)"
                     @keydown.stop
                   >
                     ✕
@@ -1173,12 +1247,13 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
       </details>
 
       <!--
-        «Рекомендация по личным вещам» — отдельная секция между
+        «Рекомендации участникам по личным вещам» — отдельная секция между
         общественным и личным снаряжением (05.11.2026). Заказчик: внутри
         «Общественного снаряжения» она «смотрится некорректно», хотя её
         и видит только организатор. Пункты попадают участнику в личный
         «Список» зелёным блоком, отметки у каждого свои и организатору
-        не возвращаются.
+        не возвращаются. Пустая рекомендация в личный список не попадает
+        (`hasRecommendation`): совет без советов — лишняя строка.
       -->
       <details
         v-if="isOrganizer"
@@ -1187,7 +1262,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
         data-test="gear-recommendation-section"
       >
         <summary class="cursor-pointer select-none text-sm font-medium text-emerald-900">
-          Рекомендация по личным вещам
+          Рекомендации участникам по личным вещам
         </summary>
 
         <div class="rounded-xl border border-border bg-white p-3">
@@ -1198,7 +1273,6 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
             scope="recommendation"
             subtitle="Рекомендация добавляется каждому участнику в личный список. Выполнение на его совести."
             empty-text="Рекомендации личных вещей ещё нет."
-            add-placeholder="Добавить в рекомендацию: «Рюкзак»"
             import-note="В рекомендацию вещи из шаблона попадут названиями типов: «Топор», а не «Топор Fixars»."
             :can-manage="true"
             :can-import="true"
@@ -1236,12 +1310,30 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           class="rounded-xl border border-border bg-white p-3"
           data-test="gear-personal-checklist"
         >
-          <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Список<span
-              v-if="personalProgress"
-              class="ml-1 text-xs font-normal text-muted"
-              data-test="gear-personal-progress"
-            >{{ personalProgress }}</span>
+          <summary class="relative cursor-pointer select-none text-sm font-medium text-text">
+            <span
+              class="inline-block max-w-full truncate align-bottom"
+              :class="checklists?.personal ? 'pr-9' : ''"
+            >
+              Список<span
+                v-if="personalProgress"
+                class="ml-1 text-xs font-normal text-muted"
+                data-test="gear-personal-progress"
+              >{{ personalProgress }}</span>
+            </span>
+
+            <button
+              v-if="checklists?.personal"
+              type="button"
+              class="absolute right-0 top-1/2 -translate-y-1/2 cursor-pointer rounded-lg border border-border bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+              :aria-expanded="!personalToolsHidden"
+              :aria-label="personalToolsHidden ? 'Показать инструменты' : 'Скрыть инструменты'"
+              :title="personalToolsHidden ? 'Показать инструменты' : 'Скрыть инструменты'"
+              data-test="checklist-tools-toggle"
+              @click.prevent.stop="personalToolsHidden = !personalToolsHidden"
+            >
+              ⋯
+            </button>
           </summary>
 
           <div class="mt-2 flex flex-col gap-3">
@@ -1265,12 +1357,11 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                 heading="Мои личные вещи"
                 subtitle="Этот список видите только вы. Можно добавить пункты или взять их из своих чек-листов."
                 empty-text="Личного списка ещё нет — заведите его и добавьте вещи."
-                add-placeholder="Добавить личное: «Спальник»"
                 import-note="В личный список вещи из шаблона попадут конкретными экземплярами — как они записаны в каталоге."
                 :can-manage="true"
                 :can-mark="true"
                 :can-import="true"
-                tools-toggle
+                :tools-hidden="personalToolsHidden"
                 @updated="applyChecklist('personal', $event)"
               />
             </template>
@@ -1415,7 +1506,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
       :can-assign="openedScope === 'shared'"
       :can-decide="canEdit && openedScope === 'shared'"
       :can-place="openedScope === 'shared' ? canEdit : true"
-      :can-remove="canRemove(openedItem)"
+      :can-remove="isMyItem(openedItem)"
       :busy="busyId === openedItem.id || removingId === openedItem.id"
       @status="onItemStatus"
       @assignee="onItemAssignee"
