@@ -23,6 +23,7 @@ import {
 import type { TripGear } from '../entities/trip-gear.entity';
 import type { TripGearSection } from '../entities/trip-gear-section.entity';
 import { GearItemAttributeDto } from './gear.dto';
+import { USER_GENDERS, type UserGender } from '../../users/gender.types';
 
 /**
  * Вещь в общественном снаряжении похода — как её видит вкладка.
@@ -564,4 +565,165 @@ export class UpdateTripGearSectionDto {
   @IsInt({ message: 'Родительский раздел должен быть указан числом' })
   @Min(1, { message: 'Некорректный родительский раздел' })
   parentId?: number | null;
+}
+
+/**
+ * Единица груза в раскладке: вещь похода или пакет еды (06.11.2026).
+ *
+ * Вид разный, а несущий один — поэтому один DTO на оба. Вещь и пакет
+ * неделимы: «Пакет 2» либо у человека целиком, либо у другого
+ * (`docs/ph/gear-distribution.md` §4).
+ */
+export class TripGearLoadUnitDto {
+  @ApiProperty({
+    description: 'Что это: вещь похода или пакет еды',
+    enum: ['gear', 'package'],
+    example: 'gear',
+  })
+  kind: 'gear' | 'package';
+
+  /**
+   * Id строки `trip_gear` или `trip_meal_packages` — строками, как везде
+   * в API походов: `bigint` в браузер числом не отдаём.
+   */
+  @ApiProperty({ description: 'Id вещи похода или пакета', example: '12' })
+  id: string;
+
+  @ApiProperty({
+    description: 'Подпись: название вещи или имя пакета',
+    example: 'Палатка на четверых',
+  })
+  title: string;
+
+  @ApiProperty({ description: 'Вес в граммах', example: 2400 })
+  weightGrams: number;
+
+  @ApiProperty({
+    description: 'Кто несёт. null — не распределено',
+    nullable: true,
+    example: '1f0f5a52-6a55-4f4e-9f56-2f4b0b3f5a11',
+  })
+  assignedUserId: string | null;
+}
+
+/**
+ * Рюкзак участника: что в нём и сколько это весит.
+ *
+ * `targetWeightGrams` — доля человека с поправкой на пол
+ * (`k_i × T`), `deviationGrams` — насколько он от неё ушёл. Отклонение
+ * **показывается, но не запрещается**: правило §4 — «перегруз видно,
+ * решают люди». Дробную долю округляем до грамма только на выходе.
+ */
+export class TripGearLoadBackpackDto {
+  @ApiProperty({ description: 'Участник', example: '1f0f5a52-…' })
+  userId: string;
+
+  @ApiProperty({ description: 'Пол — от него зависит доля', enum: USER_GENDERS })
+  gender: UserGender;
+
+  @ApiProperty({ description: 'Доля человека, граммы', example: 6300 })
+  targetWeightGrams: number;
+
+  @ApiProperty({ description: 'Вес общественных вещей, граммы', example: 4200 })
+  gearWeightGrams: number;
+
+  @ApiProperty({ description: 'Вес пакетов еды, граммы', example: 2100 })
+  packagesWeightGrams: number;
+
+  @ApiProperty({ description: 'Всего груза, граммы', example: 6300 })
+  totalWeightGrams: number;
+
+  @ApiProperty({
+    description: 'Отклонение от доли: плюс — перегруз, минус — свободно',
+    example: 0,
+  })
+  deviationGrams: number;
+
+  @ApiProperty({ description: 'Вещи в рюкзаке', type: [TripGearLoadUnitDto] })
+  gear: TripGearLoadUnitDto[];
+
+  @ApiProperty({ description: 'Пакеты еды в рюкзаке', type: [TripGearLoadUnitDto] })
+  packages: TripGearLoadUnitDto[];
+}
+
+/**
+ * «Рюкзаки» вкладки «Снаряжение» — ответ `GET /gear/load`
+ * и `POST /gear/auto-distribute` (06.11.2026).
+ *
+ * Один ответ на оба запроса: экрану не нужно второй раз собирать раскладку
+ * после кнопки, а расхождение двух сборок однажды показало бы разные числа
+ * на одном экране.
+ *
+ * **Чего здесь нет:** личных вещей участников. Их вес — «твоя проблема»
+ * (`gear-distribution.md` §5): в общее распределение они не входят
+ * и в плитке чужими не показываются. Дополнительные рюкзаки — следующий
+ * шаг, модели ещё нет.
+ */
+export class TripGearLoadDto {
+  @ApiProperty({
+    description: 'Суммарный распределяемый вес: вещи и пакеты, граммы',
+    example: 18900,
+  })
+  totalWeightGrams: number;
+
+  @ApiProperty({
+    description: 'Рюкзаки участников со статусом «Иду»',
+    type: [TripGearLoadBackpackDto],
+  })
+  backpacks: TripGearLoadBackpackDto[];
+
+  @ApiProperty({
+    description: 'Груз без несущего: нераспределённые вещи и пакеты',
+    type: [TripGearLoadUnitDto],
+  })
+  unassigned: TripGearLoadUnitDto[];
+
+  @ApiProperty({
+    description: 'Сколько утверждённых вещей без веса — в расчёт не входят',
+    example: 2,
+  })
+  itemsWithoutWeight: number;
+
+  @ApiProperty({
+    description: 'Сколько пакетов без веса (пустых) — в расчёт не входят',
+    example: 1,
+  })
+  packagesWithoutWeight: number;
+
+  /**
+   * Медик, которому закреплена аптечка. `null` — медика в походе нет:
+   * аптечка распределяется как обычная вещь, и экран говорит об этом
+   * прямо (`gear-distribution.md` §4).
+   */
+  @ApiProperty({
+    description: 'Медик, у которого аптечка. null — медика в походе нет',
+    nullable: true,
+    example: null,
+  })
+  doctorUserId: string | null;
+
+  @ApiProperty({
+    description: 'Аптечка есть, а медика нет — правило закрепления не сработало',
+    example: false,
+  })
+  doctorMissing: boolean;
+}
+
+/**
+ * Тело `PATCH /api/trips/:id/gear/packages/:packageId` — кто несёт пакет.
+ *
+ * Назначение доступно **любому участнику** (как перетаскивание вещи):
+ * люди взрослые и договариваются сами. `null` — снять назначение.
+ * Личные пакеты (автономное питание) так не назначаются: свою еду человек
+ * несёт сам.
+ */
+export class AssignTripGearPackageDto {
+  @ApiProperty({
+    description: 'Кому едет пакет. null — снять назначение',
+    nullable: true,
+    example: '1f0f5a52-6a55-4f4e-9f56-2f4b0b3f5a11',
+  })
+  @IsOptional()
+  @IsUUID('4', { message: 'Несущему нужен корректный UUID пользователя' })
+  assignedUserId?: string | null;
 }

@@ -1,4 +1,4 @@
-﻿import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
@@ -261,6 +261,20 @@ export class TripMealPackageDto {
 
   @ApiProperty({ description: 'Содержимое менялось после взвешивания' })
   weightActualStale: boolean;
+
+  /**
+   * Кто несёт пакет (06.11.2026). «Кто едет» — третья колонка таблицы
+   * фасовки (`docs/ph/meals.md` §5.1), и назначается она в «Снаряжении»:
+   * там весь груз похода, и пакет — такая же единица, как палатка.
+   * `null` — не распределён; у личных пакетов сюда не смотрим — свою еду
+   * человек несёт сам.
+   */
+  @ApiProperty({
+    description: 'Кто несёт пакет. null — не распределён',
+    nullable: true,
+    example: '1f0f5a52-6a55-4f4e-9f56-2f4b0b3f5a11',
+  })
+  assignedUserId: string | null;
 
   @ApiProperty({ description: 'Расчётный вес, граммы', example: 3200 })
   weightEstimatedGrams: number;

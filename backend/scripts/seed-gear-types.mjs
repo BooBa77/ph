@@ -203,6 +203,17 @@ const TYPES = [
     name: 'Нож',
     attributes: [],
   },
+  {
+    // Аптечка (06.11.2026). Не для кнопки, а для автораспределения:
+    // единственное закрепление — «аптечка всегда у медика»
+    // (`docs/ph/gear-distribution.md` §4). Код `firstAid` — контракт
+    // `FIRST_AID_TYPE_CODE` в `src/gear/gear.types.ts`; строку заводит
+    // ещё и миграция `TripGearLoad`, чтобы свежая база работала без сида.
+    // Характеристик нет: вес и название у вещи свои.
+    code: 'first_aid',
+    name: 'Аптечка',
+    attributes: [],
+  },
 ];
 
 const client = new pg.Client({ connectionString: url });

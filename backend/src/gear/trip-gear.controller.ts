@@ -22,10 +22,12 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
   AddManualTripGearDto,
+  AssignTripGearPackageDto,
   CreateTripGearSectionDto,
   ProposeTripGearDto,
   TripGearItemDto,
   TripGearListDto,
+  TripGearLoadDto,
   TripGearSectionDto,
   UpdateTripGearDto,
   UpdateTripGearSectionDto,
@@ -133,6 +135,62 @@ export class TripGearController {
     @Param('sectionId', ParseIntPipe) sectionId: number,
   ): Promise<void> {
     return this.tripGearService.removeSection(authUser.id, id, sectionId);
+  }
+
+  /**
+   * Раскладка груза: рюкзаки, доли, пакеты еды из «Питания» (06.11.2026).
+   *
+   * Отдельная ручка, а не поле в `GET /gear`: вес пакета выводится
+   * из раскладки «Питания», и вкладка не должна платить за это при каждом
+   * открытии. Экран грузит раскладку тогда, когда показывает
+   * «Распределение».
+   */
+  @Get(':id/gear/load')
+  @ApiOperation({ summary: 'Раскладка груза по рюкзакам' })
+  @ApiOkResponse({ type: TripGearLoadDto })
+  async load(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripGearLoadDto> {
+    return this.tripGearService.load(authUser.id, id);
+  }
+
+  /**
+   * «Автоматически распределить груз» — полный сброс и раскладка заново.
+   *
+   * Право — у того, кому роль дала вкладку «Снаряжение». Ответ — та же
+   * раскладка, что у `GET /gear/load`: экран не пересчитывает веса сам.
+   */
+  @Post(':id/gear/auto-distribute')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Разложить весь груз по рюкзакам автоматически' })
+  @ApiOkResponse({ type: TripGearLoadDto })
+  async autoDistribute(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripGearLoadDto> {
+    return this.tripGearService.autoDistribute(authUser.id, id);
+  }
+
+  /**
+   * Кто несёт пакет еды. Доступно любому участнику, как перетаскивание
+   * вещи: договариваются сами (`docs/ph/gear-distribution.md` §5).
+   */
+  @Patch(':id/gear/packages/:packageId')
+  @ApiOperation({ summary: 'Назначить несущего пакета еды' })
+  @ApiOkResponse({ type: TripGearLoadDto })
+  async assignPackage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('packageId', ParseIntPipe) packageId: number,
+    @Body() dto: AssignTripGearPackageDto,
+  ): Promise<TripGearLoadDto> {
+    return this.tripGearService.assignPackage(
+      authUser.id,
+      id,
+      packageId,
+      dto,
+    );
   }
 
   /**

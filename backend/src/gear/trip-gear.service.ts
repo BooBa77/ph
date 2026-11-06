@@ -5,29 +5,47 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager } from 'typeorm';
+import { DataSource, EntityManager, IsNull } from 'typeorm';
 
 import { TripParticipant } from '../trips/entities/trip-participant.entity';
+import { TripMealPackage } from '../trips/entities/trip-meal-package.entity';
 import { Trip } from '../trips/entities/trip.entity';
 import { TripEventsService } from '../trips/trip-events.service';
+import { TripMealsService } from '../trips/trip-meals.service';
 import type { TripTab } from '../trips/trip-tabs';
 import { TripsService } from '../trips/trips.service';
 import { User } from '../users/entities/user.entity';
 import { sqlValues } from '../users/sport-experience.types';
 import {
   AddManualTripGearDto,
+  AssignTripGearPackageDto,
   CreateTripGearSectionDto,
   ProposeTripGearDto,
   TripGearItemDto,
   TripGearListDto,
+  TripGearLoadBackpackDto,
+  TripGearLoadDto,
+  TripGearLoadUnitDto,
   TripGearSectionDto,
   UpdateTripGearDto,
   UpdateTripGearSectionDto,
 } from './dto/trip-gear.dto';
 import { GearItem } from './entities/gear-item.entity';
+import { GearType } from './entities/gear-type.entity';
 import { TripGear } from './entities/trip-gear.entity';
 import { TripGearSection } from './entities/trip-gear-section.entity';
+import {
+  CAMP_SECTION_TYPE_CODES,
+  FIRST_AID_TYPE_CODE,
+  SLEEPING_TYPE_CODES,
+} from './gear.types';
 import { GearService } from './gear.service';
+import {
+  allocateLoad,
+  loadUnitKey,
+  type LoadPerson,
+  type LoadUnit,
+} from './trip-gear-load';
 
 /** Вкладка, право на правку которой открывает «Берём / Не берём». */
 const GEAR_TAB: TripTab = 'gear';
@@ -40,6 +58,22 @@ const GEAR_TAB: TripTab = 'gear';
  * удалит или добавит свои — «Альпинизм», «Пешка».
  */
 const PERSONAL_SECTION_TEMPLATES = ['Снаряга', 'Одежда'] as const;
+
+/**
+ * Куда автораскладка кладёт вещи из «Ночёвок» (06.11.2026).
+ *
+ * Заказчик: «снаряга для табора напрямую связана между вкладками» — то,
+ * что добавили кнопками «Палатки», «Готовка» и «Спальник», не должно потом
+ * висеть в корне «Берём». «Табор» — общественный раздел, «Снаряга» —
+ * личный раздел владельца спальника.
+ *
+ * Совпадение — по названию шаблона: отдельного кода у раздела нет, и
+ * переименованный раздел автораскладка не найдёт. Это осознанно: гадать,
+ * что человек имел в виду, переименовав «Табор» в «Барахло», хуже, чем
+ * оставить вещь в корне — туда он её и положит руками.
+ */
+const CAMP_SECTION_TITLE = 'Табор';
+const PERSONAL_GEAR_SECTION_TITLE = 'Снаряга';
 
 /**
  * Общественные шаблоны. «Табор» — если в «Ночёвках» есть стоянка или
@@ -104,6 +138,12 @@ export class TripGearService {
      * зависит от смотрящего (чужие личные разделы в нём обнулены).
      */
     private readonly events: TripEventsService,
+    /**
+     * Пакеты еды — часть того же груза (06.11.2026). Вес пакета выводится
+     * из раскладки «Питания», и считать его второй раз здесь значило бы
+     * держать две формулы одного числа.
+     */
+    private readonly tripMeals: TripMealsService,
   ) {}
 
   /**
@@ -147,6 +187,167 @@ export class TripGearService {
     });
 
     return this.toList(rows, sections, userId);
+  }
+
+  /**
+   * Раскладка груза по рюкзакам — `GET /gear/load` (06.11.2026).
+   *
+   * «Снаряжение» — связующая вкладка: в рюкзаки едут вещи похода
+   * и пакеты из «Питания», а палатки и котлы приходят из «Ночёвок» через
+   * ту же таблицу `trip_gear`. Поэтому ответ собирается из трёх источников,
+   * а не из одного списка.
+   *
+   * **Вещи только утверждённые.** «Не берём» и «предложено» в рюкзак
+   * не кладут: это ещё не решение (`gear-distribution.md` §3–§4).
+   *
+   * **Личное не считается.** Личные вещи человека в доли не входят
+   * и в чужих плитках не показываются — «твоя проблема» (§5). Здесь их
+   * нет вовсе, и это правило, а не забытое поле.
+   *
+   * Доля (`targetWeightGrams`) и отклонение от неё считаются всегда, даже
+   * без нажатия кнопки: человеку полезно видеть, куда он идёт. Сама
+   * раскладка при чтении **не меняется** — иначе чужая правка терялась бы
+   * от простого открытия вкладки.
+   */
+  async load(userId: string, tripId: number): Promise<TripGearLoadDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+
+    await this.assertParticipant(manager, trip.id, userId);
+
+    return this.buildLoad(manager, trip);
+  }
+
+  /**
+   * «Автоматически распределить груз» — `POST /gear/auto-distribute`.
+   *
+   * Решения заказчика 21.10.2026 (`gear-distribution.md` §4–§5):
+   *
+   * - **полный сброс.** Прежние назначения стираются: кнопка нужна, чтобы
+   *   начать с чистого листа, а не чтобы доспорить с прошлым расчётом;
+   * - раскладывает по захардкоженным принципам: своё — владельцу, тяжёлое
+   *   вперёд, остаток и все пакеты — тому, у кого больше свободной доли;
+   * - **аптечка закреплена** за медиком — единственное исключение;
+   * - право — у того, кому роль дала вкладку «Снаряжение»: раскладка груза
+   *   это решение по составу, как «берём / не берём». Перетаскивать
+   *   отдельные вещи после этого может по-прежнему любой участник.
+   *
+   * Расчёт идёт по снимку данных в транзакции: между «прочитали вещи»
+   * и «записали назначения» второй человек мог перетащить палатку, и без
+   * общей транзакции кнопка затёрла бы его правку наполовину.
+   */
+  async autoDistribute(
+    userId: string,
+    tripId: number,
+  ): Promise<TripGearLoadDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+
+    await this.assertParticipant(manager, trip.id, userId);
+
+    if (!(await this.trips.canEditTab(userId, trip, GEAR_TAB))) {
+      throw new ForbiddenException(
+        'Распределить груз автоматически может тот, кому открыта вкладка «Снаряжение»',
+      );
+    }
+
+    const data = await this.collectLoad(manager, trip);
+    const allocation = allocateLoad(data.units, data.people);
+
+    await this.dataSource.transaction(async (tx) => {
+      await tx.query(
+        `UPDATE "trip_gear" SET "assigned_user_id" = NULL WHERE "trip_id" = $1`,
+        [trip.id],
+      );
+      // Личные пакеты не трогаем: свою еду человек несёт сам.
+      await tx.query(
+        `UPDATE "trip_meal_packages" SET "assigned_user_id" = NULL
+          WHERE "trip_id" = $1 AND "eater_user_id" IS NULL`,
+        [trip.id],
+      );
+
+      const gearByUser = new Map<string, string[]>();
+      const packagesByUser = new Map<string, string[]>();
+      for (const unit of data.units) {
+        const carrier = allocation.assignments.get(
+          loadUnitKey(unit.kind, unit.id),
+        );
+        if (!carrier) continue;
+
+        const bucket =
+          unit.kind === 'gear' ? gearByUser : packagesByUser;
+        const list = bucket.get(carrier) ?? [];
+        list.push(unit.id);
+        bucket.set(carrier, list);
+      }
+
+      for (const [carrier, ids] of gearByUser) {
+        await tx.query(
+          `UPDATE "trip_gear" SET "assigned_user_id" = $1
+            WHERE "trip_id" = $2 AND "id" = ANY($3::bigint[])`,
+          [carrier, trip.id, ids],
+        );
+      }
+      for (const [carrier, ids] of packagesByUser) {
+        await tx.query(
+          `UPDATE "trip_meal_packages" SET "assigned_user_id" = $1
+            WHERE "trip_id" = $2 AND "id" = ANY($3::bigint[])
+              AND "eater_user_id" IS NULL`,
+          [carrier, trip.id, ids],
+        );
+      }
+    });
+
+    // Второй участник должен увидеть новую раскладку, не перезагружая
+    // вкладку: канал тот же, что у перетаскивания вещи.
+    this.events.emitGear(trip.id, userId);
+
+    return this.buildLoad(manager, trip);
+  }
+
+  /**
+   * Кто несёт пакет еды — `PATCH /gear/packages/:packageId` (06.11.2026).
+   *
+   * Права — как у перетаскивания вещи: **любой участник**. Заказчик:
+   * люди взрослые и договариваются сами, «перекинь из рюкзака жены ко мне
+   * обед пятого дня» не должно идти через организатора.
+   *
+   * Личный пакет автономного питания так назначить нельзя: `eater_user_id`
+   * значит, что человек ест это сам, и «назначить» его другому — потерять
+   * смысл личного слоя «Питания».
+   *
+   * Ответ — раскладка целиком, как у кнопки: экран перерисовывает веса
+   * из одного источника, а не складывает их сам.
+   */
+  async assignPackage(
+    userId: string,
+    tripId: number,
+    packageId: number,
+    dto: AssignTripGearPackageDto,
+  ): Promise<TripGearLoadDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+
+    const pack = await manager.findOne(TripMealPackage, {
+      where: { id: String(packageId), tripId: trip.id },
+    });
+    if (!pack) throw new NotFoundException('Пакет не найден');
+    if (pack.eaterUserId !== null) {
+      throw new BadRequestException(
+        'Личную еду участник несёт сам — общий пакет назначается, личный нет',
+      );
+    }
+
+    const carrier = dto.assignedUserId ?? null;
+    await this.assertCarrier(manager, trip.id, carrier);
+
+    pack.assignedUserId = carrier;
+    await manager.save(pack);
+
+    this.events.emitGear(trip.id, userId);
+
+    return this.buildLoad(manager, trip);
   }
 
   /**
@@ -198,6 +399,16 @@ export class TripGearService {
       }),
     );
     saved.gearItem = item;
+
+    // «Табор» и «Снаряга» — сразу, а не в корне (06.11.2026).
+    await this.autoPlaceSection(
+      manager,
+      trip,
+      participant,
+      userId,
+      item.gearType.code,
+      saved,
+    );
 
     // Второй участник должен увидеть вещь, не перезагружая вкладку.
     this.events.emitGear(trip.id, userId);
@@ -337,7 +548,7 @@ export class TripGearService {
   ): Promise<TripGearItemDto> {
     const manager = this.dataSource.manager;
     const trip = await this.trips.getVisibleTrip(userId, tripId);
-    await this.assertParticipant(manager, trip.id, userId);
+    const participant = await this.assertParticipant(manager, trip.id, userId);
 
     const owner = await this.resolveManualOwner(
       manager,
@@ -384,6 +595,20 @@ export class TripGearService {
 
       return saved;
     });
+
+    const gearType = await manager.findOne(GearType, {
+      where: { id: dto.typeId },
+    });
+    if (gearType) {
+      await this.autoPlaceSection(
+        manager,
+        trip,
+        participant,
+        owner.userId,
+        gearType.code,
+        row,
+      );
+    }
 
     this.events.emitGear(trip.id, userId);
 
@@ -683,7 +908,303 @@ export class TripGearService {
     }
   }
 
+  // ───────────────────────── раскладка груза (06.11.2026) ─────────────────────────
+
+  /**
+   * Снимок данных для раскладки: люди, единицы груза и запомненные
+   * назначения.
+   *
+   * Собирается один раз и на чтение, и на кнопку: два независимых сбора
+   * однажды показали бы на одном экране разные числа. Назначения
+   * запоминаются отдельно от расчёта — `GET` показывает то, что реально
+   * лежит в базе, а не то, что алгоритм предложил бы.
+   */
+  private async collectLoad(
+    manager: EntityManager,
+    trip: Trip,
+  ): Promise<{
+    people: LoadPerson[];
+    units: LoadUnit[];
+    titles: Map<string, string>;
+    stored: Map<string, string | null>;
+    doctorUserId: string | null;
+    itemsWithoutWeight: number;
+    packagesWithoutWeight: number;
+  }> {
+    const participants = await manager.find(TripParticipant, {
+      where: { tripId: trip.id, status: 'going' },
+      relations: { user: true },
+      order: { createdAt: 'ASC', userId: 'ASC' },
+    });
+
+    const doctorUserId = await this.findDoctorUserId(manager, trip.id);
+    const people: LoadPerson[] = participants.map((participant) => ({
+      userId: participant.userId,
+      // Пол не заполнен — считаем мужским: то же правило, что у DEFAULT
+      // в базе и у DTO состава.
+      gender: participant.user?.gender ?? 'm',
+      isDoctor: participant.userId === doctorUserId,
+    }));
+
+    const rows = await manager.find(TripGear, {
+      where: { tripId: trip.id, status: 'approved' },
+      relations: { gearItem: { gearType: true } },
+      order: { id: 'ASC' },
+    });
+    const packages = await this.tripMeals.listPackagesForLoad(trip.id);
+
+    const units: LoadUnit[] = [];
+    const titles = new Map<string, string>();
+    const stored = new Map<string, string | null>();
+    let itemsWithoutWeight = 0;
+    let packagesWithoutWeight = 0;
+
+    for (const row of rows) {
+      const weight = row.gearItem.weightGrams;
+      // Вещь без веса в расчёт не входит: «не взвешено» — честный ответ,
+      // а ноль веса соврал бы о доле (тот же принцип, что в каталоге).
+      if (weight === null || weight <= 0) {
+        itemsWithoutWeight += 1;
+        continue;
+      }
+
+      const key = loadUnitKey('gear', row.id);
+      const typeCode = row.gearItem.gearType?.code ?? '';
+      units.push({
+        kind: 'gear',
+        id: row.id,
+        weightGrams: weight,
+        ownerUserId: row.ownerUserId,
+        isFirstAid: typeCode === FIRST_AID_TYPE_CODE,
+      });
+      titles.set(
+        key,
+        row.gearItem.title?.trim()
+          ? row.gearItem.title
+          : (row.gearItem.gearType?.name ?? 'Снаряжение'),
+      );
+      stored.set(key, row.assignedUserId);
+    }
+
+    for (const pack of packages) {
+      // Пустой пакет — законное состояние фасовки, но груза в нём нет.
+      if (pack.weightGrams <= 0) {
+        packagesWithoutWeight += 1;
+        continue;
+      }
+
+      const key = loadUnitKey('package', pack.id);
+      units.push({
+        kind: 'package',
+        id: pack.id,
+        weightGrams: pack.weightGrams,
+        // У общего пакета владельца нет: «своё — владельцу» здесь
+        // не работает, пакет всегда идёт в уравнивание.
+        ownerUserId: null,
+      });
+      titles.set(key, pack.name);
+      stored.set(key, pack.assignedUserId);
+    }
+
+    return {
+      people,
+      units,
+      titles,
+      stored,
+      doctorUserId,
+      itemsWithoutWeight,
+      packagesWithoutWeight,
+    };
+  }
+
+  /** Рюкзаки для ответа: что в каждом, доля и отклонение от неё. */
+  private async buildLoad(
+    manager: EntityManager,
+    trip: Trip,
+  ): Promise<TripGearLoadDto> {
+    const data = await this.collectLoad(manager, trip);
+    const allocation = allocateLoad(data.units, data.people);
+
+    const backpacks: TripGearLoadBackpackDto[] = data.people.map((person) => ({
+      userId: person.userId,
+      gender: person.gender,
+      targetWeightGrams: Math.round(allocation.targets.get(person.userId) ?? 0),
+      gearWeightGrams: 0,
+      packagesWeightGrams: 0,
+      totalWeightGrams: 0,
+      deviationGrams: 0,
+      gear: [],
+      packages: [],
+    }));
+    const byUser = new Map(
+      backpacks.map((backpack) => [backpack.userId, backpack]),
+    );
+
+    const unassigned: TripGearLoadUnitDto[] = [];
+    let totalWeightGrams = 0;
+
+    for (const unit of data.units) {
+      const key = loadUnitKey(unit.kind, unit.id);
+      const assignedUserId = data.stored.get(key) ?? null;
+      const dto: TripGearLoadUnitDto = {
+        kind: unit.kind,
+        id: unit.id,
+        title: data.titles.get(key) ?? '',
+        weightGrams: unit.weightGrams,
+        assignedUserId,
+      };
+
+      totalWeightGrams += unit.weightGrams;
+
+      const backpack = assignedUserId
+        ? byUser.get(assignedUserId)
+        : undefined;
+      // Назначение на «пока не решил» или на ушедшего — это
+      // нераспределённый груз: в рюкзаках таких людей нет.
+      if (!backpack) {
+        unassigned.push(dto);
+        continue;
+      }
+
+      if (unit.kind === 'gear') {
+        backpack.gear.push(dto);
+        backpack.gearWeightGrams += unit.weightGrams;
+      } else {
+        backpack.packages.push(dto);
+        backpack.packagesWeightGrams += unit.weightGrams;
+      }
+    }
+
+    for (const backpack of backpacks) {
+      backpack.totalWeightGrams =
+        backpack.gearWeightGrams + backpack.packagesWeightGrams;
+      backpack.deviationGrams =
+        backpack.totalWeightGrams - backpack.targetWeightGrams;
+    }
+
+    return {
+      totalWeightGrams,
+      backpacks,
+      unassigned,
+      itemsWithoutWeight: data.itemsWithoutWeight,
+      packagesWithoutWeight: data.packagesWithoutWeight,
+      doctorUserId: data.doctorUserId,
+      doctorMissing: allocation.doctorMissing,
+    };
+  }
+
+  /**
+   * Медик похода — первый по порядку состава (06.11.2026).
+   *
+   * Роль, а не участие: «медик» — это тот, кому дали роль `doctor`
+   * в справочнике (`seed-roles`). Аптечку закрепляем за ним, потому что
+   * она одна: раздавать её копиями нельзя (`gear-distribution.md` §4).
+   */
+  private async findDoctorUserId(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<string | null> {
+    const rows: Array<{ user_id: string }> = await manager.query(
+      `SELECT p."user_id"
+         FROM "trip_participants" p
+         JOIN "trip_participant_roles" r
+           ON r."trip_id" = p."trip_id" AND r."user_id" = p."user_id"
+         JOIN "roles" ro ON ro."id" = r."role_id"
+        WHERE p."trip_id" = $1
+          AND p."status" = 'going'
+          AND ro."code" = 'doctor'
+        ORDER BY p."created_at" ASC, p."user_id" ASC
+        LIMIT 1`,
+      [tripId],
+    );
+
+    return rows[0]?.user_id ?? null;
+  }
+
   // ───────────────────────── разделы: шаблоны и проверки ─────────────────────────
+
+  /**
+   * Куда вещь ложится сама: «Табор» или личный «Снаряга» (06.11.2026).
+   *
+   * Правило заказчика: «снаряга для табора напрямую связана между
+   * вкладками». Вещь, добавленная в «Ночёвках», — это та же строка
+   * `trip_gear`, и раскладывать её по разделам вручную после каждого котла
+   * человек не должен:
+   *
+   * - **«Табор»** — палатка, тент, посуда, костровое и горелки: всё, что
+   *   в «Ночёвках» добавляют кнопками секций. Общественный раздел, его
+   *   видит весь состав.
+   * - **«Снаряга»** — спальник и коврик: личная снаряга, и её место
+   *   в личном разделе владельца. Человеку без аккаунта личный раздел
+   *   заводить некому, поэтому у него вещь остаётся в корне.
+   *
+   * Раздел ищется по названию шаблона и только в корне: пользователь
+   * мог его переименовать или удалить, и тогда вещь честно остаётся
+   * в корне — она не теряется, её просто кладут руками.
+   *
+   * `ensureSections` вызывается здесь, а не ждёт первого открытия
+   * вкладки: иначе палатка, добавленная в «Ночёвках» до первого захода
+   * в «Снаряжение», легла бы в корень и там бы и осталась.
+   */
+  private async autoPlaceSection(
+    manager: EntityManager,
+    trip: Trip,
+    actor: TripParticipant,
+    ownerUserId: string,
+    typeCode: string,
+    row: TripGear,
+  ): Promise<void> {
+    if (CAMP_SECTION_TYPE_CODES.includes(typeCode)) {
+      await this.ensureSections(trip, actor, actor.userId);
+
+      const section = await manager.findOne(TripGearSection, {
+        where: {
+          tripId: trip.id,
+          scope: 'shared',
+          ownerUserId: IsNull(),
+          parentId: IsNull(),
+          title: CAMP_SECTION_TITLE,
+        },
+      });
+      if (!section) return;
+
+      row.sharedSectionId = section.id;
+      await manager.update(
+        TripGear,
+        { id: row.id },
+        { sharedSectionId: section.id },
+      );
+      return;
+    }
+
+    if (!SLEEPING_TYPE_CODES.includes(typeCode)) return;
+
+    const owner = await manager.findOne(TripParticipant, {
+      where: { tripId: trip.id, userId: ownerUserId },
+      relations: { user: true },
+    });
+    if (!owner || owner.user?.isVirtual) return;
+
+    await this.ensureSections(trip, owner, ownerUserId);
+
+    const section = await manager.findOne(TripGearSection, {
+      where: {
+        tripId: trip.id,
+        scope: 'personal',
+        ownerUserId,
+        parentId: IsNull(),
+        title: PERSONAL_GEAR_SECTION_TITLE,
+      },
+    });
+    if (!section) return;
+
+    row.personalSectionId = section.id;
+    await manager.update(
+      TripGear,
+      { id: row.id },
+      { personalSectionId: section.id },
+    );
+  }
 
   /**
    * Шаблоны разделов при первом открытии вкладки (05.11.2026).

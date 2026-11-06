@@ -116,6 +116,20 @@ export const TRIP_MEAL_PACKAGE_KINDS = ['normal', 'kulek'] as const;
 export type TripMealPackageKind = (typeof TRIP_MEAL_PACKAGE_KINDS)[number];
 
 /**
+ * Пакет еды, каким его видит раскладка груза (06.11.2026).
+ *
+ * Тот же пакет, но без содержимого: «Снаряжению» нужны имя, вес и несущий,
+ * а не доли по приёмам. Вес — фактический, если его взвесили и содержимое
+ * не менялось, иначе расчётный: правило `meals.md` §5.3.
+ */
+export interface TripLoadPackage {
+  id: string;
+  name: string;
+  weightGrams: number;
+  assignedUserId: string | null;
+}
+
+/**
  * Код роли организатора в справочнике `roles`.
  *
  * Организатор получает эту роль автоматически при создании похода, в одной

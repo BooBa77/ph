@@ -37,6 +37,11 @@ import { Trip } from './trip.entity';
  * **`eaterUserId` — чья тара.** NULL — общие пакеты похода; uuid — пакеты
  * личной еды. Имя уникально внутри слоя: «Пакет 1» участника не занимает
  * имя общего пакета, но и не смешивается с чужими — частичные индексы.
+ *
+ * **`assignedUserId` — кто несёт** (06.11.2026). Пусто — пакет ещё
+ * не распределён. У личных пакетов несущий не спрашивается: свою еду
+ * человек несёт сам (`eaterUserId`), а общий пакет раскладывается вместе
+ * со снарягой в «Снаряжении» (`docs/ph/gear-distribution.md` §4–§5).
  */
 @Entity('trip_meal_packages')
 @Index('UQ_trip_meal_packages_name', ['tripId', 'name'], {
@@ -49,6 +54,7 @@ import { Trip } from './trip.entity';
   { unique: true, where: '"eater_user_id" IS NOT NULL' },
 )
 @Index('IDX_trip_meal_packages_trip', ['tripId', 'id'])
+@Index('IDX_trip_meal_packages_assigned', ['tripId', 'assignedUserId'])
 @Check(
   'chk_trip_meal_packages_kind',
   `"kind" IN (${sqlValues(TRIP_MEAL_PACKAGE_KINDS)})`,
@@ -85,6 +91,23 @@ export class TripMealPackage {
 
   @Column({ type: 'varchar', length: 60 })
   name: string;
+
+  /**
+   * Кто несёт пакет. `NULL` — не распределён.
+   *
+   * Ссылка на `users`, а не на участие: еда — общак, и при уходе человека
+   * из похода пакет остаётся в походе, снимается только назначение
+   * (`docs/ph/gear-distribution.md` §6).
+   */
+  @Column({ name: 'assigned_user_id', type: 'uuid', nullable: true })
+  assignedUserId: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({
+    name: 'assigned_user_id',
+    foreignKeyConstraintName: 'FK_trip_meal_packages_assigned',
+  })
+  assignee: User | null;
 
   @Column({ type: 'varchar', length: 10, default: 'normal' })
   kind: TripMealPackageKind;

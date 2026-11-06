@@ -45,6 +45,7 @@ import { TripProduct } from './entities/trip-product.entity';
 import { Trip } from './entities/trip.entity';
 import {
   TRIP_MEAL_KINDS,
+  type TripLoadPackage,
   type TripMealForm,
   type TripMealKind,
 } from './trip.types';
@@ -139,6 +140,50 @@ export class TripMealsService {
     const packages = await this.loadPackages(manager, trip, meals, owner);
 
     return { dayCount, eaters, meals, packages };
+  }
+
+  /**
+   * Общие пакеты похода — как груз для «Рюкзаков» (06.11.2026).
+   *
+   * «Снаряжение» раскладывает еду вместе с вещами
+   * (`docs/ph/gear-distribution.md` §4): пакет — такая же неделимая единица,
+   * как палатка. Ему нужны только имя, вес и несущий, поэтому содержимое
+   * не собирается: `loadPackages` и так считает вес по долям, а доли
+   * приходят из тех же приёмов.
+   *
+   * **Личные пакеты сюда не попадают.** Автономное питание человек несёт
+   * сам: `eater_user_id` — это его слой, и раскладывать чужую еду по чужим
+   * рюкзакам алгоритм не должен.
+   *
+   * Чтения здесь больше, чем у обычного списка: вес пакета выводится
+   * из раскладки, а раскладка — из блюд и едоков. Поэтому метод и вынесен
+   * отдельно от `getPlan`: экрану «Снаряжения» не нужны дни и приёмы.
+   *
+   * У «мечты» и у похода без дат раскладки нет вовсе — пакетов тоже.
+   */
+  async listPackagesForLoad(tripId: string): Promise<TripLoadPackage[]> {
+    const manager = this.dataSource.manager;
+    const trip = await manager.findOne(Trip, { where: { id: tripId } });
+    if (!trip || trip.status === 'idea') return [];
+
+    const dayCount = await this.dayCount(manager, trip);
+    if (dayCount === 0) return [];
+
+    const eaters = await this.loadEaters(manager, trip);
+    const meals = await this.loadMeals(manager, trip, eaters, null);
+    const packages = await this.loadPackages(manager, trip, meals, null);
+
+    return packages.map((pack) => ({
+      id: pack.id,
+      name: pack.name,
+      // Фактический вес — после контрольного взвешивания; содержимое
+      // менялось — снова расчётный (`meals.md` §5.3).
+      weightGrams:
+        pack.weightActualGrams !== null && !pack.weightActualStale
+          ? pack.weightActualGrams
+          : pack.weightEstimatedGrams,
+      assignedUserId: pack.assignedUserId,
+    }));
   }
 
   /** Форма приёма: готовка или перекус. */
@@ -1817,6 +1862,7 @@ export class TripMealsService {
         mealId: row.mealId,
         weightActualGrams: row.weightActualGrams,
         weightActualStale: row.weightActualStale,
+        assignedUserId: row.assignedUserId,
         weightEstimatedGrams: items.reduce(
           (sum, item) => sum + item.weightGrams,
           0,
