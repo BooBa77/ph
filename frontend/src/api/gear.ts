@@ -7,6 +7,7 @@ import type {
   GearList,
   TripGearItem,
   TripGearList,
+  TripGearLoad,
   TripGearRouteSection,
   TripGearSection,
   TripGearSectionScope,
@@ -308,6 +309,34 @@ export async function updateTripGear(
           }
         : {}),
     }),
+  })
+}
+
+/**
+ * GET /api/trips/:id/gear/load — раскладка груза по рюкзакам (06.11.2026).
+ *
+ * Один ответ на чтение и на кнопку: вещи похода и пакеты «Питания» уже
+ * взвешены и разложены, экран не считает доли и веса сам.
+ */
+export async function getTripGearLoad(tripId: string): Promise<TripGearLoad> {
+  return apiFetch<TripGearLoad>(`/trips/${tripId}/gear/load`)
+}
+
+/**
+ * POST /api/trips/:id/gear/auto-distribute — «Автоматически распределить
+ * груз» (06.11.2026).
+ *
+ * Полный сброс прежних назначений и раскладка заново: своё — владельцу,
+ * тяжёлое вперёд, остаток и пакеты — самому свободному, аптечка — медику.
+ * Право — у того, кому роль дала вкладку «Снаряжение»; ответ — та же
+ * раскладка. Экран после вызова перечитывает `GET /gear`, чтобы пилюли
+ * в «Распределении» и «Берём» взяли новые `assignedUserId`.
+ */
+export async function autoDistributeTripGear(
+  tripId: string,
+): Promise<TripGearLoad> {
+  return apiFetch<TripGearLoad>(`/trips/${tripId}/gear/auto-distribute`, {
+    method: 'POST',
   })
 }
 

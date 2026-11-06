@@ -29,7 +29,15 @@ import {
   ROUTE_TAB,
   type RouteLodgerStatus,
 } from './trip-route.types';
+import type { TripTab } from './trip-tabs';
 import { TripsService } from './trips.service';
+
+/**
+ * Вкладка «Снаряжение»: её право открывает «Берём / не берём» в пилюлях
+ * «Ночёвок» (06.11.2026). Отдельная константа, чтобы в двух местах
+ * «Ночёвок» не появилось два разных литерала `'gear'`.
+ */
+const GEAR_TAB: TripTab = 'gear';
 
 /** Строка проверки палатки: вещь похода, её тип и хозяин. */
 interface TentRow {
@@ -344,23 +352,27 @@ export class TripRouteService {
     trip: Trip,
     userId: string,
   ): Promise<TripRouteDto> {
-    const [nights, sleeping, lodgers, members, canEdit] = await Promise.all([
-      manager.find(TripRouteNight, {
-        where: { tripId: trip.id },
-        order: { position: 'ASC', id: 'ASC' },
-      }),
-      this.sleepingRows(manager, trip.id, userId),
-      manager.find(TripRouteLodger, {
-        where: { tripId: trip.id },
-        relations: { member: { user: true } },
-        order: { id: 'ASC' },
-      }),
-      manager.find(TripParticipant, {
-        where: { tripId: trip.id, status: 'going' },
-        relations: { user: true },
-      }),
-      this.trips.canEditTab(userId, trip, ROUTE_TAB),
-    ]);
+    const [nights, sleeping, lodgers, members, canEdit, canEditGear] =
+      await Promise.all([
+        manager.find(TripRouteNight, {
+          where: { tripId: trip.id },
+          order: { position: 'ASC', id: 'ASC' },
+        }),
+        this.sleepingRows(manager, trip.id, userId),
+        manager.find(TripRouteLodger, {
+          where: { tripId: trip.id },
+          relations: { member: { user: true } },
+          order: { id: 'ASC' },
+        }),
+        manager.find(TripParticipant, {
+          where: { tripId: trip.id, status: 'going' },
+          relations: { user: true },
+        }),
+        this.trips.canEditTab(userId, trip, ROUTE_TAB),
+        // «Берём / не берём» в пилюлях «Ночёвок» — право вкладки
+        // «Снаряжение», а не «Ночёвок» (06.11.2026).
+        this.trips.canEditTab(userId, trip, GEAR_TAB),
+      ]);
 
     const nightDtos = nights.map(
       (night): RouteNightDto => ({
@@ -405,6 +417,7 @@ export class TripRouteService {
 
     return {
       canEdit,
+      canEditGear,
       nights: nightDtos,
       sleeping: sleepingDtos,
       lodgers: lodgerDtos,

@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
+  autoDistributeTripGear,
   createTripGearSection,
   listGear,
   listTripGear,
@@ -30,6 +31,7 @@ import type {
   TripGearItem,
   TripGearSection,
   TripGearSectionScope,
+  TripGearSleeping,
   TripGearStatus,
 } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
@@ -74,9 +76,12 @@ import {
  *   (06.11.2026) — это путь для телефона, где HTML5-drag не работает.
  *   Назначение — отдельное поле `assignedUserId`, а не смена владельца:
  *   вещь остаётся в каталоге владельца, как и решено в §5.
- * - «Взял» — общественные вещи, назначенные на меня, и «Мой рюкзак» —
- *   то же с итоговым весом. Личные вещи и дополнительные рюкзаки ждут
- *   модели: в `trip_gear` их ещё нет, и придумывать её на экране рано.
+ * - «Взял» — **личные вещи** (06.11.2026): содержимое секции «Спальник»
+ *   из «Ночёвок» в разделе «в палатку» и свои разделы человека. Вещи
+ *   похода, назначенные на меня, здесь не показываются: их место —
+ *   «Распределение» и «Мой рюкзак», а личное и общественное — разные вещи
+ *   (слова заказчика). «Мой рюкзак» — общественное назначенное плюс личное
+ *   из «Ночёвок», одним итогом.
  *
  * **Модалка одна на всё приложение.** «Добавить снаряжение» открывает
  * общий `TripGearExtraPicker` (05.11.2026) со своим `storageKey`, «Добавить
@@ -125,6 +130,17 @@ const participants = ref<TripParticipant[]>([])
  * Личные разделы сервер отдаёт только свои — чужих в массиве нет.
  */
 const sections = ref<TripGearSection[]>([])
+
+/**
+ * Мои личные вещи из «Ночёвок» (06.11.2026): содержимое секции «Спальник».
+ *
+ * Заказчик: «сюда автоматически должно попадать содержимое секции „Спальник“
+ * из Ночёвок — это личное». Строки приходят отдельным массивом: это не вещи
+ * похода, они живут в своей таблице и в «Берём» не попадают. Раздел,
+ * который их показывает, ищется по коду шаблона: переименованный раздел
+ * всё равно остаётся разделом «в палатку».
+ */
+const sleeping = ref<TripGearSleeping[]>([])
 
 const isLoading = ref(true)
 const error = ref<string | null>(null)
@@ -241,6 +257,35 @@ const personalSections = computed(() =>
   sections.value.filter((section) => section.scope === 'personal'),
 )
 
+/**
+ * Код шаблона раздела «в палатку» — тот же, что в бэкенде (06.11.2026).
+ *
+ * Сверяемся по коду, а не по названию: заказчик переименовывает разделы
+ * под себя, и после переименования спальник из «Ночёвок» не должен
+ * потерять свой раздел.
+ */
+const TENT_INSIDE_SECTION_CODE = 'tent_inside'
+
+/** Личный раздел «в палатку» — если он есть у смотрящего. */
+const tentInsideSection = computed(
+  () =>
+    personalSections.value.find(
+      (section) =>
+        section.templateCode === TENT_INSIDE_SECTION_CODE && section.parentId === null,
+    ) ?? null,
+)
+
+/**
+ * Разделы «Взял», у которых содержимое приходит не из `trip_gear`
+ * (06.11.2026): «в палатку» наполняется личным «Спальником» из «Ночёвок».
+ * Список нужен дереву разделов, чтобы не подписывать такой раздел «Пусто».
+ */
+const personalExtraSectionIds = computed(() =>
+  tentInsideSection.value !== null && sleeping.value.length > 0
+    ? [tentInsideSection.value.id]
+    : [],
+)
+
 // ───────────────────────────── карточка вещи ─────────────────────────────
 
 /**
@@ -335,8 +380,6 @@ const isCoarsePointer = ref(
 
 /** «Берём» тянет только тот, кому роль дала вкладку. */
 const canDragShared = computed(() => props.canEdit && !isCoarsePointer.value)
-/** «Взял» — своя раскладка, но и её на телефоне тянут полем в карточке. */
-const canDragPersonal = computed(() => !isCoarsePointer.value)
 
 /**
  * Плоский список разделов в порядке дерева — для выпадающего «Раздел»
@@ -391,6 +434,18 @@ const going = computed(() => participants.value.filter((person) => person.status
 /** Общественное, которое несу я: это и «Взял», и содержимое «Моего рюкзака». */
 const myItems = computed(() =>
   approved.value.filter((item) => item.assignedUserId !== null && item.assignedUserId === meId.value),
+)
+
+/** «Мой рюкзак» — общественное, что несу я, и моё личное из «Ночёвок». */
+const sleepingItems = computed(() => sleeping.value)
+
+/**
+ * Итог «Моего рюкзака»: общественное, назначенное на меня, плюс личные вещи
+ * из «Спальника» (06.11.2026). Заказчик считает рюкзак целым: «личное + общее»
+ * (`gear-distribution.md` §5), а не только ту часть, что распределяли.
+ */
+const backpackTotalLabel = computed(() =>
+  weightTotalLabel([...myItems.value, ...sleepingItems.value]),
 )
 
 /**
@@ -469,8 +524,11 @@ const assigneeChoices = computed(() => {
 /**
  * Итог по набору вещей той же строкой, что в каталоге: «Всего: 3,2 кг ·
  * без веса: 1». Неизвестный вес не прячем: иначе итог выглядел бы точным.
+ *
+ * Принимает и вещи похода, и личные строки «Ночёвок»: у обоих есть
+ * `weightGrams`, и второй счётчик веса был бы второй формулой.
  */
-function weightTotalLabel(list: TripGearItem[]): string {
+function weightTotalLabel(list: Array<{ weightGrams: number | null }>): string {
   if (list.length === 0) return '—'
 
   const withWeight = list.filter((item) => item.weightGrams !== null)
@@ -545,6 +603,7 @@ async function load(): Promise<void> {
 
     items.value = list.items
     sections.value = list.sections
+    sleeping.value = list.sleeping
 
     /**
      * Чек-листы — отдельным запросом: у них свой домен и своя ошибка.
@@ -656,6 +715,7 @@ async function refreshGearQuietly(): Promise<void> {
 
     items.value = list.items
     sections.value = list.sections
+    sleeping.value = list.sleeping
     // Снаряжение пришло — значит связь с сервером есть, и прежняя ошибка
     // загрузки больше не правда.
     error.value = null
@@ -741,6 +801,42 @@ async function patchItem(item: TripGearItem, body: GearPatch): Promise<void> {
     items.value = [...items.value]
   } finally {
     busyId.value = null
+  }
+}
+
+/**
+ * «Автоматически распределить груз» (06.11.2026).
+ *
+ * Заказчик просил кнопку ещё 21.10.2026, бэкенд готов с 06.11.2026:
+ * `POST /gear/auto-distribute` — полный сброс и раскладка заново (своё —
+ * владельцу, тяжёлое вперёд, остаток и пакеты — самому свободному, аптечка
+ * медику). Кнопка видна тому, кому роль дала вкладку: это решение по
+ * составу, как «берём / не берём».
+ *
+ * После ответа перечитываем `GET /gear`, а не считаем новые назначения
+ * сами: пилюли в «Распределении» и карточка вещи должны показывать
+ * `assignedUserId`, который записал сервер, а не нашу копию раскладки.
+ * Пакеты еды и доли приезжают тем же ответом и появятся на экране
+ * следующим шагом.
+ */
+const isDistributing = ref(false)
+
+async function distributeLoad(): Promise<void> {
+  if (isDistributing.value) return
+
+  isDistributing.value = true
+  actionError.value = null
+
+  try {
+    await autoDistributeTripGear(props.trip.id)
+    await refreshGearQuietly()
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось распределить груз автоматически'
+  } finally {
+    isDistributing.value = false
   }
 }
 
@@ -1290,6 +1386,34 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           </summary>
 
           <div class="mt-2 flex flex-col gap-2">
+            <!--
+              Кнопка автораспределения (06.11.2026): бэкенд умеет раскладку
+              с 06.11.2026, на экране её не было. Право — у того, кому роль
+              дала вкладку: это решение по составу, как «берём / не берём».
+              Полный сброс прежних назначений — так задумано
+              (`gear-distribution.md` §4).
+            -->
+            <div
+              v-if="canEdit"
+              class="flex flex-wrap items-center gap-2"
+              data-test="gear-distribute-row"
+            >
+              <button
+                type="button"
+                class="cursor-pointer rounded-xl border border-orange-900 bg-orange-900 px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
+                :disabled="isDistributing || approved.length === 0"
+                data-test="gear-distribute"
+                @click="distributeLoad"
+              >
+                {{ isDistributing ? 'Распределяем…' : 'Распределить груз' }}
+              </button>
+
+              <span class="text-xs text-muted">
+                Сбросит прежние назначения и разложит заново: своё — владельцу,
+                тяжёлое вперёд, аптечка — медику.
+              </span>
+            </div>
+
             <p
               v-if="approved.length === 0"
               class="text-sm text-muted"
@@ -1524,7 +1648,16 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           </div>
         </details>
 
-        <!-- «Взял»: то, что назначено на меня -->
+        <!--
+          «Взял» — только личные вещи (06.11.2026).
+          Заказчик: «Ты переносишь общественное снаряжение, предложенное
+          участником, в раздел его личных вещей. Это не верно в корне.
+          Личные вещи — это то, что помимо общественного: одежда, каска,
+          трекинговые палочки. Сюда автоматически должно попадать содержимое
+          секции „Спальник“ из „Ночёвок“ — это личное».
+          Поэтому вещи похода, назначенные на меня, остаются в «Распределении»
+          и «Моём рюкзаке», а здесь — личные строки из «Спальника».
+        -->
         <details
           open
           class="rounded-xl border border-border bg-white p-3"
@@ -1536,26 +1669,51 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
 
           <div class="mt-2 flex flex-col gap-2">
             <p
-              v-if="myItems.length === 0 && personalSections.length === 0"
+              v-if="sleeping.length === 0 && personalSections.length === 0"
               class="text-sm text-muted"
               data-test="gear-taken-empty"
             >
-              Вы пока ничего не несёте: вещи назначаются в «Распределении».
+              Личных вещей пока нет: спальник и коврик появятся из «Ночёвок».
             </p>
 
             <!--
-              Личные разделы «Взял»: «Снаряга», «Одежда» и что человек
-              добавит сам. Остальным они не видны — сервер их не отдаёт.
-              Кнопки добавления здесь нет: содержимое «Взял» определяет
-              «Распределение», а личные вещи ждут своей модели.
+              Запасной путь: раздел «в палатку» удалили — личные вещи
+              не должны пропасть с экрана. Строки «Спальника» всё равно
+              приходят, и их место — корень «Взял».
+            -->
+            <ul
+              v-if="sleeping.length > 0 && tentInsideSection === null"
+              class="flex flex-wrap gap-1.5"
+              data-test="gear-taken-sleeping-root"
+            >
+              <li
+                v-for="row in sleeping"
+                :key="row.id"
+                class="flex flex-wrap items-center gap-1 rounded-full border border-blue-300 bg-white px-2 py-1 text-sm text-blue-900"
+                :data-test="`gear-taken-sleeping-${row.id}`"
+              >
+                <span>{{ row.title }}</span>
+                <span v-if="row.weightGrams !== null" class="text-xs">
+                  · {{ formatWeight(row.weightGrams) }}
+                </span>
+                <span class="text-xs text-blue-700">· {{ row.typeName }}</span>
+              </li>
+            </ul>
+
+            <!--
+              Личные разделы «Взял»: «в палатку», «Одежда», «Снаряга» и что
+              человек добавит сам. Остальным они не видны — сервер их не
+              отдаёт. Кнопки добавления здесь нет: содержимое «Взял» — это
+              личные вещи, а их модель ждёт следующего шага.
             -->
             <TripGearSectionList
               :sections="personalSections"
-              :items="myItems"
+              :items="[]"
               :parent-id="null"
               scope="personal"
               :can-manage="true"
               :can-place="true"
+              :extra-ids="personalExtraSectionIds"
               class="rounded-xl border border-dashed p-2 transition-colors"
               :class="draggingKind === 'section' ? 'border-primary bg-primary/5' : 'border-blue-200 bg-blue-50'"
               data-test="gear-taken-sections"
@@ -1564,40 +1722,41 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               @remove="onRemoveSection"
               @move="moveToPersonalSection"
             >
-              <template #item="{ item }">
+              <template #sectionExtra="{ section }">
                 <!--
-                  Та же пилюля, что в «Берём», и та же карточка: во «Взял»
-                  поле «Раздел» ведёт в личные разделы. Статуса здесь нет —
-                  сюда попадают только вещи, которые человек уже несёт.
+                  «в палатку» — содержимое секции «Спальник» «Ночёвок».
+                  Раздел ищется по коду шаблона, поэтому переименование
+                  не прячет личные вещи. Это чтение: править и убирать их
+                  человек продолжает в «Ночёвках», где они и живут.
                 -->
-                <li
-                  class="flex cursor-pointer flex-wrap items-center gap-1 rounded-full border border-blue-300 bg-white px-2 py-1 text-sm text-blue-900 transition-colors hover:border-blue-500"
-                  role="button"
-                  tabindex="0"
-                  :draggable="canDragPersonal"
-                  :aria-label="`${item.title}. Открыть карточку вещи`"
-                  :data-test="`gear-taken-item-${item.id}`"
-                  @click="openItem(item, 'personal')"
-                  @keydown.enter.prevent="openItem(item, 'personal')"
-                  @keydown.space.prevent="openItem(item, 'personal')"
-                  @dragstart="startDrag(item, $event, 'section')"
-                  @dragend="endDrag"
+                <ul
+                  v-if="section.templateCode === TENT_INSIDE_SECTION_CODE && sleeping.length > 0"
+                  class="flex flex-wrap gap-1.5"
+                  data-test="gear-taken-sleeping"
                 >
-                  <span>{{ item.title }}</span>
-                  <span v-if="item.weightGrams !== null" class="text-xs">
-                    · {{ formatWeight(item.weightGrams) }}
-                  </span>
-                  <span class="text-xs text-blue-700">· {{ item.typeName }}</span>
-                </li>
+                  <li
+                    v-for="row in sleeping"
+                    :key="row.id"
+                    class="flex flex-wrap items-center gap-1 rounded-full border border-blue-300 bg-white px-2 py-1 text-sm text-blue-900"
+                    :data-test="`gear-taken-sleeping-${row.id}`"
+                  >
+                    <span>{{ row.title }}</span>
+                    <span v-if="row.weightGrams !== null" class="text-xs">
+                      · {{ formatWeight(row.weightGrams) }}
+                    </span>
+                    <span class="text-xs text-blue-700">· {{ row.typeName }}</span>
+                  </li>
+                </ul>
               </template>
             </TripGearSectionList>
           </div>
         </details>
 
         <!--
-          «Мой рюкзак» — то же, что моя плитка в «Распределении», с итогом.
-          Личные вещи и дополнительные рюкзаки («сменка на окончание похода»)
-          появятся, когда у них будет модель: сейчас их негде хранить.
+          «Мой рюкзак» — то же, что моя плитка в «Распределении», плюс личные
+          вещи из «Спальника» (06.11.2026): заказчик считает рюкзак целым —
+          «личное + общее» (`gear-distribution.md` §5). Дополнительные
+          рюкзаки («сменка на окончание похода») ждут модели.
         -->
         <details
           open
@@ -1609,7 +1768,11 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           </summary>
 
           <div class="mt-2 flex flex-col gap-2">
-            <p v-if="myItems.length === 0" class="text-sm text-muted" data-test="gear-backpack-empty">
+            <p
+              v-if="myItems.length === 0 && sleeping.length === 0"
+              class="text-sm text-muted"
+              data-test="gear-backpack-empty"
+            >
               В рюкзаке пусто.
             </p>
 
@@ -1626,10 +1789,27 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                     {{ weightInGrams(item.weightGrams) ?? 'без веса' }}
                   </span>
                 </li>
+
+                <!--
+                  Личное — отдельной строкой и с подписью «личное»: иначе
+                  человек не поймёт, почему вещь не в «Распределении».
+                -->
+                <li
+                  v-for="row in sleeping"
+                  :key="`sleeping-${row.id}`"
+                  class="flex items-baseline justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-sm"
+                  :data-test="`gear-backpack-sleeping-${row.id}`"
+                >
+                  <span class="min-w-0 truncate">{{ row.title }}</span>
+                  <span class="shrink-0 text-xs text-muted">
+                    <span class="text-blue-700">личное · </span>
+                    {{ weightInGrams(row.weightGrams) ?? 'без веса' }}
+                  </span>
+                </li>
               </ul>
 
               <p class="text-sm font-medium text-text" data-test="gear-backpack-total">
-                {{ weightTotalLabel(myItems) }}
+                {{ backpackTotalLabel }}
               </p>
             </template>
           </div>
@@ -1647,8 +1827,9 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
 
     <!--
       Карточка вещи: всё, что известно о вещи, плюс решения — несущий,
-      раздел и «берём / не берём». Одна на «Берём», «Взял» и
-      «Распределение»; `scope` выбирает, какой раздел показывать.
+      раздел и «берём / не берём». Открывается из «Берём» и
+      «Распределения»; в «Ночёвках» та же карточка живёт через
+      `TripGearItemCard`.
     -->
     <TripGearItemModal
       v-if="openedItem"

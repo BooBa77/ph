@@ -133,6 +133,8 @@ describe('Разделы снаряжения похода (e2e)', () => {
       ownerUserId: string | null;
       parentId: string | null;
       title: string;
+      templateCode: string | null;
+      sortOrder: number;
     }>;
   }> {
     const response = await call('get', `/api/trips/${tripId}/gear`, token).expect(200);
@@ -271,13 +273,32 @@ describe('Разделы снаряжения похода (e2e)', () => {
     await app?.close();
   });
 
-  it('шаблоны встают сами: «Табор», «к Велосипедам», личные «Снаряга» и «Одежда»', async () => {
+  it('шаблоны встают сами: «Табор», «к Велосипедам», «в палатку», «Одежда» и «Снаряга»', async () => {
     const data = await list(organizerToken);
 
     expect(sectionByTitle(data, 'Табор')?.scope).toBe('shared');
     expect(sectionByTitle(data, 'к Велосипедам')?.scope).toBe('shared');
     expect(sectionByTitle(data, 'Снаряга', 'personal')?.ownerUserId).toBe(organizerId);
     expect(sectionByTitle(data, 'Одежда', 'personal')?.ownerUserId).toBe(organizerId);
+
+    /**
+     * «в палатку» — 06.11.2026: в походе есть ночь в палатке, значит и
+     * секция «Спальник» в «Ночёвках» есть. Раздел встаёт **первым**:
+     * заказчик назвал порядок «перед Одежда и Снаряга».
+     */
+    const personal = data.sections
+      .filter((section) => section.scope === 'personal' && section.parentId === null)
+      .sort((left, right) => left.sortOrder - right.sortOrder);
+    expect(personal.map((section) => section.title)).toEqual([
+      'в палатку',
+      'Одежда',
+      'Снаряга',
+    ]);
+
+    // Код шаблона — контракт для автораскладки: он переживает переименование.
+    expect(sectionByTitle(data, 'Табор')?.templateCode).toBe('camp');
+    expect(sectionByTitle(data, 'к Велосипедам')?.templateCode).toBe('bikes');
+    expect(sectionByTitle(data, 'в палатку', 'personal')?.templateCode).toBe('tent_inside');
   });
 
   it('личные разделы чужим не видны', async () => {

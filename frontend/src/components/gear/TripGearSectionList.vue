@@ -45,8 +45,15 @@ const props = withDefaults(
     canPlace?: boolean
     /** Кнопка «Добавить снаряжение» внутри раздела. */
     canAdd?: boolean
+    /**
+     * Разделы, у которых есть содержимое **не из `items`** (06.11.2026):
+     * «в палатку» наполняется личными вещами «Ночёвок», а не строками
+     * `trip_gear`. Без этого списка раздел с одними личными вещами
+     * выглядел бы пустым и подписывался «Пусто».
+     */
+    extraIds?: string[]
   }>(),
-  { canManage: false, canPlace: false, canAdd: false },
+  { canManage: false, canPlace: false, canAdd: false, extraIds: () => [] },
 )
 
 const emit = defineEmits<{
@@ -64,6 +71,12 @@ const emit = defineEmits<{
  */
 defineSlots<{
   item: (props: { item: TripGearItem }) => unknown
+  /**
+   * Содержимое раздела, которого нет среди `items` (06.11.2026):
+   * у «в палатку» это личные вещи из «Ночёвок». Слот получает раздел,
+   * чтобы родитель сам решил, чей это раздел по `templateCode`.
+   */
+  sectionExtra: (props: { section: TripGearSection }) => unknown
 }>()
 
 /** Поле вещи, в котором лежит её раздел этой большой секции. */
@@ -100,11 +113,12 @@ const containerItems = computed(() =>
   }),
 )
 
-/** Есть ли у раздела хоть что-то: свои вещи или подразделы. */
+/** Есть ли у раздела хоть что-то: свои вещи, подразделы или `sectionExtra`. */
 function hasContent(sectionId: string): boolean {
   return (
     props.items.some((item) => sectionOf(item) === sectionId) ||
-    props.sections.some((section) => section.parentId === sectionId)
+    props.sections.some((section) => section.parentId === sectionId) ||
+    props.extraIds.includes(sectionId)
   )
 }
 
@@ -418,6 +432,7 @@ function onRootDrop(): void {
             :can-manage="canManage"
             :can-place="canPlace"
             :can-add="canAdd"
+            :extra-ids="extraIds"
             @create="emit('create', $event)"
             @rename="emit('rename', $event)"
             @remove="emit('remove', $event)"
@@ -427,7 +442,17 @@ function onRootDrop(): void {
             <template #item="slotProps">
               <slot name="item" :item="slotProps.item" />
             </template>
+            <template #sectionExtra="slotProps">
+              <slot name="sectionExtra" :section="slotProps.section" />
+            </template>
           </TripGearSectionList>
+
+          <!--
+            Содержимое, которого нет в `items` (06.11.2026): у «в палатку»
+            это личные вещи из «Ночёвок». Слот получает раздел, чтобы
+            родитель не угадывал, куда его положить.
+          -->
+          <slot name="sectionExtra" :section="section" />
 
           <p v-if="!hasContent(section.id)" class="text-xs text-muted">
             Пусто. Перенесите сюда вещи или добавьте новые.

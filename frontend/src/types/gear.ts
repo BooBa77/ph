@@ -300,7 +300,38 @@ export interface TripGearSection {
   /** Родительский раздел. `null` — корень большой секции. */
   parentId: string | null
   title: string
+  /**
+   * Код шаблона (06.11.2026): `camp`, `bikes`, `water`, `tent_inside`,
+   * `clothes`, `gear`. `null` — раздел заведён руками.
+   *
+   * Экрану он нужен, чтобы найти раздел после переименования: «в палатку»
+   * наполняется вещами из «Ночёвок» автоматически, а имя человек вправе
+   * поменять. Шаблон «в палатку» переименован — содержимое остаётся на месте.
+   */
+  templateCode: string | null
   sortOrder: number
+}
+
+/**
+ * Личная вещь смотрящего из секции «Спальник» «Ночёвок» (06.11.2026).
+ *
+ * В «Взял» она приходит отдельным массивом: это не общественное снаряжение
+ * похода, а своя вещь, и живёт она в `trip_route_sleeping`. Раздел
+ * «в палатку» показывает её автоматически — заказчик: «сюда автоматически
+ * должно попадать содержимое секции „Спальник“ из Ночёвок — это личное».
+ */
+export interface TripGearSleeping {
+  id: string
+  /** Предмет личного каталога снаряжения. */
+  gearItemId: string
+  /** Код типа: `sleeping_bag`, `mat` или любой тип личной вещи. */
+  typeCode: string
+  /** Название типа: «Спальник», «Коврик». */
+  typeName: string
+  /** Название вещи — то, по чему владелец её узнаёт. */
+  title: string
+  /** Вес в граммах; `null` — не указан. */
+  weightGrams: number | null
 }
 
 /**
@@ -364,4 +395,53 @@ export interface TripGearList {
   sections: TripGearSection[]
   totalWeightGrams: number
   itemsWithoutWeight: number
+  /**
+   * Мои личные вещи из «Ночёвок» (06.11.2026) — содержимое секции
+   * «Спальник». Отдельный массив, а не строки `trip_gear`: личное
+   * и общественное живут в разных таблицах, и копий не заводим.
+   */
+  sleeping: TripGearSleeping[]
+}
+
+/**
+ * Единица груза в раскладке по рюкзакам (06.11.2026): вещь похода или
+ * пакет еды. `id` — строкой, как везде в API походов (`bigint`).
+ */
+export interface TripGearLoadUnit {
+  kind: 'gear' | 'package'
+  id: string
+  title: string
+  weightGrams: number
+  assignedUserId: string | null
+}
+
+/** Рюкзак участника в раскладке: что в нём и насколько он отклонился от доли. */
+export interface TripGearLoadBackpack {
+  userId: string
+  gender: 'm' | 'f'
+  targetWeightGrams: number
+  gearWeightGrams: number
+  packagesWeightGrams: number
+  totalWeightGrams: number
+  deviationGrams: number
+  gear: TripGearLoadUnit[]
+  packages: TripGearLoadUnit[]
+}
+
+/**
+ * Ответ `GET /gear/load` и `POST /gear/auto-distribute` (06.11.2026).
+ *
+ * Один ответ на оба запроса: экрану не нужно второй раз собирать раскладку
+ * после кнопки. Пока фронт меняет только назначения и перечитывает
+ * `GET /gear`, но тип описан целиком — пакеты и доли уже приходят с сервера.
+ */
+export interface TripGearLoad {
+  totalWeightGrams: number
+  backpacks: TripGearLoadBackpack[]
+  unassigned: TripGearLoadUnit[]
+  itemsWithoutWeight: number
+  packagesWithoutWeight: number
+  /** Медик, у которого аптечка. `null` — медика в походе нет. */
+  doctorUserId: string | null
+  doctorMissing: boolean
 }

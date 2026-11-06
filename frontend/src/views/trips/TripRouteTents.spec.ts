@@ -55,6 +55,7 @@ const mocks = vi.hoisted(() => ({
   listGear: vi.fn(),
   proposeTripGear: vi.fn(),
   removeTripGear: vi.fn(),
+  updateTripGear: vi.fn(),
   addManualTripGear: vi.fn(),
   fetchGearTypes: vi.fn(),
 }))
@@ -70,6 +71,7 @@ vi.mock('@/api/gear', () => ({
   listGear: mocks.listGear,
   proposeTripGear: mocks.proposeTripGear,
   removeTripGear: mocks.removeTripGear,
+  updateTripGear: mocks.updateTripGear,
   addManualTripGear: mocks.addManualTripGear,
 }))
 
@@ -298,6 +300,11 @@ interface MountOptions {
   lodgers?: RouteLodger[]
   /** Право на вкладку: чужие места правят только ведущие вкладку. */
   canEdit?: boolean
+  /**
+   * Право вкладки «Снаряжение» (06.11.2026): без него карточка пилюли
+   * не даёт менять «Берём / не берём».
+   */
+  canEditGear?: boolean
 }
 
 /**
@@ -327,6 +334,7 @@ async function mounted(options: MountOptions = {}): Promise<ReturnType<typeof mo
           lodgers: lodgers.value,
           travelers: server.travelers,
           canEdit: server.canEdit,
+          canEditGear: options.canEditGear ?? true,
           onGear: (items: TripGearItem[]) => {
             gear.value = items
             server.gear = items
@@ -451,6 +459,37 @@ describe('секция «Палатки»', () => {
     })
 
     expect(tentTitles(wrapper)).toEqual(['Анна, 3-х местная, 2,4 кг'])
+
+    // 06.11.2026: «неодобренные вещи как в Снаряжении» — плашки у них нет,
+    // но и с экрана они не исчезают: зачёркнутая пилюля с открытой карточкой.
+    const declined = wrapper.get('[data-test="route-tent-declined-g2"]')
+    expect(declined.text()).toContain('Палатка, которую не берём')
+    expect(declined.classes()).toContain('line-through')
+  })
+
+  it('пилюля тента открывает карточку, организатор меняет статус', async () => {
+    const tent = tripGearItem({
+      id: 'g-awning',
+      typeCode: 'shelter',
+      typeName: 'Тент',
+      title: 'Тент походный',
+      ownerUserId: ME,
+      weightGrams: 3000,
+      status: 'proposed',
+    })
+    mocks.updateTripGear.mockResolvedValue({ ...tent, status: 'declined' })
+
+    const wrapper = await mounted({ gear: [annaTent(), tent] })
+    await wrapper.get('[data-test="route-awning"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="gear-item-dialog"]').text()).toContain('Тент походный')
+
+    await wrapper.get('[data-test="gear-item-status-declined"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateTripGear).toHaveBeenCalledWith('1', 'g-awning', { status: 'declined' })
+    expect(wrapper.get('[data-test="route-awning"]').classes()).toContain('line-through')
   })
 
   it('без веса в заголовке нет веса: «Анна, 3-х местная»', async () => {

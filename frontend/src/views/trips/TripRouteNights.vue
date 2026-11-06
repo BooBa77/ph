@@ -116,6 +116,13 @@ const rows = ref<NightDraft[]>([])
 /** Правит ли смотрящий таблицу — решает сервер, фронт не считает права сам. */
 const canEdit = computed(() => plan.value?.canEdit === true)
 
+/**
+ * Право вкладки «Снаряжение» (06.11.2026): по нему пилюли «Ночёвок»
+ * показывают «Берём / не берём». Право «Ночёвок» на это не годится —
+ * статус вещи решает вкладка «Снаряжение», и сервер проверяет именно её.
+ */
+const canEditGear = computed(() => plan.value?.canEditGear === true)
+
 // ───────────────────────────── ночи и даты ─────────────────────────────
 
 /**
@@ -676,6 +683,7 @@ const stoveHint = computed(() => {
           :lodgers="plan?.lodgers ?? []"
           :travelers="plan?.travelers ?? []"
           :can-edit="canEdit"
+          :can-edit-gear="canEditGear"
           @route="onRouteUpdated"
           @gear="onGearChanged"
         />
@@ -722,6 +730,7 @@ const stoveHint = computed(() => {
           :fire="hasFire"
           :stove="hasStove"
           :stove-hint="stoveHint"
+          :can-edit-gear="canEditGear"
         />
       </details>
     </template>

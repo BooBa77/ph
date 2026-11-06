@@ -27,7 +27,7 @@ import { SmtpService } from './../src/email/services/smtp.service';
  *    доля с поправкой на пол.
  * 5. **Аптечка закреплена за медиком** — единственное исключение.
  * 6. **Снаряга «Ночёвок» ложится в свой раздел**: палатка — в «Табор»,
- *    спальник — в личную «Снарягу».
+ *    а личные вещи живут в «Спальнике» и в «Берём» не попадают.
  *
  * Поход, раскладку и пакет тест заводит напрямую в базе: правила
  * «Питания» проверены в `trip-meals.e2e-spec.ts`, а здесь важно, как вес
@@ -484,7 +484,7 @@ describe('Раскладка груза по рюкзакам (e2e)', () => {
     ).expect(403);
   });
 
-  it('снаряжение «Ночёвок» ложится в «Табор», а спальник — в «Снарягу»', async () => {
+  it('снаряга «Ночёвок» ложится в «Табор», а личное остаётся личным (06.11.2026)', async () => {
     // Палатка добавлена через «Ночёвки» — раздел завёлся и заполнился сам.
     expect(tentSharedSectionId).not.toBeNull();
 
@@ -504,28 +504,60 @@ describe('Раскладка груза по рюкзакам (e2e)', () => {
       )?.sharedSectionId,
     ).toBe(tentSharedSectionId);
 
+    /**
+     * Спальник, предложенный в снаряжение похода, — **общественная вещь**:
+     * заказчик 06.11.2026 сказал, что перенос вещи похода в личный раздел
+     * владельца «не верен в корне». Вещь остаётся в «Берём» без личного
+     * раздела, а её личная копия в «Ночёвках» — отдельная строка.
+     */
     const sleepingId = await addGear(organizerToken, {
       typeId: sleepingTypeId,
       title: 'Спальник проверочный',
       weightGrams: 1500,
     });
     const sleeping = await propose(organizerToken, sleepingId).expect(201);
-    expect(sleeping.body.personalSectionId).toBeTruthy();
+    expect(sleeping.body.personalSectionId).toBeNull();
+
+    // Личная вещь из «Ночёвок» приезжает в «Взял» отдельным массивом.
+    const plan = await call(
+      'post',
+      `/api/trips/${tripId}/route/sleeping`,
+      organizerToken,
+      { gearItemId: String(sleepingId) },
+    ).expect(200);
+    const sleepingRow = (
+      plan.body.sleeping as Array<{ id: string; gearItemId: string }>
+    ).find((row) => row.gearItemId === String(sleepingId));
+    expect(sleepingRow).toBeDefined();
 
     const after = await call(
       'get',
       `/api/trips/${tripId}/gear`,
       organizerToken,
     ).expect(200);
-    const personalSection = (
-      after.body.sections as Array<{ id: string; scope: string; title: string }>
-    ).find((section) => section.id === sleeping.body.personalSectionId);
-    expect(personalSection).toMatchObject({
-      scope: 'personal',
-      title: 'Снаряга',
-    });
+    expect(after.body.sleeping).toEqual([
+      expect.objectContaining({
+        gearItemId: String(sleepingId),
+        typeCode: 'sleeping_bag',
+        title: 'Спальник проверочный',
+        weightGrams: 1500,
+      }),
+    ]);
 
-    // Убираем спальник: он не нужен остальным проверкам.
+    // Личные строки чужим не отдаются — даже организатору.
+    const memberView = await call(
+      'get',
+      `/api/trips/${tripId}/gear`,
+      memberToken,
+    ).expect(200);
+    expect(memberView.body.sleeping).toEqual([]);
+
+    // Убираем за собой: личная строка и строка похода.
+    await call(
+      'delete',
+      `/api/trips/${tripId}/route/sleeping/${sleepingRow?.id}`,
+      organizerToken,
+    ).expect(200);
     await call(
       'delete',
       `/api/trips/${tripId}/gear/${sleeping.body.id}`,

@@ -11,13 +11,15 @@ import {
 } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
 import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
+import TripGearItemCard from '@/components/gear/TripGearItemCard.vue'
 import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
-import { GEAR_TYPE_CODES, TENT_TYPE_CODES } from '@/types/gear'
+import { GEAR_TYPE_CODES, TENT_TYPE_CODES, TRIP_GEAR_STATUS_LABELS } from '@/types/gear'
 import type {
   GearItem,
   GearItemAttribute,
   TripGearItem,
   TripGearRouteSection,
+  TripGearStatus,
 } from '@/types/gear'
 import type {
   RouteLodger,
@@ -119,13 +121,18 @@ const props = defineProps<{
   travelers: RouteTraveler[]
   /** Правит ли смотрящий вкладку: от этого зависят чужие места. */
   canEdit: boolean
+  /**
+   * Право вкладки «Снаряжение» (06.11.2026): пилюля открывает карточку,
+   * и «Берём / не берём» в ней доступно только с этим правом.
+   */
+  canEditGear?: boolean
 }>()
 
 const emit = defineEmits<{
   /** Вкладка целиком после посадки: родитель берёт её как есть. */
   route: [TripRoute]
-  /** Снаряжение похода изменилось: добавили или убрали вещь. */
-  gear: [TripGearItem[]]
+  /** Снаряжение похода изменилось: добавили, убрали или сменили статус. */
+  gear: [items: TripGearItem[]]
 }>()
 
 const auth = useAuthStore()
@@ -173,6 +180,8 @@ interface AwningPill {
   weightGrams: number | null
   ownerUserId: string
   ownerName: string
+  /** Статус вещи: отклонённый тент остаётся в секции зачёркнутым. */
+  status: TripGearStatus
 }
 
 const meId = computed(() => auth.user?.id ?? '')
@@ -213,7 +222,8 @@ function isMine(person: { userId: string }): boolean {
 
 /**
  * Плашки палаток — из снаряжения похода: только тип `tent` и только
- * «берём». «Не берём» (`declined`) в распределении не участвует.
+ * не отклонённые. «Не берём» показываем отдельной зачёркнутой строкой:
+ * в такой палатке никто не живёт, и плашка с «жильцами» врала бы.
  */
 const tents = computed<TentCard[]>(() =>
   props.gear
@@ -227,10 +237,21 @@ const tents = computed<TentCard[]>(() =>
     })),
 )
 
-/** Тенты — из тех же вещей похода: тип `shelter`, «не берём» не показываем. */
+/**
+ * Отклонённые палатки (06.11.2026). Заказчик: «отображение неодобренных
+ * вещей как в Снаряжении» — то есть вещь не исчезает из своей секции,
+ * а остаётся зачёркнутой: обсуждали и не взяли — тоже ответ.
+ */
+const declinedTents = computed(() =>
+  props.gear.filter(
+    (item) => item.typeCode === GEAR_TYPE_CODES.tent && item.status === 'declined',
+  ),
+)
+
+/** Тенты — из тех же вещей похода: тип `shelter`, «не берём» — зачёркнуто. */
 const awnings = computed<AwningPill[]>(() =>
   props.gear
-    .filter((item) => item.typeCode === GEAR_TYPE_CODES.shelter && item.status !== 'declined')
+    .filter((item) => item.typeCode === GEAR_TYPE_CODES.shelter)
     .map((item) => ({
       tripGearId: item.id,
       gearItemId: item.gearItemId,
@@ -239,6 +260,7 @@ const awnings = computed<AwningPill[]>(() =>
       weightGrams: item.weightGrams,
       ownerUserId: item.ownerUserId,
       ownerName: nameOf(item.ownerUserId),
+      status: item.status,
     })),
 )
 
@@ -246,12 +268,10 @@ const awnings = computed<AwningPill[]>(() =>
  * «Добавить ещё» в «Палатках» (01.11.2026): вещи, которые добавили сюда
  * кнопкой, а не по типу. Заказчик: «может хоть лодку выбрать» — такая вещь
  * не палатка и не тент, и без пометки секции её не показала бы ни одна
- * секция «Ночёвок».
+ * секция «Ночёвок». Отклонённые тоже здесь, зачёркнутыми (06.11.2026).
  */
 const extras = computed<TripGearItem[]>(() =>
-  props.gear.filter(
-    (item) => item.routeSection === 'tent' && item.status !== 'declined',
-  ),
+  props.gear.filter((item) => item.routeSection === 'tent'),
 )
 
 /** Пилюля добавочной вещи: «Лодка - 12 кг (Сергей)». */
@@ -261,6 +281,56 @@ function extraText(item: TripGearItem): string {
 
   return `${head} (${nameOf(item.ownerUserId)})`
 }
+
+/**
+ * Оформление пилюли по статусу — как в «Берём» (06.11.2026): утверждённое
+ * сплошное, предложенное пунктиром и курсивом, отклонённое зачёркнуто.
+ * Слова статуса остаются в `title`: цвет без подписи не читается ни
+ * скринридером, ни новичком.
+ */
+function pillClass(status: TripGearStatus): string {
+  if (status === 'declined') {
+    return 'border-border bg-field text-muted line-through'
+  }
+  if (status === 'proposed') {
+    return 'border-dashed border-emerald-400 bg-white italic text-emerald-800'
+  }
+
+  return 'border-emerald-300 bg-emerald-50 text-emerald-900'
+}
+
+// ───────────────────────────── карточка вещи ─────────────────────────────
+
+/**
+ * Пилюля открывает карточку вещи (06.11.2026): характеристики и, кому
+ * можно, выбор «Берём / не берём». Заказчик: «в Ночёвках на пилюлях
+ * снаряжения также нужна модалка с характеристиками».
+ *
+ * Храним id, а не объект: после `PATCH` строка в `props.gear` заменяется,
+ * и карточка обязана показать свежую вещь.
+ */
+const openedGearId = ref<string | null>(null)
+
+const openedGear = computed(
+  () => props.gear.find((item) => item.id === openedGearId.value) ?? null,
+)
+
+function openGearPill(item: { id: string }): void {
+  openedGearId.value = item.id
+}
+
+function closeGearPill(): void {
+  openedGearId.value = null
+}
+
+/** Статус сменили в карточке: заменяем строку и отдаём список наверх. */
+function applyGearUpdate(updated: TripGearItem): void {
+  emit(
+    'gear',
+    props.gear.map((item) => (item.id === updated.id ? updated : item)),
+  )
+}
+
 
 function canManageExtra(item: TripGearItem): boolean {
   return isMine({ userId: item.ownerUserId }) || props.canEdit
@@ -1090,10 +1160,39 @@ async function pickExtra(item: GearItem): Promise<void> {
       </article>
 
       <!--
+        Отклонённые палатки (06.11.2026): «неодобренные вещи как
+        в Снаряжении». Плашку с жильцами они не получают — в них не живут,
+        — но и не исчезают: зачёркнутая пилюля показывает, что вещь
+        обсуждали, и организатор может вернуть её в карточке.
+      -->
+      <ul
+        v-if="declinedTents.length > 0"
+        class="flex flex-wrap items-center gap-1.5"
+        data-test="route-tents-declined"
+      >
+        <li
+          v-for="item in declinedTents"
+          :key="item.id"
+          class="flex cursor-pointer items-center gap-1 rounded-full border border-border bg-field px-2 py-1 text-sm text-muted line-through"
+          role="button"
+          tabindex="0"
+          :title="`${item.title} · ${TRIP_GEAR_STATUS_LABELS[item.status]}`"
+          :aria-label="`${item.title}. Не берём. Открыть карточку вещи`"
+          :data-test="`route-tent-declined-${item.id}`"
+          @click="openGearPill(item)"
+          @keydown.enter.prevent="openGearPill(item)"
+          @keydown.space.prevent="openGearPill(item)"
+        >
+          <span>{{ item.title }}</span>
+        </li>
+      </ul>
+
+      <!--
         Тенты — вещи типа `shelter` из снаряжения похода, пилюлями в формате
         «Тент - 3000 гр. (Олег)»: под тентом никто не ночует, поэтому
         в распределении его нет, но у вещи есть хозяин, вес и крестик
-        с теми же правами, что у палаток.
+        с теми же правами, что у палаток. Пилюля открывает карточку
+        с характеристиками и статусом (06.11.2026).
       -->
       <div
         v-if="awnings.length > 0"
@@ -1103,9 +1202,16 @@ async function pickExtra(item: GearItem): Promise<void> {
         <span
           v-for="awning in awnings"
           :key="awning.tripGearId"
-          class="flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-1 text-sm text-emerald-900"
-          :title="awning.title"
+          class="flex cursor-pointer items-center gap-1 rounded-full border px-2 py-1 text-sm transition-colors hover:border-emerald-500"
+          :class="pillClass(awning.status)"
+          :title="`${awning.title} · ${TRIP_GEAR_STATUS_LABELS[awning.status]}`"
+          role="button"
+          tabindex="0"
+          :aria-label="`${awning.title}. Открыть карточку вещи`"
           data-test="route-awning"
+          @click="openGearPill({ id: awning.tripGearId })"
+          @keydown.enter.prevent="openGearPill({ id: awning.tripGearId })"
+          @keydown.space.prevent="openGearPill({ id: awning.tripGearId })"
         >
           <span>{{ awningText(awning) }}</span>
 
@@ -1116,7 +1222,7 @@ async function pickExtra(item: GearItem): Promise<void> {
             class="cursor-pointer border-0 bg-transparent p-0 text-emerald-700 transition-colors hover:text-emerald-900 disabled:cursor-not-allowed disabled:opacity-40"
             title="Убрать тент из похода"
             :data-test="`route-awning-remove-${awning.tripGearId}`"
-            @click="removeAwning(awning)"
+            @click.stop="removeAwning(awning)"
           >
             ×
           </button>
@@ -1126,7 +1232,7 @@ async function pickExtra(item: GearItem): Promise<void> {
       <!--
         Вещи «Добавить ещё»: лодка, вкладыш, что угодно — заказчик разрешил
         «хоть лодку». Пометка секции и есть причина, по которой они стоят
-        здесь, а не в группе по типу.
+        здесь, а не в группе по типу. Пилюля тоже открывает карточку.
       -->
       <div
         v-if="extras.length > 0"
@@ -1136,9 +1242,16 @@ async function pickExtra(item: GearItem): Promise<void> {
         <span
           v-for="extra in extras"
           :key="extra.id"
-          class="flex items-center gap-1 rounded-full border border-emerald-300 bg-emerald-50 px-2 py-1 text-sm text-emerald-900"
-          :title="extra.title"
+          class="flex cursor-pointer items-center gap-1 rounded-full border px-2 py-1 text-sm transition-colors hover:border-emerald-500"
+          :class="pillClass(extra.status)"
+          :title="`${extra.title} · ${TRIP_GEAR_STATUS_LABELS[extra.status]}`"
+          role="button"
+          tabindex="0"
+          :aria-label="`${extra.title}. Открыть карточку вещи`"
           data-test="route-tent-extra-item"
+          @click="openGearPill(extra)"
+          @keydown.enter.prevent="openGearPill(extra)"
+          @keydown.space.prevent="openGearPill(extra)"
         >
           <span>{{ extraText(extra) }}</span>
 
@@ -1149,7 +1262,7 @@ async function pickExtra(item: GearItem): Promise<void> {
             class="cursor-pointer border-0 bg-transparent p-0 text-emerald-700 transition-colors hover:text-emerald-900 disabled:cursor-not-allowed disabled:opacity-40"
             title="Убрать вещь из похода"
             :data-test="`route-tent-extra-remove-${extra.id}`"
-            @click="removeTripItem(extra.id)"
+            @click.stop="removeTripItem(extra.id)"
           >
             ×
           </button>
@@ -1424,6 +1537,23 @@ async function pickExtra(item: GearItem): Promise<void> {
         :owner-options="manualOwnerOptions"
         @created="onManualCreated"
         @close="closeManual"
+      />
+
+      <!--
+        Карточка пилюли (06.11.2026): характеристики, владелец, статус.
+        Право на «Берём / не берём» — вкладка «Снаряжение», а не «Ночёвки»:
+        приходит отдельным пропом из ответа сервера.
+      -->
+      <TripGearItemCard
+        :trip-id="trip.id"
+        :item="openedGear"
+        :can-decide="canEditGear === true"
+        :owner-name="openedGear ? nameOf(openedGear.ownerUserId) : ''"
+        :assignee-name="
+          openedGear?.assignedUserId ? nameOf(openedGear.assignedUserId) : null
+        "
+        @updated="applyGearUpdate"
+        @close="closeGearPill"
       />
     </template>
   </section>

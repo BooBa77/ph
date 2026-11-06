@@ -13,6 +13,7 @@ import { Trip } from '../trips/entities/trip.entity';
 import { TripEventsService } from '../trips/trip-events.service';
 import { TripMealsService } from '../trips/trip-meals.service';
 import type { TripTab } from '../trips/trip-tabs';
+import { SLEEPING_NIGHT_KINDS } from '../trips/trip-route.types';
 import { TripsService } from '../trips/trips.service';
 import { User } from '../users/entities/user.entity';
 import { sqlValues } from '../users/sport-experience.types';
@@ -27,6 +28,7 @@ import {
   TripGearLoadDto,
   TripGearLoadUnitDto,
   TripGearSectionDto,
+  TripGearSleepingDto,
   UpdateTripGearDto,
   UpdateTripGearSectionDto,
 } from './dto/trip-gear.dto';
@@ -37,7 +39,6 @@ import { TripGearSection } from './entities/trip-gear-section.entity';
 import {
   CAMP_SECTION_TYPE_CODES,
   FIRST_AID_TYPE_CODE,
-  SLEEPING_TYPE_CODES,
 } from './gear.types';
 import { GearService } from './gear.service';
 import {
@@ -51,29 +52,50 @@ import {
 const GEAR_TAB: TripTab = 'gear';
 
 /**
- * Личные разделы «Взял» по шаблону (05.11.2026).
+ * Шаблоны разделов (06.11.2026: с кодом, а не только с названием).
  *
- * Заказчик назвал их в плане вкладки (`docs/ph/gear-tab.md` §3): «Снаряга»
- * и «Одежда». Это стартовый набор, а не ограничение: человек переименует,
- * удалит или добавит свои — «Альпинизм», «Пешка».
+ * Заказчик назвал личные разделы в плане вкладки (`docs/ph/gear-tab.md` §3):
+ * «Снаряга» и «Одежда». 06.11.2026 он объяснил, что такое личные вещи:
+ * «то, что помимо общественного — одежда, каска, трекинговые палочки»,
+ * и попросил раздел **«в палатку»** перед ними, если в «Ночёвках» есть
+ * ночь не в гостинице. Туда автоматически попадает содержимое секции
+ * «Спальник» — оно личное и раньше в «Берём» не попадало.
+ *
+ * Код хранится в разделе (`template_code`), потому что по нему ищется
+ * шаблон после переименования: название человек меняет, и искать «Табор»
+ * по слову значит терять раздел после первого же переименования.
  */
-const PERSONAL_SECTION_TEMPLATES = ['Снаряга', 'Одежда'] as const;
+const SHARED_SECTION_TEMPLATES = [
+  { code: 'camp', title: 'Табор' },
+  { code: 'bikes', title: 'к Велосипедам' },
+  { code: 'water', title: 'Вода' },
+] as const;
+
+const PERSONAL_SECTION_TEMPLATES = [
+  { code: 'clothes', title: 'Одежда' },
+  { code: 'gear', title: 'Снаряга' },
+] as const;
 
 /**
- * Куда автораскладка кладёт вещи из «Ночёвок» (06.11.2026).
+ * Личный раздел, который наполняется из «Ночёвок» (06.11.2026).
  *
- * Заказчик: «снаряга для табора напрямую связана между вкладками» — то,
- * что добавили кнопками «Палатки», «Готовка» и «Спальник», не должно потом
- * висеть в корне «Берём». «Табор» — общественный раздел, «Снаряга» —
- * личный раздел владельца спальника.
- *
- * Совпадение — по названию шаблона: отдельного кода у раздела нет, и
- * переименованный раздел автораскладка не найдёт. Это осознанно: гадать,
- * что человек имел в виду, переименовав «Табор» в «Барахло», хуже, чем
- * оставить вещь в корне — туда он её и положит руками.
+ * Заказчик: «если эта секция есть (ночёвки не в гостинице), то также
+ * создаём раздел „в палатку“ в секции … Взял (перед Одежда и Снаряга)».
+ * В нём показываются строки секции «Спальник» смотрящего — спальник,
+ * коврик и всё, что он туда добавил. Копий в снаряжении похода нет:
+ * вещь остаётся личной и в распределение груза не входит.
  */
-const CAMP_SECTION_TITLE = 'Табор';
-const PERSONAL_GEAR_SECTION_TITLE = 'Снаряга';
+const TENT_INSIDE_SECTION_CODE = 'tent_inside';
+const TENT_INSIDE_SECTION_TITLE = 'в палатку';
+
+/** Код общего раздела «Табор» — в него автораскладка кладёт вещи «Ночёвок». */
+const CAMP_SECTION_CODE = 'camp';
+
+/** Шаблон раздела: код для поиска и название для человека. */
+interface SectionTemplate {
+  code: string;
+  title: string;
+}
 
 /**
  * Общественные шаблоны. «Табор» — если в «Ночёвках» есть стоянка или
@@ -186,7 +208,16 @@ export class TripGearService {
       order: { sortOrder: 'ASC', id: 'ASC' },
     });
 
-    return this.toList(rows, sections, userId);
+    /**
+     * Личное из «Ночёвок» (06.11.2026): раздел «в палатку» показывает
+     * спальник, коврик и всё, что человек положил в свою секцию «Спальник».
+     * Эти строки живут в `trip_route_sleeping`, в `trip_gear` их копий нет,
+     * поэтому они приезжают отдельным массивом — экран не склеивает
+     * две таблицы сам.
+     */
+    const sleeping = await this.sleepingRows(manager, trip.id, userId);
+
+    return this.toList(rows, sections, sleeping, userId);
   }
 
   /**
@@ -400,12 +431,11 @@ export class TripGearService {
     );
     saved.gearItem = item;
 
-    // «Табор» и «Снаряга» — сразу, а не в корне (06.11.2026).
+    // «Табор» — сразу, а не в корне (06.11.2026).
     await this.autoPlaceSection(
       manager,
       trip,
       participant,
-      userId,
       item.gearType.code,
       saved,
     );
@@ -604,7 +634,6 @@ export class TripGearService {
         manager,
         trip,
         participant,
-        owner.userId,
         gearType.code,
         row,
       );
@@ -1124,23 +1153,25 @@ export class TripGearService {
   // ───────────────────────── разделы: шаблоны и проверки ─────────────────────────
 
   /**
-   * Куда вещь ложится сама: «Табор» или личный «Снаряга» (06.11.2026).
+   * Куда вещь ложится сама: только «Табор» (06.11.2026).
    *
    * Правило заказчика: «снаряга для табора напрямую связана между
    * вкладками». Вещь, добавленная в «Ночёвках», — это та же строка
    * `trip_gear`, и раскладывать её по разделам вручную после каждого котла
-   * человек не должен:
+   * человек не должен. Палатка, тент, посуда, костровое и горелки ложатся
+   * в общественный «Табор», его видит весь состав.
    *
-   * - **«Табор»** — палатка, тент, посуда, костровое и горелки: всё, что
-   *   в «Ночёвках» добавляют кнопками секций. Общественный раздел, его
-   *   видит весь состав.
-   * - **«Снаряга»** — спальник и коврик: личная снаряга, и её место
-   *   в личном разделе владельца. Человеку без аккаунта личный раздел
-   *   заводить некому, поэтому у него вещь остаётся в корне.
+   * **Спальник и коврик сюда больше не попадают** (заказчик 06.11.2026):
+   * «ты переносишь общественное снаряжение в раздел его личных вещей — это
+   * не верно в корне». Вещь похода остаётся общественной, даже если её
+   * принёс владелец: личное — это своя одежда и содержимое секции
+   * «Спальник» «Ночёвок», а не `trip_gear`. Поэтому автораскладка здесь
+   * знает ровно один раздел.
    *
-   * Раздел ищется по названию шаблона и только в корне: пользователь
-   * мог его переименовать или удалить, и тогда вещь честно остаётся
-   * в корне — она не теряется, её просто кладут руками.
+   * Раздел ищется по коду шаблона `camp`, а если код пуст — по названию
+   * «Табор»: разделы, заведённые до появления кода, продолжают находиться.
+   * Переименованный шаблон тоже находится — код переживает переименование.
+   * Удалённый раздел не находится, и вещь честно остаётся в корне.
    *
    * `ensureSections` вызывается здесь, а не ждёт первого открытия
    * вкладки: иначе палатка, добавленная в «Ночёвках» до первого захода
@@ -1150,59 +1181,38 @@ export class TripGearService {
     manager: EntityManager,
     trip: Trip,
     actor: TripParticipant,
-    ownerUserId: string,
     typeCode: string,
     row: TripGear,
   ): Promise<void> {
-    if (CAMP_SECTION_TYPE_CODES.includes(typeCode)) {
-      await this.ensureSections(trip, actor, actor.userId);
+    if (!CAMP_SECTION_TYPE_CODES.includes(typeCode)) return;
 
-      const section = await manager.findOne(TripGearSection, {
-        where: {
+    await this.ensureSections(trip, actor, actor.userId);
+
+    const section = await manager.findOne(TripGearSection, {
+      where: [
+        {
           tripId: trip.id,
           scope: 'shared',
           ownerUserId: IsNull(),
           parentId: IsNull(),
-          title: CAMP_SECTION_TITLE,
+          templateCode: CAMP_SECTION_CODE,
         },
-      });
-      if (!section) return;
-
-      row.sharedSectionId = section.id;
-      await manager.update(
-        TripGear,
-        { id: row.id },
-        { sharedSectionId: section.id },
-      );
-      return;
-    }
-
-    if (!SLEEPING_TYPE_CODES.includes(typeCode)) return;
-
-    const owner = await manager.findOne(TripParticipant, {
-      where: { tripId: trip.id, userId: ownerUserId },
-      relations: { user: true },
-    });
-    if (!owner || owner.user?.isVirtual) return;
-
-    await this.ensureSections(trip, owner, ownerUserId);
-
-    const section = await manager.findOne(TripGearSection, {
-      where: {
-        tripId: trip.id,
-        scope: 'personal',
-        ownerUserId,
-        parentId: IsNull(),
-        title: PERSONAL_GEAR_SECTION_TITLE,
-      },
+        {
+          tripId: trip.id,
+          scope: 'shared',
+          ownerUserId: IsNull(),
+          parentId: IsNull(),
+          title: 'Табор',
+        },
+      ],
     });
     if (!section) return;
 
-    row.personalSectionId = section.id;
+    row.sharedSectionId = section.id;
     await manager.update(
       TripGear,
       { id: row.id },
-      { personalSectionId: section.id },
+      { sharedSectionId: section.id },
     );
   }
 
@@ -1240,8 +1250,8 @@ export class TripGearService {
           where: { tripId: trip.id, scope: 'shared' },
         });
         if (existing === 0) {
-          const titles = await this.sharedTemplateTitles(tx, trip.id);
-          await this.insertSections(tx, trip.id, 'shared', null, titles);
+          const templates = await this.sharedTemplates(tx, trip.id);
+          await this.insertSections(tx, trip.id, 'shared', null, templates);
         }
 
         await tx.update(
@@ -1268,7 +1278,7 @@ export class TripGearService {
             trip.id,
             'personal',
             userId,
-            [...PERSONAL_SECTION_TEMPLATES],
+            await this.personalTemplates(tx, trip.id),
           );
         }
 
@@ -1282,6 +1292,43 @@ export class TripGearService {
   }
 
   /**
+   * Личные шаблоны участника (06.11.2026).
+   *
+   * «в палатку» встаёт **первым** и только если в походе есть ночь
+   * не в гостинице — то есть тогда же, когда в «Ночёвках» видна секция
+   * «Спальник» (слова заказчика: «если эта секция есть»). Дальше «Одежда»
+   * и «Снаряга»: личные вещи — это одежда, каска, палки, — и порядок
+   * заказчик назвал сам.
+   */
+  private async personalTemplates(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<SectionTemplate[]> {
+    const sleeping = await manager.query(
+      `SELECT 1
+         FROM "trip_route_nights" n
+        WHERE n."trip_id" = $1
+          AND n."kind" IN (${sqlValues(SLEEPING_NIGHT_KINDS)})
+        LIMIT 1`,
+      [tripId],
+    );
+
+    const templates: SectionTemplate[] = [];
+    if (sleeping.length > 0) {
+      templates.push({
+        code: TENT_INSIDE_SECTION_CODE,
+        title: TENT_INSIDE_SECTION_TITLE,
+      });
+    }
+
+    for (const template of PERSONAL_SECTION_TEMPLATES) {
+      templates.push({ code: template.code, title: template.title });
+    }
+
+    return templates;
+  }
+
+  /**
    * Какие общественные разделы положены походу по его данным.
    *
    * «Табор» — если в «Ночёвках» есть стоянка (палатка, изба, машина) или
@@ -1290,15 +1337,15 @@ export class TripGearService {
    * похода; водного типа в справочнике пока нет, но список кодов готов,
    * чтобы раздел появился сам, когда тип заведут.
    */
-  private async sharedTemplateTitles(
+  private async sharedTemplates(
     manager: EntityManager,
     tripId: string,
-  ): Promise<string[]> {
+  ): Promise<SectionTemplate[]> {
     const camping = await manager.query(
       `SELECT 1
          FROM "trip_route_nights" n
         WHERE n."trip_id" = $1
-          AND (n."kind" IN ('tent', 'hut', 'car') OR n."cooking" IS NOT NULL)
+          AND (n."kind" IN (${sqlValues(SLEEPING_NIGHT_KINDS)}) OR n."cooking" IS NOT NULL)
         UNION ALL
        SELECT 1
          FROM "trip_gear" tg
@@ -1320,14 +1367,14 @@ export class TripGearService {
       )
     ).map((row: { code: string }) => row.code);
 
-    const titles: string[] = [];
-    if (camping.length > 0) titles.push('Табор');
-    if (typeCodes.includes(CYCLING_TYPE_CODE)) titles.push('к Велосипедам');
+    const templates: SectionTemplate[] = [];
+    if (camping.length > 0) templates.push(SHARED_SECTION_TEMPLATES[0]);
+    if (typeCodes.includes(CYCLING_TYPE_CODE)) templates.push(SHARED_SECTION_TEMPLATES[1]);
     if (typeCodes.some((code) => (WATER_TYPE_CODES as readonly string[]).includes(code))) {
-      titles.push('Вода');
+      templates.push(SHARED_SECTION_TEMPLATES[2]);
     }
 
-    return titles;
+    return templates;
   }
 
   /** Шаблоны одного вида — корневыми разделами с шагом порядка 10. */
@@ -1336,18 +1383,19 @@ export class TripGearService {
     tripId: string,
     scope: 'shared' | 'personal',
     ownerUserId: string | null,
-    titles: string[],
+    templates: SectionTemplate[],
   ): Promise<void> {
-    if (titles.length === 0) return;
+    if (templates.length === 0) return;
 
     await manager.insert(
       TripGearSection,
-      titles.map((title, index) => ({
+      templates.map((template, index) => ({
         tripId,
         scope,
         ownerUserId,
         parentId: null,
-        title,
+        title: template.title,
+        templateCode: template.code,
         sortOrder: (index + 1) * 10,
       })),
     );
@@ -1465,10 +1513,59 @@ export class TripGearService {
     }
   }
 
+  /**
+   * Личные вещи смотрящего из «Ночёвок» (06.11.2026).
+   *
+   * Читаем ту же таблицу, что секция «Спальник»: `trip_route_sleeping`.
+   * Сервер отдаёт только строки смотрящего — личное чужим не показывается
+   * даже организатору, это правило «Ночёвок» и здесь оно не меняется.
+   * Вес и название — из каталога: спальник взвешивают один раз.
+   */
+  private async sleepingRows(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+  ): Promise<TripGearSleepingDto[]> {
+    const rows: Array<{
+      id: string;
+      gear_item_id: string;
+      type_code: string;
+      type_name: string;
+      title: string;
+      weight_grams: number | null;
+    }> = await manager.query(
+      `SELECT s.id::text AS id,
+              s.gear_item_id::text AS gear_item_id,
+              gt.code AS type_code,
+              gt.name AS type_name,
+              gi.title,
+              gi.weight_grams
+         FROM trip_route_sleeping s
+         JOIN gear_items gi ON gi.id = s.gear_item_id
+         JOIN gear_types gt ON gt.id = gi.gear_type_id
+         JOIN users u ON u.id = s.user_id
+        WHERE s.trip_id = $1
+          AND s.user_id = $2
+          AND u.is_virtual = false
+        ORDER BY s.id ASC`,
+      [tripId, userId],
+    );
+
+    return rows.map((row) => ({
+      id: row.id,
+      gearItemId: row.gear_item_id,
+      typeCode: row.type_code,
+      typeName: row.type_name,
+      title: row.title,
+      weightGrams: row.weight_grams === null ? null : Number(row.weight_grams),
+    }));
+  }
+
   /** Список с итогом: сумма только утверждённых весов. */
   private toList(
     rows: TripGear[],
     sections: TripGearSection[],
+    sleeping: TripGearSleepingDto[],
     viewerId: string,
   ): TripGearListDto {
     let totalWeightGrams = 0;
@@ -1486,6 +1583,7 @@ export class TripGearService {
       sections: sections.map((section) => TripGearSectionDto.from(section)),
       totalWeightGrams,
       itemsWithoutWeight,
+      sleeping,
     };
   }
 }

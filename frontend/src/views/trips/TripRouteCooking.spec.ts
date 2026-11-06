@@ -39,6 +39,7 @@ const mocks = vi.hoisted(() => ({
   listGear: vi.fn(),
   proposeTripGear: vi.fn(),
   removeTripGear: vi.fn(),
+  updateTripGear: vi.fn(),
   addManualTripGear: vi.fn(),
   fetchGearTypes: vi.fn(),
 }))
@@ -50,6 +51,7 @@ vi.mock('@/api/gear', () => ({
   listTripGear: mocks.listTripGear,
   proposeTripGear: mocks.proposeTripGear,
   removeTripGear: mocks.removeTripGear,
+  updateTripGear: mocks.updateTripGear,
   addManualTripGear: mocks.addManualTripGear,
 }))
 
@@ -175,7 +177,14 @@ async function mounted(
   trip: Trip = makeTrip(),
 ): Promise<ReturnType<typeof mount>> {
   const wrapper = mount(TripRouteCooking, {
-    props: { trip, fire: plan.fire ?? true, stove: plan.stove ?? true },
+    props: {
+      trip,
+      fire: plan.fire ?? true,
+      stove: plan.stove ?? true,
+      // Право вкладки «Снаряжение»: без него карточка пилюли не даёт
+      // менять статус — так же, как на живой вкладке.
+      canEditGear: true,
+    },
   })
   await flushPromises()
 
@@ -397,7 +406,7 @@ describe('секция «Готовка»', () => {
     expect(pillTexts(wrapper)).toEqual(['Пила (Анна)'])
   })
 
-  it('палатки и спальники в готовку не попадают, «не берём» — тоже', async () => {
+  it('палатки и спальники в готовку не попадают, а «не берём» — остаётся зачёркнутым', async () => {
     mocks.listTripGear.mockResolvedValue(
       tripGearList([
         tripGearItem({
@@ -427,8 +436,42 @@ describe('секция «Готовка»', () => {
 
     const wrapper = await mounted()
 
-    expect(wrapper.find('[data-test="route-cooking-items-stove"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="route-cooking-empty-stove"]').exists()).toBe(true)
+    /**
+     * 06.11.2026: «отображение неодобренных вещей как в Снаряжении» —
+     * отказанная вещь не исчезает из своей группы, а стоит зачёркнутой.
+     */
+    const stove = wrapper.get('[data-test="route-cooking-items-stove"]')
+    expect(stove.text()).toContain('Горелка (Олег)')
+    expect(stove.get('[data-test="route-cooking-item"]').classes()).toContain('line-through')
+  })
+
+  it('пилюля открывает карточку вещи, организатор меняет статус', async () => {
+    const item = tripGearItem({
+      id: 'g1',
+      typeCode: 'axe',
+      typeName: 'Топор',
+      title: 'Топор Fiskars X7',
+      ownerUserId: ME,
+      status: 'proposed',
+    })
+    mocks.listTripGear.mockResolvedValue(tripGearList([item]))
+    mocks.updateTripGear.mockResolvedValue({ ...item, status: 'declined' })
+
+    const wrapper = await mounted()
+    await wrapper.get('[data-test="route-cooking-item"]').trigger('click')
+
+    // Карточка — общая с вкладкой «Снаряжение»: характеристики и решение.
+    const dialog = wrapper.get('[data-test="gear-item-dialog"]')
+    expect(dialog.text()).toContain('Топор Fiskars X7')
+
+    await wrapper.get('[data-test="gear-item-status-declined"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.updateTripGear).toHaveBeenCalledWith('1', 'g1', { status: 'declined' })
+    // Статус сменился — пилюля в группе стала зачёркнутой.
+    expect(
+      wrapper.get('[data-test="route-cooking-item"]').classes(),
+    ).toContain('line-through')
   })
 
   it('кнопка цветная, пока вещи этого типа нет, и белая, когда она есть', async () => {

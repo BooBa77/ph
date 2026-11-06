@@ -6,12 +6,14 @@ import { ApiError } from '@/api/errors'
 import { listParticipants } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
 import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
+import TripGearItemCard from '@/components/gear/TripGearItemCard.vue'
 import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
 import {
   CAMPFIRE_TYPE_CODES,
   DISHES_TYPE_CODES,
   GEAR_TYPE_CODES,
   STOVE_TYPE_CODES,
+  TRIP_GEAR_STATUS_LABELS,
 } from '@/types/gear'
 import type {
   GearItem,
@@ -71,6 +73,11 @@ const props = defineProps<{
   stove: boolean
   /** Подпись «Запланированы N готовок на горелках» — её считает таблица ночей. */
   stoveHint?: string
+  /**
+   * Право вкладки «Снаряжение» (06.11.2026): пилюля открывает карточку,
+   * и «Берём / не берём» в ней доступно только с этим правом.
+   */
+  canEditGear?: boolean
 }>()
 
 const auth = useAuthStore()
@@ -249,10 +256,17 @@ function typeOrder(type: CookingType): number {
   return ALL_TYPES.findIndex((row) => row.code === type.code)
 }
 
-/** Вещи группы: по порядку типов, внутри типа — по названию. */
+/**
+ * Вещи группы: по порядку типов, внутри типа — по названию.
+ *
+ * **Отклонённые остаются в группе** (06.11.2026): заказчик просил
+ * «отображение неодобренных вещей как в Снаряжении» — «не берём» это
+ * отметка, а не удаление. Пилюля рисуется зачёркнутой, и организатор
+ * может вернуть вещь в карточке.
+ */
 function rowsOf(code: CookingGroupView['code']): CookingRow[] {
   return items.value
-    .filter((item) => item.status !== 'declined' && groupOf(item) === code)
+    .filter((item) => groupOf(item) === code)
     .map((item) => ({ item, type: typeOf(item) }))
     .sort(
       (left, right) =>
@@ -394,9 +408,49 @@ function removeHint(): string {
   return 'Убрать из похода'
 }
 
-/** Пилюля предложенной вещи — жёлтая, как в макете заказчика. */
-function pillClass(): string {
+/**
+ * Оформление пилюли по статусу — как в «Берём» (06.11.2026): утверждённое
+ * сплошное, предложенное пунктиром и курсивом, отклонённое зачёркнуто.
+ * Слова статуса остаются в `title`: цвет без подписи не читается.
+ */
+function pillClass(row: CookingRow): string {
+  if (row.item.status === 'declined') {
+    return 'border-border bg-field text-muted line-through'
+  }
+  if (row.item.status === 'proposed') {
+    return 'border-dashed border-amber-400 bg-white italic text-amber-800'
+  }
+
   return 'border-amber-300 bg-amber-100 text-amber-900'
+}
+
+// ───────────────────────────── карточка вещи ─────────────────────────────
+
+/**
+ * Пилюля открывает карточку вещи (06.11.2026): характеристики и, кому
+ * можно, выбор «Берём / не берём». Заказчик: «в Ночёвках на пилюлях
+ * снаряжения также нужна модалка с характеристиками».
+ *
+ * Храним id, а не объект: после `PATCH` список заменяется, и карточка
+ * обязана показать свежую вещь.
+ */
+const openedGearId = ref<string | null>(null)
+
+const openedGear = computed(
+  () => items.value.find((item) => item.id === openedGearId.value) ?? null,
+)
+
+function openGearPill(item: { id: string }): void {
+  openedGearId.value = item.id
+}
+
+function closeGearPill(): void {
+  openedGearId.value = null
+}
+
+/** Статус сменили в карточке: заменяем строку в своём списке. */
+function applyGearUpdate(updated: TripGearItem): void {
+  items.value = items.value.map((item) => (item.id === updated.id ? updated : item))
 }
 
 // ───────────────────────────── загрузка ─────────────────────────────
@@ -683,17 +737,24 @@ function onManualCreated(item: TripGearItem): void {
             <span
               v-for="row in group.rows"
               :key="row.item.id"
-              class="flex items-center gap-1 rounded-full border px-2 py-1 text-sm"
-              :class="pillClass()"
-              :title="row.item.title"
+              class="flex cursor-pointer items-center gap-1 rounded-full border px-2 py-1 text-sm transition-colors hover:border-amber-500"
+              :class="pillClass(row)"
+              :title="`${row.item.title} · ${TRIP_GEAR_STATUS_LABELS[row.item.status]}`"
+              role="button"
+              tabindex="0"
+              :aria-label="`${row.item.title}. Открыть карточку вещи`"
               data-test="route-cooking-item"
+              @click="openGearPill(row.item)"
+              @keydown.enter.prevent="openGearPill(row.item)"
+              @keydown.space.prevent="openGearPill(row.item)"
             >
               <span>{{ pillText(row) }}</span>
 
               <!--
                 Крестик убирает вещь из похода настоящим DELETE: владелец
                 свою, организатор любую (права проверяет сервер). Чужому
-                участнику крестика нет.
+                участнику крестика нет. `stop` не даёт крестику заодно
+                открыть карточку.
               -->
               <button
                 v-if="canRemove(row.item)"
@@ -702,7 +763,7 @@ function onManualCreated(item: TripGearItem): void {
                 class="cursor-pointer border-0 bg-transparent p-0 text-amber-700 transition-colors hover:text-amber-900 disabled:cursor-not-allowed disabled:opacity-40"
                 :title="removeHint()"
                 :data-test="`route-cooking-remove-${row.item.id}`"
-                @click="removeItem(row)"
+                @click.stop="removeItem(row)"
               >
                 ×
               </button>
@@ -853,6 +914,22 @@ function onManualCreated(item: TripGearItem): void {
       :owner-options="manualOwnerOptions"
       @created="onManualCreated"
       @close="cancelManual"
+    />
+
+    <!--
+      Карточка пилюли (06.11.2026): характеристики, владелец, статус.
+      Право на «Берём / не берём» — вкладка «Снаряжение», а не «Ночёвки».
+    -->
+    <TripGearItemCard
+      :trip-id="trip.id"
+      :item="openedGear"
+      :can-decide="canEditGear === true"
+      :owner-name="openedGear ? nameOf(openedGear.ownerUserId) : ''"
+      :assignee-name="
+        openedGear?.assignedUserId ? nameOf(openedGear.assignedUserId) : null
+      "
+      @updated="applyGearUpdate"
+      @close="closeGearPill"
     />
   </section>
 </template>

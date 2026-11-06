@@ -246,6 +246,21 @@ export class TripGearSectionDto {
   @ApiProperty({ description: 'Название раздела', example: 'Альпинизм' })
   title: string;
 
+  /**
+   * Код шаблона (06.11.2026): `camp`, `bikes`, `water`, `tent_inside`,
+   * `clothes`, `gear`. `null` — раздел заведён руками.
+   *
+   * Экрану он нужен, чтобы найти раздел, переживший переименование:
+   * «в палатку» наполняется вещами из «Ночёвок» автоматически, и имя
+   * этого раздела человек вправе поменять.
+   */
+  @ApiProperty({
+    description: 'Код шаблона раздела. null — раздел заведён вручную',
+    nullable: true,
+    example: 'tent_inside',
+  })
+  templateCode: string | null;
+
   @ApiProperty({ description: 'Порядок среди соседей', example: 10 })
   sortOrder: number;
 
@@ -256,9 +271,46 @@ export class TripGearSectionDto {
       ownerUserId: row.ownerUserId,
       parentId: row.parentId,
       title: row.title,
+      templateCode: row.templateCode,
       sortOrder: row.sortOrder,
     };
   }
+}
+
+/**
+ * Личная вещь смотрящего из секции «Спальник» «Ночёвок» (06.11.2026).
+ *
+ * Живёт в своей таблице `trip_route_sleeping`, а не в `trip_gear`: снаряжение
+ * похода собирают, а личные вещи каждый приносит сам. В «Снаряжение» эти
+ * строки приходят только для **чтения**: раздел «в палатку» показывает, что
+ * человек уже положил себе в ночёвку, и не заводит вторую копию вещи.
+ *
+ * Название и вес — из каталога: спальник взвешивают один раз, и в ночёвке
+ * он весит столько же. Тип нужен пилюле («Спальник», «Коврик»); владельца
+ * нет — это та же личная секция, чужих строк сервер не отдаёт.
+ */
+export class TripGearSleepingDto {
+  @ApiProperty({ description: 'Id строки ночёвки', example: '17' })
+  id: string;
+
+  @ApiProperty({ description: 'Id предмета каталога', example: '5' })
+  gearItemId: string;
+
+  @ApiProperty({ description: 'Код типа', example: 'sleeping_bag' })
+  typeCode: string;
+
+  @ApiProperty({ description: 'Название типа', example: 'Спальник' })
+  typeName: string;
+
+  @ApiProperty({ description: 'Название вещи', example: 'Спальник зимний' })
+  title: string;
+
+  @ApiProperty({
+    description: 'Вес в граммах. null — не указан',
+    example: 1200,
+    nullable: true,
+  })
+  weightGrams: number | null;
 }
 
 /**
@@ -293,6 +345,20 @@ export class TripGearListDto {
     example: 2,
   })
   itemsWithoutWeight: number;
+
+  /**
+   * Личные вещи смотрящего из «Ночёвок» (06.11.2026).
+   *
+   * Раздел «в палатку» в «Взял» показывает их автоматически: заказчик
+   * объяснил, что личные вещи — это то, что помимо общественного, и
+   * «Спальник» из ночёвок уже личный. Копий в `trip_gear` не заводим:
+   * одна вещь живёт в одной таблице, иначе вес задвоится.
+   */
+  @ApiProperty({
+    description: 'Мои личные вещи из «Ночёвок» — раздел «в палатку»',
+    type: [TripGearSleepingDto],
+  })
+  sleeping: TripGearSleepingDto[];
 }
 
 /**
