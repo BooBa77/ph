@@ -8,6 +8,7 @@ import { getPublicUser, type PublicUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
+import TripFirstAid from '@/views/trips/TripFirstAid.vue'
 import TripGear from '@/views/trips/TripGear.vue'
 import TripMeals from '@/views/trips/TripMeals.vue'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
@@ -89,7 +90,15 @@ const organizer = ref<PublicUser | null>(null)
  * переименовал вкладку и попросил её активировать, таблица ночёвок —
  * следующий шаг.
  */
-const IMPLEMENTED: TripTabCode[] = ['guest', 'members', 'meals', 'transfer', 'route', 'gear']
+const IMPLEMENTED: TripTabCode[] = [
+  'guest',
+  'members',
+  'meals',
+  'transfer',
+  'route',
+  'gear',
+  'firstAid',
+]
 
 const permissions = ref<TripTabPermission[]>([])
 const activeTab = ref<TripTabCode>('guest')
@@ -389,10 +398,12 @@ async function toggleRecruitment() {
 
       <TripGear v-else-if="activeTab === 'gear'" :trip="trip" :can-edit="canEditGear" />
 
+      <TripFirstAid v-else-if="activeTab === 'firstAid'" :trip="trip" />
+
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» ещё не готова:
-        сейчас работают «Гостевая», «Участники», «Ночёвки», «Питание», «Трансфер»
-        и «Снаряжение».
+        сейчас работают «Гостевая», «Участники», «Ночёвки», «Питание», «Трансфер»,
+        «Снаряжение» и «Аптечка».
       </p>
 
       <!--

@@ -1,6 +1,7 @@
 import { apiFetch } from '@/api/client'
 import type {
   Checklist,
+  ChecklistArea,
   RecommendationMark,
   TripChecklists,
 } from '@/types/checklists'
@@ -29,10 +30,11 @@ export async function listTripChecklists(tripId: string): Promise<TripChecklists
 export async function createTripChecklist(
   tripId: string,
   scope: 'trip' | 'personal' | 'recommendation',
+  area: ChecklistArea = 'gear',
 ): Promise<Checklist> {
   return apiFetch<Checklist>(`/trips/${tripId}/checklists`, {
     method: 'POST',
-    body: JSON.stringify({ scope }),
+    body: JSON.stringify({ scope, area }),
   })
 }
 
@@ -47,6 +49,7 @@ export async function importChecklistItems(
   tripId: string,
   body: {
     scope: 'trip' | 'personal' | 'recommendation'
+    area?: ChecklistArea
     itemIds: number[]
   },
 ): Promise<Checklist> {

@@ -14,6 +14,17 @@ export const CHECKLIST_SCOPES = [
 ] as const
 export type ChecklistScope = (typeof CHECKLIST_SCOPES)[number]
 
+/**
+ * Вкладка похода, которой принадлежит список (09.11.2026).
+ *
+ * `gear` — «Снаряжение» и шаблоны профиля, `first_aid` — «Аптечка».
+ * Уникальность списков считается парой «область + поход», поэтому общий
+ * список снаряжения и общественная аптечка живут рядом, не мешая друг другу.
+ */
+export const CHECKLIST_AREAS = ['gear', 'first_aid'] as const
+
+export type ChecklistArea = (typeof CHECKLIST_AREAS)[number]
+
 /** Пункт списка: текст, отметка и её автор. */
 export interface ChecklistItem {
   id: string
@@ -62,8 +73,18 @@ export interface ChecklistItemGear {
 export interface Checklist {
   id: string
   scope: ChecklistScope
+  /** Вкладка похода: `gear` или `first_aid` (09.11.2026). */
+  area?: ChecklistArea
   /** Заголовок. У списков похода обычно пустой. */
   title: string
+  /**
+   * Вес готовой аптечки в граммах. `null` — не взвешена.
+   *
+   * Поле имеет смысл только у области `first_aid`: в «Снаряжении» вес
+   * считают вещи. Ноль в нём не встречается — «неизвестно» это `null`.
+   * Необязательное — старые сохранённые ответы и моки без поля.
+   */
+  weightGrams?: number | null
   tripId: string | null
   ownerUserId: string | null
   items: ChecklistItem[]

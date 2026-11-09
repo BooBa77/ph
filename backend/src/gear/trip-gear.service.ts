@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DataSource, EntityManager, IsNull } from 'typeorm';
 
+import { Checklist } from '../checklists/entities/checklist.entity';
 import { TripParticipant } from '../trips/entities/trip-participant.entity';
 import { TripMealPackage } from '../trips/entities/trip-meal-package.entity';
 import { Trip } from '../trips/entities/trip.entity';
@@ -313,6 +314,13 @@ export class TripGearService {
           loadUnitKey(unit.kind, unit.id),
         );
         if (!carrier) continue;
+
+        /**
+         * Аптечка не хранится: её место у доктора и так, а писать
+         * `trip_gear.assigned_user_id` некуда — строки нет. Поэтому
+         * в сохранение она не попадает, но в ответе остаётся у доктора.
+         */
+        if (unit.kind === 'firstAid') continue;
 
         const bucket =
           unit.kind === 'gear' ? gearByUser : packagesByUser;
@@ -750,6 +758,20 @@ export class TripGearService {
       relations: { gearType: true, attributes: { gearTypeAttribute: true } },
     });
     if (!item) throw new NotFoundException('Предмет не найден');
+
+    /**
+     * Одна вещь не может быть одновременно общественной и личной
+     * (09.11.2026): в раскладке и в рюкзаке она весила бы дважды.
+     * Используется и «Готовкой» для личной посуды («КЛМН»).
+     */
+    const shared = await manager.findOne(TripGear, {
+      where: { tripId: trip.id, gearItemId: item.id },
+    });
+    if (shared) {
+      throw new ConflictException(
+        'Эта вещь уже в общественном снаряжении похода — личной она быть не может',
+      );
+    }
 
     const sectionId = await this.resolvePersonalSection(
       manager,
@@ -1216,6 +1238,37 @@ export class TripGearService {
       stored.set(key, pack.assignedUserId);
     }
 
+    /**
+     * Общественная аптечка (09.11.2026). Это не строка `trip_gear`:
+     * у неё нет вещи каталога, есть только список и итоговый вес в
+     * `checklists`. В раскладку она входит, чтобы попасть в рюкзак
+     * доктора и в его долю, — но назначение не хранится: место аптечки
+     * одно и решается правилом, а не перетаскиванием.
+     *
+     * Без доктора единицы нет вовсе: по заказчику общественная секция
+     * «Аптечки» появляется только когда доктор назначен, и везти её
+     * некому. Вес `null` — «не взвесили»: идём нулём, экран цифру
+     * не рисует.
+     */
+    if (doctorUserId !== null) {
+      const firstAid = await manager.findOne(Checklist, {
+        where: { tripId: trip.id, scope: 'trip', area: 'first_aid' },
+      });
+
+      if (firstAid) {
+        const key = loadUnitKey('firstAid', 'public');
+        units.push({
+          kind: 'firstAid',
+          id: 'public',
+          weightGrams: firstAid.weightGrams ?? 0,
+          ownerUserId: null,
+          isFirstAid: true,
+          weightKnown: firstAid.weightGrams !== null,
+        });
+        titles.set(key, 'Общественная аптечка');
+      }
+    }
+
     return {
       people,
       units,
@@ -1268,12 +1321,23 @@ export class TripGearService {
 
     for (const unit of data.units) {
       const key = loadUnitKey(unit.kind, unit.id);
-      const assignedUserId = data.stored.get(key) ?? null;
+      /**
+       * У общественной аптечки назначение не хранится: её место —
+       * у доктора, и его считает `allocateLoad` каждый раз. У вещей
+       * и пакетов наоборот: в базе лежит решение человека, а расчёт
+       * только предлагает — показывать предложенное как назначенное
+       * значило бы врать о состоянии похода.
+       */
+      const assignedUserId =
+        unit.kind === 'firstAid'
+          ? (allocation.assignments.get(key) ?? null)
+          : (data.stored.get(key) ?? null);
       const dto: TripGearLoadUnitDto = {
         kind: unit.kind,
         id: unit.id,
         title: data.titles.get(key) ?? '',
         weightGrams: unit.weightGrams,
+        weightKnown: unit.weightKnown !== false,
         assignedUserId,
       };
 
@@ -1294,12 +1358,14 @@ export class TripGearService {
         continue;
       }
 
-      if (unit.kind === 'gear') {
-        backpack.gear.push(dto);
-        backpack.gearWeightGrams += unit.weightGrams;
-      } else {
+      if (unit.kind === 'package') {
         backpack.packages.push(dto);
         backpack.packagesWeightGrams += unit.weightGrams;
+      } else {
+        // Вещи и общественная аптечка — в «снаряжение» рюкзака: аптечка
+        // не еда, и отдельная корзина ради одной строки не нужна.
+        backpack.gear.push(dto);
+        backpack.gearWeightGrams += unit.weightGrams;
       }
     }
 
@@ -1344,6 +1410,19 @@ export class TripGearService {
       order: { id: 'ASC' },
     });
     const sleeping = await this.sleepingRows(manager, trip.id, viewerId);
+    /**
+     * Личная аптечка (09.11.2026). Заказчик: «Личную аптечку как „Мои
+     * продукты“ отображаем в Личном рюкзаке». Вес берём из списка аптечки;
+     * `null` — не взвешена: строка остаётся, цифры нет, в сумму идёт 0.
+     */
+    const firstAid = await manager.findOne(Checklist, {
+      where: {
+        tripId: trip.id,
+        scope: 'personal',
+        area: 'first_aid',
+        ownerUserId: viewerId,
+      },
+    });
     const personalLoad = await this.tripMeals.listPersonalPackagesForLoad(
       trip.id,
       viewerId,
@@ -1362,6 +1441,16 @@ export class TripGearService {
         title: row.title,
         weightGrams: row.weightGrams,
       })),
+      ...(firstAid
+        ? [
+            {
+              kind: 'firstAid' as const,
+              id: firstAid.id,
+              title: 'Личная аптечка',
+              weightGrams: firstAid.weightGrams,
+            },
+          ]
+        : []),
     ];
 
     const packageDtos: TripGearLoadPersonalPackageDto[] =

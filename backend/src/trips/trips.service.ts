@@ -274,6 +274,7 @@ export class TripsService {
               { kind: 'trip_transfer', tripId: trip.id },
               { kind: 'trip_route', tripId: trip.id },
               { kind: 'trip_gear', tripId: trip.id },
+              { kind: 'trip_first_aid', tripId: trip.id },
             ],
       );
 
@@ -564,6 +565,7 @@ export class TripsService {
       'trip_transfer',
       'trip_route',
       'trip_gear',
+      'trip_first_aid',
     ] as const) {
       const hasChat = await manager.exists(Conversation, {
         where: { tripId: trip.id, kind },

@@ -37,6 +37,7 @@ export const GEAR_TYPE_CODES = {
   kettle: 'kettle',
   ladle: 'ladle',
   knife: 'knife',
+  klmn: 'klmn',
 } as const
 
 /** «Палатки»: палатка и тент — оба дают место для ночлега. */
@@ -72,6 +73,15 @@ export const DISHES_TYPE_CODES: readonly string[] = [
   GEAR_TYPE_CODES.ladle,
   GEAR_TYPE_CODES.knife,
 ]
+
+/**
+ * «КЛМН» — личная посуда участника (09.11.2026).
+ *
+ * Кружка-ложка-миска-нож: у каждого своя, поэтому кнопка «Взять личную
+ * посуду» кладёт вещь в личные вещи («Взял»), а не в снаряжение похода.
+ * Код — тот же контракт, что `KLMN_TYPE_CODE` в бэкенде.
+ */
+export const KLMN_TYPE_CODE = GEAR_TYPE_CODES.klmn
 
 /**
  * Личные вещи ночёвки: спальник и коврик (01.11.2026).
@@ -415,10 +425,17 @@ export interface TripGearList {
  * пакет еды. `id` — строкой, как везде в API походов (`bigint`).
  */
 export interface TripGearLoadUnit {
-  kind: 'gear' | 'package'
+  kind: 'gear' | 'package' | 'firstAid'
   id: string
   title: string
   weightGrams: number
+  /**
+   * Вес известен (09.11.2026). У общественной аптечки без веса `false`:
+   * в расчёт она идёт нулём, но на экране цифры нет, чтобы «0 г»
+   * не читался как пустая аптечка. Необязательное — старые моки и ответы
+   * без поля считаются взвешенными.
+   */
+  weightKnown?: boolean
   assignedUserId: string | null
 }
 
@@ -441,7 +458,7 @@ export interface TripGearLoadBackpack {
  * оставлен, чтобы подпись могла сказать, откуда вещь.
  */
 export interface TripGearLoadPersonalUnit {
-  kind: 'personal' | 'sleeping'
+  kind: 'personal' | 'sleeping' | 'firstAid'
   id: string
   title: string
   weightGrams: number | null

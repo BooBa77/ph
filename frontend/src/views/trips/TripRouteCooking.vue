@@ -1,7 +1,14 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
-import { listGear, listTripGear, proposeTripGear, removeTripGear } from '@/api/gear'
+import {
+  addPersonalTripGear,
+  listGear,
+  listTripGear,
+  proposeTripGear,
+  removePersonalTripGear,
+  removeTripGear,
+} from '@/api/gear'
 import { ApiError } from '@/api/errors'
 import { listParticipants } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
@@ -12,6 +19,7 @@ import {
   CAMPFIRE_TYPE_CODES,
   DISHES_TYPE_CODES,
   GEAR_TYPE_CODES,
+  KLMN_TYPE_CODE,
   STOVE_TYPE_CODES,
   TRIP_GEAR_STATUS_LABELS,
 } from '@/types/gear'
@@ -208,8 +216,25 @@ const WHITE_BUTTON =
 const EXTRA_BUTTON =
   'cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-red-600'
 
+/**
+ * Личная посуда — синяя кнопка (09.11.2026).
+ *
+ * Заказчик: «добавь в секции Готовка/Посуда синюю кнопку „Взять личную
+ * посуду“». Синий в проекте — цвет личного: «Личное снаряжение», «Спальник»,
+ * «Моя еда». Красный здесь был бы цветом общественной «Готовки» и соврал бы
+ * о том, чья это вещь.
+ */
+const PERSONAL_DISHES_BUTTON =
+  'cursor-pointer rounded-xl border border-blue-600 bg-blue-600 px-3 py-1.5 text-sm text-white transition-colors hover:opacity-90'
+
 /** Вещи похода и состав: имя хозяина берём из состава, как в «Палатках». */
 const items = ref<TripGearItem[]>([])
+/**
+ * Моя личная посуда («КЛМН», 09.11.2026). Живёт в `trip_personal_gear`,
+ * а не в снаряжении похода: `GET /gear` отдаёт её отдельным массивом
+ * `personalItems`, и второй правды здесь не заводим.
+ */
+const personalDishes = ref<TripGearItem[]>([])
 const people = ref<TripParticipant[]>([])
 
 const isLoading = ref(true)
@@ -473,6 +498,9 @@ async function load(): Promise<void> {
 
     people.value = members
     items.value = list.items
+    personalDishes.value = (list.personalItems ?? []).filter(
+      (row) => row.typeCode === KLMN_TYPE_CODE,
+    )
   } catch (problem) {
     error.value =
       problem instanceof ApiError ? problem.message : 'Не удалось загрузить снаряжение для готовки'
@@ -676,6 +704,120 @@ function onManualCreated(item: TripGearItem): void {
   items.value = [...items.value, item]
   finishManual()
 }
+
+// ───────────────────────── «взять личную посуду» ─────────────────────────
+
+/**
+ * Личная посуда (09.11.2026). Заказчик: «По кнопке выбор снаряжения типа
+ * „КЛМН“… Снаряжение личное, обрабатывается как спальник».
+ *
+ * «Как спальник» здесь значит: вещь лежит в личной таблице (`trip_personal_gear`),
+ * в снаряжение похода и в «Распределение» не попадает, а в «Взял» и в личном
+ * рюкзаке появляется как своё. Отдельной секции «Посуда» в «Взял» нет —
+ * вещь встаёт в корень, как любая личная без раздела.
+ */
+const isDishDialogOpen = ref(false)
+const isDishCatalogLoading = ref(false)
+const isDishSaving = ref(false)
+const dishError = ref<string | null>(null)
+const dishCatalog = ref<GearItem[]>([])
+const dishDraftId = ref('')
+const isDishManualOpen = ref(false)
+const removingDishId = ref<string | null>(null)
+
+async function openDishDialog(): Promise<void> {
+  isDishDialogOpen.value = true
+  dishError.value = null
+  dishDraftId.value = ''
+  isDishCatalogLoading.value = true
+
+  try {
+    const list = await listGear()
+    // Уже взятое — и в личных вещах, и в снаряжении похода: одна вещь
+    // не должна весить дважды (в личном рюкзаке и в общем).
+    const taken = new Set([
+      ...personalDishes.value.map((row) => row.gearItemId),
+      ...items.value.map((row) => row.gearItemId),
+    ])
+    dishCatalog.value = list.items.filter(
+      (item) => item.typeCode === KLMN_TYPE_CODE && !taken.has(item.id),
+    )
+  } catch (problem) {
+    dishError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось загрузить снаряжение'
+  } finally {
+    isDishCatalogLoading.value = false
+  }
+}
+
+/** Положить уже существующую вещь типа «КЛМН» в свои личные вещи. */
+async function addExistingDish(): Promise<void> {
+  if (isDishSaving.value || dishDraftId.value === '') return
+
+  isDishSaving.value = true
+  dishError.value = null
+
+  try {
+    const created = await addPersonalTripGear(props.trip.id, {
+      gearItemId: dishDraftId.value,
+    })
+    personalDishes.value = [...personalDishes.value, created]
+    isDishDialogOpen.value = false
+  } catch (problem) {
+    dishError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось взять личную посуду'
+  } finally {
+    isDishSaving.value = false
+  }
+}
+
+/** Новой вещи нет в каталоге — заводим её там и сразу берём в поход. */
+function openDishManual(): void {
+  isDishManualOpen.value = true
+}
+
+async function onDishManualCreated(item: GearItem): Promise<void> {
+  isDishManualOpen.value = false
+  isDishSaving.value = true
+  dishError.value = null
+
+  try {
+    const created = await addPersonalTripGear(props.trip.id, {
+      gearItemId: item.id,
+    })
+    personalDishes.value = [...personalDishes.value, created]
+    isDishDialogOpen.value = false
+  } catch (problem) {
+    dishError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось взять личную посуду'
+  } finally {
+    isDishSaving.value = false
+  }
+}
+
+async function removeDish(row: TripGearItem): Promise<void> {
+  if (removingDishId.value !== null) return
+
+  removingDishId.value = row.id
+  dishError.value = null
+
+  try {
+    await removePersonalTripGear(props.trip.id, row.id)
+    personalDishes.value = personalDishes.value.filter((item) => item.id !== row.id)
+  } catch (problem) {
+    dishError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось убрать личную посуду'
+  } finally {
+    removingDishId.value = null
+  }
+}
+
+/** Пилюля личной вещи: «КЛМН - 120 гр.». Веса нет — только название. */
+function dishText(row: TripGearItem): string {
+  const weight = weightInGrams(row.weightGrams)
+
+  return weight === null ? row.title : `${row.title} - ${weight}`
+}
 </script>
 
 <template>
@@ -703,6 +845,14 @@ function onManualCreated(item: TripGearItem): void {
         data-test="route-cooking-extra-error"
       >
         {{ extraError }}
+      </p>
+
+      <p
+        v-if="dishError"
+        class="text-sm text-red-600"
+        data-test="route-cooking-dish-error"
+      >
+        {{ dishError }}
       </p>
 
       <!--
@@ -733,6 +883,38 @@ function onManualCreated(item: TripGearItem): void {
             >
               {{ groupHint(group.code) }}
             </p>
+          </div>
+
+          <!--
+            Личная посуда («КЛМН», 09.11.2026): синие пилюли, как «Спальник»
+            и «Личное снаряжение». Вещь своя, поэтому и крестик убирает её
+            только у себя — из личных вещей похода, каталог остаётся.
+          -->
+          <div
+            v-if="group.code === 'dishes' && personalDishes.length > 0"
+            class="flex flex-wrap items-center gap-2"
+            data-test="route-cooking-personal-dishes"
+          >
+            <span
+              v-for="row in personalDishes"
+              :key="row.id"
+              class="flex items-center gap-1 rounded-full border border-blue-300 bg-blue-50 px-2 py-1 text-sm text-blue-900"
+              :title="row.title"
+              data-test="route-cooking-personal-dish"
+            >
+              <span>{{ dishText(row) }}</span>
+
+              <button
+                type="button"
+                :disabled="removingDishId !== null"
+                class="cursor-pointer border-0 bg-transparent p-0 text-blue-700 transition-colors hover:text-blue-900 disabled:cursor-not-allowed disabled:opacity-40"
+                title="Убрать из личных вещей"
+                :data-test="`route-cooking-remove-dish-${row.id}`"
+                @click.stop="removeDish(row)"
+              >
+                ×
+              </button>
+            </span>
           </div>
 
           <div
@@ -777,7 +959,10 @@ function onManualCreated(item: TripGearItem): void {
           </div>
 
           <p
-            v-else
+            v-else-if="
+              group.rows.length === 0 &&
+              !(group.code === 'dishes' && personalDishes.length > 0)
+            "
             class="text-sm text-muted"
             :data-test="`route-cooking-empty-${group.code}`"
           >
@@ -799,6 +984,21 @@ function onManualCreated(item: TripGearItem): void {
               @click="openDialog(type)"
             >
               {{ type.button }}
+            </button>
+
+            <!--
+              Личная посуда — только в «Посуде» и всегда синяя (09.11.2026):
+              это не общественная вещь группы, а своя, и цвет говорит об этом
+              раньше подписи.
+            -->
+            <button
+              v-if="group.code === 'dishes'"
+              type="button"
+              :class="PERSONAL_DISHES_BUTTON"
+              data-test="route-cooking-personal-dishes-add"
+              @click="openDishDialog"
+            >
+              Взять личную посуду
             </button>
 
             <button
@@ -905,6 +1105,104 @@ function onManualCreated(item: TripGearItem): void {
       @pick="pickExtra"
       @manual="openExtraManual"
       @close="isExtraOpen = false"
+    />
+
+    <!--
+      «Взять личную посуду» (09.11.2026): выбор только типа «КЛМН».
+      Вещь личная — уходит в «Взял» и в личный рюкзак, а не в снаряжение
+      похода, поэтому здесь своя ручка сохранения, а не `proposeTripGear`.
+    -->
+    <div
+      v-if="isDishDialogOpen"
+      class="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/30 p-4"
+      data-test="route-cooking-dishes-dialog"
+    >
+      <div class="flex w-full max-w-md flex-col gap-2 rounded-xl border border-border bg-surface p-4">
+        <h3 class="text-base font-medium text-text">Взять личную посуду</h3>
+
+        <p class="text-xs text-muted">
+          Кружка, ложка, миска, нож — своя вещь. Она попадёт в «Взял»
+          и в личный рюкзак, а не в общественное снаряжение.
+        </p>
+
+        <p v-if="isDishCatalogLoading" class="text-sm text-muted" data-test="route-cooking-dishes-loading">
+          Загружаем снаряжение…
+        </p>
+
+        <template v-else>
+          <label class="flex flex-col gap-1 text-sm text-muted">
+            Своё снаряжение типа «КЛМН»
+            <select
+              v-model="dishDraftId"
+              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
+              data-test="route-cooking-dishes-gear"
+            >
+              <option value="">выберите…</option>
+              <option v-for="item in dishCatalog" :key="item.id" :value="item.id">
+                {{ gearOptionText(item) }}
+              </option>
+            </select>
+          </label>
+
+          <p
+            v-if="dishCatalog.length === 0"
+            class="text-xs text-muted"
+            data-test="route-cooking-dishes-no-gear"
+          >
+            Подходящей вещи в личном снаряжении нет — заведите её в профиле
+            или укажите вручную.
+          </p>
+
+          <button
+            type="button"
+            class="cursor-pointer self-start border-0 bg-transparent p-0 text-sm text-primary underline transition-opacity hover:opacity-80"
+            data-test="route-cooking-dishes-manual"
+            @click="openDishManual"
+          >
+            Указать вручную
+          </button>
+
+          <p v-if="dishError" class="text-sm text-red-600" data-test="route-cooking-dishes-error">
+            {{ dishError }}
+          </p>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-blue-600 bg-blue-600 px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+              :disabled="isDishSaving || dishDraftId === ''"
+              data-test="route-cooking-dishes-save"
+              @click="addExistingDish"
+            >
+              Взять
+            </button>
+
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary"
+              :disabled="isDishSaving"
+              data-test="route-cooking-dishes-cancel"
+              @click="isDishDialogOpen = false"
+            >
+              Отмена
+            </button>
+          </div>
+        </template>
+      </div>
+    </div>
+
+    <!--
+      Личная вещь заводится в каталоге, а не строкой похода: секция личная,
+      поэтому и `mode="personal"`, как у «Спальника».
+    -->
+    <TripGearManualModal
+      v-if="isDishManualOpen"
+      :trip-id="trip.id"
+      :type-codes="[KLMN_TYPE_CODE]"
+      :default-type-code="KLMN_TYPE_CODE"
+      mode="personal"
+      @created-personal="onDishManualCreated"
+      @close="isDishManualOpen = false"
     />
 
     <!--

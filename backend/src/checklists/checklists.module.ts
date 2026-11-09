@@ -9,6 +9,7 @@ import { ChecklistItem } from './entities/checklist-item.entity';
 import { ChecklistRecommendationMark } from './entities/checklist-recommendation-mark.entity';
 import { Checklist } from './entities/checklist.entity';
 import { TripChecklistsController } from './trip-checklists.controller';
+import { TripFirstAidController } from './trip-first-aid.controller';
 
 /**
  * Чек-листы — подсистема, общая для трёх вкладок похода (Снаряжение,
@@ -33,7 +34,11 @@ import { TripChecklistsController } from './trip-checklists.controller';
     ]),
     TripsModule,
   ],
-  controllers: [ChecklistsController, TripChecklistsController],
+  controllers: [
+    ChecklistsController,
+    TripChecklistsController,
+    TripFirstAidController,
+  ],
   providers: [ChecklistsService],
   exports: [ChecklistsService],
 })

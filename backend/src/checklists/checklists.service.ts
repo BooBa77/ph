@@ -18,7 +18,11 @@ import { TripParticipant } from '../trips/entities/trip-participant.entity';
 import type { Trip } from '../trips/entities/trip.entity';
 import { TripEventsService } from '../trips/trip-events.service';
 import { TripsService } from '../trips/trips.service';
-import type { TripChecklistScope } from './checklist.types';
+import type { ChecklistArea, TripChecklistScope } from './checklist.types';
+import {
+  CHECKLIST_AREA_TABS,
+  DEFAULT_CHECKLIST_AREA,
+} from './checklist.types';
 import {
   ChecklistDto,
   ChecklistItemDto,
@@ -26,10 +30,13 @@ import {
   CreateChecklistDto,
   CreateChecklistItemDto,
   CreateTripChecklistDto,
+  FirstAidSectionDto,
   ImportChecklistItemsDto,
   RecommendationMarkDto,
+  SetFirstAidWeightDto,
   SetRecommendationMarkDto,
   TripChecklistListDto,
+  TripFirstAidDto,
   UpdateChecklistDto,
   UpdateChecklistItemDto,
 } from './dto/checklist.dto';
@@ -141,9 +148,11 @@ export class ChecklistsService {
     const saved = await this.dataSource.manager.save(
       this.dataSource.manager.create(Checklist, {
         scope: 'template',
+        area: 'gear',
         ownerUserId: userId,
         tripId: null,
         title,
+        weightGrams: null,
       }),
     );
 
@@ -357,13 +366,18 @@ export class ChecklistsService {
     await this.trips.getVisibleTrip(userId, tripId);
 
     const shared = await manager.findOne(Checklist, {
-      where: { scope: 'trip', tripId: String(tripId) },
+      where: { scope: 'trip', area: 'gear', tripId: String(tripId) },
     });
     const personal = await manager.findOne(Checklist, {
-      where: { scope: 'personal', tripId: String(tripId), ownerUserId: userId },
+      where: {
+        scope: 'personal',
+        area: 'gear',
+        tripId: String(tripId),
+        ownerUserId: userId,
+      },
     });
     const recommendation = await manager.findOne(Checklist, {
-      where: { scope: 'recommendation', tripId: String(tripId) },
+      where: { scope: 'recommendation', area: 'gear', tripId: String(tripId) },
     });
 
     return {
@@ -401,11 +415,12 @@ export class ChecklistsService {
   ): Promise<ChecklistDto> {
     const manager = this.dataSource.manager;
     const trip = await this.trips.getVisibleTrip(userId, tripId);
+    const area = dto.area ?? DEFAULT_CHECKLIST_AREA;
 
-    await this.assertCanManageScope(manager, trip, dto.scope, userId);
+    await this.assertCanManageScope(manager, trip, dto.scope, userId, area);
 
     const target = await manager.findOne(Checklist, {
-      where: this.scopeWhere(String(trip.id), dto.scope, userId),
+      where: this.scopeWhere(String(trip.id), dto.scope, userId, area),
     });
     if (!target) {
       throw new NotFoundException('Сначала заведите список в этом походе');
@@ -541,6 +556,205 @@ export class ChecklistsService {
     return this.one(manager, checklist);
   }
 
+  // ───────────────────────── «Аптечка» (09.11.2026) ─────────────────────────
+
+  /**
+   * Состояние вкладки «Аптечка» глазами смотрящего (09.11.2026).
+   *
+   * Заказчик: «открываем закладку Аптечка… две секции — Общественная (если
+   * назначен Доктор) и Личная + чат по аптечке. В секциях по одному
+   * чек-листу». Поэтому ответ — ровно две секции:
+   *
+   * - **общественная** только когда в походе есть доктор: он и понесёт
+   *   аптечку в раскладке, и список без хозяина был бы списком ни за кем;
+   * - **личная** есть у каждого участника, как личный список «Снаряжения».
+   *
+   * Оба списка **заводятся при первом чтении** (`ensureFirstAidChecklist`):
+   * «в секциях по одному чек-листу» — это состояние по умолчанию, а не
+   * кнопка «создать». Повтор безопасен благодаря частичному уникальному
+   * индексу и `ON CONFLICT DO NOTHING`.
+   *
+   * Права: общественную правит вкладка `firstAid` (доктор, организатор),
+   * личную — её владелец. Вес хранится в самом списке.
+   */
+  async getFirstAid(userId: string, tripId: number): Promise<TripFirstAidDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+
+    const doctor = await this.findTripDoctor(manager, trip.id);
+    const canEdit = await this.trips.canEditTab(userId, trip, 'firstAid');
+
+    const personal = await this.ensureFirstAidChecklist(
+      manager,
+      trip.id,
+      'personal',
+      userId,
+    );
+    const shared = doctor
+      ? await this.ensureFirstAidChecklist(manager, trip.id, 'trip', null)
+      : null;
+
+    return {
+      doctorUserId: doctor?.userId ?? null,
+      doctorName: doctor?.displayName ?? null,
+      canEdit,
+      shared: shared
+        ? await this.firstAidSection(manager, shared, canEdit)
+        : null,
+      personal: await this.firstAidSection(manager, personal, true),
+      chatKind: 'trip_first_aid',
+    };
+  }
+
+  /**
+   * Вес готовой аптечки — `PATCH /api/trips/:id/first-aid/weight`.
+   *
+   * Заказчик: «Итогом каждой секции поле для ввода веса получившейся
+   * аптечки» и «если вес не известен, то в расчётах считай за 0, и не
+   * отображай вес вообще». Поэтому `null` — законное значение: это «не
+   * взвесили», а не ноль. В раскладке такая аптечка весит 0 и цифры
+   * не показывает.
+   *
+   * Возвращается состояние вкладки целиком: экран после сохранения веса
+   * не собирает его из двух ответов и не может показать половинку.
+   */
+  async setFirstAidWeight(
+    userId: string,
+    tripId: number,
+    dto: SetFirstAidWeightDto,
+  ): Promise<TripFirstAidDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+
+    if (dto.scope === 'shared') {
+      if (!(await this.trips.canEditTab(userId, trip, 'firstAid'))) {
+        throw new ForbiddenException(
+          'Общественную аптечку правит тот, кому доступна вкладка «Аптечка»',
+        );
+      }
+
+      const doctor = await this.findTripDoctor(manager, trip.id);
+      if (!doctor) {
+        throw new BadRequestException(
+          'Общественная аптечка появляется, когда в походе назначен доктор',
+        );
+      }
+
+      const checklist = await this.ensureFirstAidChecklist(
+        manager,
+        trip.id,
+        'trip',
+        null,
+      );
+      checklist.weightGrams = dto.weightGrams ?? null;
+      await manager.save(checklist);
+    } else {
+      await this.assertParticipant(manager, trip.id, userId);
+
+      const checklist = await this.ensureFirstAidChecklist(
+        manager,
+        trip.id,
+        'personal',
+        userId,
+      );
+      checklist.weightGrams = dto.weightGrams ?? null;
+      await manager.save(checklist);
+    }
+
+    return this.getFirstAid(userId, tripId);
+  }
+
+  /**
+   * Список аптечки заводится при первом чтении вкладки.
+   *
+   * `ON CONFLICT DO NOTHING` + повторное чтение, а не «проверить и вставить»:
+   * два участника могут открыть вкладку одновременно, и второй не должен
+   * получить 500 из-за гонки. Возвращается уже существующая строка — своя
+   * или только что созданная.
+   */
+  private async ensureFirstAidChecklist(
+    manager: EntityManager,
+    tripId: string,
+    scope: 'trip' | 'personal',
+    ownerUserId: string | null,
+  ): Promise<Checklist> {
+    await manager
+      .createQueryBuilder()
+      .insert()
+      .into(Checklist)
+      .values({
+        scope,
+        area: 'first_aid',
+        tripId,
+        ownerUserId,
+        title: '',
+      })
+      .orIgnore()
+      .execute();
+
+    const where =
+      scope === 'personal'
+        ? {
+            scope,
+            area: 'first_aid' as const,
+            tripId,
+            ownerUserId: ownerUserId ?? '',
+          }
+        : { scope, area: 'first_aid' as const, tripId };
+    const checklist = await manager.findOne(Checklist, { where });
+    if (!checklist) {
+      throw new ConflictException('Чек-лист аптечки не удалось завести');
+    }
+
+    return checklist;
+  }
+
+  /** Секция «Аптечки»: список целиком и его вес. */
+  private async firstAidSection(
+    manager: EntityManager,
+    checklist: Checklist,
+    canEdit: boolean,
+  ): Promise<FirstAidSectionDto> {
+    return {
+      checklist: await this.one(manager, checklist),
+      weightGrams: checklist.weightGrams,
+      canEdit,
+    };
+  }
+
+  /**
+   * Доктор похода — первый по порядку состава (09.11.2026).
+   *
+   * То же правило, что у раскладки груза: аптечка одна, и едет она доктору.
+   * Если докторов несколько, общественную аптечку правит и несёт первый —
+   * «если их несколько, то любому» (слова заказчика). Роль, а не участие:
+   * код `doctor` из справочника `seed-roles`.
+   */
+  private async findTripDoctor(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<{ userId: string; displayName: string } | null> {
+    const rows: Array<{ user_id: string; display_name: string }> =
+      await manager.query(
+        `SELECT p."user_id", u."display_name"
+           FROM "trip_participants" p
+           JOIN "trip_participant_roles" r
+             ON r."trip_id" = p."trip_id" AND r."user_id" = p."user_id"
+           JOIN "roles" ro ON ro."id" = r."role_id"
+           JOIN "users" u ON u."id" = p."user_id"
+          WHERE p."trip_id" = $1
+            AND p."status" = 'going'
+            AND ro."code" = 'doctor'
+          ORDER BY p."created_at" ASC, p."user_id" ASC
+          LIMIT 1`,
+        [tripId],
+      );
+
+    const row = rows[0];
+    return row ? { userId: row.user_id, displayName: row.display_name } : null;
+  }
+
   /**
    * Завести список в походе.
    *
@@ -559,11 +773,12 @@ export class ChecklistsService {
   ): Promise<ChecklistDto> {
     const manager = this.dataSource.manager;
     const trip = await this.trips.getVisibleTrip(userId, tripId);
+    const area = dto.area ?? DEFAULT_CHECKLIST_AREA;
 
-    await this.assertCanManageScope(manager, trip, dto.scope, userId);
+    await this.assertCanManageScope(manager, trip, dto.scope, userId, area);
 
     const existing = await manager.findOne(Checklist, {
-      where: this.scopeWhere(String(trip.id), dto.scope, userId),
+      where: this.scopeWhere(String(trip.id), dto.scope, userId, area),
     });
     if (existing) {
       throw new ConflictException(this.duplicateMessage(dto.scope));
@@ -597,6 +812,7 @@ export class ChecklistsService {
       const checklist = await tx.save(
         tx.create(Checklist, {
           scope: dto.scope,
+          area,
           ownerUserId: dto.scope === 'personal' ? userId : null,
           tripId: trip.id,
           title: dto.title?.trim() ?? template?.title ?? '',
@@ -763,9 +979,15 @@ export class ChecklistsService {
         userId,
         Number(checklist.tripId),
       );
-      if (!(await this.trips.canEditTab(userId, trip, 'gear'))) {
+      if (
+        !(await this.trips.canEditTab(
+          userId,
+          trip,
+          CHECKLIST_AREA_TABS[checklist.area],
+        ))
+      ) {
         throw new ForbiddenException(
-          'Список снаряжения правит тот, кому доступна вкладка «Снаряжение»',
+          `Список вкладки ${this.areaTitle(checklist.area)} правит тот, кому доступна эта вкладка`,
         );
       }
       return;
@@ -794,9 +1016,15 @@ export class ChecklistsService {
         userId,
         Number(checklist.tripId),
       );
-      if (!(await this.trips.canEditTab(userId, trip, 'gear'))) {
+      if (
+        !(await this.trips.canEditTab(
+          userId,
+          trip,
+          CHECKLIST_AREA_TABS[checklist.area],
+        ))
+      ) {
         throw new ForbiddenException(
-          'Отметки в списке снаряжения ставит тот, кому доступна вкладка «Снаряжение»',
+          `Отметки в списке вкладки ${this.areaTitle(checklist.area)} ставит тот, кому доступна эта вкладка`,
         );
       }
       return;
@@ -825,15 +1053,22 @@ export class ChecklistsService {
     trip: Trip,
     scope: TripChecklistScope,
     userId: string,
+    area: ChecklistArea = DEFAULT_CHECKLIST_AREA,
   ): Promise<void> {
     if (scope === 'personal') {
       await this.assertParticipant(manager, trip.id, userId);
       return;
     }
 
-    if (!(await this.trips.canEditTab(userId, trip, 'gear'))) {
+    if (
+      !(await this.trips.canEditTab(
+        userId,
+        trip,
+        CHECKLIST_AREA_TABS[area],
+      ))
+    ) {
       throw new ForbiddenException(
-        'Список снаряжения заводит и правит тот, кому доступна вкладка «Снаряжение»',
+        `Список вкладки ${this.areaTitle(area)} заводит и правит тот, кому доступна эта вкладка`,
       );
     }
   }
@@ -843,10 +1078,16 @@ export class ChecklistsService {
     tripId: string,
     scope: TripChecklistScope,
     userId: string,
+    area: ChecklistArea = DEFAULT_CHECKLIST_AREA,
   ): FindOptionsWhere<Checklist> {
     return scope === 'personal'
-      ? { scope, tripId, ownerUserId: userId }
-      : { scope, tripId };
+      ? { scope, area, tripId, ownerUserId: userId }
+      : { scope, area, tripId };
+  }
+
+  /** Название вкладки для текста ошибки: русские подписи — только здесь. */
+  private areaTitle(area: ChecklistArea): string {
+    return area === 'first_aid' ? '«Аптечка»' : '«Снаряжение»';
   }
 
   /** Почему второй такой список завести нельзя — словами для человека. */

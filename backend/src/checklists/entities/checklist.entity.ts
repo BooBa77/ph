@@ -12,7 +12,7 @@ import {
 
 import { User } from '../../users/entities/user.entity';
 import { Trip } from '../../trips/entities/trip.entity';
-import type { ChecklistScope } from '../checklist.types';
+import type { ChecklistArea, ChecklistScope } from '../checklist.types';
 
 /**
  * Чек-лист: шаблон пользователя, общий список похода или личный в походе.
@@ -43,15 +43,15 @@ import type { ChecklistScope } from '../checklist.types';
  * в миграциях `Checklists` и `TripGearChecklists`).
  */
 @Entity('checklists')
-@Index('UQ_checklists_trip_shared', ['tripId'], {
+@Index('UQ_checklists_trip_shared', ['tripId', 'area'], {
   unique: true,
   where: `"scope" = 'trip'`,
 })
-@Index('UQ_checklists_trip_personal', ['tripId', 'ownerUserId'], {
+@Index('UQ_checklists_trip_personal', ['tripId', 'ownerUserId', 'area'], {
   unique: true,
   where: `"scope" = 'personal'`,
 })
-@Index('UQ_checklists_trip_recommendation', ['tripId'], {
+@Index('UQ_checklists_trip_recommendation', ['tripId', 'area'], {
   unique: true,
   where: `"scope" = 'recommendation'`,
 })
@@ -63,13 +63,31 @@ import type { ChecklistScope } from '../checklist.types';
    OR ("scope" = 'personal' AND "trip_id" IS NOT NULL AND "owner_user_id" IS NOT NULL)
    OR ("scope" = 'recommendation' AND "trip_id" IS NOT NULL AND "owner_user_id" IS NULL)`,
 )
+@Check(
+  'chk_checklists_area',
+  `"area" IN ('gear', 'first_aid')`,
+)
+@Check(
+  'chk_checklists_weight',
+  `"weight_grams" IS NULL OR "weight_grams" > 0`,
+)
 export class Checklist {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: string;
 
-  /** `template` | `trip` | `personal` — см. `checklist.types.ts`. */
+  /** `template` | `trip` | `personal` | `recommendation` — см. `checklist.types.ts`. */
   @Column({ type: 'varchar', length: 20 })
   scope: ChecklistScope;
+
+  /**
+   * Вкладка похода, которой принадлежит список (09.11.2026).
+   *
+   * `gear` — «Снаряжение» (и шаблоны профиля), `first_aid` — «Аптечка».
+   * Уникальность списков считается по паре «область + поход», поэтому
+   * общественная аптечка не конфликтует с общим списком снаряжения.
+   */
+  @Column({ type: 'varchar', length: 20, default: 'gear' })
+  area: ChecklistArea;
 
   /**
    * Владелец списка. У общего списка похода его нет намеренно: список
@@ -104,6 +122,18 @@ export class Checklist {
    */
   @Column({ type: 'varchar', length: 120, default: '' })
   title: string;
+
+  /**
+   * Вес готовой аптечки в граммах (09.11.2026).
+   *
+   * Поле есть только у списков аптечки: в «Снаряжении» вес считают вещи.
+   * `NULL` — «ещё не взвесили»: в раскладке такая аптечка весит 0 и вес
+   * не показывается вовсе, чтобы ноль не читался как «пустая аптечка».
+   * `CHECK` не пускает сюда 0: ноль и «неизвестно» — разные вещи, и одна
+   * колонка не должна означать обе.
+   */
+  @Column({ name: 'weight_grams', type: 'integer', nullable: true })
+  weightGrams: number | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

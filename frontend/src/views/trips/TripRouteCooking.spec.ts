@@ -42,6 +42,8 @@ const mocks = vi.hoisted(() => ({
   updateTripGear: vi.fn(),
   addManualTripGear: vi.fn(),
   fetchGearTypes: vi.fn(),
+  addPersonalTripGear: vi.fn(),
+  removePersonalTripGear: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({ listParticipants: mocks.listParticipants }))
@@ -53,6 +55,8 @@ vi.mock('@/api/gear', () => ({
   removeTripGear: mocks.removeTripGear,
   updateTripGear: mocks.updateTripGear,
   addManualTripGear: mocks.addManualTripGear,
+  addPersonalTripGear: mocks.addPersonalTripGear,
+  removePersonalTripGear: mocks.removePersonalTripGear,
 }))
 
 vi.mock('@/api/gearTypes', () => ({ fetchGearTypes: mocks.fetchGearTypes }))
@@ -953,5 +957,98 @@ describe('секция «Готовка»', () => {
     expect(wrapper.get('[data-test="route-cooking-extra-error"]').text()).toContain(
       'уже предложен в походе',
     )
+  })
+
+  /**
+   * «Взять личную посуду» (09.11.2026). Заказчик: синяя кнопка в группе
+   * «Посуда», по ней выбор снаряжения типа «КЛМН», вещь личная — как спальник.
+   */
+  it('«Взять личную посуду» — синяя кнопка только в «Посуде»', async () => {
+    const wrapper = await mounted()
+
+    const button = wrapper.get('[data-test="route-cooking-personal-dishes-add"]')
+    expect(button.text()).toBe('Взять личную посуду')
+    expect(button.classes()).toContain('bg-blue-600')
+
+    expect(
+      wrapper.find('[data-test="route-cooking-group-campfire"] [data-test="route-cooking-personal-dishes-add"]')
+        .exists(),
+    ).toBe(false)
+  })
+
+  it('личная посуда выбирается из типа «КЛМН» и уходит в личные вещи', async () => {
+    mocks.listGear.mockResolvedValue(
+      gearList([
+        gearItem({
+          id: 'k1',
+          typeCode: 'klmn',
+          typeName: 'КЛМН',
+          title: 'Набор КЛМН',
+          weightGrams: 120,
+        }),
+      ]),
+    )
+    mocks.addPersonalTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'p1',
+        gearItemId: 'k1',
+        typeCode: 'klmn',
+        typeName: 'КЛМН',
+        title: 'Набор КЛМН',
+        weightGrams: 120,
+        ownerUserId: ME,
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="route-cooking-personal-dishes-add"]').trigger('click')
+    await flushPromises()
+
+    const select = wrapper.get('[data-test="route-cooking-dishes-gear"]')
+    expect(select.findAll('option').map((option) => option.text())).toContain(
+      'Набор КЛМН · 120 гр.',
+    )
+
+    await select.setValue('k1')
+    await wrapper.get('[data-test="route-cooking-dishes-save"]').trigger('click')
+    await flushPromises()
+
+    // Ручка личная, а не `proposeTripGear`: вещь не должна попасть
+    // в снаряжение похода и в распределение.
+    expect(mocks.addPersonalTripGear).toHaveBeenCalledWith('1', { gearItemId: 'k1' })
+    expect(mocks.proposeTripGear).not.toHaveBeenCalled()
+    expect(wrapper.get('[data-test="route-cooking-personal-dish"]').text()).toContain(
+      'Набор КЛМН - 120 гр.',
+    )
+  })
+
+  it('своя личная посуда приезжает из ответа и убирается крестиком', async () => {
+    mocks.listTripGear.mockResolvedValue({
+      ...tripGearList([]),
+      personalItems: [
+        tripGearItem({
+          id: 'p1',
+          gearItemId: 'k1',
+          typeCode: 'klmn',
+          typeName: 'КЛМН',
+          title: 'Набор КЛМН',
+          ownerUserId: ME,
+        }),
+      ],
+    })
+    mocks.removePersonalTripGear.mockResolvedValue(undefined)
+
+    const wrapper = await mounted()
+
+    expect(wrapper.get('[data-test="route-cooking-personal-dish"]').text()).toContain(
+      'Набор КЛМН',
+    )
+
+    await wrapper.get('[data-test="route-cooking-remove-dish-p1"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.removePersonalTripGear).toHaveBeenCalledWith('1', 'p1')
+    expect(wrapper.find('[data-test="route-cooking-personal-dish"]').exists()).toBe(false)
   })
 })

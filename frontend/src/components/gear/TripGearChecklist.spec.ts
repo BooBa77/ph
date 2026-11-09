@@ -116,7 +116,7 @@ describe('чек-лист вкладки «Снаряжение» похода',
     await wrapper.get('[data-test="checklist-create"]').trigger('click')
     await flushPromises()
 
-    expect(mocks.createTripChecklist).toHaveBeenCalledWith('1', 'trip')
+    expect(mocks.createTripChecklist).toHaveBeenCalledWith('1', 'trip', 'gear')
     expect(wrapper.emitted('updated')?.[0]?.[0]).toMatchObject({ id: 'c1' })
   })
 
@@ -165,6 +165,7 @@ describe('чек-лист вкладки «Снаряжение» похода',
 
     expect(mocks.importChecklistItems).toHaveBeenCalledWith('1', {
       scope: 'trip',
+      area: 'gear',
       itemIds: [111, 112],
     })
     expect(wrapper.find('[data-test="template-picker"]').exists()).toBe(false)

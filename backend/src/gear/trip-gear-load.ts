@@ -52,19 +52,25 @@ import type { UserGender } from '../users/gender.types';
 const HEAVY_ITEM_MIN_GRAMS = 300;
 const HEAVY_ITEM_SHARE = 0.5;
 
-/** Вид единицы груза: вещь похода или пакет еды. */
-export type LoadUnitKind = 'gear' | 'package';
+/** Вид единицы груза: вещь похода, пакет еды или общественная аптечка. */
+export type LoadUnitKind = 'gear' | 'package' | 'firstAid';
 
 /** Единица груза, которую раскладывают по рюкзакам. */
 export interface LoadUnit {
   kind: LoadUnitKind;
-  /** Id строки `trip_gear` или `trip_meal_packages` — строками, как в API. */
+  /** Id строки `trip_gear`, `trip_meal_packages` или `first_aid:public`. */
   id: string;
   weightGrams: number;
-  /** Владелец вещи; у пакета еды владельца нет. */
+  /** Владелец вещи; у пакета еды и аптечки владельца нет. */
   ownerUserId: string | null;
   /** Аптечка: закреплена за медиком (правило §4). */
   isFirstAid?: boolean;
+  /**
+   * Вес известен (09.11.2026). У общественной аптечки без веса стоит `false`:
+   * в расчёт она идёт нулём, но на экране цифры быть не должно — «0 г»
+   * читался бы как пустая аптечка.
+   */
+  weightKnown?: boolean;
 }
 
 /** Человек, которому можно положить груз, — только идущий. */

@@ -812,17 +812,17 @@ export class UpdateTripGearSectionDto {
  */
 export class TripGearLoadUnitDto {
   @ApiProperty({
-    description: 'Что это: вещь похода или пакет еды',
-    enum: ['gear', 'package'],
+    description: 'Что это: вещь похода, пакет еды или общественная аптечка',
+    enum: ['gear', 'package', 'firstAid'],
     example: 'gear',
   })
-  kind: 'gear' | 'package';
+  kind: 'gear' | 'package' | 'firstAid';
 
   /**
-   * Id строки `trip_gear` или `trip_meal_packages` — строками, как везде
-   * в API походов: `bigint` в браузер числом не отдаём.
+   * Id строки `trip_gear`, `trip_meal_packages` или `'public'` у аптечки —
+   * строками, как везде в API походов: `bigint` в браузер числом не отдаём.
    */
-  @ApiProperty({ description: 'Id вещи похода или пакета', example: '12' })
+  @ApiProperty({ description: 'Id вещи похода, пакета или аптечки', example: '12' })
   id: string;
 
   @ApiProperty({
@@ -833,6 +833,17 @@ export class TripGearLoadUnitDto {
 
   @ApiProperty({ description: 'Вес в граммах', example: 2400 })
   weightGrams: number;
+
+  /**
+   * Известен ли вес (09.11.2026). У общественной аптечки без веса `false`:
+   * в сумму она идёт нулём, но «0 г» на экране читался бы как пустая
+   * аптечка, поэтому вес не рисуется вовсе.
+   */
+  @ApiProperty({
+    description: 'Вес известен. false — аптечку ещё не взвесили',
+    example: true,
+  })
+  weightKnown: boolean;
 
   @ApiProperty({
     description: 'Кто несёт. null — не распределено',
@@ -895,11 +906,11 @@ export class TripGearLoadBackpackDto {
  */
 export class TripGearLoadPersonalUnitDto {
   @ApiProperty({
-    description: 'Откуда вещь: «Взял» или «Спальник» «Ночёвок»',
-    enum: ['personal', 'sleeping'],
+    description: 'Откуда вещь: «Взял», «Спальник» «Ночёвок» или личная аптечка',
+    enum: ['personal', 'sleeping', 'firstAid'],
     example: 'personal',
   })
-  kind: 'personal' | 'sleeping';
+  kind: 'personal' | 'sleeping' | 'firstAid';
 
   @ApiProperty({ description: 'Id строки', example: '7' })
   id: string;

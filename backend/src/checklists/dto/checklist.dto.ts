@@ -7,13 +7,18 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
 } from 'class-validator';
 
 import type { GearItem } from '../../gear/entities/gear-item.entity';
-import type { ChecklistScope, TripChecklistScope } from '../checklist.types';
-import { TRIP_CHECKLIST_SCOPES } from '../checklist.types';
+import type {
+  ChecklistArea,
+  ChecklistScope,
+  TripChecklistScope,
+} from '../checklist.types';
+import { CHECKLIST_AREAS, TRIP_CHECKLIST_SCOPES } from '../checklist.types';
 import type { Checklist } from '../entities/checklist.entity';
 import type { ChecklistItem } from '../entities/checklist-item.entity';
 
@@ -145,10 +150,24 @@ export class ChecklistDto {
   scope: ChecklistScope;
 
   @ApiProperty({
+    description: 'Вкладка похода: снаряжение или аптечка',
+    enum: CHECKLIST_AREAS,
+    example: 'gear',
+  })
+  area: ChecklistArea;
+
+  @ApiProperty({
     description: 'Заголовок. У списков похода обычно пустой',
     example: 'Снаряжение, лето',
   })
   title: string;
+
+  @ApiProperty({
+    description: 'Вес аптечки в граммах. null — не взвешена',
+    example: 1200,
+    nullable: true,
+  })
+  weightGrams: number | null;
 
   @ApiProperty({ description: 'Поход, в котором живёт список', nullable: true })
   tripId: string | null;
@@ -169,7 +188,11 @@ export class ChecklistDto {
     return {
       id: checklist.id,
       scope: checklist.scope,
+      // У старых строк и свежих сущностей до перечитывания значение может
+      // быть `undefined`: база подставила 'gear' или NULL, а DTO — нет.
+      area: checklist.area ?? 'gear',
       title: checklist.title,
+      weightGrams: checklist.weightGrams ?? null,
       tripId: checklist.tripId,
       ownerUserId: checklist.ownerUserId,
       items: items.map((item) => ChecklistItemDto.from(item)),
@@ -338,6 +361,18 @@ export class CreateTripChecklistDto {
   scope: TripChecklistScope;
 
   @ApiProperty({
+    description: 'Вкладка похода: снаряжение (по умолчанию) или аптечка',
+    enum: CHECKLIST_AREAS,
+    example: 'gear',
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(CHECKLIST_AREAS, {
+    message: 'Область списка бывает снаряжением (gear) или аптечкой (first_aid)',
+  })
+  area?: ChecklistArea;
+
+  @ApiProperty({
     description: 'Заголовок списка. Пустой — по умолчанию',
     maxLength: 120,
     required: false,
@@ -386,6 +421,18 @@ export class ImportChecklistItemsDto {
   scope: TripChecklistScope;
 
   @ApiProperty({
+    description: 'Вкладка похода: снаряжение (по умолчанию) или аптечка',
+    enum: CHECKLIST_AREAS,
+    example: 'personal',
+    required: false,
+  })
+  @IsOptional()
+  @IsIn(CHECKLIST_AREAS, {
+    message: 'Область списка бывает снаряжением (gear) или аптечкой (first_aid)',
+  })
+  area?: ChecklistArea;
+
+  @ApiProperty({
     description: 'Пункты моих шаблонов',
     type: [Number],
     example: [111, 112],
@@ -424,4 +471,116 @@ export class RecommendationMarkDto {
     nullable: true,
   })
   doneAt: string | null;
+}
+
+/**
+ * Область веса в «Аптечке»: общественная или личная (09.11.2026).
+ *
+ * `shared` — та, что лежит у доктора; `personal` — своя у каждого.
+ * Отдельный словарь, а не `scope` чек-листа: снаружи это поле экрана,
+ * а `scope` — устройство списка.
+ */
+export const FIRST_AID_WEIGHT_SCOPES = ['shared', 'personal'] as const;
+
+export type FirstAidWeightScope = (typeof FIRST_AID_WEIGHT_SCOPES)[number];
+
+/**
+ * Тело `PATCH /api/trips/:id/first-aid/weight`.
+ *
+ * `weightGrams: null` — «вес неизвестен»: в раскладке такая аптечка весит 0,
+ * а на экране цифры нет. Ноль не принимается: он означал бы пустую аптечку,
+ * а не «ещё не взвесили» (тот же CHECK в базе).
+ */
+export class SetFirstAidWeightDto {
+  @ApiProperty({
+    description: 'Чей вес меняем',
+    enum: FIRST_AID_WEIGHT_SCOPES,
+    example: 'shared',
+  })
+  @IsIn(FIRST_AID_WEIGHT_SCOPES, {
+    message: 'Вес бывает у общественной (shared) или личной (personal) аптечки',
+  })
+  scope: FirstAidWeightScope;
+
+  @ApiProperty({
+    description: 'Вес аптечки в граммах. null — не взвешена',
+    example: 1200,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Вес аптечки должен быть целым числом граммов' })
+  @Min(1, { message: 'Вес аптечки должен быть больше нуля' })
+  @Max(100000, { message: 'Вес аптечки не должен превышать 100 кг' })
+  weightGrams?: number | null;
+}
+
+/**
+ * Одна секция «Аптечки»: список и его итоговый вес.
+ *
+ * Вес лежит и в чек-листе (`checklist.weightGrams`), и здесь — чтобы экран
+ * не искал его по вложенному объекту и мог показать поле, даже если список
+ * ещё не загрузился. Источник один: `checklists.weight_grams`.
+ */
+export class FirstAidSectionDto {
+  @ApiProperty({
+    description: 'Чек-лист аптечки. null — секции нет',
+    type: () => ChecklistDto,
+    nullable: true,
+  })
+  checklist: ChecklistDto | null;
+
+  @ApiProperty({
+    description: 'Вес аптечки в граммах. null — не взвешена',
+    example: 1200,
+    nullable: true,
+  })
+  weightGrams: number | null;
+
+  @ApiProperty({ description: 'Можно ли править список и вес' })
+  canEdit: boolean;
+}
+
+/**
+ * Ответ `GET /api/trips/:id/first-aid` (09.11.2026).
+ *
+ * Две секции, как у «Снаряжения»: общественная — только когда в походе
+ * назначен доктор (заказчик: «общественная, если назначен Доктор»), личная
+ * есть у каждого участника. `chatKind` фиксирован строкой, чтобы экран
+ * не собирал его сам и не разошёлся с сервером.
+ */
+export class TripFirstAidDto {
+  @ApiProperty({
+    description: 'Доктор похода: ему едет общественная аптечка. null — не назначен',
+    nullable: true,
+  })
+  doctorUserId: string | null;
+
+  @ApiProperty({
+    description: 'Имя доктора для подписи секции. null — не назначен',
+    nullable: true,
+  })
+  doctorName: string | null;
+
+  @ApiProperty({ description: 'Можно ли править общественную аптечку' })
+  canEdit: boolean;
+
+  @ApiProperty({
+    description: 'Общественная аптечка. null — доктора нет, секции тоже',
+    type: () => FirstAidSectionDto,
+    nullable: true,
+  })
+  shared: FirstAidSectionDto | null;
+
+  @ApiProperty({
+    description: 'Личная аптечка смотрящего',
+    type: () => FirstAidSectionDto,
+  })
+  personal: FirstAidSectionDto;
+
+  @ApiProperty({
+    description: 'Вид чата вкладки',
+    example: 'trip_first_aid',
+  })
+  chatKind: 'trip_first_aid';
 }

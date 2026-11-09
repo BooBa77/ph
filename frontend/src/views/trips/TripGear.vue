@@ -604,10 +604,12 @@ const myItems = computed(() =>
  */
 interface LoadPill {
   key: string
-  kind: 'gear' | 'package'
+  kind: 'gear' | 'package' | 'firstAid'
   id: string
   title: string
   weightGrams: number | null
+  /** Вес известен. У общественной аптечки без веса — `false`. */
+  weightKnown: boolean
   item: TripGearItem | null
 }
 
@@ -627,6 +629,9 @@ function itemPill(item: TripGearItem): LoadPill {
     id: item.id,
     title: item.title,
     weightGrams: item.weightGrams,
+    // У вещи каталога вес либо есть, либо «не указан» — это разные вещи,
+    // и «без веса» в рюкзаке по-прежнему показывается.
+    weightKnown: true,
     item,
   }
 }
@@ -638,6 +643,8 @@ function unitPill(unit: TripGearLoadUnit): LoadPill {
     id: unit.id,
     title: unit.title,
     weightGrams: unit.weightGrams,
+    // Общественная аптечка без веса: в раскладке она 0, но цифру не рисуем.
+    weightKnown: unit.weightKnown !== false,
     item:
       unit.kind === 'gear'
         ? (items.value.find((row) => row.id === unit.id) ?? null)
@@ -663,17 +670,26 @@ const bags = computed<LoadBag[]>(() => {
   const loaded = loadData.value
 
   if (loaded) {
-    return loaded.backpacks.map((backpack) => ({
-      userId: backpack.userId,
-      person:
-        participants.value.find((person) => person.userId === backpack.userId) ?? null,
-      gear: backpack.gear.map(unitPill),
-      packages: backpack.packages.map(unitPill),
-      weight:
-        backpack.gear.length + backpack.packages.length > 0
+    return loaded.backpacks.map((backpack) => {
+      const gear = backpack.gear.map(unitPill)
+      const packages = backpack.packages.map(unitPill)
+      // Одни неизвестные аптечки — не повод писать «Всего: 0 г»: цифры
+      // нет, как и у самой аптечки (слова заказчика 09.11.2026).
+      const hasKnownWeight = [...gear, ...packages].some(
+        (pill) => pill.weightKnown && (pill.weightGrams ?? 0) > 0,
+      )
+
+      return {
+        userId: backpack.userId,
+        person:
+          participants.value.find((person) => person.userId === backpack.userId) ?? null,
+        gear,
+        packages,
+        weight: hasKnownWeight
           ? formatWeightTotal(backpack.totalWeightGrams, 0)
           : '—',
-    }))
+      }
+    })
   }
 
   return going.value.map((person) => {
@@ -730,19 +746,29 @@ function sumWeight(rows: Array<{ weightGrams: number | null }>): number {
   return rows.reduce((sum, row) => sum + (row.weightGrams ?? 0), 0)
 }
 
-function countWithoutWeight(rows: Array<{ weightGrams: number | null }>): number {
-  return rows.filter((row) => row.weightGrams === null).length
+function countWithoutWeight(
+  rows: Array<{ weightGrams: number | null; kind?: string }>,
+): number {
+  // Невзвешенная личная аптечка — не «вещь без веса»: её вес вообще
+  // не показывается, и считать её в «без веса» значило бы считать то,
+  // чего на экране нет (слова заказчика 09.11.2026).
+  return rows.filter((row) => row.weightGrams === null && row.kind !== 'firstAid')
+    .length
 }
 
 const backpackPublicWeightGrams = computed(() =>
   sumWeight([...backpackPublicGear.value, ...backpackPublicPackages.value]),
 )
 
-const backpackPublicWeight = computed(() =>
-  backpackPublicGear.value.length + backpackPublicPackages.value.length > 0
+const backpackPublicWeight = computed(() => {
+  const rows = [...backpackPublicGear.value, ...backpackPublicPackages.value]
+  // Единственная строка — невзвешенная аптечка: веса нет вообще, а не «0 г».
+  const hasKnownWeight = rows.some((row) => row.weightKnown && row.weightGrams !== null)
+
+  return rows.length > 0 && hasKnownWeight
     ? formatWeightTotal(backpackPublicWeightGrams.value, 0)
-    : '—',
-)
+    : '—'
+})
 
 /**
  * «Личное» в «Моём рюкзаке» (06.11.2026): свои вещи «Взял», строки
@@ -803,14 +829,17 @@ const backpackPersonalWeightGrams = computed(() =>
   sumWeight([...backpackPersonalGear.value, ...backpackPersonalPackages.value]),
 )
 
-const backpackPersonalWeight = computed(() =>
-  backpackPersonalGear.value.length + backpackPersonalPackages.value.length > 0
+const backpackPersonalWeight = computed(() => {
+  const rows = [...backpackPersonalGear.value, ...backpackPersonalPackages.value]
+  const hasKnownWeight = rows.some((row) => row.weightGrams !== null)
+
+  return rows.length > 0 && hasKnownWeight
     ? formatWeightTotal(
         backpackPersonalWeightGrams.value,
         countWithoutWeight(backpackPersonalGear.value),
       )
-    : '—',
-)
+    : '—'
+})
 
 /**
  * Итог «Моего рюкзака» одной цифрой в заголовке (09.11.2026).
@@ -822,17 +851,21 @@ const backpackPersonalWeight = computed(() =>
  * «Всего: 0 г» у человека без груза читалось бы как ошибка.
  */
 const backpackTotalWeight = computed(() => {
+  const rows = [
+    ...backpackPublicGear.value,
+    ...backpackPublicPackages.value,
+    ...backpackPersonalGear.value,
+    ...backpackPersonalPackages.value,
+  ]
+  const hasKnownWeight = rows.some((row) => row.weightGrams !== null)
   const grams = backpackPublicWeightGrams.value + backpackPersonalWeightGrams.value
-  const missing =
-    countWithoutWeight(backpackPublicGear.value) +
-    countWithoutWeight(backpackPersonalGear.value)
 
-  return backpackPublicGear.value.length +
-    backpackPublicPackages.value.length +
-    backpackPersonalGear.value.length +
-    backpackPersonalPackages.value.length >
-    0
-    ? formatWeightTotal(grams, missing)
+  return rows.length > 0 && hasKnownWeight
+    ? formatWeightTotal(
+        grams,
+        countWithoutWeight(backpackPublicGear.value) +
+          countWithoutWeight(backpackPersonalGear.value),
+      )
     : ''
 })
 
@@ -2110,17 +2143,25 @@ const excludedIds = computed(() => {
                     "
                     :role="pill.item ? 'button' : undefined"
                     :tabindex="pill.item ? 0 : undefined"
-                    draggable="true"
+                    :draggable="pill.kind !== 'firstAid'"
                     :aria-label="
                       pill.item
                         ? `${pill.title}. Открыть карточку вещи и сменить несущего`
                         : undefined
                     "
-                    :title="pill.item ? 'Открыть карточку вещи' : 'Пакет еды из «Питания»'"
+                    :title="
+                      pill.kind === 'firstAid'
+                        ? 'Общественная аптечка: её место у доктора'
+                        : pill.item
+                          ? 'Открыть карточку вещи'
+                          : 'Пакет еды из «Питания»'
+                    "
                     :data-test="
                       pill.kind === 'package'
                         ? `gear-unassigned-package-${pill.id}`
-                        : `gear-unassigned-item-${pill.id}`
+                        : pill.kind === 'firstAid'
+                          ? `gear-unassigned-first-aid-${pill.id}`
+                          : `gear-unassigned-item-${pill.id}`
                     "
                     @click="pill.item ? openItem(pill.item, 'shared') : undefined"
                     @keydown.enter.prevent="pill.item ? openItem(pill.item, 'shared') : undefined"
@@ -2135,7 +2176,7 @@ const excludedIds = computed(() => {
                     @dragend="endDrag"
                   >
                     <span class="font-medium">{{ pill.title }}</span>
-                    <span v-if="pill.weightGrams !== null" class="text-xs text-muted">
+                    <span v-if="pill.weightKnown && pill.weightGrams !== null" class="text-xs text-muted">
                       {{ formatWeight(pill.weightGrams) }}
                     </span>
                     <span
@@ -2184,13 +2225,30 @@ const excludedIds = computed(() => {
                     <li
                       v-for="pill in bag.gear"
                       :key="pill.key"
-                      class="flex cursor-pointer flex-wrap items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-sm transition-colors hover:border-primary"
-                      role="button"
-                      tabindex="0"
-                      draggable="true"
-                      :aria-label="`${pill.title}. Открыть карточку вещи и сменить несущего`"
-                      title="Открыть карточку вещи"
-                      :data-test="`gear-bag-item-${pill.id}`"
+                      class="flex flex-wrap items-center gap-1 rounded-lg border px-2 py-1 text-sm transition-colors"
+                      :class="
+                        pill.kind === 'firstAid'
+                          ? 'border-orange-300 bg-orange-50 text-orange-900'
+                          : 'cursor-pointer border-border bg-surface hover:border-primary'
+                      "
+                      :role="pill.kind === 'firstAid' ? undefined : 'button'"
+                      :tabindex="pill.kind === 'firstAid' ? undefined : 0"
+                      :draggable="pill.kind !== 'firstAid'"
+                      :aria-label="
+                        pill.kind === 'firstAid'
+                          ? 'Общественная аптечка у доктора'
+                          : `${pill.title}. Открыть карточку вещи и сменить несущего`
+                      "
+                      :title="
+                        pill.kind === 'firstAid'
+                          ? 'Общественная аптечка: её место у доктора'
+                          : 'Открыть карточку вещи'
+                      "
+                      :data-test="
+                        pill.kind === 'firstAid'
+                          ? `gear-bag-first-aid-${pill.id}`
+                          : `gear-bag-item-${pill.id}`
+                      "
                       @click="pill.item ? openItem(pill.item, 'shared') : undefined"
                       @keydown.enter.prevent="pill.item ? openItem(pill.item, 'shared') : undefined"
                       @keydown.space.prevent="pill.item ? openItem(pill.item, 'shared') : undefined"
@@ -2198,7 +2256,10 @@ const excludedIds = computed(() => {
                       @dragend="endDrag"
                     >
                       <span class="min-w-0 truncate">{{ pill.title }}</span>
-                      <span v-if="pill.weightGrams !== null" class="text-xs text-muted">
+                      <span
+                        v-if="pill.weightKnown && pill.weightGrams !== null"
+                        class="text-xs text-muted"
+                      >
                         {{ formatWeight(pill.weightGrams) }}
                       </span>
                     </li>
@@ -2614,7 +2675,10 @@ const excludedIds = computed(() => {
                       :data-test="`gear-backpack-item-${pill.id}`"
                     >
                       <span class="min-w-0 truncate">{{ pill.title }}</span>
-                      <span class="shrink-0 text-xs text-muted">
+                      <span
+                        v-if="pill.kind !== 'firstAid' || pill.weightGrams !== null"
+                        class="shrink-0 text-xs text-muted"
+                      >
                         {{ pill.weightGrams === null ? 'без веса' : formatWeight(pill.weightGrams) }}
                       </span>
                     </li>
@@ -2663,7 +2727,10 @@ const excludedIds = computed(() => {
                     :data-test="`gear-backpack-${row.kind}-${row.id}`"
                   >
                     <span class="min-w-0 truncate">{{ row.title }}</span>
-                    <span class="shrink-0 text-xs text-muted">
+                    <span
+                      v-if="row.kind !== 'firstAid' || row.weightGrams !== null"
+                      class="shrink-0 text-xs text-muted"
+                    >
                       {{ row.weightGrams === null ? 'без веса' : formatWeight(row.weightGrams) }}
                     </span>
                   </li>

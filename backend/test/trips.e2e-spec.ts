@@ -222,7 +222,7 @@ describe('Походы (e2e)', () => {
       expect(response.body.organizerUserId).toBe(userId);
     });
 
-    it('у планируемого похода организатор сразу в составе, с ролью и тремя чатами', async () => {
+    it('у планируемого похода организатор сразу в составе, с ролью и чатами', async () => {
       // У мечты состава нет — она вишлист (`tabs.md` §7). Проверяем
       // настоящий поход: в «Планирую» организатор появляется в составе.
       const response = await createTrip({ status: 'planning' });
@@ -250,6 +250,7 @@ describe('Походы (e2e)', () => {
         [tripId],
       );
       expect(chats.map((row: { kind: string }) => row.kind).sort()).toEqual([
+        'trip_first_aid',
         'trip_gear',
         'trip_guest',
         'trip_meals',
@@ -1657,6 +1658,7 @@ describe('Походы (e2e)', () => {
         'trip_transfer',
         'trip_route',
         'trip_gear',
+        'trip_first_aid',
       ]);
       expect(mine.body.chats[0].lastMessage).toBeNull();
 
@@ -1739,7 +1741,7 @@ describe('Походы (e2e)', () => {
       );
     });
 
-    it('приглашённый получает чаты участников, питания, трансфера, табора и снаряжения, ещё не ответив', async () => {
+    it('приглашённый получает все чаты состава, ещё не ответив', async () => {
       const created = await createTrip({ announcement: 'Чат приглашённого' });
       const tripId = created.body.id as string;
 
@@ -1753,7 +1755,7 @@ describe('Походы (e2e)', () => {
         .get(`/api/trips/${tripId}/chats`)
         .set('Authorization', `Bearer ${applicantToken}`)
         .expect(200);
-      expect(chats.body.chats).toHaveLength(6);
+      expect(chats.body.chats).toHaveLength(7);
 
       await send(tripId, applicantToken, 'trip_members', 'Я в деле').expect(
         201,

@@ -1144,7 +1144,7 @@ describe('вкладка «Снаряжение» похода', () => {
       .trigger('click')
     await flushPromises()
 
-    expect(mocks.createTripChecklist).toHaveBeenCalledWith('1', 'trip')
+    expect(mocks.createTripChecklist).toHaveBeenCalledWith('1', 'trip', 'gear')
     expect(wrapper.get('[data-test="gear-shared-checklist"]').text()).toContain(
       'Пунктов пока нет',
     )

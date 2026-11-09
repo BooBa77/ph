@@ -13,7 +13,7 @@ import {
   setRecommendationMark,
 } from '@/api/tripChecklists'
 import ChecklistTemplatePicker from '@/components/checklists/ChecklistTemplatePicker.vue'
-import type { Checklist, ChecklistItem } from '@/types/checklists'
+import type { Checklist, ChecklistArea, ChecklistItem } from '@/types/checklists'
 import { formatWeight } from '@/utils/gearWeight'
 
 /**
@@ -46,6 +46,13 @@ const props = withDefaults(
     tripId: string
     checklist: Checklist | null
     scope: 'trip' | 'personal' | 'recommendation'
+    /**
+     * Вкладка похода, которой принадлежит список (09.11.2026).
+     *
+     * По умолчанию «Снаряжение»: компонент вырос там. Аптечка передаёт
+     * `first_aid`, и сервер ищет и создаёт её список в своей области.
+     */
+    area?: ChecklistArea
     heading?: string
     subtitle?: string
     emptyText?: string
@@ -83,6 +90,7 @@ const props = withDefaults(
     variant: 'default',
     importNote: '',
     toolsHidden: false,
+    area: 'gear',
   },
 )
 
@@ -182,7 +190,7 @@ async function create(): Promise<void> {
   error.value = null
 
   try {
-    local.value = await createTripChecklist(props.tripId, props.scope)
+    local.value = await createTripChecklist(props.tripId, props.scope, props.area)
     emit('updated', local.value)
   } catch (cause) {
     error.value = messageOf(cause, 'Не удалось создать список.')
@@ -298,6 +306,7 @@ async function onImport(itemIds: string[]): Promise<void> {
   try {
     local.value = await importChecklistItems(props.tripId, {
       scope: props.scope,
+      area: props.area,
       itemIds: itemIds.map(Number),
     })
     emit('updated', local.value)

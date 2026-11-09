@@ -214,6 +214,16 @@ const TYPES = [
     name: 'Аптечка',
     attributes: [],
   },
+  {
+    // «КЛМН» — личная посуда участника (09.11.2026): кружка, ложка, миска,
+    // нож. Код `klmn` — контракт `KLMN_TYPE_CODE` в `src/gear/gear.types.ts`
+    // и `GEAR_TYPE_CODES.klmn` на фронте. Строку заводит ещё и миграция
+    // `KlmnGearType`: свежая база без сида должна видеть тип.
+    // Вещь личная: кнопка в «Готовке» и фильтр выбора, а не распределение.
+    code: 'klmn',
+    name: 'КЛМН',
+    attributes: [],
+  },
 ];
 
 const client = new pg.Client({ connectionString: url });

@@ -92,6 +92,7 @@ export const GEAR_TYPE_CODES = {
   kettle: 'kettle',
   ladle: 'ladle',
   knife: 'knife',
+  klmn: 'klmn',
 } as const;
 
 export type GearBoundType = (typeof GEAR_TYPE_CODES)[keyof typeof GEAR_TYPE_CODES];
@@ -134,6 +135,19 @@ export const DISHES_TYPE_CODES: readonly string[] = [
   GEAR_TYPE_CODES.ladle,
   GEAR_TYPE_CODES.knife,
 ];
+
+/**
+ * «КЛМН» — личная посуда участника (09.11.2026).
+ *
+ * Кружка-ложка-миска-нож: набор у каждого свой, поэтому это личная вещь,
+ * а не общественная кастрюля. Кнопка «Взять личную посуду» стоит в группе
+ * «Посуда» «Готовки» и фильтрует каталог этим типом; в общее снаряжение
+ * похода вещь не попадает — её место в «Взял» и в личном рюкзаке.
+ *
+ * Код не входит в `DISHES_TYPE_CODES`: там типы **общественной** посуды,
+ * по которым «Готовка» раскладывает вещи по группам.
+ */
+export const KLMN_TYPE_CODE = GEAR_TYPE_CODES.klmn;
 
 /**
  * Коэффициент переносимости для женщин — 0,8 от мужской доли (21.10.2026).
