@@ -1759,6 +1759,36 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(mocks.assignTripGearPackage).toHaveBeenCalledWith('1', 'p9', ANNA)
   })
 
+  it('общественная аптечка без веса видна в рюкзаке, но без «0 г»', async () => {
+    // 09.11.2026: «Общественную аптечку отображаем даже пустую», и цифры
+    // веса у невзвешенной быть не должно — в раскладке она 0 граммов.
+    mocks.getTripGearLoad.mockResolvedValue(
+      tripLoad({
+        doctorUserId: ME,
+        backpacks: [
+          loadBackpack(ME, {
+            gear: [
+              {
+                kind: 'firstAid',
+                id: 'public',
+                title: 'Общественная аптечка',
+                weightGrams: 0,
+                weightKnown: false,
+                assignedUserId: ME,
+              },
+            ],
+          }),
+        ],
+      }),
+    )
+
+    const wrapper = await mounted()
+    const row = wrapper.get('[data-test="gear-backpack-item-public"]')
+
+    expect(row.text()).toContain('Общественная аптечка')
+    expect(row.text()).not.toContain('0 г')
+  })
+
   it('личная еда в «Моём рюкзаке» стоит в «Личном» с расчётным или фактическим весом', async () => {
     mocks.getTripGearLoad.mockResolvedValue(
       tripLoad({

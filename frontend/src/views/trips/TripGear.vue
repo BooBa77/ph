@@ -2676,8 +2676,18 @@ const excludedIds = computed(() => {
                       :data-test="`gear-backpack-item-${pill.id}`"
                     >
                       <span class="min-w-0 truncate">{{ pill.title }}</span>
+                      <!--
+                        Невзвешенная аптечка (weightKnown: false) цифры
+                        не показывает: в раскладке она 0, но «0 г» читалось
+                        бы как вес (слова заказчика 09.11.2026). Раньше это
+                        правило соблюдалось только в «Распределении», а здесь
+                        в рюкзаке проступало «0 г».
+                      -->
                       <span
-                        v-if="pill.kind !== 'firstAid' || pill.weightGrams !== null"
+                        v-if="
+                          pill.kind !== 'firstAid' ||
+                          (pill.weightKnown && pill.weightGrams !== null)
+                        "
                         class="shrink-0 text-xs text-muted"
                       >
                         {{ pill.weightGrams === null ? 'без веса' : formatWeight(pill.weightGrams) }}
