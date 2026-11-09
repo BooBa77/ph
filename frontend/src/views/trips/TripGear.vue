@@ -749,9 +749,10 @@ function sumWeight(rows: Array<{ weightGrams: number | null }>): number {
 function countWithoutWeight(
   rows: Array<{ weightGrams: number | null; kind?: string }>,
 ): number {
-  // Невзвешенная личная аптечка — не «вещь без веса»: её вес вообще
-  // не показывается, и считать её в «без веса» значило бы считать то,
-  // чего на экране нет (слова заказчика 09.11.2026).
+  // Личная аптечка без веса уже не приходит: 09.11.2026 сервер не отдаёт
+  // её в рюкзаке, пока она не взвешена (first-aid.md §4). Исключение
+  // оставлено страховкой: если строка всё же придёт с `null`, в «без веса»
+  // она не попадёт — у самой аптечки вес вообще не показывается.
   return rows.filter((row) => row.weightGrams === null && row.kind !== 'firstAid')
     .length
 }

@@ -8,6 +8,7 @@ import {
 import { DataSource, EntityManager, IsNull } from 'typeorm';
 
 import { Checklist } from '../checklists/entities/checklist.entity';
+import { ChecklistItem } from '../checklists/entities/checklist-item.entity';
 import { TripParticipant } from '../trips/entities/trip-participant.entity';
 import { TripMealPackage } from '../trips/entities/trip-meal-package.entity';
 import { Trip } from '../trips/entities/trip.entity';
@@ -1412,10 +1413,17 @@ export class TripGearService {
     const sleeping = await this.sleepingRows(manager, trip.id, viewerId);
     /**
      * Личная аптечка (09.11.2026). Заказчик: «Личную аптечку как „Мои
-     * продукты“ отображаем в Личном рюкзаке». Вес берём из списка аптечки;
-     * `null` — не взвешена: строка остаётся, цифры нет, в сумму идёт 0.
+     * продукты“ отображаем в Личном рюкзаке».
+     *
+     * 09.11.2026, замечание к шагу: «если в личной аптечке нет ни одного
+     * выполненного пункта или вес пустой, то и отображать её в рюкзаке
+     * не нужно». Поэтому строка появляется, только когда собрано **хотя бы
+     * одно** (есть отметка) и аптечка **взвешена**: пустая и невзвешенная
+     * аптечка — не груз, а незаполненный список, и в рюкзаке она занимала
+     * строку без веса. Общественная при этом остаётся даже пустой: её место
+     * у доктора — правило, а не то, что человек успел отметить.
      */
-    const firstAid = await manager.findOne(Checklist, {
+    const personalFirstAid = await manager.findOne(Checklist, {
       where: {
         tripId: trip.id,
         scope: 'personal',
@@ -1423,6 +1431,25 @@ export class TripGearService {
         ownerUserId: viewerId,
       },
     });
+    const personalFirstAidDone =
+      personalFirstAid === null
+        ? 0
+        : await manager.count(ChecklistItem, {
+            where: { checklistId: personalFirstAid.id, isDone: true },
+          });
+    const personalFirstAidRow =
+      personalFirstAid !== null &&
+      personalFirstAid.weightGrams !== null &&
+      personalFirstAidDone > 0
+        ? [
+            {
+              kind: 'firstAid' as const,
+              id: personalFirstAid.id,
+              title: 'Личная аптечка',
+              weightGrams: personalFirstAid.weightGrams,
+            },
+          ]
+        : [];
     const personalLoad = await this.tripMeals.listPersonalPackagesForLoad(
       trip.id,
       viewerId,
@@ -1441,16 +1468,7 @@ export class TripGearService {
         title: row.title,
         weightGrams: row.weightGrams,
       })),
-      ...(firstAid
-        ? [
-            {
-              kind: 'firstAid' as const,
-              id: firstAid.id,
-              title: 'Личная аптечка',
-              weightGrams: firstAid.weightGrams,
-            },
-          ]
-        : []),
+      ...personalFirstAidRow,
     ];
 
     const packageDtos: TripGearLoadPersonalPackageDto[] =

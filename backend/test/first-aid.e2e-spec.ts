@@ -25,7 +25,9 @@ import { SmtpService } from './../src/email/services/smtp.service';
  *    `null` — «не взвешена», а не ноль.
  * 3. **Общественная аптечка едет доктору** как единица `firstAid`
  *    в его рюкзаке; без веса она весит 0 и помечена `weightKnown: false`.
- * 4. **Личная аптечка — в личном рюкзаке** смотрящего строкой `firstAid`.
+ * 4. **Личная аптечка — в личном рюкзаке** смотрящего строкой `firstAid`,
+ *    но только собранная (есть выполненный пункт) и взвешенная: пустая
+ *    или без веса в рюкзаке не показывается (замечание 09.11.2026).
  * 5. **Без доктора общественной секции нет** и в раскладке аптечки нет.
  *
  * Поход, роли и состав тест заводит напрямую в базе: правила походов
@@ -87,6 +89,25 @@ describe('Аптечка похода (e2e)', () => {
 
   function state(token: string) {
     return call('get', `/api/trips/${tripId}/first-aid`, token);
+  }
+
+  /**
+   * Отметить пункт личной аптечки. Личный рюкзак показывает аптечку только
+   * с выполненным пунктом (замечание заказчика 09.11.2026), поэтому тестам
+   * раскладки нужна настоящая отметка, а не строка в базе.
+   */
+  async function markPersonalItem(
+    token: string,
+    isDone: boolean,
+  ): Promise<void> {
+    const personal = await state(token).expect(200);
+    const item = personal.body.personal.checklist.items.find(
+      (row: { title: string }) => row.title === 'Пластырь',
+    );
+
+    await call('patch', `/api/checklists/items/${item.id}`, token, {
+      isDone,
+    }).expect(200);
   }
 
   beforeAll(async () => {
@@ -270,6 +291,12 @@ describe('Аптечка похода (e2e)', () => {
       { scope: 'shared', weightGrams: 900 },
     ).expect(200);
 
+    /**
+     * Личная аптечка попадает в рюкзак только собранная и взвешенная:
+     * замечание заказчика 09.11.2026. Отмечаем пункт, иначе строки нет.
+     */
+    await markPersonalItem(doctorToken, true);
+
     const load = await call(
       'get',
       `/api/trips/${tripId}/gear/load`,
@@ -300,7 +327,7 @@ describe('Аптечка похода (e2e)', () => {
     expect(load.body.personal.gearWeightGrams).toBe(300);
   });
 
-  it('неизвестный личный вес — строка без веса, в расчёте ноль', async () => {
+  it('личная аптечка без веса в рюкзак не попадает', async () => {
     await call(
       'patch',
       `/api/trips/${tripId}/first-aid/weight`,
@@ -314,13 +341,35 @@ describe('Аптечка похода (e2e)', () => {
       doctorToken,
     ).expect(200);
 
-    const personalFirstAid = load.body.personal.gear.find(
-      (row: { kind: string }) => row.kind === 'firstAid',
-    );
-    expect(personalFirstAid).toMatchObject({
-      title: 'Личная аптечка',
-      weightGrams: null,
-    });
+    expect(
+      load.body.personal.gear.some(
+        (row: { kind: string }) => row.kind === 'firstAid',
+      ),
+    ).toBe(false);
+    expect(load.body.personal.gearWeightGrams).toBe(0);
+  });
+
+  it('личная аптечка без выполненного пункта в рюкзак не попадает', async () => {
+    // Вес есть, отметки нет: пустой список — не груз.
+    await call(
+      'patch',
+      `/api/trips/${tripId}/first-aid/weight`,
+      doctorToken,
+      { scope: 'personal', weightGrams: 300 },
+    ).expect(200);
+    await markPersonalItem(doctorToken, false);
+
+    const load = await call(
+      'get',
+      `/api/trips/${tripId}/gear/load`,
+      doctorToken,
+    ).expect(200);
+
+    expect(
+      load.body.personal.gear.some(
+        (row: { kind: string }) => row.kind === 'firstAid',
+      ),
+    ).toBe(false);
   });
 
   it('без доктора общественной секции и общественной аптечки нет', async () => {
