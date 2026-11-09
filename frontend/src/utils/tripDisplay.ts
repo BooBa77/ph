@@ -50,14 +50,17 @@ export function tripWhenText(trip: WhenTrip): string {
  * Рамка похода словами — для строки «Рамка» на «Гостевой»: тут важно
  * и отсутствие коммерции, потому что строка отвечает на вопрос
  * «это платное?» целиком.
+ *
+ * **Цены здесь нет с 09.11.2026**: заказчик попросил убрать информацию
+ * по стоимости из-за юридических вопросов. Осталось «коммерческий /
+ * некоммерческий [· официальный]» — тип похода, а не сумма.
  */
 export function tripFrameParts(
-  trip: Pick<Trip, 'isCommercial' | 'isOfficial' | 'priceRub'>,
+  trip: Pick<Trip, 'isCommercial' | 'isOfficial'>,
 ): string[] {
   const parts = [trip.isCommercial ? 'коммерческий' : 'некоммерческий']
 
   if (trip.isOfficial) parts.push('официальный поход')
-  if (trip.isCommercial && trip.priceRub) parts.push(`${trip.priceRub} ₽`)
 
   return parts
 }
@@ -72,15 +75,17 @@ export function tripFrameParts(
  * «Будет гитара» здесь именно признак: он отличает один поход от другого
  * и отвечает на вопрос, который задают первым делом. Пишется только когда
  * гитара есть, — «без гитары» так же нормально, как и «некоммерческий».
+ *
+ * **Суммы в ленте нет с 09.11.2026** — по той же причине, что и на
+ * «Гостевой»: это публичная стоимость, а не признак похода. «Коммерческий»
+ * остался словом.
  */
 export function tripBadges(
-  trip: Pick<Trip, 'isCommercial' | 'isOfficial' | 'priceRub' | 'hasGuitar'>,
+  trip: Pick<Trip, 'isCommercial' | 'isOfficial' | 'hasGuitar'>,
 ): string[] {
   const badges: string[] = []
 
-  if (trip.isCommercial) {
-    badges.push(trip.priceRub ? `коммерческий · ${trip.priceRub} ₽` : 'коммерческий')
-  }
+  if (trip.isCommercial) badges.push('коммерческий')
   if (trip.isOfficial) badges.push('официальный поход')
   if (trip.hasGuitar) badges.push('будет гитара')
 

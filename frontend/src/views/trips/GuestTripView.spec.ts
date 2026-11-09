@@ -63,14 +63,80 @@ describe('GuestTripView', () => {
     mockedObjects.listObjectsByIds.mockResolvedValue([])
   })
 
-  it('показывает обзор: цель, когда, рамку, маршрут и требования', async () => {
+  it('показывает обзор: цель, даты, статус, рамку, маршрут и требования', async () => {
     const wrapper = await mountView()
 
     expect(wrapper.find('[data-test="guest-goal"]').text()).toContain('Витязь')
-    expect(wrapper.find('[data-test="guest-when"]').text()).toContain('2027')
+    expect(wrapper.find('[data-test="guest-dates"]').text()).toContain('2027')
+    expect(wrapper.find('[data-test="guest-status"]').text()).toBe('Решено')
     expect(wrapper.find('[data-test="guest-frame"]').text()).toContain('коммерческий')
     expect(wrapper.find('[data-test="guest-route"]').text()).toContain('Подход')
     expect(wrapper.find('[data-test="guest-requirements"]').text()).toContain('кошки')
+  })
+
+  /**
+   * Замечания заказчика к шагу 09.11.2026: подпись «Когда» — это «Даты»,
+   * готовность вынесена в отдельную строку «Статус», а информация
+   * по стоимости скрыта из-за юридических вопросов.
+   */
+  it('подписи «Даты» и «Статус», а не «Когда» со статусом в одной строке', async () => {
+    const wrapper = await mountView()
+    const labels = wrapper.findAll('dt').map((label) => label.text())
+
+    expect(labels).toContain('Даты')
+    expect(labels).toContain('Статус')
+    expect(labels).not.toContain('Когда')
+    expect(wrapper.find('[data-test="guest-dates"]').text()).not.toContain('Решено')
+  })
+
+  it('стоимости на «Гостевой» нет: ни блока, ни суммы', async () => {
+    const wrapper = await mountView()
+
+    expect(wrapper.text()).not.toContain('Что входит в стоимость')
+    expect(wrapper.text()).not.toContain('Заброска и питание')
+    expect(wrapper.text()).not.toContain('5000')
+    expect(wrapper.find('[data-test="guest-frame"]').text()).not.toContain('₽')
+  })
+
+  it('у мечты без дат написано «не заданы», а не статус вместо даты', async () => {
+    mocked.fetchGuestTrip.mockResolvedValue(
+      makeGuest({ status: 'idea', startsAt: null, endsAt: null, isCommercial: false }),
+    )
+
+    const wrapper = await mountView()
+
+    expect(wrapper.find('[data-test="guest-dates"]').text()).toBe('не заданы')
+    expect(wrapper.find('[data-test="guest-status"]').text()).toBe('Мечта')
+  })
+
+  it('значения обзора и имена в составе — полужирные', async () => {
+    mocked.fetchGuestTrip.mockResolvedValue(
+      makeGuest({
+        participants: [
+          {
+            userId: 'u-1',
+            displayName: 'Анна',
+            avatarUrl: null,
+            status: 'going',
+            roles: [],
+            isOrganizer: false,
+            isVirtual: false,
+            createdAt: '2026-10-14T10:00:00.000Z',
+            updatedAt: '2026-10-14T10:00:00.000Z',
+          },
+        ],
+      }),
+    )
+
+    const wrapper = await mountView()
+
+    // font-semibold — слова заказчика «оформи жирным шрифтом покрупнее».
+    expect(wrapper.find('[data-test="guest-goal"]').classes()).toContain('font-semibold')
+    expect(wrapper.find('[data-test="guest-dates"]').classes()).toContain('font-semibold')
+    expect(wrapper.find('[data-test="guest-status"]').classes()).toContain('font-semibold')
+    expect(wrapper.find('[data-test="guest-participants"] span').classes()).toContain(
+      'font-semibold',
+    )
   })
 
   it('места сбора на обзоре нет', async () => {

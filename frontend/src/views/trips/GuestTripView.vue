@@ -11,7 +11,7 @@ import {
   type MentionLinks,
   type MentionNames,
 } from '@/utils/markdown'
-import { tripFrameParts, tripWhenText, formatTripDate } from '@/utils/tripDisplay'
+import { tripFrameParts, tripDatesText, formatTripDate } from '@/utils/tripDisplay'
 import {
   PARTICIPANT_STATUS_LABELS,
   TRIP_STATUS_LABELS,
@@ -25,9 +25,14 @@ import TripChat from '@/views/trips/TripChat.vue'
  * «Гостевая» вкладка — обзор похода, один для всех.
  *
  * С 21.10.2026 отдельной вкладки «Инфо» нет: и участники, и гости видят
- * здесь одно и то же — цель, анонс, даты (решение и факт), состав с ролями,
- * маршрут, требования, коммерцию и цену. Правка — кнопкой «Редактировать»
+ * здесь одно и то же — цель, анонс, даты (решение и факт), статус, состав
+ * с ролями, маршрут и требования. Правка — кнопкой «Редактировать»
  * в шапке. **Места сбора здесь нет**: «где встречаемся» уехало в «Трансфер».
+ *
+ * **Стоимость скрыта 09.11.2026** («возникли юридические вопросы»):
+ * ни «что входит в стоимость», ни цена в строке «Рамка» не показываются.
+ * Поля в модели остались — их спрашивает форма правки; вопрос отображения
+ * решается здесь и в `utils/tripDisplay.ts`, а не удалением из базы.
  */
 const props = defineProps<{ tripId: string }>()
 
@@ -76,7 +81,21 @@ async function load() {
   }
 }
 
-const whenText = computed(() => (trip.value ? tripWhenText(trip.value) : ''))
+/**
+ * Даты похода. 09.11.2026 заказчик попросил подпись «Когда» заменить
+ * на «Даты» и вынести готовность в отдельную строку «Статус»: раньше
+ * в одной строке стояло «5 мая 2027 г. · Решено», и «Решено» читалось
+ * как дата, а не как состояние похода.
+ *
+ * Если дат нет (мечта, план), честнее написать «не заданы», чем показать
+ * статус под подписью «Даты».
+ */
+const datesText = computed(() => {
+  if (!trip.value) return ''
+  return tripDatesText(trip.value) || 'не заданы'
+})
+
+const statusText = computed(() => (trip.value ? TRIP_STATUS_LABELS[trip.value.status] : ''))
 const frame = computed(() => (trip.value ? tripFrameParts(trip.value).join(' · ') : ''))
 
 /**
@@ -116,35 +135,52 @@ onMounted(load)
     <p v-else-if="error" class="text-sm text-muted" data-test="guest-error">{{ error }}</p>
 
     <template v-else-if="trip">
+      <!--
+        Строки обзора. Значения — крупнее и полужирным (замечание заказчика
+        09.11.2026: «оформи жирным шрифтом покрупнее значения — „Витязь“,
+        даты, „Решено“, „Анна“, „Пётр“»): подпись мелкая и серая, а то,
+        что человек ищет, должно читаться сразу.
+      -->
       <dl class="grid gap-3 md:grid-cols-2">
         <div>
           <dt class="text-xs text-muted">Цель</dt>
-          <dd class="text-sm text-text" data-test="guest-goal">
+          <dd class="text-base font-semibold text-text" data-test="guest-goal">
             {{ trip.goalObject?.name ?? '—' }}
-            <span v-if="trip.goalObject" class="text-muted"> · {{ trip.goalObject.type }}</span>
+            <span v-if="trip.goalObject" class="text-sm font-normal text-muted">
+              · {{ trip.goalObject.type }}
+            </span>
           </dd>
         </div>
 
         <div>
-          <dt class="text-xs text-muted">Когда</dt>
-          <dd class="text-sm text-text" data-test="guest-when">
-            {{ whenText }} · {{ TRIP_STATUS_LABELS[trip.status] }}
+          <dt class="text-xs text-muted">Даты</dt>
+          <dd class="text-base font-semibold text-text" data-test="guest-dates">
+            {{ datesText }}
+          </dd>
+        </div>
+
+        <div>
+          <dt class="text-xs text-muted">Статус</dt>
+          <dd class="text-base font-semibold text-text" data-test="guest-status">
+            {{ statusText }}
           </dd>
         </div>
 
         <div>
           <dt class="text-xs text-muted">Рамка</dt>
-          <dd class="text-sm text-text" data-test="guest-frame">{{ frame }}</dd>
+          <dd class="text-base font-semibold text-text" data-test="guest-frame">{{ frame }}</dd>
         </div>
 
         <div v-if="trip.isRecruitmentClosed">
           <dt class="text-xs text-muted">Набор</dt>
-          <dd class="text-sm text-text">закрыт</dd>
+          <dd class="text-base font-semibold text-text">закрыт</dd>
         </div>
 
         <div v-if="actualText">
           <dt class="text-xs text-muted">Факт</dt>
-          <dd class="text-sm text-text" data-test="guest-actual-dates">{{ actualText }}</dd>
+          <dd class="text-base font-semibold text-text" data-test="guest-actual-dates">
+            {{ actualText }}
+          </dd>
         </div>
       </dl>
 
@@ -154,13 +190,14 @@ onMounted(load)
 
       <!--
         Состав — часть анонса и виден всем: с 21.10.2026 у «Гостевой» нет
-        «урезанного» режима для гостей. Роли и статусы показываем как есть.
+        «урезанного» режима для гостей. Роли и статусы показываем как есть,
+        имя — крупным полужирным, как остальные значения обзора.
       -->
       <div v-if="trip.participants.length > 0">
         <h2 class="mb-1 text-sm text-muted">Состав</h2>
         <ul class="flex flex-col gap-1 text-sm text-text" data-test="guest-participants">
           <li v-for="person in trip.participants" :key="person.userId">
-            <span>{{ person.displayName }}</span>
+            <span class="text-base font-semibold">{{ person.displayName }}</span>
             <span v-if="person.isOrganizer" class="text-muted"> · организатор</span>
             <span v-if="extraRoles(person).length" class="text-muted">
               · {{ extraRoles(person).map((role) => role.name).join(', ') }}
@@ -168,11 +205,6 @@ onMounted(load)
             <span class="text-muted"> · {{ PARTICIPANT_STATUS_LABELS[person.status] }}</span>
           </li>
         </ul>
-      </div>
-
-      <div v-if="trip.priceNote?.trim()">
-        <h2 class="mb-1 text-sm text-muted">Что входит в стоимость</h2>
-        <p class="text-sm whitespace-pre-line text-text">{{ trip.priceNote }}</p>
       </div>
 
       <div v-if="trip.routeText.trim()">

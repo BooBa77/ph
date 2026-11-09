@@ -44,17 +44,27 @@ describe('tripDisplay', () => {
     expect(single).not.toContain('—')
   })
 
-  it('«Рамка» называет и отсутствие коммерции, и цену', () => {
+  it('«Рамка» называет и отсутствие коммерции, а цены в ней больше нет', () => {
     expect(tripFrameParts(trip())).toEqual(['некоммерческий'])
     expect(tripFrameParts(trip({ isCommercial: true, priceRub: 25000 }))).toEqual([
       'коммерческий',
-      '25000 ₽',
     ])
     expect(tripFrameParts(trip({ isCommercial: true, priceRub: 25000, isOfficial: true }))).toEqual([
       'коммерческий',
       'официальный поход',
-      '25000 ₽',
     ])
+  })
+
+  /**
+   * Стоимость скрыта 09.11.2026: «возникли юридические вопросы». Проверяем
+   * именно отсутствие суммы — вернуть её случайно (например, собрав строку
+   * заново) легче, чем заметить на экране.
+   */
+  it('цены нет ни в «Рамке», ни в значках ленты', () => {
+    const commercial = trip({ isCommercial: true, priceRub: 25000 })
+
+    expect(tripFrameParts(commercial).join(' ')).not.toContain('25000')
+    expect(tripBadges(commercial).join(' ')).not.toContain('25000')
   })
 
   it('в карточке ленты «некоммерческий» не пишется: это норма, а не признак', () => {
@@ -72,6 +82,6 @@ describe('tripDisplay', () => {
     expect(tripBadges(trip({ hasGuitar: true }))).toEqual(['будет гитара'])
     expect(
       tripBadges(trip({ hasGuitar: true, isCommercial: true, priceRub: 5000 })),
-    ).toEqual(['коммерческий · 5000 ₽', 'будет гитара'])
+    ).toEqual(['коммерческий', 'будет гитара'])
   })
 })

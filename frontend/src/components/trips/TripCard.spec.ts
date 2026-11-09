@@ -87,11 +87,13 @@ describe('TripCard', () => {
     expect(text).toContain('2027')
   })
 
-  it('коммерция и спортивность видны значками, цена — рядом с признаком', () => {
+  it('коммерция и спортивность видны значками, цены в них нет', () => {
     const wrapper = mountCard(trip({ isCommercial: true, priceRub: 25000, isOfficial: true }))
     const badges = wrapper.findAll('[data-test="trip-card-badge"]').map((badge) => badge.text())
 
-    expect(badges).toEqual(['коммерческий · 25000 ₽', 'официальный поход'])
+    // Стоимость скрыта с 09.11.2026 (юридические вопросы): «коммерческий»
+    // остался словом, суммы рядом с ним больше нет.
+    expect(badges).toEqual(['коммерческий', 'официальный поход'])
   })
 
   it('у обычного похода значков нет', () => {
