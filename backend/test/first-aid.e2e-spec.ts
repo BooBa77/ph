@@ -280,6 +280,25 @@ describe('Аптечка похода (e2e)', () => {
 
     expect(cleared.body.shared.weightGrams).toBeNull();
     expect(cleared.body.shared.checklist.weightGrams).toBeNull();
+
+    // Невзвешенная общественная аптечка всё равно едет доктору: заказчик
+    // 09.11.2026 — «Общественную аптечку отображаем даже пустую».
+    const load = await call(
+      'get',
+      `/api/trips/${tripId}/gear/load`,
+      doctorToken,
+    ).expect(200);
+    const doctorBag = load.body.backpacks.find(
+      (bag: { userId: string }) => bag.userId === doctorId,
+    );
+    expect(
+      doctorBag.gear.find((unit: { kind: string }) => unit.kind === 'firstAid'),
+    ).toMatchObject({
+      title: 'Общественная аптечка',
+      weightGrams: 0,
+      weightKnown: false,
+      assignedUserId: doctorId,
+    });
   });
 
   it('общественная аптечка едет доктору, личная — в личном рюкзаке', async () => {

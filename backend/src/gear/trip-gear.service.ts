@@ -1250,24 +1250,29 @@ export class TripGearService {
      * «Аптечки» появляется только когда доктор назначен, и везти её
      * некому. Вес `null` — «не взвесили»: идём нулём, экран цифру
      * не рисует.
+     *
+     * **Пустая аптечка — тоже в рюкзаке** (замечание 09.11.2026:
+     * «Общественную аптечку отображаем даже пустую»). Поэтому единица
+     * добавляется по одному наличию доктора, а не по наличию списка:
+     * списки «Аптечки» заводятся при первом чтении её вкладки, и до
+     * этого момента аптечки в рюкзаке врача не было бы вовсе. Нет списка —
+     * значит нет и веса: 0 граммов, `weightKnown: false`.
      */
     if (doctorUserId !== null) {
       const firstAid = await manager.findOne(Checklist, {
         where: { tripId: trip.id, scope: 'trip', area: 'first_aid' },
       });
 
-      if (firstAid) {
-        const key = loadUnitKey('firstAid', 'public');
-        units.push({
-          kind: 'firstAid',
-          id: 'public',
-          weightGrams: firstAid.weightGrams ?? 0,
-          ownerUserId: null,
-          isFirstAid: true,
-          weightKnown: firstAid.weightGrams !== null,
-        });
-        titles.set(key, 'Общественная аптечка');
-      }
+      const key = loadUnitKey('firstAid', 'public');
+      units.push({
+        kind: 'firstAid',
+        id: 'public',
+        weightGrams: firstAid?.weightGrams ?? 0,
+        ownerUserId: null,
+        isFirstAid: true,
+        weightKnown: (firstAid?.weightGrams ?? null) !== null,
+      });
+      titles.set(key, 'Общественная аптечка');
     }
 
     return {

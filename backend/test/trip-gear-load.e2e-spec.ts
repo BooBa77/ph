@@ -409,6 +409,27 @@ describe('Раскладка груза по рюкзакам (e2e)', () => {
         expect.objectContaining({ title: 'Аптечка походная', weightGrams: 500 }),
       ]),
     );
+
+    /**
+     * Общественная аптечка вкладки «Аптечка» — у медика, даже пустая
+     * (09.11.2026: «Общественную аптечку отображаем даже пустую»).
+     * Вкладку здесь никто не открывал, списка нет — и это как раз случай,
+     * когда единица обязана появиться нулём, а не исчезнуть.
+     */
+    const doctorBag = response.body.backpacks.find(
+      (backpack: { userId: string }) => backpack.userId === memberId,
+    );
+    expect(doctorBag.gear).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'firstAid',
+          title: 'Общественная аптечка',
+          weightGrams: 0,
+          weightKnown: false,
+          assignedUserId: memberId,
+        }),
+      ]),
+    );
   });
 
   it('доли считаются с поправкой на пол', async () => {
