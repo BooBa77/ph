@@ -8,6 +8,7 @@ import { getPublicUser, type PublicUser } from '@/api/users'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
+import TripFinance from '@/views/trips/TripFinance.vue'
 import TripFirstAid from '@/views/trips/TripFirstAid.vue'
 import TripGear from '@/views/trips/TripGear.vue'
 import TripMeals from '@/views/trips/TripMeals.vue'
@@ -98,6 +99,7 @@ const IMPLEMENTED: TripTabCode[] = [
   'route',
   'gear',
   'firstAid',
+  'finance',
 ]
 
 const permissions = ref<TripTabPermission[]>([])
@@ -400,10 +402,12 @@ async function toggleRecruitment() {
 
       <TripFirstAid v-else-if="activeTab === 'firstAid'" :trip="trip" />
 
+      <TripFinance v-else-if="activeTab === 'finance'" :trip-id="trip.id" />
+
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» ещё не готова:
         сейчас работают «Гостевая», «Участники», «Ночёвки», «Питание», «Трансфер»,
-        «Снаряжение» и «Аптечка».
+        «Снаряжение», «Аптечка» и «Бухгалтерия».
       </p>
 
       <!--

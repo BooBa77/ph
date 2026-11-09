@@ -250,6 +250,7 @@ describe('Походы (e2e)', () => {
         [tripId],
       );
       expect(chats.map((row: { kind: string }) => row.kind).sort()).toEqual([
+        'trip_finance',
         'trip_first_aid',
         'trip_gear',
         'trip_guest',
@@ -1659,6 +1660,7 @@ describe('Походы (e2e)', () => {
         'trip_route',
         'trip_gear',
         'trip_first_aid',
+        'trip_finance',
       ]);
       expect(mine.body.chats[0].lastMessage).toBeNull();
 
@@ -1755,7 +1757,9 @@ describe('Походы (e2e)', () => {
         .get(`/api/trips/${tripId}/chats`)
         .set('Authorization', `Bearer ${applicantToken}`)
         .expect(200);
-      expect(chats.body.chats).toHaveLength(7);
+      // Восемь чатов: гостевой, членский, питания, трансфера, ночёвок,
+      // снаряжения, аптечки и бухгалтерии.
+      expect(chats.body.chats).toHaveLength(8);
 
       await send(tripId, applicantToken, 'trip_members', 'Я в деле').expect(
         201,

@@ -122,6 +122,7 @@ async function mountTrip() {
         TripRoute: { template: '<div data-test="route-stub" />' },
         TripGear: { template: '<div data-test="gear-stub" />' },
         TripFirstAid: { template: '<div data-test="first-aid-stub" />' },
+        TripFinance: { template: '<div data-test="finance-stub" />' },
       },
     },
   })
@@ -181,7 +182,21 @@ describe('TripView и мобильное меню', () => {
     expect(items.find((item) => item.key === 'route')?.available).toBe(true)
     expect(items.find((item) => item.key === 'gear')?.available).toBe(true)
     expect(items.find((item) => item.key === 'firstAid')?.available).toBe(true)
+    expect(items.find((item) => item.key === 'finance')?.available).toBe(true)
     expect(items.find((item) => item.key === 'sport')?.available).toBe(false)
+  })
+
+  it('вкладка «Бухгалтерия» открывается и показывает свой экран', async () => {
+    const { wrapper } = await mountTrip()
+
+    useMobileMenuStore()
+      .context?.items.find((item) => item.key === 'finance')
+      ?.onSelect?.()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="finance-stub"]').exists()).toBe(true)
+    // Заглушки «ещё не готова» на этой вкладке быть не должно.
+    expect(wrapper.find('[data-test="tab-soon"]').exists()).toBe(false)
   })
 
   it('вкладка «Ночёвки» называется так и показывает чат табора', async () => {
