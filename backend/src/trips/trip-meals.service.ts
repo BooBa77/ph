@@ -3,6 +3,7 @@ import {
   ConflictException,
   ForbiddenException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import {
@@ -16,6 +17,12 @@ import {
   type FindOptionsWhere,
 } from 'typeorm';
 
+import {
+  allocateLoad,
+  loadUnitKey,
+  type LoadPerson,
+  type LoadUnit,
+} from '../gear/trip-gear-load';
 import { DishIngredient } from '../meals/entities/dish-ingredient.entity';
 import type { ProductUnit } from '../meals/meal.types';
 import { Dish } from '../meals/entities/dish.entity';
@@ -46,9 +53,11 @@ import { Trip } from './entities/trip.entity';
 import {
   TRIP_MEAL_KINDS,
   type TripLoadPackage,
+  type TripLoadPersonalPackage,
   type TripMealForm,
   type TripMealKind,
 } from './trip.types';
+import { TripEventsService } from './trip-events.service';
 import { TripsService } from './trips.service';
 
 const DAY_MS = 86_400_000;
@@ -91,9 +100,12 @@ interface ProductRow {
  */
 @Injectable()
 export class TripMealsService {
+  private readonly logger = new Logger(TripMealsService.name);
+
   constructor(
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
+    private readonly events: TripEventsService,
   ) {}
 
   /** Раскладка и фасовка целиком. */
@@ -184,6 +196,181 @@ export class TripMealsService {
           : pack.weightEstimatedGrams,
       assignedUserId: pack.assignedUserId,
     }));
+  }
+
+  /**
+   * Пакеты личной еды участника — для секции «Личное» «Моего рюкзака»
+   * (06.11.2026).
+   *
+   * Заказчик: «В „Личном“ отображается личная еда из Походы/Питание,
+   * фактический вес, а если нет, то расчётный». Пакеты автономного питания
+   * не назначаются и по рюкзакам не раскладываются — человек несёт их сам,
+   * поэтому сервер отдаёт их только владельцу и только для отображения.
+   *
+   * Личную еду ведёт только 100% идущий; у остальных слоя нет, и пустой
+   * список — честный ответ, а не ошибка.
+   */
+  async listPersonalPackagesForLoad(
+    tripId: string,
+    userId: string,
+  ): Promise<TripLoadPersonalPackage[]> {
+    const manager = this.dataSource.manager;
+    const trip = await manager.findOne(Trip, { where: { id: tripId } });
+    if (!trip || trip.status === 'idea') return [];
+
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId: trip.id, userId, status: 'going' },
+    });
+    if (!participant) return [];
+
+    const dayCount = await this.dayCount(manager, trip);
+    if (dayCount === 0) return [];
+
+    const eaters = await this.loadOwnerEater(manager, trip, userId);
+    const meals = await this.loadMeals(manager, trip, eaters, userId);
+    const packages = await this.loadPackages(manager, trip, meals, userId);
+
+    return packages.map((pack) => ({
+      id: pack.id,
+      name: pack.name,
+      // Фактический вес — после контрольного взвешивания; содержимое
+      // менялось — снова расчётный (`meals.md` §5.3).
+      weightGrams:
+        pack.weightActualGrams !== null && !pack.weightActualStale
+          ? pack.weightActualGrams
+          : pack.weightEstimatedGrams,
+      isActual: pack.weightActualGrams !== null && !pack.weightActualStale,
+    }));
+  }
+
+  /**
+   * Переложить пакеты общей еды по рюкзакам, не трогая снаряжение
+   * (06.11.2026).
+   *
+   * Заказчик: «При изменении состава пакетов в Питании нужно
+   * перераспределять пакеты в рюкзаках, не трогая снаряжение. Рюкзаки
+   * питающихся самостоятельно в этом не участвуют».
+   *
+   * Почему из «Питания», а не по кнопке в «Снаряжении»: состав пакетов
+   * меняется здесь, и завхоз не должен помнить про вторую вкладку. Меняется
+   * только `trip_meal_packages.assigned_user_id`: вещи `trip_gear` стоят
+   * на месте, иначе каждая правка рецепта перетасовывала бы палатки.
+   *
+   * Раскладка — тот же `allocateLoad`, что у кнопки, но единицы — только
+   * пакеты, а на людях уже висит их снаряжение (`initialWeights`). Так
+   * пакет получает тот едок, у кого больше свободной доли с учётом того,
+   * что он уже несёт.
+   *
+   * Люди, питающиеся отдельно, в пул не входят: общий котёл они не едят
+   * и не несут. Свою еду каждый несёт сам — её пакеты не назначаются.
+   */
+  private async redistributePackages(
+    tripId: string,
+    actorId: string,
+  ): Promise<void> {
+    const manager = this.dataSource.manager;
+    const trip = await manager.findOne(Trip, { where: { id: tripId } });
+    if (!trip || trip.status === 'idea') return;
+
+    const dayCount = await this.dayCount(manager, trip);
+    if (dayCount === 0) return;
+
+    const eaters = await this.loadEaters(manager, trip);
+    const meals = await this.loadMeals(manager, trip, eaters, null);
+    const packages = await this.loadPackages(manager, trip, meals, null);
+
+    const units: LoadUnit[] = packages
+      .map((pack) => ({
+        kind: 'package' as const,
+        id: pack.id,
+        weightGrams:
+          pack.weightActualGrams !== null && !pack.weightActualStale
+            ? pack.weightActualGrams
+            : pack.weightEstimatedGrams,
+        // У общего пакета владельца нет: «своё — владельцу» здесь
+        // не работает, пакет всегда идёт в уравнивание.
+        ownerUserId: null,
+      }))
+      .filter((unit) => unit.weightGrams > 0);
+
+    // Пустые пакеты груза не несут — переставлять нечего.
+    if (units.length === 0) return;
+
+    const people: LoadPerson[] = eaters.people
+      .filter((person) => !person.eatsSeparately)
+      .map((person) => ({
+        userId: person.userId,
+        gender: person.gender,
+        isDoctor: false,
+      }));
+
+    /**
+     * Едоков нет — пакеты остаются нераспределёнными: нести общий котёл
+     * некому, а назначить его «питающемуся отдельно» значило бы соврать.
+     */
+    if (people.length === 0) {
+      await manager.query(
+        `UPDATE "trip_meal_packages" SET "assigned_user_id" = NULL
+          WHERE "trip_id" = $1 AND "eater_user_id" IS NULL`,
+        [trip.id],
+      );
+      this.events.emitGear(trip.id, actorId);
+
+      return;
+    }
+
+    // Что уже лежит на людях: только утверждённые вещи с известным весом.
+    const weights: Array<{ user_id: string; total: string | null }> =
+      await manager.query(
+        `SELECT tg."assigned_user_id" AS user_id,
+                SUM(gi."weight_grams")::text AS total
+           FROM "trip_gear" tg
+           JOIN "gear_items" gi ON gi."id" = tg."gear_item_id"
+          WHERE tg."trip_id" = $1
+            AND tg."status" = 'approved'
+            AND tg."assigned_user_id" = ANY($2::uuid[])
+            AND gi."weight_grams" IS NOT NULL
+            AND gi."weight_grams" > 0
+          GROUP BY tg."assigned_user_id"`,
+        [trip.id, people.map((person) => person.userId)],
+      );
+    const initial = new Map<string, number>(
+      weights.map((row) => [row.user_id, Number(row.total ?? 0)]),
+    );
+
+    const allocation = allocateLoad(units, people, undefined, initial);
+
+    const byUser = new Map<string, string[]>();
+    for (const unit of units) {
+      const carrier = allocation.assignments.get(
+        loadUnitKey('package', unit.id),
+      );
+      if (!carrier) continue;
+
+      const list = byUser.get(carrier) ?? [];
+      list.push(unit.id);
+      byUser.set(carrier, list);
+    }
+
+    await this.dataSource.transaction(async (tx) => {
+      await tx.query(
+        `UPDATE "trip_meal_packages" SET "assigned_user_id" = NULL
+          WHERE "trip_id" = $1 AND "eater_user_id" IS NULL`,
+        [trip.id],
+      );
+
+      for (const [carrier, ids] of byUser) {
+        await tx.query(
+          `UPDATE "trip_meal_packages" SET "assigned_user_id" = $1
+            WHERE "trip_id" = $2 AND "id" = ANY($3::bigint[])
+              AND "eater_user_id" IS NULL`,
+          [carrier, trip.id, ids],
+        );
+      }
+    });
+
+    // «Снаряжение» слушает тот же канал: пакеты в рюкзаках обновились.
+    this.events.emitGear(trip.id, actorId);
   }
 
   /** Форма приёма: готовка или перекус. */
@@ -1327,6 +1514,28 @@ export class TripMealsService {
       }
       await work(manager, trip);
     });
+
+    /**
+     * Общий слой изменился — пакеты в рюкзаках пересобираются, вещи стоят
+     * на месте (06.11.2026). Личный слой чужого рюкзака не трогает:
+     * автономная еда никому не назначается.
+     *
+     * Ошибку пересборки не отдаём клиенту: раскладка уже сохранена, и
+     * красная плашка «не удалось» рядом с сохранённой правкой соврала бы.
+     * Пакеты при следующем изменении или по кнопке в «Снаряжении»
+     * разложатся снова.
+     */
+    if (owner === null) {
+      try {
+        await this.redistributePackages(trip.id, userId);
+      } catch (problem) {
+        this.logger.warn(
+          `Пакеты общей еды не перераспределились: ${
+            problem instanceof Error ? problem.message : String(problem)
+          }`,
+        );
+      }
+    }
   }
 
   // ─────────────────────────── слои еды ───────────────────────────

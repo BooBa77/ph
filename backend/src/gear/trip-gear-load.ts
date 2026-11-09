@@ -52,6 +52,12 @@ export interface LoadPerson {
   userId: string;
   gender: UserGender;
   isDoctor: boolean;
+  /**
+   * Питается отдельно (06.11.2026) — не ест общий котёл и не несёт его.
+   * Заказчик: «Рюкзаки питающихся самостоятельно в этом не участвуют».
+   * На снаряжение это не влияет: палатку он несёт как все.
+   */
+  eatsSeparately?: boolean;
 }
 
 /** Результат расчёта: кому что и с какой долей. */
@@ -86,11 +92,22 @@ export function capacityCoefficient(
  * выигрывает тот, кто раньше в списке, — иначе один и тот же поход давал бы
  * разные ответы на двух прогонах, и «сохранилось не то» выглядело бы
  * ошибкой.
+ *
+ * `initialWeights` — уже лежащий на людях груз (06.11.2026). Нужен
+ * «Питанию»: когда меняется состав пакетов, оно перераскладывает **только
+ * пакеты**, не трогая снаряжение, и свободная доля человека считается
+ * от снаряжения, которое за ним уже закреплено.
+ *
+ * **Пакеты еды не раскладываются «питающимся отдельно»** (решение
+ * заказчика 06.11.2026): они не едят общий котёл и не должны его нести.
+ * Если едоков нет вовсе, пакеты остаются нераспределёнными — экран так
+ * и скажет.
  */
 export function allocateLoad(
   units: LoadUnit[],
   people: LoadPerson[],
   coefficient: number = GEAR_CAPACITY_COEFFICIENT,
+  initialWeights?: ReadonlyMap<string, number>,
 ): LoadAllocation {
   const assignments = new Map<string, string>();
   const targets = new Map<string, number>();
@@ -101,10 +118,15 @@ export function allocateLoad(
     doctor === null && units.some((unit) => unit.isFirstAid === true);
 
   for (const person of people) {
-    weights.set(person.userId, 0);
+    weights.set(person.userId, initialWeights?.get(person.userId) ?? 0);
   }
 
-  const totalWeight = units.reduce((sum, unit) => sum + unit.weightGrams, 0);
+  const initialTotal = people.reduce(
+    (sum, person) => sum + (initialWeights?.get(person.userId) ?? 0),
+    0,
+  );
+  const totalWeight =
+    units.reduce((sum, unit) => sum + unit.weightGrams, 0) + initialTotal;
   const capacity = people.reduce(
     (sum, person) => sum + capacityCoefficient(person.gender, coefficient),
     0,
@@ -153,9 +175,15 @@ export function allocateLoad(
   }
 
   // 4. Остаток и пакеты — тому, у кого больше свободной доли.
+  //
+  // Пакеты еды ищут несущего только среди тех, кто ест общий котёл:
+  // «питающийся отдельно» груз общей еды не берёт (06.11.2026).
+  const foodPeople = people.filter((person) => person.eatsSeparately !== true);
   for (const unit of pool.sort(compareUnits)) {
-    const person = freestPerson(people, targets, weights);
-    if (!person) break;
+    const candidates = unit.kind === 'package' ? foodPeople : people;
+    const person = freestPerson(candidates, targets, weights);
+    // Едоков нет — пакет остаётся нераспределённым, а не «у любого».
+    if (!person) continue;
     add(person.userId, unit);
   }
 

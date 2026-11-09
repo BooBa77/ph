@@ -2423,6 +2423,143 @@ rows.push([
   sectionChildLeft === 0 ? '' : `осталось ${sectionChildLeft}`,
 ]);
 
+// ─── Личные вещи «Взял» (06.11.2026) ───
+/**
+ * `trip_personal_gear`: личная вещь живёт отдельно от `trip_gear`
+ * и в «Распределение» не протекает. Проверяем форму (CASCADE и SET NULL)
+ * и то, что раздел обязан быть личным разделом того же человека.
+ */
+const personalShape = await client.query(
+  `SELECT
+     (SELECT 1 FROM information_schema.tables
+       WHERE table_name = 'trip_personal_gear') AS table_exists,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_trip_personal_gear_member') AS member_delete,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_trip_personal_gear_item') AS item_delete,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_trip_personal_gear_section') AS section_delete,
+     (SELECT 1 FROM pg_trigger
+       WHERE tgname = 'trg_trip_personal_gear_section') AS has_trigger,
+     (SELECT 1 FROM pg_indexes
+       WHERE indexname = 'UQ_trip_personal_gear_item') AS has_unique`,
+);
+
+const personalShapeRow = personalShape.rows[0];
+const personalShapeOk =
+  personalShapeRow.table_exists === 1 &&
+  // Ушли из состава или удалили предмет каталога — вещь уходит с ними.
+  personalShapeRow.member_delete === 'c' &&
+  personalShapeRow.item_delete === 'c' &&
+  // Раздел убрали — вещь осталась в походе (высыпалась в корень).
+  personalShapeRow.section_delete === 'n' &&
+  personalShapeRow.has_trigger === 1 &&
+  personalShapeRow.has_unique === 1;
+
+if (!personalShapeOk) failed += 1;
+rows.push([
+  personalShapeOk ? 'ok' : 'НЕТ СХЕМЫ',
+  'личные вещи: каскады, SET NULL раздела, триггер и уникальность',
+  personalShapeOk
+    ? ''
+    : `table=${personalShapeRow.table_exists}, member=${personalShapeRow.member_delete}, item=${personalShapeRow.item_delete}, section=${personalShapeRow.section_delete}, trigger=${personalShapeRow.has_trigger}, unique=${personalShapeRow.has_unique}`,
+]);
+
+const personalRowId = (
+  await client.query(
+    `INSERT INTO trip_personal_gear (trip_id, user_id, gear_item_id)
+     VALUES ($1, $2, $3) RETURNING id`,
+    [tripId, user1, routeExtraItemId],
+  )
+).rows[0].id;
+
+await check(
+  'личные вещи: одну вещь дважды в один поход не положить',
+  'fail',
+  `INSERT INTO trip_personal_gear (trip_id, user_id, gear_item_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, user1, routeExtraItemId],
+);
+
+const personalLocalSectionId = (
+  await client.query(
+    `INSERT INTO trip_gear_sections (trip_id, scope, owner_user_id, title)
+     VALUES ($1, 'personal', $2, 'Одежда') RETURNING id`,
+    [tripId, user1],
+  )
+).rows[0].id;
+
+await check(
+  'личные вещи: свой личный раздел принимается',
+  'ok',
+  `UPDATE trip_personal_gear SET section_id = $1 WHERE id = $2`,
+  [personalLocalSectionId, personalRowId],
+);
+
+const personalSharedSectionId = (
+  await client.query(
+    `INSERT INTO trip_gear_sections (trip_id, scope, title)
+     VALUES ($1, 'shared', 'Общий для проверки') RETURNING id`,
+    [tripId],
+  )
+).rows[0].id;
+
+await check(
+  'личные вещи: общественный раздел в личную вещь не встаёт',
+  'fail',
+  `UPDATE trip_personal_gear SET section_id = $1 WHERE id = $2`,
+  [personalSharedSectionId, personalRowId],
+);
+
+const personalOtherOwnerSectionId = (
+  await client.query(
+    `INSERT INTO trip_gear_sections (trip_id, scope, owner_user_id, title)
+     VALUES ($1, 'personal', $2, 'Одежда второго') RETURNING id`,
+    [tripId, user2],
+  )
+).rows[0].id;
+
+await check(
+  'личные вещи: чужой личный раздел не принимается',
+  'fail',
+  `UPDATE trip_personal_gear SET section_id = $1 WHERE id = $2`,
+  [personalOtherOwnerSectionId, personalRowId],
+);
+
+const foreignPersonalSectionId = (
+  await client.query(
+    `INSERT INTO trip_gear_sections (trip_id, scope, owner_user_id, title)
+     VALUES ($1, 'personal', $2, 'Чужой личный') RETURNING id`,
+    [otherTripId, user1],
+  )
+).rows[0].id;
+
+await check(
+  'личные вещи: раздел из чужого похода не принимается',
+  'fail',
+  `UPDATE trip_personal_gear SET section_id = $1 WHERE id = $2`,
+  [foreignPersonalSectionId, personalRowId],
+);
+
+// Удалили раздел — вещь осталась и высыпалась в корень.
+await client.query(`DELETE FROM trip_gear_sections WHERE id = $1`, [
+  personalLocalSectionId,
+]);
+
+const personalSectionSpilled = (
+  await client.query(
+    `SELECT section_id FROM trip_personal_gear WHERE id = $1`,
+    [personalRowId],
+  )
+).rows[0].section_id;
+
+if (personalSectionSpilled !== null) failed += 1;
+rows.push([
+  personalSectionSpilled === null ? 'ok' : 'ЛИЧНАЯ ВЕЩЬ ПОТЕРЯЛАСЬ',
+  'личные вещи: удалили раздел — вещь осталась в корне',
+  personalSectionSpilled === null ? '' : `section_id=${personalSectionSpilled}`,
+]);
+
 await client.query('ROLLBACK');
 await client.end();
 

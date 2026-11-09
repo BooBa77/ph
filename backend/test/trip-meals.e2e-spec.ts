@@ -1214,4 +1214,107 @@ describe('Питание похода (e2e)', () => {
       ).expect(400);
     });
   });
+
+  it('состав пакетов изменился — пакеты переезжают, снаряжение стоит на месте', async () => {
+    /**
+     * Заказчик 06.11.2026: «При изменении состава пакетов в Питании нужно
+     * перераспределять пакеты в рюкзаках, не трогая снаряжение. Рюкзаки
+     * питающихся самостоятельно в этом не участвуют».
+     *
+     * Здесь участница уже питается отдельно (предыдущий тест), поэтому
+     * единственный едок — организатор. Проверяем: общий пакет после правки
+     * состава оказывается у него, а назначение вещи похода не изменилось.
+     */
+    const gearTypeId = (
+      await dataSource.query('SELECT id FROM gear_types ORDER BY id LIMIT 1')
+    )[0].id;
+    const gearItemId = (
+      await dataSource.query(
+        `INSERT INTO gear_items (owner_user_id, gear_type_id, title, weight_grams)
+         VALUES ($1, $2, 'Вещь для проверки пересборки', 2100) RETURNING id`,
+        [organizerId, gearTypeId],
+      )
+    )[0].id;
+    const tripGearId = (
+      await dataSource.query(
+        `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id,
+                                assigned_user_id, status)
+         VALUES ($1, $2, $3, $3, 'approved') RETURNING id`,
+        [tripId, gearItemId, organizerId],
+      )
+    )[0].id;
+
+    // Свой пакет с содержимым: в конце файла у старых пакетов вес уже 0.
+    const created = await call(
+      'post',
+      `/api/trips/${tripId}/meal-packages`,
+      organizerToken,
+    ).expect(201);
+    const ownPackage = (
+      packagesOf(created.body as Record<string, unknown>) as unknown as Array<{
+        id: string;
+        name: string;
+      }>
+    ).at(-1)!;
+
+    // Кладём в него «всё» из первого приёма с ненулевым продуктом.
+    const plan = await readPlan(organizerToken);
+    const meals = plan.meals as Array<{
+      dayIndex: number;
+      kind: string;
+      products: Array<{ productId: number; amount: number }>;
+    }>;
+    const meal = meals.find((row) =>
+      row.products.some((product) => product.amount > 0),
+    )!;
+    const product = meal.products.find((row) => row.amount > 0)!;
+
+    await call(
+      'put',
+      `/api/trips/${tripId}/meals/${meal.dayIndex}/${meal.kind}/allocations/${product.productId}`,
+      organizerToken,
+    )
+      .send({ allocations: [{ packageId: ownPackage.id, amount: 0, isElastic: true }] })
+      .expect(200);
+
+    // Специально ставим пакет «не тому» — отдельному едоку.
+    await dataSource.query(
+      `UPDATE trip_meal_packages SET assigned_user_id = $1
+        WHERE trip_id = $2 AND id = $3`,
+      [memberId, tripId, ownPackage.id],
+    );
+
+    // Любая правка общего слоя запускает пересборку пакетов.
+    await call(
+      'patch',
+      `/api/trips/${tripId}/meal-packages/${ownPackage.id}`,
+      organizerToken,
+    )
+      .send({ name: `${ownPackage.name} (правка)` })
+      .expect(200);
+
+    try {
+      const packs = await dataSource.query(
+        `SELECT id, assigned_user_id FROM trip_meal_packages
+          WHERE trip_id = $1 AND eater_user_id IS NULL AND id = $2`,
+        [tripId, ownPackage.id],
+      );
+      // Общий котёл несёт только тот, кто ест со всеми.
+      expect(packs[0].assigned_user_id).toBe(organizerId);
+
+      const gear = await dataSource.query(
+        'SELECT assigned_user_id FROM trip_gear WHERE id = $1',
+        [tripGearId],
+      );
+      expect(gear[0].assigned_user_id).toBe(organizerId);
+    } finally {
+      // За собой: строка похода уходит каскадом с походом, а предмет
+      // каталога и строку убираем руками — иначе afterAll не удалит
+      // пользователя (FK владельца).
+      await dataSource.query('DELETE FROM trip_gear WHERE id = $1', [tripGearId]);
+      await dataSource.query('DELETE FROM gear_items WHERE id = $1', [
+        gearItemId,
+      ]);
+    }
+  });
 });

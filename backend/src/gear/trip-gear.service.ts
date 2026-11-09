@@ -19,6 +19,7 @@ import { User } from '../users/entities/user.entity';
 import { sqlValues } from '../users/sport-experience.types';
 import {
   AddManualTripGearDto,
+  AddTripGearPersonalDto,
   AssignTripGearPackageDto,
   CreateTripGearSectionDto,
   ProposeTripGearDto,
@@ -26,16 +27,22 @@ import {
   TripGearListDto,
   TripGearLoadBackpackDto,
   TripGearLoadDto,
+  TripGearLoadPersonalDto,
+  TripGearLoadPersonalPackageDto,
+  TripGearLoadPersonalUnitDto,
   TripGearLoadUnitDto,
+  TripGearPersonalDto,
   TripGearSectionDto,
   TripGearSleepingDto,
   UpdateTripGearDto,
+  UpdateTripGearPersonalDto,
   UpdateTripGearSectionDto,
 } from './dto/trip-gear.dto';
 import { GearItem } from './entities/gear-item.entity';
 import { GearType } from './entities/gear-type.entity';
 import { TripGear } from './entities/trip-gear.entity';
 import { TripGearSection } from './entities/trip-gear-section.entity';
+import { TripPersonalGear } from './entities/trip-personal-gear.entity';
 import {
   CAMP_SECTION_TYPE_CODES,
   FIRST_AID_TYPE_CODE,
@@ -216,8 +223,9 @@ export class TripGearService {
      * две таблицы сам.
      */
     const sleeping = await this.sleepingRows(manager, trip.id, userId);
+    const personalItems = await this.personalRows(manager, trip.id, userId);
 
-    return this.toList(rows, sections, sleeping, userId);
+    return this.toList(rows, sections, sleeping, personalItems, userId);
   }
 
   /**
@@ -246,7 +254,7 @@ export class TripGearService {
 
     await this.assertParticipant(manager, trip.id, userId);
 
-    return this.buildLoad(manager, trip);
+    return this.buildLoad(manager, trip, userId);
   }
 
   /**
@@ -333,9 +341,8 @@ export class TripGearService {
     // вкладку: канал тот же, что у перетаскивания вещи.
     this.events.emitGear(trip.id, userId);
 
-    return this.buildLoad(manager, trip);
+    return this.buildLoad(manager, trip, userId);
   }
-
   /**
    * Кто несёт пакет еды — `PATCH /gear/packages/:packageId` (06.11.2026).
    *
@@ -345,10 +352,9 @@ export class TripGearService {
    *
    * Личный пакет автономного питания так назначить нельзя: `eater_user_id`
    * значит, что человек ест это сам, и «назначить» его другому — потерять
-   * смысл личного слоя «Питания».
-   *
-   * Ответ — раскладка целиком, как у кнопки: экран перерисовывает веса
-   * из одного источника, а не складывает их сам.
+   * смысл личного слоя «Питания». Пакет общего котла нельзя отдать тому,
+   * кто питается отдельно: его рюкзак в раскладке еды не участвует
+   * (решение заказчика 06.11.2026).
    */
   async assignPackage(
     userId: string,
@@ -373,12 +379,30 @@ export class TripGearService {
     const carrier = dto.assignedUserId ?? null;
     await this.assertCarrier(manager, trip.id, carrier);
 
+    /**
+     * Питается отдельно — общий котёл не несёт (06.11.2026).
+     *
+     * Заказчик: «Рюкзаки питающихся самостоятельно в этом не участвуют» —
+     * речь о распределении общей еды. Свою человек несёт сам, и пакет
+     * общего котла в его рюкзаке был бы грузом, который он не ест.
+     */
+    if (carrier !== null) {
+      const participant = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: carrier },
+      });
+      if (participant?.eatsSeparately) {
+        throw new BadRequestException(
+          'Участник питается отдельно — общую еду ему не назначают',
+        );
+      }
+    }
+
     pack.assignedUserId = carrier;
     await manager.save(pack);
 
     this.events.emitGear(trip.id, userId);
 
-    return this.buildLoad(manager, trip);
+    return this.buildLoad(manager, trip, userId);
   }
 
   /**
@@ -688,6 +712,160 @@ export class TripGearService {
     this.events.emitGear(trip.id, userId);
   }
 
+  // ───────────────────────── личные вещи «Взял» (06.11.2026) ─────────────────────────
+
+  /**
+   * Добавить свою вещь в раздел «Взял».
+   *
+   * Заказчик: «Личные вещи — это то, что помимо общественного: одежда,
+   * каска, трекинговые палочки», и у раздела нужны кнопки «Добавить
+   * снаряжение в этот раздел». Вещь берётся из **своего** каталога: чужой
+   * предмет не найдётся (404), как и в остальных личных ручках.
+   *
+   * Личные вещи — только 100% идущему: «пока не решил» и приглашённый
+   * ещё не собирают рюкзак, а строка была бы вещью в чужом походе
+   * без хозяина. То же правило, что у личной еды «Питания».
+   *
+   * `sectionId` не указан — вещь встанет в корень «Взял». Раздел обязан
+   * быть личным разделом этого человека; чужой или общественный — 400.
+   */
+  async addPersonal(
+    userId: string,
+    tripId: number,
+    dto: AddTripGearPersonalDto,
+  ): Promise<TripGearPersonalDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    const participant = await this.assertParticipant(manager, trip.id, userId);
+
+    if (participant.status !== 'going') {
+      throw new BadRequestException(
+        'Личные вещи собирает только тот, кто идёт в поход',
+      );
+    }
+
+    const item = await manager.findOne(GearItem, {
+      where: { id: String(dto.gearItemId), ownerUserId: userId },
+      relations: { gearType: true, attributes: { gearTypeAttribute: true } },
+    });
+    if (!item) throw new NotFoundException('Предмет не найден');
+
+    const sectionId = await this.resolvePersonalSection(
+      manager,
+      trip.id,
+      userId,
+      dto.sectionId ?? null,
+    );
+
+    const existing = await manager.findOne(TripPersonalGear, {
+      where: { tripId: trip.id, userId, gearItemId: item.id },
+    });
+    if (existing) {
+      throw new ConflictException('Эта вещь уже в вашем личном снаряжении');
+    }
+
+    const saved = await manager.save(
+      manager.create(TripPersonalGear, {
+        tripId: trip.id,
+        userId,
+        gearItemId: item.id,
+        sectionId,
+      }),
+    );
+    saved.gearItem = item;
+
+    this.events.emitGear(trip.id, userId);
+
+    return TripGearPersonalDto.from(saved);
+  }
+
+  /**
+   * Перенести личную вещь в другой раздел «Взял» — путь для телефона, где
+   * HTML5-drag не работает. Меняет только владелец: чужая строка не
+   * находится (404), а не «видна без кнопок».
+   */
+  async updatePersonal(
+    userId: string,
+    tripId: number,
+    personalId: number,
+    dto: UpdateTripGearPersonalDto,
+  ): Promise<TripGearPersonalDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+
+    const row = await this.findPersonalRow(manager, trip.id, userId, personalId);
+
+    if (dto.sectionId !== undefined) {
+      row.sectionId = await this.resolvePersonalSection(
+        manager,
+        trip.id,
+        userId,
+        dto.sectionId,
+      );
+      await manager.save(row);
+    }
+
+    this.events.emitGear(trip.id, userId);
+
+    return TripGearPersonalDto.from(row);
+  }
+
+  /** Убрать свою личную вещь из похода. Предмет каталога остаётся. */
+  async removePersonal(
+    userId: string,
+    tripId: number,
+    personalId: number,
+  ): Promise<void> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, trip.id, userId);
+
+    const row = await this.findPersonalRow(manager, trip.id, userId, personalId);
+    await manager.delete(TripPersonalGear, { id: row.id });
+
+    this.events.emitGear(trip.id, userId);
+  }
+
+  /** Личная строка этого человека или 404: чужое личное не существует. */
+  private async findPersonalRow(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+    personalId: number,
+  ): Promise<TripPersonalGear> {
+    const row = await manager.findOne(TripPersonalGear, {
+      where: { id: String(personalId), tripId, userId },
+      relations: { gearItem: { gearType: true, attributes: { gearTypeAttribute: true } } },
+    });
+    if (!row) throw new NotFoundException('Личная вещь не найдена');
+
+    return row;
+  }
+
+  /**
+   * Раздел для личной вещи: `null` — корень, иначе личный раздел этого
+   * человека в этом походе. Общественный или чужой раздел — 400: личное
+   * не должно попасть в общую структуру.
+   */
+  private async resolvePersonalSection(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+    sectionId: number | null,
+  ): Promise<string | null> {
+    if (sectionId === null) return null;
+
+    const section = await manager.findOne(TripGearSection, {
+      where: { id: String(sectionId), tripId, scope: 'personal', ownerUserId: userId },
+    });
+    if (!section) {
+      throw new BadRequestException('Личный раздел не найден у этого участника');
+    }
+
+    return section.id;
+  }
+
   // ───────────────────────── разделы «Берём» и «Взял» ─────────────────────────
 
   /**
@@ -973,6 +1151,8 @@ export class TripGearService {
       // в базе и у DTO состава.
       gender: participant.user?.gender ?? 'm',
       isDoctor: participant.userId === doctorUserId,
+      // «Питается отдельно» — не несёт общий котёл (06.11.2026).
+      eatsSeparately: participant.eatsSeparately,
     }));
 
     const rows = await manager.find(TripGear, {
@@ -1050,6 +1230,7 @@ export class TripGearService {
   private async buildLoad(
     manager: EntityManager,
     trip: Trip,
+    viewerId: string,
   ): Promise<TripGearLoadDto> {
     const data = await this.collectLoad(manager, trip);
     const allocation = allocateLoad(data.units, data.people);
@@ -1067,6 +1248,18 @@ export class TripGearService {
     }));
     const byUser = new Map(
       backpacks.map((backpack) => [backpack.userId, backpack]),
+    );
+
+    /**
+     * Рюкзаки «питающихся отдельно» в распределении общей еды не участвуют
+     * (решение заказчика 06.11.2026). Назначение, оставшееся с тех пор,
+     * как человек перешёл на своё питание, показывает нераспределённым —
+     * иначе общий пакет висел бы в рюкзаке того, кто его не ест.
+     */
+    const separateEaters = new Set(
+      data.people
+        .filter((person) => person.eatsSeparately === true)
+        .map((person) => person.userId),
     );
 
     const unassigned: TripGearLoadUnitDto[] = [];
@@ -1095,6 +1288,11 @@ export class TripGearService {
         continue;
       }
 
+      if (unit.kind === 'package' && separateEaters.has(backpack.userId)) {
+        unassigned.push(dto);
+        continue;
+      }
+
       if (unit.kind === 'gear') {
         backpack.gear.push(dto);
         backpack.gearWeightGrams += unit.weightGrams;
@@ -1119,6 +1317,74 @@ export class TripGearService {
       packagesWithoutWeight: data.packagesWithoutWeight,
       doctorUserId: data.doctorUserId,
       doctorMissing: allocation.doctorMissing,
+      personal: await this.buildPersonalLoad(manager, trip, viewerId),
+    };
+  }
+
+  /**
+   * Личная половина «Моего рюкзака» (06.11.2026).
+   *
+   * Заказчик: «секция Личное снаряжение/Рюкзак должна быть разделена на две
+   * секции „Общественное“ и „Личное“. В „Личном“ отображается личная еда
+   * из Походы/Питание, фактический вес, а если нет, то расчётный».
+   *
+   * Поэтому здесь рядом лежат три источника, и все — только смотрящего:
+   * личные вещи «Взял», строки «Спальника» «Ночёвок» и пакеты личной еды
+   * «Питания». В общее распределение они не входят — это отображение.
+   */
+  private async buildPersonalLoad(
+    manager: EntityManager,
+    trip: Trip,
+    viewerId: string,
+  ): Promise<TripGearLoadPersonalDto> {
+    const items = await manager.find(TripPersonalGear, {
+      where: { tripId: trip.id, userId: viewerId },
+      relations: { gearItem: true },
+      order: { id: 'ASC' },
+    });
+    const sleeping = await this.sleepingRows(manager, trip.id, viewerId);
+    const packages = await this.tripMeals.listPersonalPackagesForLoad(
+      trip.id,
+      viewerId,
+    );
+
+    const gear: TripGearLoadPersonalUnitDto[] = [
+      ...items.map((row) => ({
+        kind: 'personal' as const,
+        id: row.id,
+        title: row.gearItem.title,
+        weightGrams: row.gearItem.weightGrams,
+      })),
+      ...sleeping.map((row) => ({
+        kind: 'sleeping' as const,
+        id: row.id,
+        title: row.title,
+        weightGrams: row.weightGrams,
+      })),
+    ];
+
+    const packageDtos: TripGearLoadPersonalPackageDto[] = packages.map((pack) => ({
+      id: pack.id,
+      name: pack.name,
+      weightGrams: pack.weightGrams,
+      isActual: pack.isActual,
+    }));
+
+    const gearWeightGrams = gear.reduce(
+      (sum, row) => sum + (row.weightGrams ?? 0),
+      0,
+    );
+    const packagesWeightGrams = packageDtos.reduce(
+      (sum, pack) => sum + pack.weightGrams,
+      0,
+    );
+
+    return {
+      gearWeightGrams,
+      packagesWeightGrams,
+      totalWeightGrams: gearWeightGrams + packagesWeightGrams,
+      gear,
+      packages: packageDtos,
     };
   }
 
@@ -1561,11 +1827,33 @@ export class TripGearService {
     }));
   }
 
+  /**
+   * Личные вещи смотрящего из раздела «Взял» (06.11.2026).
+   *
+   * Читаем `trip_personal_gear` только по своему человеку: личное не
+   * показывается никому, включая организатора, — то же правило, что
+   * у «Спальника» «Ночёвок». Название, тип и вес приходят из каталога.
+   */
+  private async personalRows(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+  ): Promise<TripGearPersonalDto[]> {
+    const rows = await manager.find(TripPersonalGear, {
+      where: { tripId, userId },
+      relations: { gearItem: { gearType: true, attributes: { gearTypeAttribute: true } } },
+      order: { id: 'ASC' },
+    });
+
+    return rows.map((row) => TripGearPersonalDto.from(row));
+  }
+
   /** Список с итогом: сумма только утверждённых весов. */
   private toList(
     rows: TripGear[],
     sections: TripGearSection[],
     sleeping: TripGearSleepingDto[],
+    personalItems: TripGearPersonalDto[],
     viewerId: string,
   ): TripGearListDto {
     let totalWeightGrams = 0;
@@ -1584,6 +1872,7 @@ export class TripGearService {
       totalWeightGrams,
       itemsWithoutWeight,
       sleeping,
+      personalItems,
     };
   }
 }

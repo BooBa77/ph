@@ -401,6 +401,13 @@ export interface TripGearList {
    * и общественное живут в разных таблицах, и копий не заводим.
    */
   sleeping: TripGearSleeping[]
+  /**
+   * Мои личные вещи «Взял» (06.11.2026) — одежда, каска, палки. Приходят
+   * **той же формой**, что общественные: дерево разделов и карточка вещи
+   * не знают про второй вид строки. Отличает их только смысл:
+   * `personalSectionId` — место в «Взял», `sharedSectionId` всегда `null`.
+   */
+  personalItems: TripGearItem[]
 }
 
 /**
@@ -429,11 +436,43 @@ export interface TripGearLoadBackpack {
 }
 
 /**
+ * Личная вещь в рюкзаке смотрящего (06.11.2026): из «Взял» или из
+ * «Спальника» «Ночёвок». Для рюкзака это одно и то же личное; `kind`
+ * оставлен, чтобы подпись могла сказать, откуда вещь.
+ */
+export interface TripGearLoadPersonalUnit {
+  kind: 'personal' | 'sleeping'
+  id: string
+  title: string
+  weightGrams: number | null
+}
+
+/**
+ * Пакет личной еды из «Питания» (06.11.2026). `isActual` — вес взвешен,
+ * иначе он расчётный: заказчик просил показывать оба.
+ */
+export interface TripGearLoadPersonalPackage {
+  id: string
+  name: string
+  weightGrams: number
+  isActual: boolean
+}
+
+/** Личная половина «Моего рюкзака»: свои вещи и своя еда. */
+export interface TripGearLoadPersonal {
+  gearWeightGrams: number
+  packagesWeightGrams: number
+  totalWeightGrams: number
+  gear: TripGearLoadPersonalUnit[]
+  packages: TripGearLoadPersonalPackage[]
+}
+
+/**
  * Ответ `GET /gear/load` и `POST /gear/auto-distribute` (06.11.2026).
  *
  * Один ответ на оба запроса: экрану не нужно второй раз собирать раскладку
- * после кнопки. Пока фронт меняет только назначения и перечитывает
- * `GET /gear`, но тип описан целиком — пакеты и доли уже приходят с сервера.
+ * после кнопки. `backpacks` — только распределяемый груз, `personal` —
+ * свои вещи и своя еда смотрящего для отдельной секции «Личное».
  */
 export interface TripGearLoad {
   totalWeightGrams: number
@@ -444,4 +483,5 @@ export interface TripGearLoad {
   /** Медик, у которого аптечка. `null` — медика в походе нет. */
   doctorUserId: string | null
   doctorMissing: boolean
+  personal: TripGearLoadPersonal
 }

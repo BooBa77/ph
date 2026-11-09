@@ -601,4 +601,150 @@ describe('Раскладка груза по рюкзакам (e2e)', () => {
     expect(memberBag?.totalWeightGrams).toBe(4500);
     expect(response.body.unassigned).toHaveLength(0);
   });
+
+  it('личные вещи «Взял»: добавляются в свой раздел, видны только владельцу и идут в «Личное» рюкзака', async () => {
+    // Разделы засеялись при первом `GET /gear` — берём «Одежду» организатора.
+    const list = await call(
+      'get',
+      `/api/trips/${tripId}/gear`,
+      organizerToken,
+    ).expect(200);
+    const clothes = (
+      list.body.sections as Array<{
+        id: string;
+        scope: string;
+        title: string;
+        templateCode: string | null;
+      }>
+    ).find(
+      (section) =>
+        section.scope === 'personal' && section.templateCode === 'clothes',
+    );
+    expect(clothes).toBeDefined();
+
+    const jacketId = await addGear(organizerToken, {
+      typeId: plainTypeId,
+      title: 'Куртка мембранная',
+      weightGrams: 800,
+    });
+
+    const created = await call(
+      'post',
+      `/api/trips/${tripId}/gear/personal`,
+      organizerToken,
+      { gearItemId: Number(jacketId), sectionId: Number(clothes?.id) },
+    ).expect(201);
+
+    expect(created.body).toMatchObject({
+      title: 'Куртка мембранная',
+      weightGrams: 800,
+      personalSectionId: clothes?.id,
+      sharedSectionId: null,
+      status: 'approved',
+    });
+
+    // Повторно ту же вещь в тот же поход не положить.
+    await call('post', `/api/trips/${tripId}/gear/personal`, organizerToken, {
+      gearItemId: Number(jacketId),
+    }).expect(409);
+
+    const own = await call(
+      'get',
+      `/api/trips/${tripId}/gear`,
+      organizerToken,
+    ).expect(200);
+    expect(own.body.personalItems).toEqual([
+      expect.objectContaining({
+        id: created.body.id,
+        title: 'Куртка мембранная',
+        personalSectionId: clothes?.id,
+      }),
+    ]);
+
+    // Чужие личные вещи не отдаются — даже организатор чужой «Взял» не видит.
+    const memberView = await call(
+      'get',
+      `/api/trips/${tripId}/gear`,
+      memberToken,
+    ).expect(200);
+    expect(memberView.body.personalItems).toEqual([]);
+
+    // В раскладке — отдельный блок «Личное», в общественные доли не входит.
+    const load = await call(
+      'get',
+      `/api/trips/${tripId}/gear/load`,
+      organizerToken,
+    ).expect(200);
+    expect(load.body.personal.gear).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: 'personal',
+          title: 'Куртка мембранная',
+          weightGrams: 800,
+        }),
+      ]),
+    );
+    expect(load.body.personal.gearWeightGrams).toBeGreaterThanOrEqual(800);
+    expect(
+      (load.body.backpacks as Array<{
+        gear: Array<{ title: string }>;
+      }>).flatMap((bag) => bag.gear.map((unit) => unit.title)),
+    ).not.toContain('Куртка мембранная');
+
+    // Крестик: убираем строку, предмет каталога остаётся.
+    await call(
+      'delete',
+      `/api/trips/${tripId}/gear/personal/${created.body.id}`,
+      organizerToken,
+    ).expect(204);
+
+    const after = await call(
+      'get',
+      `/api/trips/${tripId}/gear`,
+      organizerToken,
+    ).expect(200);
+    expect(after.body.personalItems).toEqual([]);
+
+    // Чужой предмет в личные не положить.
+    await call('post', `/api/trips/${tripId}/gear/personal`, memberToken, {
+      gearItemId: Number(jacketId),
+    }).expect(404);
+  });
+
+  it('питающийся отдельно не несёт общий пакет: автораскладка обходит его рюкзак', async () => {
+    // Участник перешёл на своё питание (правило «Питания» 06.11.2026).
+    await call('patch', `/api/trips/${tripId}/participants/me`, memberToken, {
+      status: 'going',
+      eatsSeparately: true,
+    }).expect(200);
+
+    // Назначить ему пакет вручную тоже нельзя.
+    await call(
+      'patch',
+      `/api/trips/${tripId}/gear/packages/${packageId}`,
+      organizerToken,
+      { assignedUserId: memberId },
+    ).expect(400);
+
+    const response = await call(
+      'post',
+      `/api/trips/${tripId}/gear/auto-distribute`,
+      organizerToken,
+    ).expect(200);
+
+    const bags = new Map<string, { packages: Array<{ id: string }> }>(
+      (
+        response.body.backpacks as Array<{
+          userId: string;
+          packages: Array<{ id: string }>;
+        }>
+      ).map((backpack) => [backpack.userId, backpack]),
+    );
+
+    // Общий пакет ушёл единственному едоку, а рюкзак «отдельного» пуст по еде.
+    expect(bags.get(organizerId)?.packages.map((unit) => unit.id)).toContain(
+      packageId,
+    );
+    expect(bags.get(memberId)?.packages).toHaveLength(0);
+  });
 });

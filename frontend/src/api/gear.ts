@@ -313,10 +313,78 @@ export async function updateTripGear(
 }
 
 /**
+ * POST /api/trips/:id/gear/personal — своя вещь в раздел «Взял» (06.11.2026).
+ *
+ * Заказчик: «Личные вещи — это то, что помимо общественного: одежда, каска,
+ * трекинговые палочки», и у раздела нужны кнопки «Добавить снаряжение
+ * в этот раздел». Вещь обязательно из своего каталога, `gearItemId` —
+ * строка, как у каталога; `sectionId` не указан — корень «Взял».
+ */
+export async function addPersonalTripGear(
+  tripId: string,
+  body: { gearItemId: string; sectionId?: string | null },
+): Promise<TripGearItem> {
+  return apiFetch<TripGearItem>(`/trips/${tripId}/gear/personal`, {
+    method: 'POST',
+    body: JSON.stringify({
+      gearItemId: Number(body.gearItemId),
+      ...(body.sectionId !== undefined
+        ? { sectionId: body.sectionId === null ? null : Number(body.sectionId) }
+        : {}),
+    }),
+  })
+}
+
+/**
+ * PATCH /api/trips/:id/gear/personal/:personalId — перенос между разделами
+ * «Взял». Путь для телефона, где HTML5-drag не работает.
+ */
+export async function updatePersonalTripGear(
+  tripId: string,
+  personalId: string,
+  body: { sectionId: string | null },
+): Promise<TripGearItem> {
+  return apiFetch<TripGearItem>(`/trips/${tripId}/gear/personal/${personalId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      sectionId: body.sectionId === null ? null : Number(body.sectionId),
+    }),
+  })
+}
+
+/** DELETE .../gear/personal/:personalId — убрать свою личную вещь. */
+export async function removePersonalTripGear(
+  tripId: string,
+  personalId: string,
+): Promise<void> {
+  await apiFetch<void>(`/trips/${tripId}/gear/personal/${personalId}`, {
+    method: 'DELETE',
+  })
+}
+
+/**
+ * PATCH /api/trips/:id/gear/packages/:packageId — кто несёт пакет еды
+ * (06.11.2026). Назначает **любой участник**, как и несущего вещи;
+ * `null` — снять назначение. Питающемуся отдельно общий пакет сервер
+ * не отдаст: его рюкзак в раскладке еды не участвует.
+ */
+export async function assignTripGearPackage(
+  tripId: string,
+  packageId: string,
+  assignedUserId: string | null,
+): Promise<TripGearLoad> {
+  return apiFetch<TripGearLoad>(`/trips/${tripId}/gear/packages/${packageId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ assignedUserId }),
+  })
+}
+
+/**
  * GET /api/trips/:id/gear/load — раскладка груза по рюкзакам (06.11.2026).
  *
  * Один ответ на чтение и на кнопку: вещи похода и пакеты «Питания» уже
- * взвешены и разложены, экран не считает доли и веса сам.
+ * взвешены и разложены, экран не считает доли и веса сам. В `personal` —
+ * свои вещи «Взял», «Спальника» и своя еда для отдельной секции «Личное».
  */
 export async function getTripGearLoad(tripId: string): Promise<TripGearLoad> {
   return apiFetch<TripGearLoad>(`/trips/${tripId}/gear/load`)

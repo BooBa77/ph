@@ -2,20 +2,25 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
 import {
+  addPersonalTripGear,
+  assignTripGearPackage,
   autoDistributeTripGear,
   createTripGearSection,
+  getTripGearLoad,
   listGear,
   listTripGear,
   proposeTripGear,
+  removePersonalTripGear,
   removeTripGear,
   removeTripGearSection,
+  updatePersonalTripGear,
   updateTripGear,
   updateTripGearSection,
 } from '@/api/gear'
 import { subscribeTripEvents } from '@/api/events'
 import type { TripEvent } from '@/api/events'
 import { listTripChecklists } from '@/api/tripChecklists'
-import { listParticipants } from '@/api/trips'
+import { listParticipants, removeRouteSleeping } from '@/api/trips'
 import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 import TripChat from '@/views/trips/TripChat.vue'
@@ -29,6 +34,8 @@ import type { Checklist, TripChecklists } from '@/types/checklists'
 import type {
   GearItem,
   TripGearItem,
+  TripGearLoad,
+  TripGearLoadUnit,
   TripGearSection,
   TripGearSectionScope,
   TripGearSleeping,
@@ -38,7 +45,6 @@ import type { Trip, TripParticipant } from '@/types/trips'
 import {
   formatWeight,
   formatWeightTotal,
-  weightInGrams,
 } from '@/utils/gearWeight'
 
 /**
@@ -142,12 +148,113 @@ const sections = ref<TripGearSection[]>([])
  */
 const sleeping = ref<TripGearSleeping[]>([])
 
+/**
+ * Мои личные вещи «Взял» (06.11.2026): одежда, каска, палки.
+ *
+ * Приходят **той же формой**, что общественные вещи (`TripGearItem`):
+ * дерево разделов, карточка и пилюля не знают про второй вид строки.
+ * Отличает их только смысл: место — `personalSectionId`, статуса нет,
+ * несущий — сам владелец. Поэтому отдельного типа на экране не нужно,
+ * а сервер отдаёт их отдельным массивом: в «Берём» и «Распределение»
+ * личное не попадает.
+ */
+const personalItems = ref<TripGearItem[]>([])
+
+/**
+ * Раскладка груза `GET /gear/load` (06.11.2026): рюкзаки с весами, пакеты
+ * еды из «Питания», доли и личная половина смотрящего.
+ *
+ * Раньше «Распределение» и «Мой рюкзак» считали вес сами по `items`:
+ * пакетов там не было вовсе. Теперь единственный источник цифр — ответ
+ * сервера — так после кнопки и после перезагрузки на экране одни и те же
+ * числа. `null` — раскладка не загрузилась; тогда экран показывает
+ * прежнюю картину по вещам, без пакетов, вместо пустого места.
+ */
+const loadData = ref<TripGearLoad | null>(null)
+
 const isLoading = ref(true)
 const error = ref<string | null>(null)
 /** Ошибка действия: её показываем рядом, не закрывая уже загруженный список. */
 const actionError = ref<string | null>(null)
 /** Состав не загрузился — имена в рюкзаках будут неполными, но экран живёт. */
 const peopleError = ref<string | null>(null)
+
+// ───────────────────────────── свёрнутые секции ─────────────────────────────
+
+/**
+ * Какие секции вкладки развёрнуты (06.11.2026).
+ *
+ * Заказчик: «закладка Снаряжения первый раз должна открываться со свёрнутыми
+ * секциями, а дальше помнить что развёрнуто и сохранять/воссоздавать при
+ * переключении между закладками».
+ *
+ * Переключение закладок в `TripView` — это `v-if`: компонент вкладки
+ * размонтируется, и состояние в памяти до следующего открытия не доживает.
+ * Поэтому развёрнутость живёт в `localStorage` **на поход**: у каждого
+ * похода своя раскладка, и «Общественное» одного не должно разворачивать
+ * «Общественное» другого.
+ *
+ * Первый раз ключа нет — `{}`, то есть всё свёрнуто. Пишем только известные
+ * булевы значения: мусор в хранилище не должен ломать вкладку.
+ */
+const OPEN_STATE_PREFIX = 'ph.tripGear.open'
+
+const openState = ref<Record<string, boolean>>({})
+
+function openStateKey(tripId: string): string {
+  return `${OPEN_STATE_PREFIX}.${tripId}`
+}
+
+function readOpenState(tripId: string): Record<string, boolean> {
+  try {
+    const raw = window.localStorage.getItem(openStateKey(tripId))
+    if (raw === null) return {}
+
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+
+    const result: Record<string, boolean> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'boolean') result[key] = value
+    }
+
+    return result
+  } catch {
+    // Мусор в localStorage — те же свёрнутые секции, а не пустая вкладка.
+    return {}
+  }
+}
+
+function writeOpenState(tripId: string, state: Record<string, boolean>): void {
+  try {
+    window.localStorage.setItem(openStateKey(tripId), JSON.stringify(state))
+  } catch {
+    // Хранилище недоступно (приватный режим, квота) — память секций
+    // останется только до перезагрузки. Вкладку это не ломает.
+  }
+}
+
+watch(
+  () => props.trip.id,
+  (tripId) => {
+    openState.value = readOpenState(tripId)
+  },
+  { immediate: true },
+)
+
+function isSectionOpen(key: string): boolean {
+  return openState.value[key] === true
+}
+
+/** `<details>` сообщил о свёртывании/развёртывании — запоминаем. */
+function onSectionToggle(key: string, event: Event): void {
+  const open = (event.target as HTMLDetailsElement).open
+  if (openState.value[key] === open) return
+
+  const next = { ...openState.value, [key]: open }
+  openState.value = next
+  writeOpenState(props.trip.id, next)
+}
 
 /** Вещь, по которой идёт запрос: её поля блокируются до ответа. */
 const busyId = ref<string | null>(null)
@@ -234,6 +341,14 @@ function applyChecklist(
 
 const isPickerOpen = ref(false)
 const isManualOpen = ref(false)
+/**
+ * Куда кладём выбранную вещь: в «Берём» (`shared`) или в раздел «Взял»
+ * (`personal`). У модалки выбора одна на оба пути — заказчик просил ту же
+ * «Добавить снаряжение», а разница только в ручке сохранения (06.11.2026).
+ */
+const pickerScope = ref<'shared' | 'personal'>('shared')
+/** Раздел «Взял», в который положат следующую личную вещь. */
+const personalAddTargetSection = ref<string | null>(null)
 const catalog = ref<GearItem[]>([])
 const isCatalogLoading = ref(false)
 const isCatalogLoaded = ref(false)
@@ -305,9 +420,24 @@ const openedItemId = ref<string | null>(null)
 /** Из какой большой секции открыли карточку: от этого зависит поле «Раздел». */
 const openedScope = ref<TripGearSectionScope>('shared')
 
-const openedItem = computed(
-  () => items.value.find((row) => row.id === openedItemId.value) ?? null,
-)
+/**
+ * Открытая карточка — личная вещь «Взял» (06.11.2026). Решает большая
+ * секция, из которой открыли, а не совпадение id: id у `trip_gear`
+ * и `trip_personal_gear` независимы, и «5» может быть и там, и там.
+ */
+const openedIsPersonal = computed(() => openedScope.value === 'personal')
+
+const openedItem = computed(() => {
+  if (openedIsPersonal.value) {
+    return personalItems.value.find((row) => row.id === openedItemId.value) ?? null
+  }
+
+  return (
+    items.value.find((row) => row.id === openedItemId.value) ??
+    personalItems.value.find((row) => row.id === openedItemId.value) ??
+    null
+  )
+})
 
 function openItem(item: TripGearItem, scope: TripGearSectionScope): void {
   openedItemId.value = item.id
@@ -325,6 +455,8 @@ function closeItem(): void {
 async function onItemStatus(status: TripGearStatus): Promise<void> {
   const item = openedItem.value
   if (!item) return
+  // У личной вещи статуса нет: её не решают «берём / не берём».
+  if (openedIsPersonal.value) return
 
   await patchItem(item, { status })
 }
@@ -333,6 +465,11 @@ async function onItemStatus(status: TripGearStatus): Promise<void> {
 async function onItemSection(sectionId: string | null): Promise<void> {
   const item = openedItem.value
   if (!item) return
+
+  if (openedIsPersonal.value) {
+    await patchPersonal(item, sectionId)
+    return
+  }
 
   await patchItem(
     item,
@@ -352,7 +489,7 @@ async function onItemSection(sectionId: string | null): Promise<void> {
  */
 async function onItemAssignee(userId: string | null): Promise<void> {
   const item = openedItem.value
-  if (!item) return
+  if (!item || openedIsPersonal.value) return
 
   await patchItem(item, { assignedUserId: userId })
 }
@@ -360,6 +497,11 @@ async function onItemAssignee(userId: string | null): Promise<void> {
 async function onItemRemove(): Promise<void> {
   const item = openedItem.value
   if (!item) return
+
+  if (openedIsPersonal.value) {
+    await removePersonal(item)
+    return
+  }
 
   await remove(item)
 }
@@ -425,39 +567,215 @@ const personalSectionChoices = computed(() => sectionChoices(personalSections.va
  */
 const taking = computed(() => [...approved.value, ...proposed.value, ...declined.value])
 
-/** Утверждённое без несущего: его и перетаскивают в рюкзаки. */
-const unassigned = computed(() => approved.value.filter((item) => item.assignedUserId === null))
+/** Утверждённое без несущего — запасной вид, когда раскладка не пришла. */
+const unassignedItems = computed(() =>
+  approved.value.filter((item) => item.assignedUserId === null),
+)
 
 /** Плитки строятся только по «иду»: «пока не решил» ещё не несёт груз. */
 const going = computed(() => participants.value.filter((person) => person.status === 'going'))
 
-/** Общественное, которое несу я: это и «Взял», и содержимое «Моего рюкзака». */
+/** Общественное, которое несу я: запасной вид «Моего рюкзака». */
 const myItems = computed(() =>
   approved.value.filter((item) => item.assignedUserId !== null && item.assignedUserId === meId.value),
 )
 
-/** «Мой рюкзак» — общественное, что несу я, и моё личное из «Ночёвок». */
-const sleepingItems = computed(() => sleeping.value)
+// ───────────────────────────── вид раскладки ─────────────────────────────
 
 /**
- * Итог «Моего рюкзака»: общественное, назначенное на меня, плюс личные вещи
- * из «Спальника» (06.11.2026). Заказчик считает рюкзак целым: «личное + общее»
- * (`gear-distribution.md` §5), а не только ту часть, что распределяли.
+ * Пилюля груза в «Распределении» и «Моём рюкзаке» (06.11.2026).
+ *
+ * Одно представление на вещь и на пакет еды: у обоих есть название, вес
+ * и несущий, а различает их только оформление (пакет — фиолетовый, как
+ * в «Питании») и то, что по вещи открывается карточка, а у пакета её нет.
+ * `item` — найденная вещь похода: из `GET /gear/load` приходят только id,
+ * название и вес, а карточке нужна вся строка.
  */
-const backpackTotalLabel = computed(() =>
-  weightTotalLabel([...myItems.value, ...sleepingItems.value]),
-)
+interface LoadPill {
+  key: string
+  kind: 'gear' | 'package'
+  id: string
+  title: string
+  weightGrams: number | null
+  item: TripGearItem | null
+}
+
+/** Рюкзак участника: общественные вещи, пакеты и итог. */
+interface LoadBag {
+  userId: string
+  person: TripParticipant | null
+  gear: LoadPill[]
+  packages: LoadPill[]
+  weight: string
+}
+
+function itemPill(item: TripGearItem): LoadPill {
+  return {
+    key: `gear-${item.id}`,
+    kind: 'gear',
+    id: item.id,
+    title: item.title,
+    weightGrams: item.weightGrams,
+    item,
+  }
+}
+
+function unitPill(unit: TripGearLoadUnit): LoadPill {
+  return {
+    key: `${unit.kind}-${unit.id}`,
+    kind: unit.kind,
+    id: unit.id,
+    title: unit.title,
+    weightGrams: unit.weightGrams,
+    item:
+      unit.kind === 'gear'
+        ? (items.value.find((row) => row.id === unit.id) ?? null)
+        : null,
+  }
+}
+
+/** Нераспределённое: из раскладки, а без неё — по вещам похода. */
+const unassignedPills = computed<LoadPill[]>(() => {
+  const loaded = loadData.value
+  if (loaded) return loaded.unassigned.map(unitPill)
+
+  return unassignedItems.value.map(itemPill)
+})
 
 /**
- * Рюкзаки участников одним проходом: список вещей и итог считаются здесь,
- * а не в разметке по три раза на плитку.
+ * Рюкзаки «Распределения». Источник весов — `GET /gear/load`: он один
+ * складывает вещи и пакеты «Питания», поэтому после кнопки и после
+ * перезагрузки на экране одни и те же числа. Раскладка не пришла —
+ * показываем вещи похода, как раньше, но без пакетов.
  */
-const bags = computed(() =>
-  going.value.map((person) => {
+const bags = computed<LoadBag[]>(() => {
+  const loaded = loadData.value
+
+  if (loaded) {
+    return loaded.backpacks.map((backpack) => ({
+      userId: backpack.userId,
+      person:
+        participants.value.find((person) => person.userId === backpack.userId) ?? null,
+      gear: backpack.gear.map(unitPill),
+      packages: backpack.packages.map(unitPill),
+      weight:
+        backpack.gear.length + backpack.packages.length > 0
+          ? formatWeightTotal(backpack.totalWeightGrams, 0)
+          : '—',
+    }))
+  }
+
+  return going.value.map((person) => {
     const list = approved.value.filter((item) => item.assignedUserId === person.userId)
 
-    return { person, items: list, weight: weightTotalLabel(list) }
-  }),
+    return {
+      userId: person.userId,
+      person,
+      gear: list.map(itemPill),
+      packages: [],
+      weight: weightTotalLabel(list),
+    }
+  })
+})
+
+/**
+ * Есть ли что распределять: вещи похода или пакеты «Питания».
+ *
+ * Раньше кнопка смотрела только на утверждённые вещи, и поход с одними
+ * пакетами еды не мог разложить их автоматически. Теперь тот же ответ
+ * `GET /gear/load`, что рисует плитки, говорит и об этом.
+ */
+const hasDistributable = computed(() =>
+  loadData.value
+    ? loadData.value.totalWeightGrams > 0 || loadData.value.unassigned.length > 0
+    : approved.value.length > 0,
+)
+
+/** Моя плитка в «Распределении» — источник «Общественного» в рюкзаке. */
+const myLoadBag = computed<LoadBag | null>(() => {
+  if (loadData.value) return bags.value.find((bag) => bag.userId === meId.value) ?? null
+
+  return null
+})
+
+/** «Общественное» в «Моём рюкзаке»: вещи, пакеты и итог. */
+const backpackPublicGear = computed<LoadPill[]>(() =>
+  loadData.value
+    ? (myLoadBag.value?.gear ?? [])
+    : myItems.value.map(itemPill),
+)
+
+const backpackPublicPackages = computed<LoadPill[]>(() =>
+  loadData.value ? (myLoadBag.value?.packages ?? []) : [],
+)
+
+const backpackPublicWeight = computed(() => {
+  if (loadData.value) {
+    const bag = myLoadBag.value
+    return bag
+      ? bag.weight
+      : formatWeightTotal(0, 0)
+  }
+
+  return weightTotalLabel(myItems.value)
+})
+
+/**
+ * «Личное» в «Моём рюкзаке» (06.11.2026): свои вещи «Взял», строки
+ * «Спальника» и своя еда из «Питания» — с фактическим весом, а если его
+ * нет, с расчётным. Заказчик просил ровно это, и личное здесь отдельной
+ * секцией, а не в общем итоге: в распределение оно не входит.
+ */
+const backpackPersonalGear = computed(() => {
+  const personal = loadData.value?.personal
+  if (personal) {
+    return personal.gear.map((row) => ({
+      key: `${row.kind}-${row.id}`,
+      id: row.id,
+      kind: row.kind,
+      title: row.title,
+      weightGrams: row.weightGrams,
+    }))
+  }
+
+  return [
+    ...personalItems.value.map((item) => ({
+      key: `personal-${item.id}`,
+      id: item.id,
+      kind: 'personal' as const,
+      title: item.title,
+      weightGrams: item.weightGrams,
+    })),
+    ...sleeping.value.map((row) => ({
+      key: `sleeping-${row.id}`,
+      id: row.id,
+      kind: 'sleeping' as const,
+      title: row.title,
+      weightGrams: row.weightGrams,
+    })),
+  ]
+})
+
+/** Пакеты личной еды: вес и откуда он — фактический или расчётный. */
+const backpackPersonalPackages = computed(
+  () => loadData.value?.personal?.packages ?? [],
+)
+
+const backpackPersonalWeight = computed(() => {
+  const personal = loadData.value?.personal
+  if (personal) return formatWeightTotal(personal.totalWeightGrams, 0)
+
+  return weightTotalLabel([
+    ...personalItems.value,
+    ...sleeping.value,
+  ])
+})
+
+/** Есть ли во «Личном» вообще что показать. */
+const backpackPersonalEmpty = computed(
+  () =>
+    backpackPersonalGear.value.length === 0 &&
+    backpackPersonalPackages.value.length === 0,
 )
 
 /** Организатору — выбор хозяина для «Добавить вручную», как в «Ночёвках». */
@@ -488,6 +806,14 @@ function personOptionLabel(person: TripParticipant): string {
   return person.userId === meId.value
     ? `${person.displayName} (я)`
     : person.displayName
+}
+
+/** Подпись рюкзака: состав мог не загрузиться — тогда хотя бы имя из вещей. */
+function bagPersonLabel(bag: LoadBag): string {
+  if (bag.person) return personOptionLabel(bag.person)
+  if (bag.userId === meId.value) return `${auth.user?.displayName ?? 'Я'} (я)`
+
+  return personName(bag.userId)
 }
 
 /**
@@ -604,6 +930,19 @@ async function load(): Promise<void> {
     items.value = list.items
     sections.value = list.sections
     sleeping.value = list.sleeping
+    personalItems.value = list.personalItems
+
+    /**
+     * Раскладка — отдельным запросом: она считает вес пакетов «Питания»
+     * и доли, и её падение не должно закрывать вкладку. Не пришла —
+     * «Распределение» покажет прежнюю картину по вещам без пакетов.
+     */
+    try {
+      const loaded = await getTripGearLoad(props.trip.id)
+      if (current === requestId) loadData.value = loaded
+    } catch {
+      if (current === requestId) loadData.value = null
+    }
 
     /**
      * Чек-листы — отдельным запросом: у них свой домен и своя ошибка.
@@ -701,7 +1040,7 @@ function scheduleChecklistRefresh(): void {
  * событие или перезагрузка страницы попробует снова, а красная плашка
  * посреди работы из-за чужого перетаскивания только мешала бы.
  */
-async function refreshGearQuietly(): Promise<void> {
+async function refreshGearQuietly(withLoad = true): Promise<void> {
   if (isLoading.value) return
 
   const tripId = props.trip.id
@@ -716,15 +1055,60 @@ async function refreshGearQuietly(): Promise<void> {
     items.value = list.items
     sections.value = list.sections
     sleeping.value = list.sleeping
+    personalItems.value = list.personalItems
     // Снаряжение пришло — значит связь с сервером есть, и прежняя ошибка
     // загрузки больше не правда.
     error.value = null
+
+    // Пакеты в рюкзаках и доли могли измениться вместе с вещами: чужая
+    // правка в «Питании» тоже приходит этим событием.
+    if (withLoad) await refreshLoadQuietly()
   } catch {
     // Молча: экран уже показан, поток переподключится сам.
   }
 }
 
-/** То же для трёх чек-листов: общий, мой личный и рекомендация. */
+/**
+ * Пересчитать раскладку тихо (06.11.2026): пакеты, доли и личная половина.
+ *
+ * Отдельная версия, потому что после смены несущего и правки пакета
+ * `GET /gear/load` — единственный источник новых цифр. Ошибку глотаем:
+ * экран уже показан, а следующее событие или кнопка попробуют снова.
+ */
+let loadVersion = 0
+
+async function refreshLoadQuietly(): Promise<void> {
+  if (isLoading.value) return
+
+  const tripId = props.trip.id
+  const version = ++loadVersion
+
+  try {
+    const loaded = await getTripGearLoad(tripId)
+    if (version !== loadVersion || tripId !== props.trip.id) return
+
+    loadData.value = loaded
+  } catch {
+    // Молча — по той же причине, что и у снаряжения.
+  }
+}
+
+/** Серия быстрых правок — один пересчёт раскладки. */
+const LOAD_REFRESH_DELAY = 400
+let loadRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+function scheduleLoadRefresh(): void {
+  if (loadRefreshTimer !== null) return
+
+  loadRefreshTimer = setTimeout(() => {
+    loadRefreshTimer = null
+    void refreshLoadQuietly()
+  }, LOAD_REFRESH_DELAY)
+}
+
+/**
+ * То же для трёх чек-листов: общий, мой личный и рекомендация.
+ */
 async function refreshChecklistsQuietly(): Promise<void> {
   if (checklistsLoading.value) return
 
@@ -764,8 +1148,10 @@ onBeforeUnmount(() => {
 
   if (gearRefreshTimer !== null) clearTimeout(gearRefreshTimer)
   if (checklistRefreshTimer !== null) clearTimeout(checklistRefreshTimer)
+  if (loadRefreshTimer !== null) clearTimeout(loadRefreshTimer)
   gearRefreshTimer = null
   checklistRefreshTimer = null
+  loadRefreshTimer = null
 })
 
 
@@ -795,6 +1181,9 @@ async function patchItem(item: TripGearItem, body: GearPatch): Promise<void> {
   try {
     const updated = await updateTripGear(props.trip.id, item.id, body)
     items.value = items.value.map((row) => (row.id === updated.id ? updated : row))
+
+    // Несущий поменялся — раскладка и доли уже другие.
+    if (body.assignedUserId !== undefined) scheduleLoadRefresh()
   } catch (problem) {
     actionError.value =
       problem instanceof ApiError ? problem.message : 'Не удалось сохранить изменение'
@@ -828,8 +1217,10 @@ async function distributeLoad(): Promise<void> {
   actionError.value = null
 
   try {
-    await autoDistributeTripGear(props.trip.id)
-    await refreshGearQuietly()
+    const distributed = await autoDistributeTripGear(props.trip.id)
+    // Ответ кнопки — уже готовая раскладка: лишний `GET /gear/load` не нужен.
+    loadData.value = distributed
+    await refreshGearQuietly(false)
   } catch (problem) {
     actionError.value =
       problem instanceof ApiError
@@ -853,7 +1244,7 @@ const draggingId = ref<string | null>(null)
  * У одного и того же набора пилюль два разных смысла перетаскивания,
  * и без пометки падение в чужую зону сделало бы не то, что ждали.
  */
-const draggingKind = ref<'assign' | 'section' | null>(null)
+const draggingKind = ref<'assign' | 'section' | 'personal-section' | null>(null)
 
 function startDrag(item: TripGearItem, event: DragEvent, kind: 'assign' | 'section' = 'assign'): void {
   draggingId.value = item.id
@@ -868,10 +1259,20 @@ function startDrag(item: TripGearItem, event: DragEvent, kind: 'assign' | 'secti
 /** Перетаскивание бросили мимо цели — состояние не должно залипнуть. */
 function endDrag(): void {
   draggingId.value = null
+  draggingPackageId.value = null
   draggingKind.value = null
 }
 
 async function dropOn(userId: string | null): Promise<void> {
+  // Пакет еды — такая же единица груза, но живёт в своей ручке.
+  if (draggingKind.value === 'assign' && draggingPackageId.value !== null) {
+    const packageId = draggingPackageId.value
+    draggingPackageId.value = null
+    draggingKind.value = null
+    await assignPackage(packageId, userId)
+    return
+  }
+
   const item = items.value.find((row) => row.id === draggingId.value)
   draggingId.value = null
   draggingKind.value = null
@@ -879,6 +1280,35 @@ async function dropOn(userId: string | null): Promise<void> {
   if (!item || item.assignedUserId === userId) return
 
   await patchItem(item, { assignedUserId: userId })
+}
+
+/**
+ * Пакет еды тянут в рюкзак (06.11.2026). Пакеты «Питания» — не вещи похода:
+ * у них своя ручка назначения, и открывать по ним карточку вещи нечего.
+ */
+const draggingPackageId = ref<string | null>(null)
+
+function startPackageDrag(packageId: string, event: DragEvent): void {
+  draggingId.value = null
+  draggingPackageId.value = packageId
+  draggingKind.value = 'assign'
+
+  event.dataTransfer?.setData('text/plain', packageId)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
+/** Назначили несущего пакета: сервер отвечает раскладкой целиком. */
+async function assignPackage(packageId: string, userId: string | null): Promise<void> {
+  actionError.value = null
+
+  try {
+    loadData.value = await assignTripGearPackage(props.trip.id, packageId, userId)
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось назначить пакет'
+  }
 }
 
 // ───────────────────────────── разделы «Берём» и «Взял» ─────────────────────────────
@@ -1016,6 +1446,17 @@ async function moveToSharedSection(sectionId: string | null): Promise<void> {
 
 /** Перенесли вещь в личный раздел («Взял») или в его корень. */
 async function moveToPersonalSection(sectionId: string | null): Promise<void> {
+  if (draggingKind.value === 'personal-section') {
+    const personal = personalItems.value.find((row) => row.id === draggingId.value)
+    draggingId.value = null
+    draggingKind.value = null
+
+    if (!personal || personal.personalSectionId === sectionId) return
+
+    await patchPersonal(personal, sectionId)
+    return
+  }
+
   if (draggingKind.value !== 'section') return
 
   const item = items.value.find((row) => row.id === draggingId.value)
@@ -1067,6 +1508,119 @@ async function remove(item: TripGearItem): Promise<void> {
   }
 }
 
+// ───────────────────────────── личные вещи «Взял» ─────────────────────────────
+
+/**
+ * Добавили свою вещь в раздел «Взял» (06.11.2026).
+ *
+ * Заказчик: «Личные вещи — это то, что помимо общественного: одежда, каска,
+ * трекинговые палочки», и у раздела нужна кнопка «Добавить снаряжение
+ * в этот раздел». Вещь приходит из личного каталога — того же, что
+ * у «Берём», — и сразу встаёт в выбранный личный раздел.
+ */
+async function addPersonalTo(
+  gearItem: GearItem,
+  sectionId: string | null,
+): Promise<void> {
+  if (isAdding.value) return
+
+  isAdding.value = true
+  actionError.value = null
+
+  try {
+    const created = await addPersonalTripGear(props.trip.id, {
+      gearItemId: gearItem.id,
+      sectionId,
+    })
+    personalItems.value = [...personalItems.value, created]
+    isPickerOpen.value = false
+    pickerScope.value = 'shared'
+    scheduleLoadRefresh()
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось добавить личную вещь'
+  } finally {
+    isAdding.value = false
+  }
+}
+
+/**
+ * Правка личной вещи: только раздел. Статуса и несущего у неё нет —
+ * нести её может только владелец, а «берём / не берём» не решается.
+ */
+async function patchPersonal(item: TripGearItem, sectionId: string | null): Promise<void> {
+  if (busyId.value !== null) return
+
+  busyId.value = item.id
+  actionError.value = null
+
+  try {
+    const updated = await updatePersonalTripGear(props.trip.id, item.id, { sectionId })
+    personalItems.value = personalItems.value.map((row) =>
+      row.id === updated.id ? updated : row,
+    )
+    scheduleLoadRefresh()
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось перенести вещь'
+  } finally {
+    busyId.value = null
+  }
+}
+
+/** Крестик у личной вещи: строка уходит из похода, каталог остаётся. */
+async function removePersonal(item: TripGearItem): Promise<void> {
+  if (removingId.value !== null) return
+
+  removingId.value = item.id
+  actionError.value = null
+
+  try {
+    await removePersonalTripGear(props.trip.id, item.id)
+    personalItems.value = personalItems.value.filter((row) => row.id !== item.id)
+    if (openedItemId.value === item.id) openedItemId.value = null
+    scheduleLoadRefresh()
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось убрать личную вещь'
+  } finally {
+    removingId.value = null
+  }
+}
+
+/**
+ * Крестик у строки «Спальника» «Ночёвок». Это одна и та же личная вещь:
+ * убираем её из той таблицы, где она живёт, — второй правды не заводим.
+ */
+async function removeSleepingPill(row: TripGearSleeping): Promise<void> {
+  if (removingId.value !== null) return
+
+  removingId.value = row.id
+  actionError.value = null
+
+  try {
+    await removeRouteSleeping(props.trip.id, row.id)
+    sleeping.value = sleeping.value.filter((item) => item.id !== row.id)
+    scheduleLoadRefresh()
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось убрать вещь из «Спальника»'
+  } finally {
+    removingId.value = null
+  }
+}
+
+/** Личная вещь тянется между разделами «Взял» — на мыши. */
+function startPersonalDrag(item: TripGearItem, event: DragEvent): void {
+  draggingId.value = item.id
+  draggingKind.value = 'personal-section'
+
+  event.dataTransfer?.setData('text/plain', item.id)
+  if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+}
+
 /**
  * «Добавить снаряжение»: открываем общую модалку, каталог грузим один раз.
  *
@@ -1100,18 +1654,32 @@ async function openPickerBase(): Promise<void> {
 }
 
 async function openPicker(): Promise<void> {
+  pickerScope.value = 'shared'
   addTargetSection.value = null
   await openPickerBase()
 }
 
 async function openPickerForSection(sectionId: string | null): Promise<void> {
+  pickerScope.value = 'shared'
   addTargetSection.value = sectionId
   await openPickerBase()
 }
 
-/** Выбрали вещь каталога: она уходит в поход предложением, как и раньше. */
+/** «Добавить снаряжение в этот раздел» во «Взял» (06.11.2026). */
+async function openPersonalPickerForSection(sectionId: string | null): Promise<void> {
+  pickerScope.value = 'personal'
+  personalAddTargetSection.value = sectionId
+  await openPickerBase()
+}
+
+/** Выбрали вещь каталога: в «Берём» — предложение, во «Взял» — личная строка. */
 async function onPick(item: GearItem): Promise<void> {
   if (isAdding.value) return
+
+  if (pickerScope.value === 'personal') {
+    await addPersonalTo(item, personalAddTargetSection.value)
+    return
+  }
 
   isAdding.value = true
   actionError.value = null
@@ -1144,8 +1712,31 @@ async function onManualCreated(item: TripGearItem): Promise<void> {
   addTargetSection.value = undefined
 }
 
-/** Каталог, из которого нельзя предложить: то, что уже в походе. */
-const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
+/**
+ * Ручная вещь в личный раздел: модалка в режиме `personal` заводит предмет
+ * каталога, а строка «Взял» создаётся той же ручкой, что у выбора из
+ * каталога. Так у личной вещи одна модель пути, а не две.
+ */
+async function onPersonalCatalogCreated(item: GearItem): Promise<void> {
+  await addPersonalTo(item, personalAddTargetSection.value)
+  isManualOpen.value = false
+}
+
+/**
+ * Каталог, из которого нельзя взять вещь: то, что уже в походе.
+ *
+ * В личный раздел не предлагаем ещё и то, что человек уже несёт
+ * в «Спальнике»: это та же вещь, и вторая строка задвоила бы её вес.
+ */
+const excludedIds = computed(() => {
+  if (pickerScope.value === 'shared') return items.value.map((item) => item.gearItemId)
+
+  return [
+    ...items.value.map((item) => item.gearItemId),
+    ...personalItems.value.map((item) => item.gearItemId),
+    ...sleeping.value.map((row) => row.gearItemId),
+  ]
+})
 </script>
 
 <template>
@@ -1171,9 +1762,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
         выберет, цвет переедет в `themes.css` и сюда станет токеном.
       -->
       <details
-        open
+        :open="isSectionOpen('shared')"
         class="flex flex-col gap-3 rounded-2xl border border-orange-900 bg-orange-100 p-3"
         data-test="gear-public-section"
+        @toggle="onSectionToggle('shared', $event)"
       >
         <summary class="cursor-pointer select-none text-sm font-medium text-orange-900">
           Общественное снаряжение
@@ -1184,9 +1776,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           ведёт тот, кому доступна вкладка; остальные только видят его.
         -->
         <details
-          open
+          :open="isSectionOpen('shared-checklist')"
           class="rounded-xl border border-border bg-white p-3"
           data-test="gear-shared-checklist"
+          @toggle="onSectionToggle('shared-checklist', $event)"
         >
           <!--
             Заголовок списка — одной строкой с родным треугольником:
@@ -1250,9 +1843,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
 
         <!-- «Берём»: пул вещей похода и решение «берём / не берём» -->
         <details
-          open
+          :open="isSectionOpen('taking')"
           class="rounded-xl border border-border bg-white p-3"
           data-test="gear-taking"
+          @toggle="onSectionToggle('taking', $event)"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
             Берём
@@ -1281,6 +1875,8 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               :can-manage="canEdit"
               :can-place="canEdit"
               :can-add="canEdit"
+              open-key-prefix="shared-section"
+              :is-section-open="isSectionOpen"
               class="rounded-xl border border-dashed p-2 transition-colors"
               :class="draggingKind === 'section' ? 'border-primary bg-primary/5' : 'border-border bg-surface'"
               data-test="gear-taking-sections"
@@ -1289,6 +1885,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               @remove="onRemoveSection"
               @move="moveToSharedSection"
               @add-to="openPickerForSection"
+              @toggle-section="onSectionToggle"
             >
               <template #item="{ item }">
                 <!--
@@ -1377,9 +1974,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           не бывает, а назначить вещь человек вправе с любого устройства.
         -->
         <details
-          open
+          :open="isSectionOpen('distribution')"
           class="rounded-xl border border-border bg-white p-3"
           data-test="gear-distribution"
+          @toggle="onSectionToggle('distribution', $event)"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
             Распределение
@@ -1401,21 +1999,21 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               <button
                 type="button"
                 class="cursor-pointer rounded-xl border border-orange-900 bg-orange-900 px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
-                :disabled="isDistributing || approved.length === 0"
+                :disabled="isDistributing || !hasDistributable"
                 data-test="gear-distribute"
                 @click="distributeLoad"
               >
-                {{ isDistributing ? 'Распределяем…' : 'Распределить груз' }}
+                {{ isDistributing ? 'Распределяем груз…' : 'Распределить груз автоматически' }}
               </button>
 
               <span class="text-xs text-muted">
                 Сбросит прежние назначения и разложит заново: своё — владельцу,
-                тяжёлое вперёд, аптечка — медику.
+                тяжёлое вперёд, пакеты еды — тем, кто ест со всеми, аптечка — медику.
               </span>
             </div>
 
             <p
-              v-if="approved.length === 0"
+              v-if="!hasDistributable"
               class="text-sm text-muted"
               data-test="gear-distribution-empty"
             >
@@ -1425,7 +2023,7 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
             <template v-else>
               <div
                 class="rounded-xl border border-dashed p-2 transition-colors"
-                :class="draggingId ? 'border-primary bg-primary/5' : 'border-border bg-surface'"
+                :class="draggingId || draggingPackageId ? 'border-primary bg-primary/5' : 'border-border bg-surface'"
                 data-test="gear-unassigned"
                 @dragover.prevent
                 @drop.prevent="dropOn(null)"
@@ -1434,28 +2032,54 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                   Не распределено
                 </p>
 
-                <ul v-if="unassigned.length > 0" class="mt-1 flex flex-wrap gap-1.5">
+                <ul v-if="unassignedPills.length > 0" class="mt-1 flex flex-wrap gap-1.5">
                   <li
-                    v-for="item in unassigned"
-                    :key="item.id"
-                    class="flex cursor-pointer flex-wrap items-center gap-1 rounded-xl border border-border bg-white px-2 py-1 text-sm transition-colors hover:border-primary"
-                    role="button"
-                    tabindex="0"
+                    v-for="pill in unassignedPills"
+                    :key="pill.key"
+                    class="flex flex-wrap items-center gap-1 rounded-xl border px-2 py-1 text-sm transition-colors"
+                    :class="
+                      pill.kind === 'package'
+                        ? 'cursor-grab border-violet-300 bg-violet-100 text-violet-900 hover:border-violet-500'
+                        : 'cursor-pointer border-border bg-white hover:border-primary'
+                    "
+                    :role="pill.item ? 'button' : undefined"
+                    :tabindex="pill.item ? 0 : undefined"
                     draggable="true"
-                    :aria-label="`${item.title}. Открыть карточку вещи и сменить несущего`"
-                    title="Открыть карточку вещи"
-                    :data-test="`gear-unassigned-item-${item.id}`"
-                    @click="openItem(item, 'shared')"
-                    @keydown.enter.prevent="openItem(item, 'shared')"
-                    @keydown.space.prevent="openItem(item, 'shared')"
-                    @dragstart="startDrag(item, $event)"
+                    :aria-label="
+                      pill.item
+                        ? `${pill.title}. Открыть карточку вещи и сменить несущего`
+                        : undefined
+                    "
+                    :title="pill.item ? 'Открыть карточку вещи' : 'Пакет еды из «Питания»'"
+                    :data-test="
+                      pill.kind === 'package'
+                        ? `gear-unassigned-package-${pill.id}`
+                        : `gear-unassigned-item-${pill.id}`
+                    "
+                    @click="pill.item ? openItem(pill.item, 'shared') : undefined"
+                    @keydown.enter.prevent="pill.item ? openItem(pill.item, 'shared') : undefined"
+                    @keydown.space.prevent="pill.item ? openItem(pill.item, 'shared') : undefined"
+                    @dragstart="
+                      pill.kind === 'package'
+                        ? startPackageDrag(pill.id, $event)
+                        : pill.item
+                          ? startDrag(pill.item, $event)
+                          : undefined
+                    "
                     @dragend="endDrag"
                   >
-                    <span class="font-medium">{{ item.title }}</span>
-                    <span v-if="weightInGrams(item.weightGrams)" class="text-xs text-muted">
-                      {{ weightInGrams(item.weightGrams) }}
+                    <span class="font-medium">{{ pill.title }}</span>
+                    <span v-if="pill.weightGrams !== null" class="text-xs text-muted">
+                      {{ formatWeight(pill.weightGrams) }}
                     </span>
-                    <span class="text-xs text-muted">· {{ personName(item.ownerUserId) }}</span>
+                    <span
+                      v-if="pill.kind === 'package'"
+                      class="text-xs text-violet-700"
+                    >· еда</span>
+                    <span
+                      v-else-if="pill.item"
+                      class="text-xs text-muted"
+                    >· {{ personName(pill.item.ownerUserId) }}</span>
                   </li>
                 </ul>
 
@@ -1473,41 +2097,63 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
               <div v-else class="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                 <div
                   v-for="bag in bags"
-                  :key="bag.person.userId"
+                  :key="bag.userId"
                   class="flex flex-col gap-1 rounded-xl border bg-white p-2 transition-colors"
-                  :class="bag.person.userId === meId ? 'border-primary' : 'border-border'"
-                  :data-test="`gear-bag-${bag.person.userId}`"
+                  :class="bag.userId === meId ? 'border-primary' : 'border-border'"
+                  :data-test="`gear-bag-${bag.userId}`"
                   @dragover.prevent
-                  @drop.prevent="dropOn(bag.person.userId)"
+                  @drop.prevent="dropOn(bag.userId)"
                 >
                   <div class="flex items-baseline justify-between gap-2">
                     <span class="truncate text-sm font-medium text-text">
-                      {{ personOptionLabel(bag.person) }}
+                      {{ bagPersonLabel(bag) }}
                     </span>
                     <span class="shrink-0 text-xs text-muted">{{ bag.weight }}</span>
                   </div>
 
-                  <ul v-if="bag.items.length > 0" class="flex flex-col gap-1">
+                  <ul
+                    v-if="bag.gear.length > 0 || bag.packages.length > 0"
+                    class="flex flex-col gap-1"
+                  >
                     <li
-                      v-for="item in bag.items"
-                      :key="item.id"
+                      v-for="pill in bag.gear"
+                      :key="pill.key"
                       class="flex cursor-pointer flex-wrap items-center gap-1 rounded-lg border border-border bg-surface px-2 py-1 text-sm transition-colors hover:border-primary"
                       role="button"
                       tabindex="0"
                       draggable="true"
-                      :aria-label="`${item.title}. Открыть карточку вещи и сменить несущего`"
+                      :aria-label="`${pill.title}. Открыть карточку вещи и сменить несущего`"
                       title="Открыть карточку вещи"
-                      :data-test="`gear-bag-item-${item.id}`"
-                      @click="openItem(item, 'shared')"
-                      @keydown.enter.prevent="openItem(item, 'shared')"
-                      @keydown.space.prevent="openItem(item, 'shared')"
-                      @dragstart="startDrag(item, $event)"
+                      :data-test="`gear-bag-item-${pill.id}`"
+                      @click="pill.item ? openItem(pill.item, 'shared') : undefined"
+                      @keydown.enter.prevent="pill.item ? openItem(pill.item, 'shared') : undefined"
+                      @keydown.space.prevent="pill.item ? openItem(pill.item, 'shared') : undefined"
+                      @dragstart="pill.item ? startDrag(pill.item, $event) : undefined"
                       @dragend="endDrag"
                     >
-                      <span class="min-w-0 truncate">{{ item.title }}</span>
-                      <span v-if="weightInGrams(item.weightGrams)" class="text-xs text-muted">
-                        {{ weightInGrams(item.weightGrams) }}
+                      <span class="min-w-0 truncate">{{ pill.title }}</span>
+                      <span v-if="pill.weightGrams !== null" class="text-xs text-muted">
+                        {{ formatWeight(pill.weightGrams) }}
                       </span>
+                    </li>
+
+                    <!--
+                      Пакеты еды — фиолетовые, как в «Питании»: той же
+                      вкладкой их и собирали. Неделимы и перетаскиваются
+                      в чужой рюкзак так же, как вещь.
+                    -->
+                    <li
+                      v-for="pill in bag.packages"
+                      :key="pill.key"
+                      class="flex cursor-grab flex-wrap items-center gap-1 rounded-lg border border-violet-300 bg-violet-100 px-2 py-1 text-sm text-violet-900 transition-colors hover:border-violet-500"
+                      draggable="true"
+                      title="Пакет еды из «Питания»"
+                      :data-test="`gear-bag-package-${pill.id}`"
+                      @dragstart="startPackageDrag(pill.id, $event)"
+                      @dragend="endDrag"
+                    >
+                      <span class="min-w-0 truncate">{{ pill.title }}</span>
+                      <span class="text-xs">· {{ formatWeight(pill.weightGrams) }}</span>
                     </li>
                   </ul>
 
@@ -1530,9 +2176,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
       -->
       <details
         v-if="isOrganizer"
-        open
+        :open="isSectionOpen('recommendation')"
         class="flex flex-col gap-3 rounded-2xl border border-emerald-300 bg-emerald-100 p-3"
         data-test="gear-recommendation-section"
+        @toggle="onSectionToggle('recommendation', $event)"
       >
         <summary class="cursor-pointer select-none text-sm font-medium text-emerald-900">
           Рекомендации участникам по личным вещам
@@ -1563,9 +2210,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
 
       <!-- Личное снаряжение — синее, как «Питание» и «Спальник» -->
       <details
-        open
+        :open="isSectionOpen('personal')"
         class="flex flex-col gap-3 rounded-2xl border border-blue-300 bg-blue-100 p-3"
         data-test="gear-personal-section"
+        @toggle="onSectionToggle('personal', $event)"
       >
         <summary class="cursor-pointer select-none text-sm font-medium text-blue-900">
           Личное снаряжение
@@ -1579,9 +2227,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           по всем личным вещам, а не только по своим.
         -->
         <details
-          open
+          :open="isSectionOpen('personal-checklist')"
           class="rounded-xl border border-border bg-white p-3"
           data-test="gear-personal-checklist"
+          @toggle="onSectionToggle('personal-checklist', $event)"
         >
           <summary class="relative cursor-pointer select-none text-sm font-medium text-text">
             <span
@@ -1659,9 +2308,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           и «Моём рюкзаке», а здесь — личные строки из «Спальника».
         -->
         <details
-          open
+          :open="isSectionOpen('taken')"
           class="rounded-xl border border-border bg-white p-3"
           data-test="gear-taken"
+          @toggle="onSectionToggle('taken', $event)"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
             Взял
@@ -1669,11 +2319,12 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
 
           <div class="mt-2 flex flex-col gap-2">
             <p
-              v-if="sleeping.length === 0 && personalSections.length === 0"
+              v-if="sleeping.length === 0 && personalItems.length === 0 && personalSections.length === 0"
               class="text-sm text-muted"
               data-test="gear-taken-empty"
             >
-              Личных вещей пока нет: спальник и коврик появятся из «Ночёвок».
+              Личных вещей пока нет: спальник и коврик появятся из «Ночёвок»,
+              а одежду, каску и палки добавьте кнопкой ниже.
             </p>
 
             <!--
@@ -1697,37 +2348,94 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                   · {{ formatWeight(row.weightGrams) }}
                 </span>
                 <span class="text-xs text-blue-700">· {{ row.typeName }}</span>
+
+                <!--
+                  Крестик у личной вещи (06.11.2026). У «Спальника» он
+                  убирает строку из той же таблицы, что и «Ночёвки»:
+                  это одна вещь, и второй правды не заводим.
+                -->
+                <button
+                  type="button"
+                  class="ml-1 shrink-0 cursor-pointer rounded-lg border border-blue-200 bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                  :disabled="removingId === row.id"
+                  :aria-label="`Убрать «${row.title}» из личных вещей`"
+                  title="Убрать из личных вещей"
+                  :data-test="`gear-taken-remove-sleeping-${row.id}`"
+                  @click.stop="removeSleepingPill(row)"
+                >
+                  ✕
+                </button>
               </li>
             </ul>
 
             <!--
               Личные разделы «Взял»: «в палатку», «Одежда», «Снаряга» и что
-              человек добавит сам. Остальным они не видны — сервер их не
-              отдаёт. Кнопки добавления здесь нет: содержимое «Взял» — это
-              личные вещи, а их модель ждёт следующего шага.
+              человек добавит сам. Остальным они не видны — сервер их
+              не отдаёт. С 06.11.2026 у каждого раздела есть кнопка
+              «Добавить снаряжение в этот раздел», а у пилюль — крестик.
             -->
             <TripGearSectionList
               :sections="personalSections"
-              :items="[]"
+              :items="personalItems"
               :parent-id="null"
               scope="personal"
               :can-manage="true"
               :can-place="true"
+              :can-add="true"
               :extra-ids="personalExtraSectionIds"
+              open-key-prefix="personal-section"
+              :is-section-open="isSectionOpen"
               class="rounded-xl border border-dashed p-2 transition-colors"
-              :class="draggingKind === 'section' ? 'border-primary bg-primary/5' : 'border-blue-200 bg-blue-50'"
+              :class="draggingKind === 'personal-section' ? 'border-primary bg-primary/5' : 'border-blue-200 bg-blue-50'"
               data-test="gear-taken-sections"
               @create="onCreateSection('personal', $event)"
               @rename="onRenameSection"
               @remove="onRemoveSection"
               @move="moveToPersonalSection"
+              @add-to="openPersonalPickerForSection"
+              @toggle-section="onSectionToggle"
             >
+              <template #item="{ item }">
+                <li
+                  class="flex flex-wrap items-center gap-1 rounded-full border border-blue-300 bg-white px-2 py-1 text-sm text-blue-900 transition-colors hover:border-blue-500"
+                  role="button"
+                  tabindex="0"
+                  draggable="true"
+                  :aria-label="`${item.title}. Открыть карточку личной вещи`"
+                  :data-test="`gear-taken-personal-${item.id}`"
+                  @click="openItem(item, 'personal')"
+                  @keydown.enter.prevent="openItem(item, 'personal')"
+                  @keydown.space.prevent="openItem(item, 'personal')"
+                  @dragstart="startPersonalDrag(item, $event)"
+                  @dragend="endDrag"
+                >
+                  <span>{{ item.title }}</span>
+                  <span v-if="item.weightGrams !== null" class="text-xs">
+                    · {{ formatWeight(item.weightGrams) }}
+                  </span>
+                  <span class="text-xs text-blue-700">· {{ item.typeName }}</span>
+
+                  <button
+                    type="button"
+                    class="ml-1 shrink-0 cursor-pointer rounded-lg border border-blue-200 bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                    :disabled="removingId === item.id"
+                    :aria-label="`Убрать «${item.title}» из личных вещей`"
+                    title="Убрать из личных вещей"
+                    :data-test="`gear-taken-remove-${item.id}`"
+                    @click.stop="removePersonal(item)"
+                    @keydown.stop
+                  >
+                    ✕
+                  </button>
+                </li>
+              </template>
+
               <template #sectionExtra="{ section }">
                 <!--
                   «в палатку» — содержимое секции «Спальник» «Ночёвок».
                   Раздел ищется по коду шаблона, поэтому переименование
-                  не прячет личные вещи. Это чтение: править и убирать их
-                  человек продолжает в «Ночёвках», где они и живут.
+                  не прячет личные вещи. Крестик убирает строку там, где
+                  она живёт, — во «Спальнике».
                 -->
                 <ul
                   v-if="section.templateCode === TENT_INSIDE_SECTION_CODE && sleeping.length > 0"
@@ -1745,10 +2453,31 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
                       · {{ formatWeight(row.weightGrams) }}
                     </span>
                     <span class="text-xs text-blue-700">· {{ row.typeName }}</span>
+
+                    <button
+                      type="button"
+                      class="ml-1 shrink-0 cursor-pointer rounded-lg border border-blue-200 bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                      :disabled="removingId === row.id"
+                      :aria-label="`Убрать «${row.title}» из личных вещей`"
+                      title="Убрать из личных вещей"
+                      :data-test="`gear-taken-remove-sleeping-${row.id}`"
+                      @click.stop="removeSleepingPill(row)"
+                    >
+                      ✕
+                    </button>
                   </li>
                 </ul>
               </template>
             </TripGearSectionList>
+
+            <button
+              type="button"
+              class="cursor-pointer self-start rounded-xl border border-blue-900 bg-blue-900 px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90"
+              data-test="gear-taken-add"
+              @click="openPersonalPickerForSection(null)"
+            >
+              Добавить снаряжение
+            </button>
           </div>
         </details>
 
@@ -1759,59 +2488,128 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
           рюкзаки («сменка на окончание похода») ждут модели.
         -->
         <details
-          open
+          :open="isSectionOpen('backpack')"
           class="rounded-xl border border-border bg-white p-3"
           data-test="gear-backpack"
+          @toggle="onSectionToggle('backpack', $event)"
         >
           <summary class="cursor-pointer select-none text-sm font-medium text-text">
             Мой рюкзак
           </summary>
 
           <div class="mt-2 flex flex-col gap-2">
-            <p
-              v-if="myItems.length === 0 && sleeping.length === 0"
-              class="text-sm text-muted"
-              data-test="gear-backpack-empty"
+            <!--
+              «Общественное» и «Личное» — две секции (06.11.2026), как просил
+              заказчик: «секция Личное снаряжение/Рюкзак должна быть
+              разделена на две секции „Общественное“ и „Личное“». В «Личном»
+              рядом со своими вещами стоит личная еда из «Питания» с
+              фактическим весом, а если его нет — с расчётным.
+            -->
+            <details
+              :open="isSectionOpen('backpack-public')"
+              class="rounded-xl border border-border bg-surface p-2"
+              data-test="gear-backpack-public"
+              @toggle="onSectionToggle('backpack-public', $event)"
             >
-              В рюкзаке пусто.
-            </p>
+              <summary class="relative cursor-pointer select-none text-sm font-medium text-text">
+                <span class="inline-block max-w-full truncate align-bottom">Общественное</span>
+                <span class="ml-1 text-xs font-normal text-muted">
+                  {{ backpackPublicWeight }}
+                </span>
+              </summary>
 
-            <template v-else>
-              <ul class="flex flex-col gap-1">
-                <li
-                  v-for="item in myItems"
-                  :key="item.id"
-                  class="flex items-baseline justify-between gap-2 rounded-lg border border-border bg-surface px-2 py-1 text-sm"
-                  :data-test="`gear-backpack-item-${item.id}`"
+              <div class="mt-2 flex flex-col gap-1">
+                <p
+                  v-if="backpackPublicGear.length === 0 && backpackPublicPackages.length === 0"
+                  class="text-sm text-muted"
+                  data-test="gear-backpack-public-empty"
                 >
-                  <span class="min-w-0 truncate">{{ item.title }}</span>
-                  <span class="shrink-0 text-xs text-muted">
-                    {{ weightInGrams(item.weightGrams) ?? 'без веса' }}
-                  </span>
-                </li>
+                  Общественного груза за вами нет.
+                </p>
 
-                <!--
-                  Личное — отдельной строкой и с подписью «личное»: иначе
-                  человек не поймёт, почему вещь не в «Распределении».
-                -->
-                <li
-                  v-for="row in sleeping"
-                  :key="`sleeping-${row.id}`"
-                  class="flex items-baseline justify-between gap-2 rounded-lg border border-blue-200 bg-blue-50 px-2 py-1 text-sm"
-                  :data-test="`gear-backpack-sleeping-${row.id}`"
+                <template v-else>
+                  <ul class="flex flex-col gap-1">
+                    <li
+                      v-for="pill in backpackPublicGear"
+                      :key="pill.key"
+                      class="flex items-baseline justify-between gap-2 rounded-lg border border-border bg-white px-2 py-1 text-sm"
+                      :data-test="`gear-backpack-item-${pill.id}`"
+                    >
+                      <span class="min-w-0 truncate">{{ pill.title }}</span>
+                      <span class="shrink-0 text-xs text-muted">
+                        {{ pill.weightGrams === null ? 'без веса' : formatWeight(pill.weightGrams) }}
+                      </span>
+                    </li>
+
+                    <li
+                      v-for="pill in backpackPublicPackages"
+                      :key="pill.key"
+                      class="flex items-baseline justify-between gap-2 rounded-lg border border-violet-300 bg-violet-100 px-2 py-1 text-sm text-violet-900"
+                      :data-test="`gear-backpack-package-${pill.id}`"
+                    >
+                      <span class="min-w-0 truncate">{{ pill.title }}</span>
+                      <span class="shrink-0 text-xs">· {{ formatWeight(pill.weightGrams) }}</span>
+                    </li>
+                  </ul>
+                </template>
+              </div>
+            </details>
+
+            <details
+              :open="isSectionOpen('backpack-personal')"
+              class="rounded-xl border border-blue-200 bg-blue-50 p-2"
+              data-test="gear-backpack-personal"
+              @toggle="onSectionToggle('backpack-personal', $event)"
+            >
+              <summary class="relative cursor-pointer select-none text-sm font-medium text-blue-900">
+                <span class="inline-block max-w-full truncate align-bottom">Личное</span>
+                <span class="ml-1 text-xs font-normal text-blue-700">
+                  {{ backpackPersonalWeight }}
+                </span>
+              </summary>
+
+              <div class="mt-2 flex flex-col gap-1">
+                <p
+                  v-if="backpackPersonalEmpty"
+                  class="text-sm text-muted"
+                  data-test="gear-backpack-personal-empty"
                 >
-                  <span class="min-w-0 truncate">{{ row.title }}</span>
-                  <span class="shrink-0 text-xs text-muted">
-                    <span class="text-blue-700">личное · </span>
-                    {{ weightInGrams(row.weightGrams) ?? 'без веса' }}
-                  </span>
-                </li>
-              </ul>
+                  Личных вещей и личной еды нет.
+                </p>
 
-              <p class="text-sm font-medium text-text" data-test="gear-backpack-total">
-                {{ backpackTotalLabel }}
-              </p>
-            </template>
+                <ul v-else class="flex flex-col gap-1">
+                  <li
+                    v-for="row in backpackPersonalGear"
+                    :key="row.key"
+                    class="flex items-baseline justify-between gap-2 rounded-lg border border-blue-200 bg-white px-2 py-1 text-sm"
+                    :data-test="`gear-backpack-${row.kind}-${row.id}`"
+                  >
+                    <span class="min-w-0 truncate">{{ row.title }}</span>
+                    <span class="shrink-0 text-xs text-muted">
+                      {{ row.weightGrams === null ? 'без веса' : formatWeight(row.weightGrams) }}
+                    </span>
+                  </li>
+
+                  <!--
+                    Личная еда: вес фактический, если пакет взвешен и состав
+                    не менялся, иначе расчётный — заказчик просил показывать
+                    оба и называть, какой именно.
+                  -->
+                  <li
+                    v-for="pack in backpackPersonalPackages"
+                    :key="`personal-package-${pack.id}`"
+                    class="flex items-baseline justify-between gap-2 rounded-lg border border-blue-200 bg-white px-2 py-1 text-sm"
+                    :data-test="`gear-backpack-personal-package-${pack.id}`"
+                  >
+                    <span class="min-w-0 truncate">{{ pack.name }}</span>
+                    <span class="shrink-0 text-xs text-muted">
+                      <span class="text-blue-700">{{ pack.isActual ? 'факт' : 'расчёт' }} · </span>
+                      {{ formatWeight(pack.weightGrams) }}
+                    </span>
+                  </li>
+                </ul>
+              </div>
+            </details>
           </div>
         </details>
       </details>
@@ -1841,10 +2639,12 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
       :owner-name="personName(openedItem.ownerUserId)"
       :assignee-name="openedItem.assignedUserId ? personName(openedItem.assignedUserId) : null"
       :assignee-choices="assigneeChoices"
-      :can-assign="openedScope === 'shared'"
-      :can-decide="canEdit && openedScope === 'shared'"
+      :can-assign="openedScope === 'shared' && !openedIsPersonal"
+      :can-decide="canEdit && openedScope === 'shared' && !openedIsPersonal"
       :can-place="openedScope === 'shared' ? canEdit : true"
-      :can-remove="isMyItem(openedItem)"
+      :can-remove="openedIsPersonal ? true : isMyItem(openedItem)"
+      :hide-assignee="openedIsPersonal"
+      :hide-status="openedIsPersonal"
       :busy="busyId === openedItem.id || removingId === openedItem.id"
       @status="onItemStatus"
       @assignee="onItemAssignee"
@@ -1870,8 +2670,10 @@ const excludedIds = computed(() => items.value.map((item) => item.gearItemId))
       :trip-id="trip.id"
       :type-codes="[]"
       default-type-code=""
+      :mode="pickerScope === 'personal' ? 'personal' : 'trip'"
       :owner-options="manualOwnerOptions"
       @created="onManualCreated"
+      @created-personal="onPersonalCatalogCreated"
       @close="isManualOpen = false"
     />
   </section>

@@ -22,14 +22,17 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
   AddManualTripGearDto,
+  AddTripGearPersonalDto,
   AssignTripGearPackageDto,
   CreateTripGearSectionDto,
   ProposeTripGearDto,
   TripGearItemDto,
   TripGearListDto,
   TripGearLoadDto,
+  TripGearPersonalDto,
   TripGearSectionDto,
   UpdateTripGearDto,
+  UpdateTripGearPersonalDto,
   UpdateTripGearSectionDto,
 } from './dto/trip-gear.dto';
 import { TripGearService } from './trip-gear.service';
@@ -191,6 +194,50 @@ export class TripGearController {
       packageId,
       dto,
     );
+  }
+
+  /**
+   * Личные вещи раздела «Взял» (06.11.2026): одежда, каска, палки.
+   *
+   * Своя таблица и свои ручки: общественное снаряжение (`trip_gear`)
+   * в «Распределение» и в доли веса, личное — «твоя проблема» и чужим
+   * не показывается. Ручки стоят **до** `PATCH :id/gear/:gearId` по той же
+   * причине, что `sections`: Nest матчит маршруты в порядке объявления,
+   * и `ParseIntPipe` у `:gearId` иначе ответил бы 400 на «personal».
+   */
+  @Post(':id/gear/personal')
+  @ApiOperation({ summary: 'Добавить свою вещь в раздел «Взял»' })
+  @ApiCreatedResponse({ type: TripGearPersonalDto })
+  async addPersonal(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: AddTripGearPersonalDto,
+  ): Promise<TripGearPersonalDto> {
+    return this.tripGearService.addPersonal(authUser.id, id, dto);
+  }
+
+  @Patch(':id/gear/personal/:personalId')
+  @ApiOperation({ summary: 'Перенести личную вещь в другой раздел «Взял»' })
+  @ApiOkResponse({ type: TripGearPersonalDto })
+  async updatePersonal(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('personalId', ParseIntPipe) personalId: number,
+    @Body() dto: UpdateTripGearPersonalDto,
+  ): Promise<TripGearPersonalDto> {
+    return this.tripGearService.updatePersonal(authUser.id, id, personalId, dto);
+  }
+
+  @Delete(':id/gear/personal/:personalId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Убрать свою личную вещь из похода' })
+  @ApiNoContentResponse({ description: 'Личная вещь убрана, каталог цел' })
+  async removePersonal(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('personalId', ParseIntPipe) personalId: number,
+  ): Promise<void> {
+    return this.tripGearService.removePersonal(authUser.id, id, personalId);
   }
 
   /**

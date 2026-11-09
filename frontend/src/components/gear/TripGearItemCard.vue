@@ -117,6 +117,7 @@ function close(): void {
     :can-decide="canDecide"
     :can-place="false"
     :can-remove="false"
+    :hide-assignee="true"
     :busy="busy"
     :error-text="errorText"
     @status="saveStatus"

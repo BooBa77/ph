@@ -163,4 +163,44 @@ describe('allocateLoad', () => {
       expect(first.assignments.get(key)).toBe(second.assignments.get(key));
     }
   });
+
+  it('пакеты общей еды не достаются питающемуся отдельно', () => {
+    // Заказчик 06.11.2026: «Рюкзаки питающихся самостоятельно в этом
+    // не участвуют». Снаряжение он по-прежнему несёт.
+    const result = allocateLoad([pack('1', 1000)], [
+      { ...man('a'), eatsSeparately: true },
+      man('b'),
+    ]);
+
+    expect(result.assignments.get(loadUnitKey('package', '1'))).toBe('b');
+  });
+
+  it('все питаются отдельно — пакеты остаются нераспределёнными', () => {
+    const result = allocateLoad(
+      [gear('1', 1000, 'a'), pack('2', 500)],
+      [
+        { ...man('a'), eatsSeparately: true },
+        { ...man('b'), eatsSeparately: true },
+      ],
+    );
+
+    expect(result.assignments.get(loadUnitKey('gear', '1'))).toBe('a');
+    expect(result.assignments.has(loadUnitKey('package', '2'))).toBe(false);
+  });
+
+  it('пакет уходит менее загруженному: «Питание» не трогает снаряжение', () => {
+    // `initialWeights` — уже лежащие на людях вещи: пересборка пакетов
+    // считается от них, а не с нуля.
+    const result = allocateLoad(
+      [pack('1', 1000)],
+      [man('a'), man('b')],
+      undefined,
+      new Map([
+        ['a', 3000],
+        ['b', 0],
+      ]),
+    );
+
+    expect(result.assignments.get(loadUnitKey('package', '1'))).toBe('b');
+  });
 });

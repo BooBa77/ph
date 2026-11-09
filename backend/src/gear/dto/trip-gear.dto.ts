@@ -20,10 +20,33 @@ import {
   type TripGearSectionScope,
   type TripGearStatus,
 } from '../trip-gear.types';
+import type { GearItem } from '../entities/gear-item.entity';
+import type { TripPersonalGear } from '../entities/trip-personal-gear.entity';
 import type { TripGear } from '../entities/trip-gear.entity';
 import type { TripGearSection } from '../entities/trip-gear-section.entity';
 import { GearItemAttributeDto } from './gear.dto';
 import { USER_GENDERS, type UserGender } from '../../users/gender.types';
+
+/**
+ * Характеристики предмета в порядке справочника — общий кусок двух DTO.
+ *
+ * У общественной вещи и у личной «Взял» характеристики берутся из одного
+ * и того же `gear_items`. Второй сортировки не заводим: разойдясь, они
+ * показали бы одни и те же поля в разном порядке на двух вкладках.
+ */
+function attributeDtos(item: GearItem): GearItemAttributeDto[] {
+  const values = [...(item.attributes ?? [])].sort((left, right) => {
+    const leftAttribute = left.gearTypeAttribute;
+    const rightAttribute = right.gearTypeAttribute;
+    if (leftAttribute.sortOrder !== rightAttribute.sortOrder) {
+      return leftAttribute.sortOrder - rightAttribute.sortOrder;
+    }
+
+    return leftAttribute.id - rightAttribute.id;
+  });
+
+  return values.map((value) => GearItemAttributeDto.from(value));
+}
 
 /**
  * Вещь в общественном снаряжении похода — как её видит вкладка.
@@ -176,16 +199,6 @@ export class TripGearItemDto {
    * полей от смотрящего ничего не зависит.
    */
   static from(row: TripGear, viewerId?: string): TripGearItemDto {
-    const values = [...(row.gearItem.attributes ?? [])].sort((left, right) => {
-      const leftAttribute = left.gearTypeAttribute;
-      const rightAttribute = right.gearTypeAttribute;
-      if (leftAttribute.sortOrder !== rightAttribute.sortOrder) {
-        return leftAttribute.sortOrder - rightAttribute.sortOrder;
-      }
-
-      return leftAttribute.id - rightAttribute.id;
-    });
-
     return {
       id: row.id,
       gearItemId: row.gearItemId,
@@ -193,7 +206,7 @@ export class TripGearItemDto {
       typeCode: row.gearItem.gearType.code,
       typeName: row.gearItem.gearType.name,
       title: row.gearItem.title,
-      attributes: values.map((value) => GearItemAttributeDto.from(value)),
+      attributes: attributeDtos(row.gearItem),
       weightGrams: row.gearItem.weightGrams,
       note: row.gearItem.note,
       isTripOnly: row.gearItem.isTripOnly,
@@ -206,6 +219,107 @@ export class TripGearItemDto {
           : null,
       ownerUserId: row.ownerUserId,
       assignedUserId: row.assignedUserId,
+      createdAt: row.createdAt.toISOString(),
+    };
+  }
+}
+
+/**
+ * Личная вещь раздела «Взял» (06.11.2026).
+ *
+ * Форма **намеренно та же**, что у общественной вещи: экран уже умеет
+ * рисовать пилюлю, открывать карточку и раскладывать вещи по разделам.
+ * Отличия только по смыслу: `sharedSectionId` всегда `null`, а
+ * `personalSectionId` — раздел «Взял», где вещь стоит; `status` всегда
+ * `approved` (личную вещь «не берём» не решают — её просто убирают),
+ * `assignedUserId` — владелец: нести её может только он.
+ *
+ * Почему не отдельная форма: дерево разделов «Взял» рисуется тем же
+ * компонентом, что и «Берём», и вторая форма заставила бы его знать про
+ * два вида пилюль. Карточка личной вещи прячет статус и несущего —
+ * это её пропсы, а не новый DTO.
+ */
+export class TripGearPersonalDto {
+  @ApiProperty({ description: 'Id личной вещи', example: '7' })
+  id: string;
+
+  @ApiProperty({ description: 'Id предмета личного каталога', example: '5' })
+  gearItemId: string;
+
+  @ApiProperty({ description: 'Id типа снаряжения', example: 1 })
+  typeId: number;
+
+  @ApiProperty({ description: 'Код типа', example: 'clothes' })
+  typeCode: string;
+
+  @ApiProperty({ description: 'Название типа', example: 'Одежда' })
+  typeName: string;
+
+  @ApiProperty({ description: 'Название вещи', example: 'Куртка мембранная' })
+  title: string;
+
+  @ApiProperty({
+    description: 'Значения характеристик в порядке справочника',
+    type: [GearItemAttributeDto],
+  })
+  attributes: GearItemAttributeDto[];
+
+  @ApiProperty({
+    description: 'Вес в граммах. null — не указан',
+    example: 800,
+    nullable: true,
+  })
+  weightGrams: number | null;
+
+  @ApiProperty({ description: 'Заметка из каталога', nullable: true, example: null })
+  note: string | null;
+
+  @ApiProperty({ description: 'Вещь заведена вручную в походе', example: false })
+  isTripOnly: boolean;
+
+  @ApiProperty({
+    description: 'Статус всегда «берём»: личную вещь не решают, а убирают',
+    enum: ['approved'],
+    example: 'approved',
+  })
+  status: TripGearStatus;
+
+  @ApiProperty({ description: 'Секция «Ночёвок». У личной вещи всегда null', nullable: true })
+  routeSection: TripGearRouteSection | null;
+
+  @ApiProperty({ description: 'Общественный раздел. У личной вещи всегда null', nullable: true })
+  sharedSectionId: string | null;
+
+  @ApiProperty({ description: 'Личный раздел «Взял». null — корень', nullable: true })
+  personalSectionId: string | null;
+
+  @ApiProperty({ description: 'Владелец — он же несущий', example: '90ca6b06-…' })
+  ownerUserId: string;
+
+  @ApiProperty({ description: 'Несущий — владелец', example: '90ca6b06-…' })
+  assignedUserId: string | null;
+
+  @ApiProperty({ description: 'Когда вещь добавили' })
+  createdAt: string;
+
+  static from(row: TripPersonalGear): TripGearPersonalDto {
+    return {
+      id: row.id,
+      gearItemId: row.gearItemId,
+      typeId: row.gearItem.gearTypeId,
+      typeCode: row.gearItem.gearType.code,
+      typeName: row.gearItem.gearType.name,
+      title: row.gearItem.title,
+      attributes: attributeDtos(row.gearItem),
+      weightGrams: row.gearItem.weightGrams,
+      note: row.gearItem.note,
+      isTripOnly: row.gearItem.isTripOnly,
+      status: 'approved',
+      routeSection: null,
+      sharedSectionId: null,
+      personalSectionId: row.sectionId,
+      ownerUserId: row.userId,
+      assignedUserId: row.userId,
       createdAt: row.createdAt.toISOString(),
     };
   }
@@ -359,6 +473,17 @@ export class TripGearListDto {
     type: [TripGearSleepingDto],
   })
   sleeping: TripGearSleepingDto[];
+
+  /**
+   * Личные вещи смотрящего в разделе «Взял» (06.11.2026): одежда, каска,
+   * палки. Чужих строк в ответе нет — личное не показывается никому,
+   * включая организатора.
+   */
+  @ApiProperty({
+    description: 'Мои личные вещи «Взял» — одежда, каска, палки',
+    type: [TripGearPersonalDto],
+  })
+  personalItems: TripGearPersonalDto[];
 }
 
 /**
@@ -458,6 +583,51 @@ export class UpdateTripGearDto {
   @IsInt({ message: 'Раздел должен быть указан числом' })
   @Min(1, { message: 'Некорректный раздел' })
   personalSectionId?: number | null;
+}
+
+/**
+ * Тело `POST /api/trips/:id/gear/personal` — своя вещь в раздел «Взял»
+ * (06.11.2026).
+ *
+ * `gearItemId` — предмет **своего** каталога: чужой не найдётся (404), как
+ * и в остальных ручках личных вещей. `sectionId` — личный раздел «Взял»;
+ * не указан — вещь встанет в корень секции. Раздел обязан быть личным
+ * разделом этого же человека — это проверяет и сервис, и триггер в базе.
+ */
+export class AddTripGearPersonalDto {
+  @ApiProperty({ description: 'Id предмета из моего каталога', example: 5 })
+  @IsInt({ message: 'Предмет каталога должен быть указан числом' })
+  @Min(1, { message: 'Некорректный предмет каталога' })
+  gearItemId: number;
+
+  @ApiProperty({
+    description: 'Личный раздел «Взял». Не указан — корень секции',
+    nullable: true,
+    required: false,
+    example: 15,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Раздел должен быть указан числом' })
+  @Min(1, { message: 'Некорректный раздел' })
+  sectionId?: number | null;
+}
+
+/**
+ * Тело `PATCH /api/trips/:id/gear/personal/:personalId` — перенос личной
+ * вещи между разделами «Взял». Путь для телефона, где HTML5-drag не работает.
+ * `sectionId: null` — вернуть вещь в корень.
+ */
+export class UpdateTripGearPersonalDto {
+  @ApiProperty({
+    description: 'Личный раздел «Взял». null — корень',
+    nullable: true,
+    required: false,
+    example: 15,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Раздел должен быть указан числом' })
+  @Min(1, { message: 'Некорректный раздел' })
+  sectionId?: number | null;
 }
 
 /**
@@ -713,6 +883,92 @@ export class TripGearLoadBackpackDto {
 }
 
 /**
+ * Личная вещь в рюкзаке смотрящего — для секции «Личное» «Моего рюкзака»
+ * (06.11.2026).
+ *
+ * Два источника в одном списке: `personal` — строки новой таблицы
+ * `trip_personal_gear` («Взял»), `sleeping` — содержимое «Спальника»
+ * «Ночёвок». Экран показывает их одной строкой — для рюкзака это одно
+ * и то же личное, — а вид оставлен, чтобы подпись могла сказать, откуда
+ * вещь. Вес может быть `null`: неизвестный не прячем, иначе итог выглядел
+ * бы точным.
+ */
+export class TripGearLoadPersonalUnitDto {
+  @ApiProperty({
+    description: 'Откуда вещь: «Взял» или «Спальник» «Ночёвок»',
+    enum: ['personal', 'sleeping'],
+    example: 'personal',
+  })
+  kind: 'personal' | 'sleeping';
+
+  @ApiProperty({ description: 'Id строки', example: '7' })
+  id: string;
+
+  @ApiProperty({ description: 'Название вещи', example: 'Куртка мембранная' })
+  title: string;
+
+  @ApiProperty({
+    description: 'Вес в граммах. null — не указан',
+    nullable: true,
+    example: 800,
+  })
+  weightGrams: number | null;
+}
+
+/**
+ * Пакет личной еды смотрящего из «Питания» (06.11.2026).
+ *
+ * Заказчик: «В „Личном“ отображается личная еда из Походы/Питание,
+ * фактический вес, а если нет, то расчётный». Поэтому `isActual` говорит,
+ * откуда взялся вес: взвешенный (и состав не менялся) или расчётный.
+ * Пакеты автономного питания не назначаются и не распределяются — человек
+ * несёт их сам, поэтому у них нет `assignedUserId`.
+ */
+export class TripGearLoadPersonalPackageDto {
+  @ApiProperty({ description: 'Id пакета «Питания»', example: '9' })
+  id: string;
+
+  @ApiProperty({ description: 'Имя пакета', example: 'Пакет 1' })
+  name: string;
+
+  @ApiProperty({ description: 'Вес в граммах', example: 1200 })
+  weightGrams: number;
+
+  @ApiProperty({
+    description: 'Вес фактический (true) или расчётный (false)',
+    example: false,
+  })
+  isActual: boolean;
+}
+
+/**
+ * Личная половина «Моего рюкзака»: свои вещи и своя еда.
+ *
+ * В общее распределение не входит и в автораскладку не попадает — правило
+ * «личное — твоя проблема» (`gear-distribution.md` §5). Сервер отдаёт этот
+ * блок только смотрящему: чужие личные вещи не показываются никому.
+ */
+export class TripGearLoadPersonalDto {
+  @ApiProperty({ description: 'Вес личных вещей, граммы', example: 2400 })
+  gearWeightGrams: number;
+
+  @ApiProperty({ description: 'Вес личной еды, граммы', example: 1200 })
+  packagesWeightGrams: number;
+
+  @ApiProperty({ description: 'Вес личного целиком, граммы', example: 3600 })
+  totalWeightGrams: number;
+
+  @ApiProperty({ description: 'Личные вещи', type: [TripGearLoadPersonalUnitDto] })
+  gear: TripGearLoadPersonalUnitDto[];
+
+  @ApiProperty({
+    description: 'Пакеты личной еды',
+    type: [TripGearLoadPersonalPackageDto],
+  })
+  packages: TripGearLoadPersonalPackageDto[];
+}
+
+/**
  * «Рюкзаки» вкладки «Снаряжение» — ответ `GET /gear/load`
  * и `POST /gear/auto-distribute` (06.11.2026).
  *
@@ -720,10 +976,10 @@ export class TripGearLoadBackpackDto {
  * после кнопки, а расхождение двух сборок однажды показало бы разные числа
  * на одном экране.
  *
- * **Чего здесь нет:** личных вещей участников. Их вес — «твоя проблема»
- * (`gear-distribution.md` §5): в общее распределение они не входят
- * и в плитке чужими не показываются. Дополнительные рюкзаки — следующий
- * шаг, модели ещё нет.
+ * **Общественное и личное разделены.** `backpacks` — только распределяемый
+ * груз; `personal` — свои вещи и своя еда смотрящего для отдельной секции
+ * «Личное» «Моего рюкзака». В общее распределение личное не входит
+ * (`gear-distribution.md` §5) и в чужих плитках не показывается.
  */
 export class TripGearLoadDto {
   @ApiProperty({
@@ -755,6 +1011,12 @@ export class TripGearLoadDto {
     example: 1,
   })
   packagesWithoutWeight: number;
+
+  @ApiProperty({
+    description: 'Личное смотрящего: вещи «Взял» и «Спальника», своя еда',
+    type: TripGearLoadPersonalDto,
+  })
+  personal: TripGearLoadPersonalDto;
 
   /**
    * Медик, которому закреплена аптечка. `null` — медика в походе нет:

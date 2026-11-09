@@ -68,6 +68,20 @@ const props = withDefaults(
     canPlace?: boolean
     /** Убрать вещь из похода: своя вещь или право вкладки. */
     canRemove?: boolean
+    /**
+     * Показывать несущего (06.11.2026). В «Ночёвках» карточку открывает
+     * пилюля секции, и заказчик просил не показывать там, кто несёт:
+     * несущего правят в «Снаряжении», а в «Ночёвках» это лишний вопрос
+     * к вещи, которую человек просто кладёт в поход.
+     */
+    hideAssignee?: boolean
+    /**
+     * Показывать статус «Берём?» (06.11.2026). У личной вещи «Взял» статуса
+     * нет: её не решают «берём / не берём», а просто убирают крестиком.
+     * Показывать «Статус: Берём» значило бы придумать ей решение, которого
+     * никто не принимал.
+     */
+    hideStatus?: boolean
     /** По вещи идёт запрос: поля блокируются до ответа. */
     busy?: boolean
     /**
@@ -86,6 +100,8 @@ const props = withDefaults(
     canDecide: false,
     canPlace: false,
     canRemove: false,
+    hideAssignee: false,
+    hideStatus: false,
     busy: false,
     errorText: null,
   },
@@ -159,7 +175,7 @@ const sectionFieldVisible = computed(
  * поле не рисуем — `select` из одного «не распределено» ничего не выбирает.
  */
 const assigneeFieldVisible = computed(
-  () => props.canAssign && props.assigneeChoices.length > 0,
+  () => !props.hideAssignee && props.canAssign && props.assigneeChoices.length > 0,
 )
 
 function changeStatus(status: TripGearStatus): void {
@@ -229,9 +245,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
         <!--
           Без права менять несущего «Несёт» остаётся строкой: в «Взял»
-          вещь уже в чьём-то рюкзаке, и это факт, а не поле.
+          вещь уже в чьём-то рюкзаке, и это факт, а не поле. В «Ночёвках»
+          строки нет вовсе — `hideAssignee`: несущего правят в «Снаряжении».
         -->
-        <template v-if="!assigneeFieldVisible">
+        <template v-if="!hideAssignee && !assigneeFieldVisible">
           <dt class="text-muted">Несёт</dt>
           <dd data-test="gear-item-assignee-words">{{ assigneeName ?? 'не распределено' }}</dd>
         </template>
@@ -266,7 +283,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         вкладки видит статус словами: решает не он, но знать ему нужно.
       -->
       <div
-        v-if="canDecide"
+        v-if="canDecide && !hideStatus"
         class="flex flex-col gap-1"
         data-test="gear-item-status-field"
       >
@@ -293,7 +310,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </div>
       </div>
 
-      <p v-else class="text-sm text-text" data-test="gear-item-status-words">
+      <p v-else-if="!hideStatus" class="text-sm text-text" data-test="gear-item-status-words">
         Статус: {{ statusWords }}
       </p>
 

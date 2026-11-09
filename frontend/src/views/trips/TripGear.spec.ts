@@ -9,6 +9,8 @@ import type { Checklist, ChecklistItem, TripChecklists } from '@/types/checklist
 import type {
   GearItem,
   TripGearItem,
+  TripGearLoad,
+  TripGearLoadBackpack,
   TripGearSection,
   TripGearSleeping,
 } from '@/types/gear'
@@ -52,6 +54,12 @@ const mocks = vi.hoisted(() => ({
   removeTripGearSection: vi.fn(),
   subscribeTripEvents: vi.fn(),
   autoDistributeTripGear: vi.fn(),
+  getTripGearLoad: vi.fn(),
+  addPersonalTripGear: vi.fn(),
+  updatePersonalTripGear: vi.fn(),
+  removePersonalTripGear: vi.fn(),
+  assignTripGearPackage: vi.fn(),
+  removeRouteSleeping: vi.fn(),
 }))
 
 vi.mock('@/api/gear', () => ({
@@ -66,6 +74,11 @@ vi.mock('@/api/gear', () => ({
   updateTripGearSection: mocks.updateTripGearSection,
   removeTripGearSection: mocks.removeTripGearSection,
   autoDistributeTripGear: mocks.autoDistributeTripGear,
+  getTripGearLoad: mocks.getTripGearLoad,
+  addPersonalTripGear: mocks.addPersonalTripGear,
+  updatePersonalTripGear: mocks.updatePersonalTripGear,
+  removePersonalTripGear: mocks.removePersonalTripGear,
+  assignTripGearPackage: mocks.assignTripGearPackage,
 }))
 
 vi.mock('@/api/tripChecklists', () => ({
@@ -82,7 +95,10 @@ vi.mock('@/api/checklists', () => ({
   deleteChecklistItem: mocks.deleteChecklistItem,
 }))
 
-vi.mock('@/api/trips', () => ({ listParticipants: mocks.listParticipants }))
+vi.mock('@/api/trips', () => ({
+  listParticipants: mocks.listParticipants,
+  removeRouteSleeping: mocks.removeRouteSleeping,
+}))
 vi.mock('@/api/gearTypes', () => ({ fetchGearTypes: mocks.fetchGearTypes }))
 
 /**
@@ -237,12 +253,14 @@ function tripGearList(
   items: TripGearItem[],
   sections: TripGearSection[] = [],
   sleeping: TripGearSleeping[] = [],
+  personalItems: TripGearItem[] = [],
 ): {
   items: TripGearItem[]
   sections: TripGearSection[]
   totalWeightGrams: number
   itemsWithoutWeight: number
   sleeping: TripGearSleeping[]
+  personalItems: TripGearItem[]
 } {
   return {
     items,
@@ -250,6 +268,47 @@ function tripGearList(
     totalWeightGrams: 0,
     itemsWithoutWeight: 0,
     sleeping,
+    personalItems,
+  }
+}
+
+/** Рюкзак в раскладке: по умолчанию всё пусто, тесты наливают нужное. */
+function loadBackpack(
+  userId: string,
+  overrides: Partial<TripGearLoadBackpack> = {},
+): TripGearLoadBackpack {
+  return {
+    userId,
+    gender: 'm',
+    targetWeightGrams: 0,
+    gearWeightGrams: 0,
+    packagesWeightGrams: 0,
+    totalWeightGrams: 0,
+    deviationGrams: 0,
+    gear: [],
+    packages: [],
+    ...overrides,
+  }
+}
+
+/** Ответ `GET /gear/load`: по умолчанию без груза, без пакетов и без личного. */
+function tripLoad(overrides: Partial<TripGearLoad> = {}): TripGearLoad {
+  return {
+    totalWeightGrams: 0,
+    backpacks: [] as TripGearLoadBackpack[],
+    unassigned: [],
+    itemsWithoutWeight: 0,
+    packagesWithoutWeight: 0,
+    doctorUserId: null,
+    doctorMissing: false,
+    personal: {
+      gearWeightGrams: 0,
+      packagesWeightGrams: 0,
+      totalWeightGrams: 0,
+      gear: [],
+      packages: [],
+    },
+    ...overrides,
   }
 }
 
@@ -374,12 +433,17 @@ describe('вкладка «Снаряжение» похода', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    window.localStorage.clear()
     setActivePinia(createPinia())
     useAuthStore().setAuth(makeUser(), 'token')
 
     // Поток событий по умолчанию молчит: большинство тестов живут без него.
     mocks.subscribeTripEvents.mockReset()
     mocks.subscribeTripEvents.mockReturnValue(() => {})
+
+    // Раскладка по умолчанию не пришла: старые тесты проверяют вид
+    // по вещам похода, а пакеты и доли — в отдельных тестах ниже.
+    mocks.getTripGearLoad.mockResolvedValue(null)
 
     mocks.listTripGear.mockResolvedValue(tripGearList(defaultItems()))
     mocks.listParticipants.mockResolvedValue([
@@ -415,6 +479,36 @@ describe('вкладка «Снаряжение» похода', () => {
       }),
     )
     mocks.removeTripGearSection.mockResolvedValue(undefined)
+    mocks.removeRouteSleeping.mockResolvedValue({})
+    mocks.addPersonalTripGear.mockImplementation(
+      async (_tripId: string, body: { gearItemId: string; sectionId?: string | null }) =>
+        tripGearItem({
+          id: `personal-${body.gearItemId}`,
+          gearItemId: body.gearItemId,
+          typeCode: 'clothes',
+          typeName: 'Одежда',
+          title: 'Куртка',
+          ownerUserId: ME,
+          assignedUserId: ME,
+          weightGrams: 800,
+          personalSectionId: body.sectionId ?? null,
+        }),
+    )
+    mocks.updatePersonalTripGear.mockImplementation(
+      async (_tripId: string, personalId: string, body: { sectionId: string | null }) =>
+        tripGearItem({
+          id: personalId,
+          gearItemId: `cat-${personalId}`,
+          typeCode: 'clothes',
+          typeName: 'Одежда',
+          title: 'Куртка',
+          ownerUserId: ME,
+          assignedUserId: ME,
+          weightGrams: 800,
+          personalSectionId: body.sectionId,
+        }),
+    )
+    mocks.removePersonalTripGear.mockResolvedValue(undefined)
     mocks.updateTripGear.mockImplementation(
       async (_tripId: string, gearId: string, body: Record<string, unknown>) => {
         const row = defaultItems().find((item) => item.id === gearId)
@@ -568,6 +662,12 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(toggle.attributes('aria-expanded')).toBe('true')
     expect(block.find('[data-test="checklist-new-item"]').exists()).toBe(true)
 
+    // Кнопка в `<summary>` не сворачивает сам список: сначала разворачиваем
+    // секцию (по умолчанию вкладка открывается свёрнутой), потом жмём «⋯».
+    const details = block.element as HTMLDetailsElement
+    details.open = true
+    await block.trigger('toggle')
+
     await toggle.trigger('click')
 
     expect(block.find('[data-test="checklist-new-item"]').exists()).toBe(false)
@@ -577,7 +677,7 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(toggle.attributes('aria-expanded')).toBe('false')
 
     // Кнопка в `<summary>` не сворачивает сам список.
-    expect(block.element.hasAttribute('open')).toBe(true)
+    expect(details.hasAttribute('open')).toBe(true)
   })
 
   it('у всех трёх списков один плейсхолдер и одно название импорта', async () => {
@@ -783,10 +883,17 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-taken-item-g1"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="gear-taken-sleeping-s1"]').exists()).toBe(true)
 
+    // «Мой рюкзак» разделён на «Общественное» и «Личное» (06.11.2026).
     expect(wrapper.find('[data-test="gear-backpack-item-g1"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="gear-backpack-item-g2"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="gear-backpack-sleeping-s1"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="gear-backpack-total"]').text()).toBe('Всего: 3,8 кг')
+
+    expect(
+      wrapper.get('[data-test="gear-backpack-public"] summary').text(),
+    ).toContain('Всего: 2,6 кг')
+    expect(
+      wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
+    ).toContain('Всего: 1,2 кг')
   })
 
   it('«Добавить снаряжение» открывает общий каталог и предлагает вещь', async () => {
@@ -981,7 +1088,8 @@ describe('вкладка «Снаряжение» похода', () => {
     )
     expect(wrapper.find('[data-test="gear-distribution-empty"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="gear-taken-empty"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="gear-backpack-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="gear-backpack-public-empty"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="gear-backpack-personal-empty"]').exists()).toBe(true)
   })
 
   // ───────────────────────── «Список»: чек-листы (05.11.2026) ─────────────────────────
@@ -1453,5 +1561,215 @@ describe('вкладка «Снаряжение» похода', () => {
     await settleLive()
 
     expect(mocks.listTripGear).toHaveBeenCalledTimes(1)
+  })
+
+  // ───────────────── «Взял», рюкзаки и память секций (06.11.2026) ─────────────────
+
+  it('впервые вкладка открывается со свёрнутыми секциями, а развёрнутость запоминается', async () => {
+    const wrapper = await mounted()
+    const section = wrapper.get('[data-test="gear-public-section"]')
+    const details = section.element as HTMLDetailsElement
+
+    expect(details.open).toBe(false)
+
+    // Развернули «Общественное снаряжение» — состояние ушло в хранилище.
+    details.open = true
+    await section.trigger('toggle')
+    await flushPromises()
+
+    const stored = JSON.parse(
+      window.localStorage.getItem('ph.tripGear.open.1') ?? '{}',
+    ) as Record<string, boolean>
+    expect(stored.shared).toBe(true)
+
+    // Переключились на другую закладку и вернулись: состояние то же.
+    wrapper.unmount()
+    const again = await mounted()
+    expect(
+      (again.get('[data-test="gear-public-section"]').element as HTMLDetailsElement).open,
+    ).toBe(true)
+  })
+
+  it('кнопка автораскладки называется «Распределить груз автоматически»', async () => {
+    const wrapper = await mounted(true)
+
+    expect(wrapper.get('[data-test="gear-distribute"]').text()).toBe(
+      'Распределить груз автоматически',
+    )
+  })
+
+  it('у личных вещей «Взял» есть крестик, и он убирает вещь из похода', async () => {
+    const personal = tripGearItem({
+      id: 'p1',
+      gearItemId: 'cat-1',
+      typeCode: 'clothes',
+      typeName: 'Одежда',
+      title: 'Куртка мембранная',
+      ownerUserId: ME,
+      assignedUserId: ME,
+      weightGrams: 800,
+      personalSectionId: 'sec-clothes',
+    })
+
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList(
+        [],
+        [
+          tripGearSection({
+            id: 'sec-clothes',
+            title: 'Одежда',
+            scope: 'personal',
+            ownerUserId: ME,
+            templateCode: 'clothes',
+          }),
+        ],
+        [],
+        [personal],
+      ),
+    )
+
+    const wrapper = await mounted()
+
+    expect(wrapper.find('[data-test="gear-taken-personal-p1"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="gear-taken-remove-p1"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.removePersonalTripGear).toHaveBeenCalledWith('1', 'p1')
+    expect(wrapper.find('[data-test="gear-taken-personal-p1"]').exists()).toBe(false)
+  })
+
+  it('«Добавить снаряжение в этот раздел» кладёт вещь в личный раздел', async () => {
+    mocks.listTripGear.mockResolvedValue(
+      tripGearList([], [
+        tripGearSection({
+          id: 'sec-clothes',
+          title: 'Одежда',
+          scope: 'personal',
+          ownerUserId: ME,
+          templateCode: 'clothes',
+        }),
+      ]),
+    )
+    mocks.listGear.mockResolvedValue({
+      items: [
+        gearItem({ id: 'cat-1', typeCode: 'clothes', typeName: 'Одежда', title: 'Куртка' }),
+      ],
+      totalWeightGrams: 0,
+      itemsWithoutWeight: 0,
+    })
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="gear-section-add-item-sec-clothes"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(true)
+
+    // Группы каталога в модалке свёрнуты: сначала раскрываем «Прочее».
+    await wrapper.get('[data-test="route-extra-toggle-other"]').trigger('click')
+    await wrapper.get('[data-test="route-extra-item-cat-1"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.addPersonalTripGear).toHaveBeenCalledWith('1', {
+      gearItemId: 'cat-1',
+      sectionId: 'sec-clothes',
+    })
+    expect(wrapper.find('[data-test="gear-taken-personal-personal-cat-1"]').exists()).toBe(true)
+  })
+
+  it('пакеты еды стоят в рюкзаках фиолетовыми пилюлями и считаются в весе', async () => {
+    mocks.getTripGearLoad.mockResolvedValue(
+      tripLoad({
+        totalWeightGrams: 3800,
+        backpacks: [
+          loadBackpack(ME, {
+            gear: [
+              {
+                kind: 'gear',
+                id: 'g1',
+                title: 'Палатка',
+                weightGrams: 2600,
+                assignedUserId: ME,
+              },
+            ],
+            packages: [
+              {
+                kind: 'package',
+                id: 'p9',
+                title: 'Пакет 1',
+                weightGrams: 1200,
+                assignedUserId: ME,
+              },
+            ],
+            gearWeightGrams: 2600,
+            packagesWeightGrams: 1200,
+            totalWeightGrams: 3800,
+          }),
+        ],
+      }),
+    )
+
+    const wrapper = await mounted(true)
+    const pill = wrapper.get('[data-test="gear-bag-package-p9"]')
+
+    expect(pill.text()).toContain('Пакет 1')
+    expect(pill.classes().join(' ')).toContain('violet')
+    expect(wrapper.get(`[data-test="gear-bag-${ME}"]`).text()).toContain('Всего: 3,8 кг')
+  })
+
+  it('пакет перетаскивается в рюкзак своей ручкой, а не как вещь', async () => {
+    mocks.getTripGearLoad.mockResolvedValue(
+      tripLoad({
+        totalWeightGrams: 1200,
+        backpacks: [loadBackpack(ME), loadBackpack(ANNA)],
+        unassigned: [
+          {
+            kind: 'package',
+            id: 'p9',
+            title: 'Пакет 1',
+            weightGrams: 1200,
+            assignedUserId: null,
+          },
+        ],
+      }),
+    )
+    mocks.assignTripGearPackage.mockResolvedValue(tripLoad())
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="gear-unassigned-package-p9"]').trigger('dragstart')
+    await wrapper.get(`[data-test="gear-bag-${ANNA}"]`).trigger('drop')
+    await flushPromises()
+
+    expect(mocks.assignTripGearPackage).toHaveBeenCalledWith('1', 'p9', ANNA)
+  })
+
+  it('личная еда в «Моём рюкзаке» стоит в «Личном» с расчётным или фактическим весом', async () => {
+    mocks.getTripGearLoad.mockResolvedValue(
+      tripLoad({
+        personal: {
+          gearWeightGrams: 800,
+          packagesWeightGrams: 1200,
+          totalWeightGrams: 2000,
+          gear: [
+            { kind: 'personal', id: 'p1', title: 'Куртка мембранная', weightGrams: 800 },
+          ],
+          packages: [
+            { id: 'pp1', name: 'Мой пакет', weightGrams: 1200, isActual: false },
+          ],
+        },
+      }),
+    )
+
+    const wrapper = await mounted()
+    const pack = wrapper.get('[data-test="gear-backpack-personal-package-pp1"]')
+
+    expect(pack.text()).toContain('Мой пакет')
+    expect(pack.text()).toContain('расчёт')
+    expect(pack.text()).toContain('1,2 кг')
+    expect(
+      wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
+    ).toContain('Всего: 2 кг')
   })
 })

@@ -12,6 +12,7 @@ import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
 import { TripGearSection } from './entities/trip-gear-section.entity';
 import { TripGear } from './entities/trip-gear.entity';
+import { TripPersonalGear } from './entities/trip-personal-gear.entity';
 import { GearAdminGroupTemplatesController } from './gear-admin-groups.controller';
 import { GearAdminTypesController } from './gear-admin.controller';
 import { GearController } from './gear.controller';
@@ -55,6 +56,7 @@ import { TripGearService } from './trip-gear.service';
       GearItemAttribute,
       TripGear,
       TripGearSection,
+      TripPersonalGear,
       GearType,
       GearTypeAttribute,
       GearAttributeOption,

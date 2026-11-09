@@ -52,8 +52,17 @@ const props = withDefaults(
      * выглядел бы пустым и подписывался «Пусто».
      */
     extraIds?: string[]
+    /**
+     * Память раскрытия разделов (06.11.2026). Префикс отличает «Берём» от
+     * «Взял», а `isSectionOpen` приходит из `TripGear.vue`: состояние живёт
+     * в localStorage на поход, и дерево не должно знать про хранилище.
+     * Функций нет — разделы открыты, как раньше (так компонент работает
+     * в тестах и в «Ночёвках», где он не используется).
+     */
+    openKeyPrefix?: string
+    isSectionOpen?: (key: string) => boolean
   }>(),
-  { canManage: false, canPlace: false, canAdd: false, extraIds: () => [] },
+  { canManage: false, canPlace: false, canAdd: false, extraIds: () => [], openKeyPrefix: '' },
 )
 
 const emit = defineEmits<{
@@ -63,6 +72,8 @@ const emit = defineEmits<{
   /** Вещь перенесли в раздел `sectionId`; `null` — в корень. */
   move: [sectionId: string | null]
   addTo: [sectionId: string | null]
+  /** Раздел свернули или развернули: ключ состояния и событие `<details>`. */
+  toggleSection: [key: string, event: Event]
 }>()
 
 /**
@@ -224,6 +235,24 @@ function onRootDrop(): void {
   // раздел, и его drop уже поймал обработчик раздела.
   if (props.parentId === null && props.canPlace) emit('move', null)
 }
+
+// ───────────────────────────── раскрытие разделов ─────────────────────────────
+
+/** Ключ раздела в общей памяти раскрытия: «shared-section:12». */
+function openKey(section: TripGearSection): string {
+  return `${props.openKeyPrefix}:${section.id}`
+}
+
+function sectionOpen(section: TripGearSection): boolean {
+  // Без памяти (компонент без пропа) — прежнее поведение: открыто.
+  return props.isSectionOpen ? props.isSectionOpen(openKey(section)) : true
+}
+
+function onSectionToggle(section: TripGearSection, event: Event): void {
+  if (!props.isSectionOpen) return
+
+  emit('toggleSection', openKey(section), event)
+}
 </script>
 
 <template>
@@ -292,7 +321,10 @@ function onRootDrop(): void {
       @dragover.prevent
       @drop.stop.prevent="onDrop(section.id)"
     >
-      <details open>
+      <details
+        :open="sectionOpen(section)"
+        @toggle="onSectionToggle(section, $event)"
+      >
         <!--
           Треугольник раскрытия — родной маркер `<summary>`, поэтому
           содержимое остаётся строчным: `display: flex` на самом `<summary>`
@@ -433,11 +465,14 @@ function onRootDrop(): void {
             :can-place="canPlace"
             :can-add="canAdd"
             :extra-ids="extraIds"
+            :open-key-prefix="openKeyPrefix"
+            :is-section-open="isSectionOpen"
             @create="emit('create', $event)"
             @rename="emit('rename', $event)"
             @remove="emit('remove', $event)"
             @move="emit('move', $event)"
             @add-to="emit('addTo', $event)"
+            @toggle-section="(key, event) => emit('toggleSection', key, event)"
           >
             <template #item="slotProps">
               <slot name="item" :item="slotProps.item" />
