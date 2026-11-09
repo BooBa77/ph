@@ -561,7 +561,15 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.get('[data-test="gear-distribution"] > summary').text()).toBe('Распределение')
     expect(wrapper.get('[data-test="gear-unassigned"] p').text()).toBe('Не распределено')
     expect(wrapper.get('[data-test="gear-taken"] > summary').text()).toBe('Взял')
-    expect(wrapper.get('[data-test="gear-backpack"] > summary').text()).toBe('Мой рюкзак')
+
+    // В заголовке «Моего рюкзака» теперь вес, а не количество (09.11.2026):
+    // заказчик просил суммарный вес, видимый и в свёрнутой секции.
+    expect(wrapper.get('[data-test="gear-backpack"] > summary').text()).toContain(
+      'Мой рюкзак',
+    )
+    expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
+      'Всего: 2,6 кг',
+    )
 
     // Прогресс стоит в `<summary>`: в свёрнутой секции только он и виден.
     expect(
@@ -894,6 +902,12 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(
       wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
     ).toContain('Всего: 1,2 кг')
+
+    // Итог рюкзака виден в свёрнутой строке: 2,6 кг общественного
+    // плюс 1,2 кг личного (09.11.2026).
+    expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
+      'Всего: 3,8 кг',
+    )
   })
 
   it('«Добавить снаряжение» открывает общий каталог и предлагает вещь', async () => {
@@ -1771,5 +1785,80 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(
       wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
     ).toContain('Всего: 2 кг')
+  })
+
+  it('«Мои продукты» видны в «Личном», а фактический вес подменяет расчёт (09.11.2026)', async () => {
+    // Заказчик: «в Личном рюкзаке не отображается пакет „Мои продукты“».
+    // Вес «факт» вписывают в «Питании», он живёт в браузере — рюкзак
+    // обязан прочитать ту же отметку, а не показывать расчёт.
+    window.localStorage.setItem(`ph.myFoodWeight.1.${ME}`, '350')
+
+    mocks.getTripGearLoad.mockResolvedValue(
+      tripLoad({
+        backpacks: [
+          loadBackpack(ME, {
+            gearWeightGrams: 2600,
+            totalWeightGrams: 2600,
+            gear: [
+              {
+                kind: 'gear',
+                id: 'g1',
+                title: 'Палатка',
+                weightGrams: 2600,
+                assignedUserId: ME,
+              },
+            ],
+          }),
+        ],
+        personal: {
+          gearWeightGrams: 0,
+          packagesWeightGrams: 70,
+          totalWeightGrams: 70,
+          gear: [],
+          packages: [
+            { id: 'my-food', name: 'Мои продукты', weightGrams: 70, isActual: false },
+          ],
+        },
+      }),
+    )
+
+    const wrapper = await mounted()
+    const pack = wrapper.get('[data-test="gear-backpack-personal-package-my-food"]')
+
+    expect(pack.text()).toContain('Мои продукты')
+    expect(pack.text()).toContain('факт')
+    expect(pack.text()).toContain('350 г')
+    expect(
+      wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
+    ).toContain('Всего: 350 г')
+    // Главный итог — общественное плюс личное: 2600 + 350.
+    expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
+      'Всего: 2,95 кг',
+    )
+  })
+
+  it('«Мои продукты» без отметки показываются расчётным весом', async () => {
+    mocks.getTripGearLoad.mockResolvedValue(
+      tripLoad({
+        personal: {
+          gearWeightGrams: 0,
+          packagesWeightGrams: 70,
+          totalWeightGrams: 70,
+          gear: [],
+          packages: [
+            { id: 'my-food', name: 'Мои продукты', weightGrams: 70, isActual: false },
+          ],
+        },
+      }),
+    )
+
+    const wrapper = await mounted()
+    const pack = wrapper.get('[data-test="gear-backpack-personal-package-my-food"]')
+
+    expect(pack.text()).toContain('расчёт')
+    expect(pack.text()).toContain('70 г')
+    expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
+      'Всего: 70 г',
+    )
   })
 })

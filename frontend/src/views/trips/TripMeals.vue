@@ -47,6 +47,10 @@ import {
 } from '@/types/trips'
 import { formatProductAmount, type Dish, type Product } from '@/types/meals'
 import { formatWeight } from '@/utils/gearWeight'
+import {
+  readMyFoodWeight as readStoredFoodWeight,
+  writeMyFoodWeight,
+} from '@/utils/myFoodWeight'
 
 /**
  * Вкладка «Питание»: едоки, раскладка по дням и приёмам, фасовка.
@@ -1261,22 +1265,21 @@ const myProductsWeight = computed(() =>
  * про личный вес ничего не знает. Когда личные продукты поедут в
  * «Снаряжение» одной позицией, вес переедет в базу вместе с рюкзаком.
  */
-const MY_FOOD_WEIGHT_KEY = 'ph.myFoodWeight'
+/**
+ * Вес моих продуктов после контрольного взвешивания.
+ *
+ * Хранится в браузере: это отметка для себя, а не данные похода — сервер
+ * про личный вес ничего не знает. Ключ и чтение живут в
+ * `utils/myFoodWeight.ts`: ту же отметку показывает «Мой рюкзак»
+ * в «Снаряжении» (09.11.2026), и два экрана не должны прочитать её
+ * по-разному. Когда личные продукты поедут в «Снаряжение» одной позицией,
+ * вес переедет в базу вместе с рюкзаком.
+ */
 
 const myFoodActualGrams = ref<number | null>(null)
 
-function myFoodWeightKey(): string {
-  return `${MY_FOOD_WEIGHT_KEY}.${props.trip.id}.${auth.user?.id ?? ''}`
-}
-
 function readMyFoodWeight(): void {
-  try {
-    const raw = window.localStorage.getItem(myFoodWeightKey())
-    myFoodActualGrams.value =
-      raw === null || Number.isNaN(Number(raw)) ? null : Number(raw)
-  } catch {
-    myFoodActualGrams.value = null
-  }
+  myFoodActualGrams.value = readStoredFoodWeight(props.trip.id, auth.user?.id ?? '')
 }
 
 function saveMyFoodWeight(event: Event): void {
@@ -1285,13 +1288,7 @@ function saveMyFoodWeight(event: Event): void {
   if (grams !== null && (!Number.isInteger(grams) || grams <= 0)) return
 
   myFoodActualGrams.value = grams
-
-  try {
-    if (grams === null) window.localStorage.removeItem(myFoodWeightKey())
-    else window.localStorage.setItem(myFoodWeightKey(), String(grams))
-  } catch {
-    // Без хранилища отметка просто не переживёт перезагрузку.
-  }
+  writeMyFoodWeight(props.trip.id, auth.user?.id ?? '', grams)
 }
 
 /**

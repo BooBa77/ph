@@ -19,7 +19,9 @@ import type { UserGender } from '../users/gender.types';
  *    не дошёл до `target_i`. Дошёл — в общий пул. Порядок «сначала тяжёлое»
  *    не косметика: тяжёлую вещь хуже всего переносить «не туда».
  * 4. Остаток и **все пакеты еды** уравниваются: единица уходит тому, у кого
- *    больше свободной доли (`target_i − W_i`).
+ *    больше свободной доли (`target_i − W_i`). Тяжёлое среди остатка
+ *    сначала предлагается мужчинам: если у кого-то из них есть свободная
+ *    доля, вещь идёт ему (09.11.2026, правило ниже).
  * 5. Аптечка — единственное закрепление: она сразу у медика и в уравнивании
  *    не участвует. Медика нет — аптечка становится обычной вещью, и это
  *    видно по флагу `doctorMissing`.
@@ -31,6 +33,24 @@ import type { UserGender } from '../users/gender.types';
  *   а не измеренная величина; в документации это сказано прямо.
  * - **Не запрещает перегруз.** Он показывается отклонением, а решают люди.
  */
+
+/**
+ * Тяжёлая вещь — та, что забирает заметную часть рюкзака (09.11.2026).
+ *
+ * Заказчик посмотрел раскладку «Витязя»: топор 900 г достался Марине,
+ * а тан 800 г и пилу — мужчинам. Он сказал прямо: «если у тебя заложена
+ * логика распределения тяжёлых вещей в первую очередь, то тогда нужно
+ * учитывать и пол — тяжёлые вещи мужикам».
+ *
+ * Порог **относительный**: половина средней доли `T` — то есть вещь,
+ * которая заметно утяжелит рюкзак именно в этом походе. Плюс пол в 300 г:
+ * горелку или пилу в 150 г «тяжёлой» называть смешно, пол для них роли
+ * не играет. Гендерное правило не закрепляет вещь за мужчиной навсегда:
+ * если у мужчин свободной доли уже нет, вещь достаётся самому свободному,
+ * кем бы он ни был.
+ */
+const HEAVY_ITEM_MIN_GRAMS = 300;
+const HEAVY_ITEM_SHARE = 0.5;
 
 /** Вид единицы груза: вещь похода или пакет еды. */
 export type LoadUnitKind = 'gear' | 'package';
@@ -140,6 +160,9 @@ export function allocateLoad(
     );
   }
 
+  // С какого веса вещь считается тяжёлой в этом походе (09.11.2026).
+  const heavyThreshold = Math.max(share * HEAVY_ITEM_SHARE, HEAVY_ITEM_MIN_GRAMS);
+
   const add = (personId: string, unit: LoadUnit): void => {
     assignments.set(loadUnitKey(unit.kind, unit.id), personId);
     weights.set(personId, (weights.get(personId) ?? 0) + unit.weightGrams);
@@ -178,10 +201,17 @@ export function allocateLoad(
   //
   // Пакеты еды ищут несущего только среди тех, кто ест общий котёл:
   // «питающийся отдельно» груз общей еды не берёт (06.11.2026).
+  // Тяжёлое сначала предлагаем мужчинам (09.11.2026): если у кого-то
+  // из них ещё есть свободная доля, вещь идёт ему, иначе — как раньше,
+  // самому свободному из всех.
   const foodPeople = people.filter((person) => person.eatsSeparately !== true);
   for (const unit of pool.sort(compareUnits)) {
     const candidates = unit.kind === 'package' ? foodPeople : people;
-    const person = freestPerson(candidates, targets, weights);
+    const receivers =
+      unit.weightGrams >= heavyThreshold
+        ? menWithRoom(candidates, targets, weights)
+        : candidates;
+    const person = freestPerson(receivers, targets, weights);
     // Едоков нет — пакет остаётся нераспределённым, а не «у любого».
     if (!person) continue;
     add(person.userId, unit);
@@ -212,6 +242,34 @@ function compareUnits(left: LoadUnit, right: LoadUnit): number {
   return left.id.localeCompare(right.id, 'en', { numeric: true });
 }
 
+/** Свободная доля человека: сколько он ещё может взять. */
+function freeShare(
+  person: LoadPerson,
+  targets: Map<string, number>,
+  weights: Map<string, number>,
+): number {
+  return (targets.get(person.userId) ?? 0) - (weights.get(person.userId) ?? 0);
+}
+
+/**
+ * Кому предлагать тяжёлую вещь: мужчинам со свободной долей (09.11.2026).
+ *
+ * Если мужчин нет вовсе или у всех уже перегруз, возвращаем весь список:
+ * правило «тяжёлое — мужчинам» не должно оставлять вещь нераспределённой
+ * и не должно валить на одного человека весь груз похода.
+ */
+function menWithRoom(
+  people: LoadPerson[],
+  targets: Map<string, number>,
+  weights: Map<string, number>,
+): LoadPerson[] {
+  const men = people.filter(
+    (person) => person.gender === 'm' && freeShare(person, targets, weights) > 0,
+  );
+
+  return men.length > 0 ? men : people;
+}
+
 /** Кто самый свободный; при равенстве — раньше в составе. */
 function freestPerson(
   people: LoadPerson[],
@@ -222,8 +280,7 @@ function freestPerson(
   let bestFree = Number.NEGATIVE_INFINITY;
 
   for (const person of people) {
-    const free =
-      (targets.get(person.userId) ?? 0) - (weights.get(person.userId) ?? 0);
+    const free = freeShare(person, targets, weights);
     // Строго больше: при равных долях выигрывает первый в составе.
     if (free > bestFree) {
       best = person;

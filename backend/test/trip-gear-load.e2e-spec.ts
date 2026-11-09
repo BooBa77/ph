@@ -711,6 +711,70 @@ describe('Раскладка груза по рюкзакам (e2e)', () => {
     }).expect(404);
   });
 
+  it('«Мои продукты»: личная еда без пакета видна в «Личном» рюкзака (09.11.2026)', async () => {
+    // Заказчик: «в Личном рюкзаке не отображается пакет „Мои продукты“».
+    // В «Питании» это сводка по личным приёмам, а не строка в базе —
+    // проверяем, что сервер сам считает её вес и отдаёт владельцу.
+    const foodProductId = (
+      await dataSource.query(
+        `INSERT INTO trip_products (trip_id, name, unit, weight_per_unit_grams)
+         VALUES ($1, 'Печенье проверочное', 'g', 5) RETURNING id`,
+        [tripId],
+      )
+    )[0].id;
+    const myMealId = (
+      await dataSource.query(
+        `INSERT INTO trip_meals (trip_id, day_index, kind, form, eater_user_id)
+         VALUES ($1, 2, 'dinner', 'snack', $2) RETURNING id`,
+        [tripId, organizerId],
+      )
+    )[0].id;
+    await dataSource.query(
+      `INSERT INTO trip_meal_lines (meal_id, product_id, amount)
+       VALUES ($1, $2, 30)`,
+      [myMealId, foodProductId],
+    );
+
+    try {
+      const load = await call(
+        'get',
+        `/api/trips/${tripId}/gear/load`,
+        organizerToken,
+      ).expect(200);
+
+      // 30 × 5 г = 150 г — расчётный вес сводки.
+      expect(load.body.personal.packages).toEqual([
+        expect.objectContaining({
+          id: 'my-food',
+          name: 'Мои продукты',
+          weightGrams: 150,
+          isActual: false,
+        }),
+      ]);
+      expect(load.body.personal.packagesWeightGrams).toBe(150);
+
+      // Чужой личной еды не видно: у участника нет своих приёмов,
+      // поэтому сводки «Мои продукты» в его рюкзаке тоже нет.
+      const memberView = await call(
+        'get',
+        `/api/trips/${tripId}/gear/load`,
+        memberToken,
+      ).expect(200);
+      expect(
+        (memberView.body.personal.packages as Array<{ id: string }>).map(
+          (pack) => pack.id,
+        ),
+      ).not.toContain('my-food');
+    } finally {
+      await dataSource.query('DELETE FROM trip_meals WHERE id = $1', [
+        myMealId,
+      ]);
+      await dataSource.query('DELETE FROM trip_products WHERE id = $1', [
+        foodProductId,
+      ]);
+    }
+  });
+
   it('питающийся отдельно не несёт общий пакет: автораскладка обходит его рюкзак', async () => {
     // Участник перешёл на своё питание (правило «Питания» 06.11.2026).
     await call('patch', `/api/trips/${tripId}/participants/me`, memberToken, {

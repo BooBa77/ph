@@ -46,6 +46,7 @@ import { TripPersonalGear } from './entities/trip-personal-gear.entity';
 import {
   CAMP_SECTION_TYPE_CODES,
   FIRST_AID_TYPE_CODE,
+  PERSONAL_FOOD_PACKAGE_ID,
 } from './gear.types';
 import { GearService } from './gear.service';
 import {
@@ -1343,7 +1344,7 @@ export class TripGearService {
       order: { id: 'ASC' },
     });
     const sleeping = await this.sleepingRows(manager, trip.id, viewerId);
-    const packages = await this.tripMeals.listPersonalPackagesForLoad(
+    const personalLoad = await this.tripMeals.listPersonalPackagesForLoad(
       trip.id,
       viewerId,
     );
@@ -1363,12 +1364,33 @@ export class TripGearService {
       })),
     ];
 
-    const packageDtos: TripGearLoadPersonalPackageDto[] = packages.map((pack) => ({
-      id: pack.id,
-      name: pack.name,
-      weightGrams: pack.weightGrams,
-      isActual: pack.isActual,
-    }));
+    const packageDtos: TripGearLoadPersonalPackageDto[] =
+      personalLoad.packages.map((pack) => ({
+        id: pack.id,
+        name: pack.name,
+        weightGrams: pack.weightGrams,
+        isActual: pack.isActual,
+      }));
+
+    /**
+     * «Мои продукты» (09.11.2026). В «Питании» это синяя карточка-сводка
+     * по личным приёмам, а не пакет, — поэтому в рюкзаке она появляется,
+     * только когда своих пакетов **с весом** нет. Если человек включил
+     * кулёк, еда уже посчитана в нём, и вторая строка удвоила бы вес.
+     * Пустой пакет (кулёк без содержимого) сводку не отменяет.
+     */
+    if (
+      personalLoad.foodWeightGrams > 0 &&
+      !packageDtos.some((pack) => pack.weightGrams > 0)
+    ) {
+      packageDtos.push({
+        id: PERSONAL_FOOD_PACKAGE_ID,
+        name: 'Мои продукты',
+        weightGrams: personalLoad.foodWeightGrams,
+        // Факт живёт в браузере человека: сервер считает только расчёт.
+        isActual: false,
+      });
+    }
 
     const gearWeightGrams = gear.reduce(
       (sum, row) => sum + (row.weightGrams ?? 0),

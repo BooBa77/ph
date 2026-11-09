@@ -46,6 +46,7 @@ import {
   formatWeight,
   formatWeightTotal,
 } from '@/utils/gearWeight'
+import { readMyFoodWeight } from '@/utils/myFoodWeight'
 
 /**
  * Вкладка «Снаряжение» похода (код `gear`), первый проход по фронту
@@ -381,6 +382,16 @@ const personalSections = computed(() =>
  */
 const TENT_INSIDE_SECTION_CODE = 'tent_inside'
 
+/**
+ * Id строки «Мои продукты» в личной половине раскладки (09.11.2026).
+ *
+ * В «Питании» это не пакет из базы, а сводка по личным приёмам, поэтому
+ * у неё нет своего id. Сервер отдаёт её в списке пакетов с этим
+ * договорным id — по нему экран понимает, что вес можно подменить
+ * фактическим из отметки человека, а не из расчёта.
+ */
+const MY_FOOD_PACKAGE_ID = 'my-food'
+
 /** Личный раздел «в палатку» — если он есть у смотрящего. */
 const tentInsideSection = computed(
   () =>
@@ -709,16 +720,29 @@ const backpackPublicPackages = computed<LoadPill[]>(() =>
   loadData.value ? (myLoadBag.value?.packages ?? []) : [],
 )
 
-const backpackPublicWeight = computed(() => {
-  if (loadData.value) {
-    const bag = myLoadBag.value
-    return bag
-      ? bag.weight
-      : formatWeightTotal(0, 0)
-  }
+/**
+ * Сумма веса строк рюкзака и число «без веса» — одной парой функций на все
+ * три итога. Веса с сервера приходят готовыми, но у личных вещей он бывает
+ * `null`, и складывать их надо одинаково: иначе итог рюкзака разошёлся бы
+ * с итогами его секций.
+ */
+function sumWeight(rows: Array<{ weightGrams: number | null }>): number {
+  return rows.reduce((sum, row) => sum + (row.weightGrams ?? 0), 0)
+}
 
-  return weightTotalLabel(myItems.value)
-})
+function countWithoutWeight(rows: Array<{ weightGrams: number | null }>): number {
+  return rows.filter((row) => row.weightGrams === null).length
+}
+
+const backpackPublicWeightGrams = computed(() =>
+  sumWeight([...backpackPublicGear.value, ...backpackPublicPackages.value]),
+)
+
+const backpackPublicWeight = computed(() =>
+  backpackPublicGear.value.length + backpackPublicPackages.value.length > 0
+    ? formatWeightTotal(backpackPublicWeightGrams.value, 0)
+    : '—',
+)
 
 /**
  * «Личное» в «Моём рюкзаке» (06.11.2026): свои вещи «Взял», строки
@@ -757,18 +781,59 @@ const backpackPersonalGear = computed(() => {
 })
 
 /** Пакеты личной еды: вес и откуда он — фактический или расчётный. */
-const backpackPersonalPackages = computed(
-  () => loadData.value?.personal?.packages ?? [],
+const backpackPersonalPackages = computed(() => {
+  const rows = loadData.value?.personal?.packages
+
+  if (!rows) return []
+
+  return rows.map((pack) => {
+    // «Мои продукты» сервер считает расчётно: фактический вес человек
+    // вписывает в «Питании», и живёт он в его браузере, а не в походе
+    // (`meals.md` §5.7). Читаем ту же отметку, чтобы рюкзак не спорил
+    // с «Питанием» на одном экране.
+    if (pack.id !== MY_FOOD_PACKAGE_ID) return pack
+
+    const actual = readMyFoodWeight(props.trip.id, meId.value)
+
+    return actual === null ? pack : { ...pack, weightGrams: actual, isActual: true }
+  })
+})
+
+const backpackPersonalWeightGrams = computed(() =>
+  sumWeight([...backpackPersonalGear.value, ...backpackPersonalPackages.value]),
 )
 
-const backpackPersonalWeight = computed(() => {
-  const personal = loadData.value?.personal
-  if (personal) return formatWeightTotal(personal.totalWeightGrams, 0)
+const backpackPersonalWeight = computed(() =>
+  backpackPersonalGear.value.length + backpackPersonalPackages.value.length > 0
+    ? formatWeightTotal(
+        backpackPersonalWeightGrams.value,
+        countWithoutWeight(backpackPersonalGear.value),
+      )
+    : '—',
+)
 
-  return weightTotalLabel([
-    ...personalItems.value,
-    ...sleeping.value,
-  ])
+/**
+ * Итог «Моего рюкзака» одной цифрой в заголовке (09.11.2026).
+ *
+ * Заказчик: «Нужен суммарный вес рюкзака, сделай в строке „Мой рюкзак“,
+ * чтобы даже в свёрнутом видно было». Считаем те же строки, что показаны
+ * внутри: общественное плюс личное, — поэтому цифра в заголовке не может
+ * разойтись с двумя подытогами. Пустой рюкзак цифру не показывает:
+ * «Всего: 0 г» у человека без груза читалось бы как ошибка.
+ */
+const backpackTotalWeight = computed(() => {
+  const grams = backpackPublicWeightGrams.value + backpackPersonalWeightGrams.value
+  const missing =
+    countWithoutWeight(backpackPublicGear.value) +
+    countWithoutWeight(backpackPersonalGear.value)
+
+  return backpackPublicGear.value.length +
+    backpackPublicPackages.value.length +
+    backpackPersonalGear.value.length +
+    backpackPersonalPackages.value.length >
+    0
+    ? formatWeightTotal(grams, missing)
+    : ''
 })
 
 /** Есть ли во «Личном» вообще что показать. */
@@ -1934,7 +1999,7 @@ const excludedIds = computed(() => {
                   <button
                     v-if="canCross(item)"
                     type="button"
-                    class="ml-auto shrink-0 cursor-pointer rounded-lg border border-orange-200 bg-white px-1.5 py-0.5 text-xs text-muted no-underline transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                    class="ml-auto shrink-0 cursor-pointer border-0 bg-transparent p-0 text-xs text-orange-700 transition-colors hover:text-orange-900 disabled:cursor-not-allowed disabled:opacity-40"
                     :disabled="removingId === item.id || busyId === item.id"
                     :aria-label="
                       isMyItem(item)
@@ -1946,7 +2011,7 @@ const excludedIds = computed(() => {
                     @click.stop="crossItem(item)"
                     @keydown.stop
                   >
-                    ✕
+                    ×
                   </button>
                 </li>
               </template>
@@ -2008,7 +2073,8 @@ const excludedIds = computed(() => {
 
               <span class="text-xs text-muted">
                 Сбросит прежние назначения и разложит заново: своё — владельцу,
-                тяжёлое вперёд, пакеты еды — тем, кто ест со всеми, аптечка — медику.
+                тяжёлое — сначала мужчинам, пакеты еды — тем, кто ест со всеми,
+                аптечка — медику.
               </span>
             </div>
 
@@ -2356,14 +2422,14 @@ const excludedIds = computed(() => {
                 -->
                 <button
                   type="button"
-                  class="ml-1 shrink-0 cursor-pointer rounded-lg border border-blue-200 bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                  class="ml-1 shrink-0 cursor-pointer border-0 bg-transparent p-0 text-xs text-blue-700 transition-colors hover:text-blue-900 disabled:cursor-not-allowed disabled:opacity-40"
                   :disabled="removingId === row.id"
                   :aria-label="`Убрать «${row.title}» из личных вещей`"
                   title="Убрать из личных вещей"
                   :data-test="`gear-taken-remove-sleeping-${row.id}`"
                   @click.stop="removeSleepingPill(row)"
                 >
-                  ✕
+                  ×
                 </button>
               </li>
             </ul>
@@ -2417,7 +2483,7 @@ const excludedIds = computed(() => {
 
                   <button
                     type="button"
-                    class="ml-1 shrink-0 cursor-pointer rounded-lg border border-blue-200 bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                    class="ml-1 shrink-0 cursor-pointer border-0 bg-transparent p-0 text-xs text-blue-700 transition-colors hover:text-blue-900 disabled:cursor-not-allowed disabled:opacity-40"
                     :disabled="removingId === item.id"
                     :aria-label="`Убрать «${item.title}» из личных вещей`"
                     title="Убрать из личных вещей"
@@ -2425,7 +2491,7 @@ const excludedIds = computed(() => {
                     @click.stop="removePersonal(item)"
                     @keydown.stop
                   >
-                    ✕
+                    ×
                   </button>
                 </li>
               </template>
@@ -2456,14 +2522,14 @@ const excludedIds = computed(() => {
 
                     <button
                       type="button"
-                      class="ml-1 shrink-0 cursor-pointer rounded-lg border border-blue-200 bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-red-400 hover:text-red-600 disabled:opacity-40"
+                      class="ml-1 shrink-0 cursor-pointer border-0 bg-transparent p-0 text-xs text-blue-700 transition-colors hover:text-blue-900 disabled:cursor-not-allowed disabled:opacity-40"
                       :disabled="removingId === row.id"
                       :aria-label="`Убрать «${row.title}» из личных вещей`"
                       title="Убрать из личных вещей"
                       :data-test="`gear-taken-remove-sleeping-${row.id}`"
                       @click.stop="removeSleepingPill(row)"
                     >
-                      ✕
+                      ×
                     </button>
                   </li>
                 </ul>
@@ -2493,8 +2559,20 @@ const excludedIds = computed(() => {
           data-test="gear-backpack"
           @toggle="onSectionToggle('backpack', $event)"
         >
-          <summary class="cursor-pointer select-none text-sm font-medium text-text">
-            Мой рюкзак
+          <summary class="relative cursor-pointer select-none text-sm font-medium text-text">
+            <span class="inline-block max-w-full truncate align-bottom">Мой рюкзак</span>
+
+            <!--
+              Итог рюкзака виден и в свёрнутой строке (09.11.2026): заказчик
+              просил «суммарный вес рюкзака, чтобы даже в свёрнутом видно
+              было». Цифра считается из тех же строк, что лежат внутри,
+              поэтому с подытогами секций не расходится.
+            -->
+            <span
+              v-if="backpackTotalWeight"
+              class="ml-1 text-xs font-normal text-muted"
+              data-test="gear-backpack-total"
+            >{{ backpackTotalWeight }}</span>
           </summary>
 
           <div class="mt-2 flex flex-col gap-2">

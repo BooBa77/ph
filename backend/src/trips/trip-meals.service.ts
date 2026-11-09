@@ -199,48 +199,63 @@ export class TripMealsService {
   }
 
   /**
-   * Пакеты личной еды участника — для секции «Личное» «Моего рюкзака»
-   * (06.11.2026).
+   * Пакеты личной еды участника и вес «Моих продуктов» — для секции
+   * «Личное» «Моего рюкзака» (06.11.2026, вес добавлен 09.11.2026).
    *
    * Заказчик: «В „Личном“ отображается личная еда из Походы/Питание,
-   * фактический вес, а если нет, то расчётный». Пакеты автономного питания
-   * не назначаются и по рюкзакам не раскладываются — человек несёт их сам,
-   * поэтому сервер отдаёт их только владельцу и только для отображения.
+   * фактический вес, а если нет, то расчётный» и отдельно — «в Личном
+   * рюкзаке не отображается пакет „Мои продукты“».
    *
-   * Личную еду ведёт только 100% идущий; у остальных слоя нет, и пустой
-   * список — честный ответ, а не ошибка.
+   * **«Мои продукты» — не пакет из базы.** В «Питании» это сводка по всем
+   * личным приёмам (синяя карточка), и своей строки `trip_meal_packages`
+   * у неё нет. Поэтому сервер отдаёт её расчётный вес отдельным числом:
+   * «Снаряжение» соберёт из него строку рюкзака, а фактический вес из
+   * контрольного взвешивания останется отметкой человека в браузере
+   * (`meals.md` §5.7) и подменит расчёт на экране.
+   *
+   * Пакеты автономного питания не назначаются и по рюкзакам
+   * не раскладываются — человек несёт их сам, поэтому сервер отдаёт их
+   * только владельцу и только для отображения. Личную еду ведёт только
+   * 100% идущий; у остальных слоя нет, и пустой список — честный ответ.
    */
   async listPersonalPackagesForLoad(
     tripId: string,
     userId: string,
-  ): Promise<TripLoadPersonalPackage[]> {
+  ): Promise<{ foodWeightGrams: number; packages: TripLoadPersonalPackage[] }> {
     const manager = this.dataSource.manager;
     const trip = await manager.findOne(Trip, { where: { id: tripId } });
-    if (!trip || trip.status === 'idea') return [];
+    if (!trip || trip.status === 'idea') {
+      return { foodWeightGrams: 0, packages: [] };
+    }
 
     const participant = await manager.findOne(TripParticipant, {
       where: { tripId: trip.id, userId, status: 'going' },
     });
-    if (!participant) return [];
+    if (!participant) return { foodWeightGrams: 0, packages: [] };
 
     const dayCount = await this.dayCount(manager, trip);
-    if (dayCount === 0) return [];
+    if (dayCount === 0) return { foodWeightGrams: 0, packages: [] };
 
     const eaters = await this.loadOwnerEater(manager, trip, userId);
     const meals = await this.loadMeals(manager, trip, eaters, userId);
     const packages = await this.loadPackages(manager, trip, meals, userId);
 
-    return packages.map((pack) => ({
-      id: pack.id,
-      name: pack.name,
-      // Фактический вес — после контрольного взвешивания; содержимое
-      // менялось — снова расчётный (`meals.md` §5.3).
-      weightGrams:
-        pack.weightActualGrams !== null && !pack.weightActualStale
-          ? pack.weightActualGrams
-          : pack.weightEstimatedGrams,
-      isActual: pack.weightActualGrams !== null && !pack.weightActualStale,
-    }));
+    return {
+      // Та же сумма, что в «Питании»: вес приёма складывается из продуктов
+      // (количество × вес единицы), а не берётся из фасовки.
+      foodWeightGrams: meals.reduce((sum, meal) => sum + meal.weightGrams, 0),
+      packages: packages.map((pack) => ({
+        id: pack.id,
+        name: pack.name,
+        // Фактический вес — после контрольного взвешивания; содержимое
+        // менялось — снова расчётный (`meals.md` §5.3).
+        weightGrams:
+          pack.weightActualGrams !== null && !pack.weightActualStale
+            ? pack.weightActualGrams
+            : pack.weightEstimatedGrams,
+        isActual: pack.weightActualGrams !== null && !pack.weightActualStale,
+      })),
+    };
   }
 
   /**
