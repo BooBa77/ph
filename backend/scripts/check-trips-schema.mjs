@@ -1677,6 +1677,119 @@ rows.push([
   '',
 ]);
 
+// ─── Родные (10.11.2026) ───
+/**
+ * Инварианты родства (`family_links`).
+ *
+ * Правила, которые нельзя доказать тестом API: пара хранится один раз
+ * в каноническом порядке, запрос отправила одна из двух сторон, а
+ * `accepted` без даты согласия невозможен. Если из базы убрать CHECK,
+ * e2e останутся зелёными, а данные поедут: появятся две встречные строки
+ * об одном родстве или «согласие», которого никто не давал.
+ */
+const familyShape = await client.query(
+  `SELECT
+     (SELECT count(*)::int FROM information_schema.tables
+       WHERE table_name = 'family_links') AS table_exists,
+     (SELECT column_default FROM information_schema.columns
+       WHERE table_name = 'family_links' AND column_name = 'status') AS status_default,
+     (SELECT 1 FROM pg_indexes
+       WHERE indexname = 'UQ_family_links_pair') AS has_unique,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_family_links_user_a') AS delete_a,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_family_links_user_b') AS delete_b,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_family_links_requested_by') AS delete_requester`,
+);
+const familyShapeRow = familyShape.rows[0];
+const familyShapeOk =
+  familyShapeRow.table_exists === 1 &&
+  (familyShapeRow.status_default ?? '').includes('pending') &&
+  familyShapeRow.has_unique === 1 &&
+  familyShapeRow.delete_a === 'c' &&
+  familyShapeRow.delete_b === 'c' &&
+  familyShapeRow.delete_requester === 'c';
+
+if (!familyShapeOk) failed += 1;
+rows.push([
+  familyShapeOk ? 'ok' : 'НЕТ СХЕМЫ',
+  'родные: таблица, значение по умолчанию, уникальная пара и каскады',
+  familyShapeOk
+    ? ''
+    : `table=${familyShapeRow.table_exists}, default=${familyShapeRow.status_default}, unique=${familyShapeRow.has_unique}, delete=${familyShapeRow.delete_a}/${familyShapeRow.delete_b}/${familyShapeRow.delete_requester}`,
+]);
+
+const familyThirdId = (
+  await client.query(
+    `INSERT INTO users (display_name) VALUES ('Проверочный третий') RETURNING id`,
+  )
+).rows[0].id;
+
+// Канонический порядок пары — как его держит база: меньший uuid первым.
+const [familyA, familyB] =
+  user1 < user2 ? [user1, user2] : [user2, user1];
+const [familyThirdA, familyThirdB] =
+  familyA < familyThirdId
+    ? [familyA, familyThirdId]
+    : [familyThirdId, familyA];
+
+await check(
+  'родные: пара в обратном порядке запрещена',
+  'fail',
+  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id)
+   VALUES ($1, $2, $1)`,
+  [familyB, familyA],
+);
+
+await check(
+  'родные: отправитель запроса обязан быть стороной пары',
+  'fail',
+  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id)
+   VALUES ($1, $2, $3)`,
+  [familyA, familyB, familyThirdId],
+);
+
+await check(
+  'родные: запрос со стороной пары принимается',
+  'ok',
+  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id)
+   VALUES ($1, $2, $1)`,
+  [familyA, familyB],
+);
+
+await check(
+  'родные: вторая строка о той же паре запрещена',
+  'fail',
+  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id, status, responded_at)
+   VALUES ($1, $2, $2, 'accepted', now())`,
+  [familyA, familyB],
+);
+
+await check(
+  'родные: согласие без даты запрещено',
+  'fail',
+  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id, status)
+   VALUES ($1, $2, $1, 'accepted')`,
+  [familyThirdA, familyThirdB],
+);
+
+await check(
+  'родные: согласие с датой принимается',
+  'ok',
+  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id, status, responded_at)
+   VALUES ($1, $2, $1, 'accepted', now())`,
+  [familyThirdA, familyThirdB],
+);
+
+await check(
+  'родные: родство с самим собой невозможно',
+  'fail',
+  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id)
+   VALUES ($1, $1, $1)`,
+  [familyA],
+);
+
 const manualTypeId = (
   await client.query(
     `INSERT INTO gear_types (code, name)

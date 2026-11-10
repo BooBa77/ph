@@ -440,34 +440,10 @@ describe('Виртуальные участники (e2e)', () => {
     }).expect(400);
   });
 
-  it('пока он в походе, из личного списка его не убрать — 409', async () => {
-    await call(
-      'delete',
-      `/api/users/me/virtual/${virtualId}`,
-      organizerToken,
-    ).expect(409);
-  });
-
-  it('убрали из состава — ушёл из списка, и только после всех походов', async () => {
-    await call(
-      'delete',
-      `/api/trips/${tripId}/participants/${virtualId}`,
-      organizerToken,
-    ).expect(204);
-
-    // Он ещё во втором походе — убрать из списка всё равно нельзя.
-    await call(
-      'delete',
-      `/api/users/me/virtual/${virtualId}`,
-      organizerToken,
-    ).expect(409);
-
-    await call(
-      'delete',
-      `/api/trips/${secondTripId}/participants/${virtualId}`,
-      organizerToken,
-    ).expect(204);
-
+  it('удаление на стадии подготовки убирает его из походов и из списка', async () => {
+    // Заказчик 10.11.2026: «нельзя удалять тех, кто уже сходил в поход,
+    // на стадии подготовки — можно». Оба похода здесь ещё не состоялись,
+    // поэтому удаление разрешено и снимает человека из состава сам.
     await call(
       'delete',
       `/api/users/me/virtual/${virtualId}`,
@@ -481,6 +457,28 @@ describe('Виртуальные участники (e2e)', () => {
     ).expect(200);
     expect(
       (list.body.users as Array<{ id: string }>).map((user) => user.id),
+    ).not.toContain(virtualId);
+
+    const secondParticipants = await call(
+      'get',
+      `/api/trips/${secondTripId}/participants`,
+      organizerToken,
+    ).expect(200);
+    expect(
+      (secondParticipants.body.participants as Array<{ userId: string }>).map(
+        (row) => row.userId,
+      ),
+    ).not.toContain(virtualId);
+
+    const firstParticipants = await call(
+      'get',
+      `/api/trips/${tripId}/participants`,
+      organizerToken,
+    ).expect(200);
+    expect(
+      (firstParticipants.body.participants as Array<{ userId: string }>).map(
+        (row) => row.userId,
+      ),
     ).not.toContain(virtualId);
   });
 

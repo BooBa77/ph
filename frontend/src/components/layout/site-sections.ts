@@ -15,6 +15,12 @@ export const SITE_SECTIONS = [
   // страницей внутри. Ведём в корень: подсветка пункта работает и на
   // вложенных страницах раздела.
   { to: '/trips', label: 'Походы', icon: 'trips' },
+  // Контакты — третьим пунктом, сразу за походами (10.11.2026). Решение
+  // заказчика: люди нужны и в походе, и в подготовке, а «Профиль» и
+  // «Календарь» — это уже про себя. Здесь же живут родные, с которыми
+  // общий бюджет и снаряжение, поэтому раздел перестал быть справочником
+  // и стоит рядом с походами, а не в конце меню.
+  { to: '/people', label: 'Контакты', icon: 'people' },
   { to: '/profile/personal', label: 'Профиль', icon: 'profile' },
   { to: '/profile/calendar', label: 'Календарь', icon: 'calendar' },
   { to: '/profile/sport', label: 'Спорт', icon: 'sport' },
@@ -23,9 +29,6 @@ export const SITE_SECTIONS = [
   { to: '/profile/gear', label: 'Снаряжение', icon: 'gear' },
   { to: '/profile/meals', label: 'Кулинарная книга', icon: 'meals' },
   { to: '/profile/checklists', label: 'Чек-листы', icon: 'checklist' },
-  // Люди — не раздел аккаунта, а раздел сайта: искать человека нужно
-  // из похода и из меню, а не из настроек.
-  { to: '/people', label: 'Контакты', icon: 'people' },
   { to: '/profile/settings', label: 'Настройки', icon: 'settings' },
 ] as const
 

@@ -497,7 +497,7 @@ describe('TripParticipants', () => {
     expect(wrapper.find('[data-test="virtual-edit-dialog"]').exists()).toBe(false)
   })
 
-  it('удаление из списка объясняет, почему нельзя: он ещё участник', async () => {
+  it('удаление из списка объясняет, почему нельзя: он уже был в походе', async () => {
     signIn(ORGANIZER)
     mocks.listMyVirtual.mockResolvedValue([
       {
@@ -508,7 +508,10 @@ describe('TripParticipants', () => {
       },
     ])
     mocks.removeVirtual.mockRejectedValue(
-      new ApiError(409, 'Сначала уберите его из состава похода'),
+      new ApiError(
+        409,
+        'Нельзя удалить: «Дядя Витя» уже участвовал(а) в походе «Витязь». Удалить можно только до начала похода.',
+      ),
     )
 
     const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true })])
@@ -520,7 +523,7 @@ describe('TripParticipants', () => {
 
     expect(wrapper.find('[data-test="virtual-edit-dialog"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="virtual-edit-error"]').text()).toContain(
-      'Сначала уберите его из состава похода',
+      'только до начала похода',
     )
   })
 

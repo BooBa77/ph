@@ -17,6 +17,7 @@ import {
 import {
   ApiBody,
   ApiConsumes,
+  ApiCreatedResponse,
   ApiNoContentResponse,
   ApiOkResponse,
   ApiOperation,
@@ -38,6 +39,12 @@ import {
   UserSearchResultDto,
 } from './dto/user-search.dto';
 import {
+  AddFamilyMemberDto,
+  FamilyLinkResultDto,
+  FamilyListDto,
+} from './dto/family.dto';
+import {
+  CreateVirtualUserDto,
   UpdateVirtualUserDto,
   VirtualUserDto,
   VirtualUserListDto,
@@ -209,6 +216,30 @@ export class UsersController {
   // ─────────────────── люди без аккаунта (30.10.2026) ───────────────────
 
   /**
+   * Завести человека без аккаунта отдельно от похода (10.11.2026).
+   *
+   * Раньше единственным путём было «завести и сразу в поход». Заказчик
+   * попросил обратное: в «Контактах» есть секция «Люди без аккаунта, под
+   * моим управлением», где человек заводится сам по себе, а уже потом
+   * добавляется в поход («может в поле Люди_без_аккаунта/Имя?»).
+   *
+   * Модель та же — строка `users` без входа, одна на человека. Создание
+   * подчиняется тем же правилам, что и в походе: имя проверяет общий DTO,
+   * пол по умолчанию `m`.
+   */
+  @Post('me/virtual')
+  @ApiOperation({ summary: 'Завести человека без аккаунта' })
+  @ApiCreatedResponse({ type: VirtualUserDto })
+  async createVirtual(
+    @CurrentUser() authUser: AuthUser,
+    @Body() dto: CreateVirtualUserDto,
+  ): Promise<VirtualUserDto> {
+    const user = await this.usersService.createVirtual(authUser.id, dto);
+
+    return VirtualUserDto.from(user);
+  }
+
+  /**
    * Мои люди без аккаунта — для «быстрого добавления» в следующий поход.
    *
    * Список личный: у каждого организатора свой, и чужой не виден.
@@ -260,5 +291,91 @@ export class UsersController {
     @Param('userId', ParseUUIDPipe) userId: string,
   ): Promise<void> {
     return this.usersService.removeVirtual(authUser.id, userId);
+  }
+
+  // ────────────────────────── родные (10.11.2026) ──────────────────────────
+
+  /**
+   * Мои родные: подтверждённые, входящие и исходящие запросы.
+   *
+   * «Родные» — члены семьи с общим бюджетом и снаряжением. Список строит
+   * сервер, а не клиент: родство взаимно, и вторая сторона видит человека
+   * без второго запроса. Входящие запросы видны здесь же — отдельного
+   * экрана уведомлений нет.
+   */
+  @Get('me/family')
+  @ApiOperation({ summary: 'Мои родные и запросы в родные' })
+  @ApiOkResponse({ type: FamilyListDto })
+  async listFamily(
+    @CurrentUser() authUser: AuthUser,
+  ): Promise<FamilyListDto> {
+    return this.usersService.listFamily(authUser.id);
+  }
+
+  /**
+   * Добавить человека в родные.
+   *
+   * Настоящему пользователю уходит запрос на подтверждение; свой человек
+   * без аккаунта становится родным сразу. Повтор и встречная заявка
+   * описаны в `UsersService.addFamilyMember`.
+   */
+  @Post('me/family')
+  @ApiOperation({ summary: 'Добавить человека в родные' })
+  @ApiCreatedResponse({ type: FamilyLinkResultDto })
+  async addFamilyMember(
+    @CurrentUser() authUser: AuthUser,
+    @Body() dto: AddFamilyMemberDto,
+  ): Promise<FamilyLinkResultDto> {
+    return this.usersService.addFamilyMember(authUser.id, dto.userId);
+  }
+
+  /** Принять входящий запрос в родные. */
+  @Post('me/family/:userId/accept')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Принять запрос в родные' })
+  @ApiOkResponse({ type: FamilyLinkResultDto })
+  async acceptFamilyMember(
+    @CurrentUser() authUser: AuthUser,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ): Promise<FamilyLinkResultDto> {
+    const result = await this.usersService.respondToFamilyRequest(
+      authUser.id,
+      userId,
+      true,
+    );
+    if (!result) {
+      // Недостижимо: отказ — единственный путь, возвращающий null.
+      throw new NotFoundException('Запрос в родные не найден');
+    }
+
+    return result;
+  }
+
+  /** Отклонить входящий запрос: связи не будет, строки не останется. */
+  @Post('me/family/:userId/decline')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Отклонить запрос в родные' })
+  @ApiNoContentResponse({ description: 'Запрос отклонён' })
+  async declineFamilyMember(
+    @CurrentUser() authUser: AuthUser,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ): Promise<void> {
+    await this.usersService.respondToFamilyRequest(
+      authUser.id,
+      userId,
+      false,
+    );
+  }
+
+  /** Убрать из родных — или отменить свой запрос, или отклонить входящий. */
+  @Delete('me/family/:userId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Убрать человека из родных' })
+  @ApiNoContentResponse({ description: 'Связи больше нет' })
+  async removeFamilyMember(
+    @CurrentUser() authUser: AuthUser,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ): Promise<void> {
+    return this.usersService.removeFamilyMember(authUser.id, userId);
   }
 }

@@ -3,6 +3,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { User } from './entities/user.entity';
 import { SportExperience } from './entities/sport-experience.entity';
 import { DisplayNameHistory } from './entities/display-name-history.entity';
+import { FamilyLink } from './entities/family-link.entity';
 import { UsersService } from './users.service';
 import { AvatarService } from './avatar.service';
 import { UsersController } from './users.controller';
@@ -10,7 +11,7 @@ import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([User, SportExperience, DisplayNameHistory]),
+    TypeOrmModule.forFeature([User, SportExperience, DisplayNameHistory, FamilyLink]),
     StorageModule,
   ],
   controllers: [UsersController],

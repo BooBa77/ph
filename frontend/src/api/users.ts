@@ -139,6 +139,32 @@ export interface VirtualUser {
   displayName: string
   gender: Gender
   createdAt: string
+  /** В скольких походах человек участвует — для подписи в «Контактах». */
+  tripsCount: number
+  /**
+   * Можно ли его удалить. `false` — он уже был в начавшемся или прошедшем
+   * походе: такая запись нужна истории похода. На стадии подготовки
+   * удаление разрешено, и из этих походов человек уйдёт.
+   */
+  canDelete: boolean
+}
+
+/**
+ * POST /api/users/me/virtual — завести человека без аккаунта.
+ *
+ * Заводится отдельно от похода: в «Контактах» есть секция «Люди без
+ * аккаунта, под моим управлением», откуда человек потом попадает в
+ * «Походы → Участники». Раньше единственным путём было «завести и сразу
+ * в поход».
+ */
+export async function createVirtual(data: {
+  displayName: string
+  gender?: Gender
+}): Promise<VirtualUser> {
+  return apiFetch<VirtualUser>('/users/me/virtual', {
+    method: 'POST',
+    body: JSON.stringify(data),
+  })
 }
 
 /**
@@ -178,4 +204,91 @@ export async function updateVirtual(
  */
 export async function removeVirtual(userId: string): Promise<void> {
   await apiFetch<void>(`/users/me/virtual/${userId}`, { method: 'DELETE' })
+}
+
+// ──────────────────────────── родные (10.11.2026) ────────────────────────────
+
+/**
+ * Родной человек: член семьи, с которым общий бюджет и снаряжение.
+ *
+ * Подтверждённые родные и виртуальные, которых завёл сам человек, —
+ * один список: разница только в подписи «без аккаунта» и в том, что
+ * виртуального нельзя открыть как профиль.
+ */
+export interface FamilyMember {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  isVirtual: boolean
+  /** Когда родство подтвердили (у виртуального — когда завели). */
+  since: string
+}
+
+/** Запрос в родные: отправленный мной или ожидающий моего ответа. */
+export interface FamilyRequest {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  direction: 'incoming' | 'outgoing'
+  requestedAt: string
+}
+
+/** Три списка «Родных» — ровно как их отдаёт сервер. */
+export interface FamilyList {
+  family: FamilyMember[]
+  incoming: FamilyRequest[]
+  outgoing: FamilyRequest[]
+}
+
+/** Что ответила ручка добавления: родство сразу или запрос на подтверждение. */
+export interface FamilyLinkResult {
+  userId: string
+  status: 'pending' | 'accepted'
+}
+
+/**
+ * GET /api/users/me/family — мои родные и запросы.
+ *
+ * Родство взаимно, поэтому сервер ищет его по обеим сторонам пары: вторая
+ * сторона видит человека без второго запроса. Входящие запросы приходят
+ * сюда же — отдельного экрана уведомлений пока нет.
+ */
+export async function getMyFamily(): Promise<FamilyList> {
+  return apiFetch<FamilyList>('/users/me/family')
+}
+
+/**
+ * POST /api/users/me/family — добавить в родные.
+ *
+ * Настоящему человеку уходит запрос на подтверждение (`pending`); свой
+ * человек без аккаунта становится родным сразу (`accepted`) — подтверждать
+ * ему нечем.
+ */
+export async function addFamilyMember(userId: string): Promise<FamilyLinkResult> {
+  return apiFetch<FamilyLinkResult>('/users/me/family', {
+    method: 'POST',
+    body: JSON.stringify({ userId }),
+  })
+}
+
+/** Принять входящий запрос в родные. */
+export async function acceptFamilyMember(userId: string): Promise<FamilyLinkResult> {
+  return apiFetch<FamilyLinkResult>(`/users/me/family/${userId}/accept`, {
+    method: 'POST',
+  })
+}
+
+/** Отклонить входящий запрос: строки не останется. */
+export async function declineFamilyMember(userId: string): Promise<void> {
+  await apiFetch<void>(`/users/me/family/${userId}/decline`, { method: 'POST' })
+}
+
+/**
+ * DELETE /api/users/me/family/:userId — убрать из родных.
+ *
+ * Одна ручка на три действия: удалить родного, отменить свой запрос и
+ * отклонить входящий. Связи после неё нет ни у одной стороны.
+ */
+export async function removeFamilyMember(userId: string): Promise<void> {
+  await apiFetch<void>(`/users/me/family/${userId}`, { method: 'DELETE' })
 }

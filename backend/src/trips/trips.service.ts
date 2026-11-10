@@ -11,8 +11,6 @@ import { DataSource, EntityManager, In, IsNull, Not, Repository } from 'typeorm'
 
 import { CalendarActivityGroup } from '../calendar/entities/activity-group.entity';
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
-import { GearItem } from '../gear/entities/gear-item.entity';
-import { TripGear } from '../gear/entities/trip-gear.entity';
 import { User } from '../users/entities/user.entity';
 import { UsersService } from '../users/users.service';
 import type { CreateVirtualUserDto } from '../users/dto/virtual-user.dto';
@@ -57,8 +55,6 @@ import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
 import { TripRouteNight } from './entities/trip-route-night.entity';
-import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
-import { TripTransferPassenger } from './entities/trip-transfer-passenger.entity';
 import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { extractObjectIds } from './route-links';
@@ -70,6 +66,11 @@ import {
   type TripTab,
 } from './trip-tabs';
 import { PARTICIPANT_ONLY_CHAT_KINDS } from './trip-transfer.types';
+import {
+  detachTripParticipant,
+  postTripSystemMessage,
+  releaseTripTransfers,
+} from './trip-participant-detach';
 import {
   CHAT_KINDS,
   DEFAULT_TRIP_TYPE_CODE,
@@ -1567,11 +1568,9 @@ export class TripsService {
    *
    * `sender_id = NULL` — так помечены системные сообщения, отдельного флага
    * для этого нет. Пишутся они здесь и только здесь: история обработки
-   * тикетов живёт в чатах, поэтому у тикета нет статуса.
-   *
-   * Отсутствие чата — не «молча пропустить», а поломка данных: оба чата
-   * создаются в одной транзакции с походом. Проглотить это значило бы
-   * потерять сообщение и не сказать никому.
+   * тикетов живёт в чатах, поэтому у тикета нет статуса. Сама запись —
+   * в `trip-participant-detach.ts`: тот же код нужен «Контактам», когда
+   * удаляют человека без аккаунта из похода на стадии подготовки.
    */
   private async postSystemMessage(
     manager: EntityManager,
@@ -1579,18 +1578,7 @@ export class TripsService {
     kind: ChatKind,
     body: string,
   ): Promise<void> {
-    const chat = await manager.findOne(Conversation, { where: { tripId, kind } });
-    if (!chat) {
-      throw new InternalServerErrorException(
-        `У похода нет чата «${kind}» — данные похода повреждены`,
-      );
-    }
-
-    await manager.insert(Message, {
-      conversationId: chat.id,
-      senderId: null,
-      body,
-    });
+    return postTripSystemMessage(manager, tripId, kind, body);
   }
 
   /**
@@ -1714,48 +1702,14 @@ export class TripsService {
         throw new NotFoundException('Такого участника в походе нет');
       }
 
-      // Одноразовые вещи ушедшего уносим вместе с ним: строку `trip_gear`
-      // убирает каскад от участника, а строку `gear_items` — нет, и она
-      // осталась бы в базе невидимой никому (каталог одноразовые не отдаёт).
-      // Берём только строки **этого** похода: у настоящего человека такие
-      // вещи могут быть заведены и в другом походе, и они там нужны.
-      //
-      // Запрос идёт **до** удаления участника: строки `trip_gear` исчезают
-      // каскадом вместе с ним, и после удаления искать было бы нечего.
-      const tripOnlyItems = await manager
-        .createQueryBuilder(TripGear, 'gear')
-        .innerJoin(GearItem, 'item', 'item.id = gear.gearItemId')
-        .select('item.id', 'id')
-        .where('gear.tripId = :tripId', { tripId: trip.id })
-        .andWhere('gear.ownerUserId = :ownerUserId', {
-          ownerUserId: targetUserId,
-        })
-        .andWhere('item.isTripOnly = true')
-        .getRawMany<{ id: string }>();
-
-      await manager.delete(TripParticipant, {
-        tripId: trip.id,
-        userId: targetUserId,
-      });
-      await manager.delete(TripMembershipRequest, {
-        tripId: trip.id,
-        userId: targetUserId,
-      });
-
-      if (tripOnlyItems.length > 0) {
-        await manager.delete(GearItem, {
-          id: In(tripOnlyItems.map((row) => row.id)),
-        });
-      }
-
-      // Из состава убрали — из рейсов тоже: за карточкой он больше не едет.
-      await this.releaseTransfers(manager, trip.id, targetUserId);
-
-      await this.postSystemMessage(
+      // Уборка — в общем помощнике (`trip-participant-detach.ts`): тем же
+      // путём удаляют человека без аккаунта из «Контактов», и второй
+      // экземпляр этой логики однажды разошёлся бы с первым.
+      await detachTripParticipant(
         manager,
         trip.id,
-        'trip_members',
-        `${displayNameOf(participant.user)} больше не в составе`,
+        targetUserId,
+        displayNameOf(participant.user),
       );
     });
   }
@@ -1899,8 +1853,7 @@ export class TripsService {
     tripId: string,
     userId: string,
   ): Promise<void> {
-    await manager.delete(TripTransferPassenger, { tripId, userId });
-    await manager.delete(TripTransferLeg, { tripId, ownerUserId: userId });
+    return releaseTripTransfers(manager, tripId, userId);
   }
 
   /**

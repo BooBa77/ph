@@ -41,12 +41,45 @@ export class VirtualUserDto {
   @ApiProperty({ description: 'Когда человек заведён' })
   createdAt: string;
 
-  static from(user: User): VirtualUserDto {
+  /**
+   * В скольких походах человек участвует (любой статус похода).
+   *
+   * Нужно «Контактам»: при удалении видно, что человек не просто запись
+   * в записной книжке, а участник подготовки.
+   */
+  @ApiProperty({
+    description: 'В скольких походах человек участвует',
+    example: 2,
+  })
+  tripsCount: number;
+
+  /**
+   * Можно ли удалить человека из списка.
+   *
+   * `false` — он уже был в походе (поход начался или закончился). Такой
+   * человек нужен истории похода, и удалять его нельзя; на стадии
+   * подготовки (`true`) удаление разрешено, и из этих походов он уйдёт.
+   */
+  @ApiProperty({
+    description:
+      'false — человек уже был в походе, удалить нельзя; true — только подготовка',
+    example: true,
+  })
+  canDelete: boolean;
+
+  static from(
+    user: User,
+    stats: { tripsCount?: number; startedTripsCount?: number } = {},
+  ): VirtualUserDto {
+    const tripsCount = stats.tripsCount ?? 0;
+
     return {
       id: user.id,
       displayName: user.displayName,
       gender: user.gender,
       createdAt: user.createdAt.toISOString(),
+      tripsCount,
+      canDelete: (stats.startedTripsCount ?? 0) === 0,
     };
   }
 }

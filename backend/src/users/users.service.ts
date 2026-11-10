@@ -14,7 +14,9 @@ import {
 import { User } from './entities/user.entity';
 import { SportExperience } from './entities/sport-experience.entity';
 import { DisplayNameHistory } from './entities/display-name-history.entity';
-import { TripParticipant } from '../trips/entities/trip-participant.entity';
+import { FamilyLink } from './entities/family-link.entity';
+import { detachTripParticipant } from '../trips/trip-participant-detach';
+import type { FamilyLinkStatus } from './family.types';
 import type { UserGender } from './gender.types';
 import type { SportExperienceData } from './sport-experience.types';
 import {
@@ -22,6 +24,12 @@ import {
   type CreateVirtualUserDto,
   type UpdateVirtualUserDto,
 } from './dto/virtual-user.dto';
+import {
+  FamilyListDto,
+  FamilyMemberDto,
+  FamilyRequestDto,
+  type FamilyLinkResultDto,
+} from './dto/family.dto';
 
 /** Сколько людей отдавать в поиске: список выбора, а не справочник. */
 const SEARCH_LIMIT = 20;
@@ -61,6 +69,8 @@ export class UsersService {
   constructor(
     @InjectRepository(User)
     private readonly usersRepository: Repository<User>,
+    @InjectRepository(FamilyLink)
+    private readonly familyRepository: Repository<FamilyLink>,
     private readonly dataSource: DataSource,
   ) {}
 
@@ -191,7 +201,40 @@ export class UsersService {
       order: { displayName: 'ASC' },
     });
 
-    return users.map((user) => VirtualUserDto.from(user));
+    if (users.length === 0) return [];
+
+    /**
+     * Участие в походах — одним запросом на весь список.
+     *
+     * `startedTripsCount` считает только те походы, которые уже начались
+     * и не отменены: именно они запрещают удаление («нельзя удалять тех,
+     * кто уже сходил в поход, на стадии подготовки — можно»). Статус
+     * участия `going` обязателен: приглашённый, но отказавшийся в поход
+     * не ходил. Отменённый поход не блокирует: человек в него не попал.
+     */
+    const stats = (await this.dataSource.query(
+      `SELECT p.user_id AS "userId",
+              count(*)::int AS "tripsCount",
+              count(*) FILTER (
+                WHERE p.status = 'going'
+                  AND t.cancelled_at IS NULL
+                  AND COALESCE(t.actual_started_at, t.starts_at) IS NOT NULL
+                  AND COALESCE(t.actual_started_at, t.starts_at) <= now()
+              )::int AS "startedTripsCount"
+         FROM trip_participants p
+         JOIN trips t ON t.id = p.trip_id
+        WHERE p.user_id = ANY($1::uuid[])
+        GROUP BY p.user_id`,
+      [users.map((user) => user.id)],
+    )) as Array<{
+      userId: string;
+      tripsCount: number;
+      startedTripsCount: number;
+    }>;
+
+    const byId = new Map(stats.map((row) => [row.userId, row]));
+
+    return users.map((user) => VirtualUserDto.from(user, byId.get(user.id)));
   }
 
   /**
@@ -257,23 +300,258 @@ export class UsersService {
    * Убрать из личного списка — мягко (`deleted_at`), как удаляется обычный
    * пользователь.
    *
-   * Пока человек участвует хоть в одном походе, убрать его нельзя (409,
-   * как у вещи, которая уже едет в походе): пропал бы участник состава,
-   * и в палатках, трансфере и питании остались бы ссылки на него.
+   * **Удалять можно только до начала похода (10.11.2026).** Заказчик:
+   * «Здесь их можно создавать и удалять (с большими оговорками, нельзя
+   * удалять тех, кто уже сходил в поход, на стадии подготовки — можно)».
+   * Поэтому:
+   *
+   * - поход, который уже начался или закончился, удаление **запрещает**
+   *   (409): человек нужен истории похода, и его вещи, места в палатках
+   *   и роли — часть прошедшего события;
+   * - из походов на стадии подготовки он уходит вместе с удалением:
+   *   иначе «удалённый» продолжал бы числиться участником, а список
+   *   «мои люди без аккаунта» врал бы. Уборка — общий помощник
+   *   `detachTripParticipant`, тот же, что у «Убрать из состава».
+   *
+   * Отменённый поход не блокирует: человек в него не попал. Тикет или
+   * статус «пока не решил» тоже не блокируют — он не ходил.
+   *
+   * Заодно сносятся родственные связи: удалённый человек не должен
+   * оставаться «родным» ни у кого (сейчас это всегда владелец, но
+   * правило не должно зависеть от этого).
    */
   async removeVirtual(ownerUserId: string, userId: string): Promise<void> {
-    await this.findOwnedVirtual(ownerUserId, userId);
+    const user = await this.findOwnedVirtual(ownerUserId, userId);
 
-    const trips = await this.dataSource.manager.count(TripParticipant, {
-      where: { userId },
-    });
-    if (trips > 0) {
-      throw new ConflictException(
-        'Человек без аккаунта ещё участвует в походе — сначала уберите его из состава',
+    await this.dataSource.transaction(async (manager) => {
+      const participations = (await manager.query(
+        `SELECT t.id AS "tripId",
+                COALESCE(t.announcement, o.name, 'поход') AS "tripName",
+                (p.status = 'going'
+                 AND t.cancelled_at IS NULL
+                 AND COALESCE(t.actual_started_at, t.starts_at) IS NOT NULL
+                 AND COALESCE(t.actual_started_at, t.starts_at) <= now()) AS "started"
+           FROM trip_participants p
+           JOIN trips t ON t.id = p.trip_id
+           LEFT JOIN objects o ON o.id = t.goal_object_id
+          WHERE p.user_id = $1
+          ORDER BY t.id`,
+        [userId],
+      )) as Array<{ tripId: string; tripName: string; started: boolean }>;
+
+      const blocking = participations.find((row) => row.started);
+      if (blocking) {
+        throw new ConflictException(
+          `Нельзя удалить: «${user.displayName}» уже участвовал(а) в походе ` +
+            `«${blocking.tripName}». Удалить можно только до начала похода.`,
+        );
+      }
+
+      for (const row of participations) {
+        await detachTripParticipant(
+          manager,
+          row.tripId,
+          userId,
+          user.displayName,
+        );
+      }
+
+      await manager.query(
+        'DELETE FROM family_links WHERE user_a_id = $1 OR user_b_id = $1',
+        [userId],
       );
+      await manager.update(
+        User,
+        { id: userId },
+        { deletedAt: new Date(), updatedAt: new Date() },
+      );
+    });
+  }
+
+  // ─── родные (10.11.2026) ───
+
+  /**
+   * Мои родные: подтверждённые, входящие запросы и исходящие.
+   *
+   * Родство взаимно, поэтому ищем по обеим сторонам пары. Удалённые
+   * (мягко) люди не показываются: о них нечего рассказывать, но сама
+   * связь остаётся — человек вернётся, и родство вернётся с ним.
+   *
+   * Три списка, а не один с полем «статус»: у каждого свои действия
+   * («удалить», «принять / отклонить», «отменить»), и раскладывать их
+   * по статусу на клиенте — значит повторять правило в каждом экране.
+   */
+  async listFamily(userId: string): Promise<FamilyListDto> {
+    const links = await this.familyRepository.find({
+      where: [{ userAId: userId }, { userBId: userId }],
+      relations: { userA: true, userB: true },
+      order: { createdAt: 'ASC' },
+    });
+
+    const family: FamilyMemberDto[] = [];
+    const incoming: FamilyRequestDto[] = [];
+    const outgoing: FamilyRequestDto[] = [];
+
+    for (const link of links) {
+      const other = link.userAId === userId ? link.userB : link.userA;
+      if (!other || other.deletedAt !== null) continue;
+
+      if (link.status === 'accepted') {
+        family.push(
+          FamilyMemberDto.from(other, link.respondedAt ?? link.createdAt),
+        );
+      } else if (link.requestedByUserId === userId) {
+        outgoing.push(FamilyRequestDto.from(other, 'outgoing', link.createdAt));
+      } else {
+        incoming.push(FamilyRequestDto.from(other, 'incoming', link.createdAt));
+      }
     }
 
-    await this.setDeletedAt(userId);
+    family.sort((left, right) =>
+      left.displayName.localeCompare(right.displayName, 'ru'),
+    );
+
+    return { family, incoming, outgoing };
+  }
+
+  /**
+   * Добавить человека в родные.
+   *
+   * Настоящему пользователю уходит запрос (`pending`) — родство вступает
+   * в силу, когда он подтвердит. **Уведомления об этом пока нет**: личных
+   * сообщений на фронте не существует (`people.md` §5), поэтому запрос
+   * виден у получателя в «Контактах», в разделе «Родные». Отправка
+   * сообщением или письмом — техдолг до появления мессенджера.
+   *
+   * Свой человек без аккаунта подтвердить ничего не может — им управляет
+   * тот же человек, который его завёл, поэтому такая связь создаётся
+   * сразу `accepted`.
+   *
+   * **Встречная заявка — это согласие.** Если Иван уже отправил запрос
+   * Анне, а Анна добавляет Ивана, второй запрос не создаётся и ждать
+   * нечего: оба выразили желание. Это дешевле, чем две встречные строки
+   * и вопрос «кто теперь подтверждает».
+   */
+  async addFamilyMember(
+    userId: string,
+    targetUserId: string,
+  ): Promise<FamilyLinkResultDto> {
+    if (userId === targetUserId) {
+      throw new BadRequestException('Себя в родные добавить нельзя');
+    }
+
+    const target = await this.usersRepository.findOne({
+      where: { id: targetUserId },
+    });
+    if (!target || target.deletedAt !== null) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+    if (target.isVirtual && target.virtualOwnerUserId !== userId) {
+      // Чужой человек без аккаунта для этого человека не существует.
+      throw new NotFoundException('Человек без аккаунта не найден');
+    }
+
+    const [userAId, userBId] = familyPair(userId, targetUserId);
+
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(FamilyLink);
+      const existing = await repo.findOne({
+        where: { userAId, userBId },
+      });
+
+      if (existing?.status === 'accepted') {
+        throw new ConflictException('Вы уже родные');
+      }
+      if (existing && existing.requestedByUserId === userId) {
+        throw new ConflictException('Запрос уже отправлен — ждём подтверждения');
+      }
+      if (existing) {
+        // Встречная заявка: оба хотим — подтверждаем сразу.
+        existing.status = 'accepted';
+        existing.respondedAt = new Date();
+        await repo.save(existing);
+
+        return { userId: targetUserId, status: 'accepted' as const };
+      }
+
+      const status: FamilyLinkStatus = target.isVirtual ? 'accepted' : 'pending';
+      await repo.save(
+        repo.create({
+          userAId,
+          userBId,
+          requestedByUserId: userId,
+          status,
+          respondedAt: status === 'accepted' ? new Date() : null,
+        }),
+      );
+
+      return { userId: targetUserId, status };
+    });
+  }
+
+  /**
+   * Ответ на входящий запрос: принять или отклонить.
+   *
+   * Принять может только вторая сторона и только висящий запрос:
+   * «принять» собственный исходящий запрос означало бы родство с самим
+   * собой в обход согласия. Отказ удаляет строку целиком — отдельного
+   * статуса `declined` нет (`family.types.ts`).
+   */
+  async respondToFamilyRequest(
+    userId: string,
+    otherUserId: string,
+    accept: boolean,
+  ): Promise<FamilyLinkResultDto | null> {
+    const [userAId, userBId] = familyPair(userId, otherUserId);
+
+    return this.dataSource.transaction(async (manager) => {
+      const repo = manager.getRepository(FamilyLink);
+      const link = await repo.findOne({ where: { userAId, userBId } });
+
+      if (
+        !link ||
+        link.status !== 'pending' ||
+        link.requestedByUserId === userId
+      ) {
+        throw new NotFoundException('Запрос в родные не найден');
+      }
+
+      if (!accept) {
+        await repo.delete(link.id);
+
+        return null;
+      }
+
+      link.status = 'accepted';
+      link.respondedAt = new Date();
+      await repo.save(link);
+
+      return { userId: otherUserId, status: 'accepted' as const };
+    });
+  }
+
+  /**
+   * Убрать человека из родных — в любую сторону и на любой стадии.
+   *
+   * Одна ручка на три действия: удалить родного, отменить свой запрос и
+   * отклонить входящий. Для человека это одно и то же — «связи нет»,
+   * а разные ручки заставляли бы экран угадывать, какая из них сейчас
+   * уместна.
+   */
+  async removeFamilyMember(
+    userId: string,
+    otherUserId: string,
+  ): Promise<void> {
+    const [userAId, userBId] = familyPair(userId, otherUserId);
+
+    const link = await this.familyRepository.findOne({
+      where: { userAId, userBId },
+    });
+    if (!link) {
+      throw new NotFoundException('Этого человека нет в родных');
+    }
+
+    await this.familyRepository.delete(link.id);
   }
 
   /**
@@ -543,4 +821,20 @@ function isSportExperienceEmpty(row: SportExperience): boolean {
   ];
 
   return values.every((value) => value === null || value === undefined);
+}
+
+/**
+ * Канонический порядок пары для `family_links` (10.11.2026).
+ *
+ * В базе пара хранится один раз, `user_a_id < user_b_id`
+ * (`chk_family_links_pair`), чтобы встречные запросы не создавали две
+ * строки об одном и том же родстве. Postgres сравнивает `uuid` побайтно,
+ * а каноническая запись uuid — нижний регистр; `ParseUUIDPipe` регистр
+ * не меняет, поэтому приводим обе стороны сами.
+ */
+function familyPair(left: string, right: string): [string, string] {
+  const first = left.toLowerCase();
+  const second = right.toLowerCase();
+
+  return first < second ? [first, second] : [second, first];
 }
