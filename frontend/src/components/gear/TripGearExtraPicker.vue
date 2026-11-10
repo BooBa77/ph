@@ -62,7 +62,10 @@ import { weightInGrams } from '@/utils/gearWeight'
  * у вкладки «Снаряжение» будет свой путь.
  */
 const props = defineProps<{
-  /** Весь личный каталог: `GET /api/gear`. */
+  /**
+   * Весь личный каталог и снаряжение родных: `pickableGear(listGear())`.
+   * Своё и общее — одним списком, вещи родных подписаны именем владельца.
+   */
   items: readonly GearItem[]
   /** Что уже в походе: повторно не предлагаем. */
   excludeIds?: readonly string[]
@@ -329,12 +332,19 @@ const selectedGroupValue = computed<string>({
   },
 })
 
-/** Строка вещи: «Котёл 5 л · Котёл · 900 гр.». */
+/**
+ * Строка вещи: «Котёл 5 л · Котёл · 900 гр.»
+ *
+ * У вещи родного (10.11.2026, вечер) в конце — имя владельца: «· Анна».
+ * Иначе чужой спальник в списке выглядел бы своим, а заказчик просил
+ * общее снаряжение семьи, а не безымянную кучу.
+ */
 function itemText(item: GearItem): string {
   const weight = weightInGrams(item.weightGrams)
   const head = item.title === item.typeName ? item.title : `${item.title} · ${item.typeName}`
+  const own = weight === null ? head : `${head} · ${weight}`
 
-  return weight === null ? head : `${head} · ${weight}`
+  return item.ownerName ? `${own} · ${item.ownerName}` : own
 }
 
 /** Нажали на вещь: выбор отдаём секции. */
@@ -354,7 +364,7 @@ function pick(item: GearItem): void {
       <div class="flex shrink-0 flex-col gap-1">
         <h3 class="text-base font-medium text-text">{{ title ?? 'Добавить ещё' }}</h3>
         <p class="text-xs text-muted" data-test="route-extra-subtitle">
-          {{ subtitle ?? 'Любую вещь из личного снаряжения или создать новую.' }}
+          {{ subtitle ?? 'Любую вещь из своего снаряжения или снаряжения родных — либо создать новую.' }}
         </p>
       </div>
 

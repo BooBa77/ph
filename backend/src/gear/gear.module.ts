@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { TripsModule } from '../trips/trips.module';
+import { UsersModule } from '../users/users.module';
 import { GearAttributeOption } from './entities/gear-attribute-option.entity';
 import { GearGroupTemplate } from './entities/gear-group-template.entity';
 import { GearGroup } from './entities/gear-group.entity';
@@ -43,6 +44,11 @@ import { TripGearService } from './trip-gear.service';
  * уже едет в походе, нельзя удалить из каталога (409 вместо ошибки
  * внешнего ключа).
  *
+ * `UsersModule` — ради родных (10.11.2026, вечер): «мои родные» знает
+ * только `UsersService` (`family_links`), и снаряжение спрашивает список
+ * у него, а не копией SQL. Цикла нет: `UsersModule` про снаряжение
+ * ничего не знает.
+ *
  * **Две пары «шаблон — копия» (02.11.2026):** `GearGroupTemplatesService`
  * ведёт рекомендуемые группы админа, `GearGroupsService` — личные группы
  * человека и раскладку типов. `GearService` спрашивает у второго
@@ -65,6 +71,7 @@ import { TripGearService } from './trip-gear.service';
       GearTypeGroup,
     ]),
     TripsModule,
+    UsersModule,
   ],
   controllers: [
     GearController,

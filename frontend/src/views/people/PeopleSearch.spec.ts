@@ -66,6 +66,7 @@ function makeVirtual(overrides: Partial<VirtualUser> = {}): VirtualUser {
     createdAt: '2026-11-10T00:00:00.000Z',
     tripsCount: 0,
     canDelete: true,
+    blockedByTrip: null,
     ...overrides,
   }
 }
@@ -296,18 +297,38 @@ describe('PeopleSearch (Контакты)', () => {
 
   it('того, кто уже сходил в поход, удалить нельзя', async () => {
     mocked.listMyVirtual.mockResolvedValue([
-      makeVirtual({ tripsCount: 2, canDelete: false }),
+      makeVirtual({
+        tripsCount: 2,
+        canDelete: false,
+        blockedByTrip: {
+          id: '679',
+          title: 'Витязь',
+          startedAt: '2026-11-01T00:00:00.000Z',
+        },
+      }),
     ])
 
     const wrapper = mountSection()
     await flushPromises()
 
     expect(wrapper.find('[data-test="virtual-remove"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="virtual-delete-blocked"]').text()).toContain(
-      'уже был',
-    )
+
+    // Подпись говорит правило, а не «был»: запрет считается по датам похода.
+    const blocked = wrapper.find('[data-test="virtual-delete-blocked"]')
+    expect(blocked.text()).toContain('поход уже начался')
+    expect(blocked.attributes('title')).toContain('«Витязь»')
+
     // Счётчик походов в строке не дублирует причину: подписи хватает.
     expect(wrapper.find('[data-test="virtual-trips"]').exists()).toBe(false)
+  })
+
+  it('в заголовках секций нет количества записей', async () => {
+    // Заказчик 10.11.2026: «не нужны количества записей в секциях».
+    const wrapper = mountSection()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="family-count"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="virtual-count"]').exists()).toBe(false)
   })
 
   it('ошибку загрузки показывает, а не молчит', async () => {

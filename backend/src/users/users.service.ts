@@ -16,7 +16,7 @@ import { SportExperience } from './entities/sport-experience.entity';
 import { DisplayNameHistory } from './entities/display-name-history.entity';
 import { FamilyLink } from './entities/family-link.entity';
 import { detachTripParticipant } from '../trips/trip-participant-detach';
-import type { FamilyLinkStatus } from './family.types';
+import type { FamilyLinkStatus, FamilyPerson } from './family.types';
 import type { UserGender } from './gender.types';
 import type { SportExperienceData } from './sport-experience.types';
 import {
@@ -234,7 +234,49 @@ export class UsersService {
 
     const byId = new Map(stats.map((row) => [row.userId, row]));
 
-    return users.map((user) => VirtualUserDto.from(user, byId.get(user.id)));
+    /**
+     * Причина запрета — словами (10.11.2026, вечер).
+     *
+     * Флага `canDelete` мало: заказчик спросил, по каким датам он считается,
+     * и подпись «уже был в походе» оказалась непонятной. Правило прежнее
+     * (даты, участие `going`, не отменён), но теперь экран получает поход,
+     * из-за которого удалять нельзя, — и может сказать «поход «Витязь»
+     * уже начался», а не загадочное «был».
+     *
+     * Берём **последний** начавшийся поход: он ближе всего к человеку
+     * по времени, и именно его человек вспомнит.
+     */
+    const blocked = (await this.dataSource.query(
+      `SELECT DISTINCT ON (p.user_id)
+              p.user_id AS "userId",
+              t.id AS "id",
+              COALESCE(t.announcement, o.name, 'поход') AS "title",
+              COALESCE(t.actual_started_at, t.starts_at) AS "startedAt"
+         FROM trip_participants p
+         JOIN trips t ON t.id = p.trip_id
+         LEFT JOIN objects o ON o.id = t.goal_object_id
+        WHERE p.user_id = ANY($1::uuid[])
+          AND p.status = 'going'
+          AND t.cancelled_at IS NULL
+          AND COALESCE(t.actual_started_at, t.starts_at) IS NOT NULL
+          AND COALESCE(t.actual_started_at, t.starts_at) <= now()
+        ORDER BY p.user_id, COALESCE(t.actual_started_at, t.starts_at) DESC`,
+      [users.map((user) => user.id)],
+    )) as Array<{
+      userId: string;
+      id: string;
+      title: string;
+      startedAt: Date;
+    }>;
+
+    const blockedById = new Map(blocked.map((row) => [row.userId, row]));
+
+    return users.map((user) =>
+      VirtualUserDto.from(user, {
+        ...byId.get(user.id),
+        blockedByTrip: blockedById.get(user.id) ?? null,
+      }),
+    );
   }
 
   /**
@@ -369,6 +411,45 @@ export class UsersService {
   }
 
   // ─── родные (10.11.2026) ───
+
+  /**
+   * Действующие родные — **правило, а не экран** (10.11.2026, вечер).
+   *
+   * «Снаряжение» спрашивает этот список, чтобы понять, чью вещь человек
+   * вправе взять в поход: свою или родного. Здесь только `accepted`
+   * и только живые люди: ожидающий запрос прав не даёт, а удалённый
+   * (мягко) родной не должен оставлять после себя доступ к каталогу.
+   *
+   * Виртуальный родной тоже попадает в список, но каталога у него нет,
+   * поэтому на снаряжении это никак не сказывается: правило «вещь
+   * из каталога» само отсекает такие вещи.
+   *
+   * Возвращаем имя вместе с id: подпись «Палатка · Анна» собирается
+   * из этого же ответа, и второй запрос за составом не нужен.
+   */
+  async familyMembers(userId: string): Promise<FamilyPerson[]> {
+    const links = await this.familyRepository.find({
+      where: [
+        { userAId: userId, status: 'accepted' },
+        { userBId: userId, status: 'accepted' },
+      ],
+      relations: { userA: true, userB: true },
+      order: { createdAt: 'ASC' },
+    });
+
+    const people: FamilyPerson[] = [];
+
+    for (const link of links) {
+      const other = link.userAId === userId ? link.userB : link.userA;
+      if (!other || other.deletedAt !== null) continue;
+
+      people.push({ id: other.id, displayName: other.displayName });
+    }
+
+    return people.sort((left, right) =>
+      left.displayName.localeCompare(right.displayName, 'ru'),
+    );
+  }
 
   /**
    * Мои родные: подтверждённые, входящие запросы и исходящие.

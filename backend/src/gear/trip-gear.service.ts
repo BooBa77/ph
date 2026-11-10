@@ -416,11 +416,22 @@ export class TripGearService {
   }
 
   /**
-   * Предложить предмет из своего каталога.
+   * Предложить предмет в снаряжение похода.
    *
-   * Владелец — тот, кто прислал запрос: его предмет из его каталога.
-   * Несущий по умолчанию — владелец, но только если он **идёт**: вещь
-   * человека «пока не решил» не должна числиться в чьём-то рюкзаке,
+   * **Свой или родного (10.11.2026, вечер).** Заказчик: «у родных
+   * снаряжение общее… В походе родные равноправно могут использовать
+   * снаряжение». Поэтому предмет ищется в своём каталоге **и в каталогах
+   * родных**; чужой (не родного) по-прежнему не существует (404).
+   *
+   * **Владелец строки — тот, кто выставил.** Слова заказчика: «Кто выставил
+   * снарягу для общественных нужд, тот считается и владельцем». Поэтому
+   * `owner_user_id` — автор запроса, даже если предмет лежит в каталоге
+   * родного: с ним вещь едет в рюкзаке, он её убирает и он же отвечает
+   * за неё в походе. Каталог при этом не меняется: `gear_items
+   * .owner_user_id` остаётся настоящим хозяином вещи.
+   *
+   * Несущий по умолчанию — владелец строки, но только если он **идёт**:
+   * вещь человека «пока не решил» не должна числиться в чьём-то рюкзаке,
    * поэтому она сразу ложится в «нераспределённые» (§6.6).
    *
    * Повторная попытка предложить тот же предмет — 409: строка одна,
@@ -436,13 +447,15 @@ export class TripGearService {
     const trip = await this.trips.getVisibleTrip(userId, tripId);
     const participant = await this.assertParticipant(manager, trip.id, userId);
 
-    // Чужой предмет не существует (404, как в каталоге): перебирать
-    // id чужих списков снаряжения нечего.
-    const item = await manager.findOne(GearItem, {
-      where: { id: String(dto.gearItemId), ownerUserId: userId },
-      relations: { gearType: true, attributes: { gearTypeAttribute: true } },
-    });
-    if (!item) throw new NotFoundException('Предмет не найден');
+    // Предмет ищется среди своих и родных; чужой не существует (404, как
+    // в каталоге): перебирать id чужих списков снаряжения нечего.
+    const available = await this.gear.findAvailable(
+      manager,
+      userId,
+      String(dto.gearItemId),
+    );
+    if (!available) throw new NotFoundException('Предмет не найден');
+    const item = available.item;
 
     const existing = await manager.findOne(TripGear, {
       where: { tripId: trip.id, gearItemId: item.id },
@@ -725,12 +738,22 @@ export class TripGearService {
   // ───────────────────────── личные вещи «Взял» (06.11.2026) ─────────────────────────
 
   /**
-   * Добавить свою вещь в раздел «Взял».
+   * Добавить вещь в раздел «Взял».
    *
    * Заказчик: «Личные вещи — это то, что помимо общественного: одежда,
    * каска, трекинговые палочки», и у раздела нужны кнопки «Добавить
-   * снаряжение в этот раздел». Вещь берётся из **своего** каталога: чужой
-   * предмет не найдётся (404), как и в остальных личных ручках.
+   * снаряжение в этот раздел».
+   *
+   * **Вещь своя или родного (10.11.2026, вечер).** «У родных снаряжение
+   * общее… если один задействовал что-то, то второму нельзя, нельзя один
+   * спальник обоим взять». Поэтому предмет берётся из своего каталога
+   * **или из каталога родного**, а «чужой» (не родного) по-прежнему
+   * не находится (404).
+   *
+   * **Одна вещь — один человек.** Раньше это вытекало из «только свой
+   * каталог»; теперь проверяется явно, а в базе стоит уникальный индекс
+   * `(trip_id, gear_item_id)`. Взятую родным вещь второй раз не взять:
+   * 409 с человеческим текстом, а не «вещь исчезла из списка».
    *
    * Личные вещи — только 100% идущему: «пока не решил» и приглашённый
    * ещё не собирают рюкзак, а строка была бы вещью в чужом походе
@@ -754,11 +777,13 @@ export class TripGearService {
       );
     }
 
-    const item = await manager.findOne(GearItem, {
-      where: { id: String(dto.gearItemId), ownerUserId: userId },
-      relations: { gearType: true, attributes: { gearTypeAttribute: true } },
-    });
-    if (!item) throw new NotFoundException('Предмет не найден');
+    const available = await this.gear.findAvailable(
+      manager,
+      userId,
+      String(dto.gearItemId),
+    );
+    if (!available) throw new NotFoundException('Предмет не найден');
+    const item = available.item;
 
     /**
      * Одна вещь не может быть одновременно общественной и личной
@@ -774,6 +799,27 @@ export class TripGearService {
       );
     }
 
+    /**
+     * Та же вещь в «Спальнике» **у другого человека** (10.11.2026, вечер) —
+     * двойное «я её взял» и двойной вес. Раньше эта пара была невозможна
+     * только потому, что в «Спальник» и «Взял» попадали вещи одного
+     * человека; с общим снаряжением родных проверка нужна явно.
+     *
+     * Своя же строка не мешает: «общественная вещь и её личная копия» —
+     * решение 06.11.2026, и ломать его этим шагом незачем.
+     */
+    const sleeping = (await manager.query(
+      `SELECT user_id::text AS "userId"
+         FROM trip_route_sleeping
+        WHERE trip_id = $1 AND gear_item_id = $2`,
+      [trip.id, item.id],
+    )) as Array<{ userId: string }>;
+    if (sleeping[0] !== undefined && sleeping[0].userId !== userId) {
+      throw new ConflictException(
+        'Эту вещь уже взял родной в «Спальник» — второй раз её не взять',
+      );
+    }
+
     const sectionId = await this.resolvePersonalSection(
       manager,
       trip.id,
@@ -782,10 +828,14 @@ export class TripGearService {
     );
 
     const existing = await manager.findOne(TripPersonalGear, {
-      where: { tripId: trip.id, userId, gearItemId: item.id },
+      where: { tripId: trip.id, gearItemId: item.id },
     });
     if (existing) {
-      throw new ConflictException('Эта вещь уже в вашем личном снаряжении');
+      throw new ConflictException(
+        existing.userId === userId
+          ? 'Эта вещь уже в вашем личном снаряжении'
+          : 'Эту вещь уже взял родной — одну вещь вдвоём не взять',
+      );
     }
 
     const saved = await manager.save(

@@ -946,6 +946,64 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-taking-item-g6"]').exists()).toBe(true)
   })
 
+  it('в выборе снаряжения видны вещи родных — с именем владельца', async () => {
+    // Заказчик 10.11.2026: «у родных снаряжение общее». Каталог личный,
+    // вещи родных приходят отдельным списком — и попадают в выбор похода.
+    const own = gearItem({
+      id: 'cat-1',
+      title: 'Котёл',
+      typeCode: 'kettle',
+      typeName: 'Котёл',
+    })
+    const relative = gearItem({
+      id: 'cat-2',
+      title: 'Палатка Анны',
+      typeCode: 'tent',
+      typeName: 'Палатка',
+      groupCode: 'family',
+      groupName: 'Снаряжение родных',
+      ownerUserId: 'u-anna',
+      ownerName: 'Анна',
+    })
+
+    mocks.listGear.mockResolvedValue({
+      items: [own],
+      familyItems: [relative],
+      totalWeightGrams: 0,
+      itemsWithoutWeight: 0,
+    })
+    mocks.proposeTripGear.mockResolvedValue(
+      tripGearItem({
+        id: 'g7',
+        gearItemId: 'cat-2',
+        typeCode: 'tent',
+        typeName: 'Палатка',
+        title: 'Палатка Анны',
+        ownerUserId: ME,
+        assignedUserId: ME,
+        status: 'proposed',
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="gear-add"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.get('[data-test="route-extra-search"]').setValue('Палатка')
+    await flushPromises()
+
+    // Вещь родного не выглядит своей: подписана его именем.
+    expect(wrapper.get('[data-test="route-extra-item-cat-2"]').text()).toContain(
+      'Анна',
+    )
+
+    await wrapper.get('[data-test="route-extra-item-cat-2"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.proposeTripGear).toHaveBeenCalledWith('1', 'cat-2')
+  })
+
   it('«Добавить вручную» открывает общую форму поверх выбора', async () => {
     mocks.fetchGearTypes.mockResolvedValue([])
 

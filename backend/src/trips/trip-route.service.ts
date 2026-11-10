@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -7,6 +8,7 @@ import {
 import { DataSource, EntityManager } from 'typeorm';
 
 import { GEAR_TYPE_CODES } from '../gear/gear.types';
+import { UsersService } from '../users/users.service';
 import {
   AddSleepingDto,
   LodgeRouteDto,
@@ -90,6 +92,12 @@ export class TripRouteService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
+    /**
+     * Родные (10.11.2026, вечер): спальник берут из своего каталога **или
+     * из каталога родного** — «у родных снаряжение общее». Список родных
+     * знает только `UsersService`, поэтому спрашиваем у него.
+     */
+    private readonly users: UsersService,
   ) {}
 
   /** Вкладка целиком. Видят участники похода. */
@@ -143,12 +151,16 @@ export class TripRouteService {
   /**
    * Добавить себе вещь в ночёвку — спальник, коврик или что угодно личное.
    *
-   * Вещь — обязательно предмет **своего** каталога: секция личная, чужую
-   * вещь сюда не положить. С 01.11.2026 тип не ограничен: кнопка
-   * «Добавить ещё» берёт из каталога любую вещь — «вкладыш в спальник,
-   * грелка, губка для мытья посуды». Повторное добавление той же вещи
-   * ничего не ломает (`ON CONFLICT DO NOTHING`), количество вещей
-   * не ограничено.
+   * **Вещь своя или родного (10.11.2026, вечер).** Заказчик: «у родных
+   * снаряжение общее… нельзя один спальник обоим взять». Поэтому предмет
+   * берётся из своего каталога или каталога родного, а **одну вещь в походе
+   * занимает один человек**: второму сервер отвечает 409, а в базе стоит
+   * уникальный индекс `(trip_id, gear_item_id)`.
+   *
+   * С 01.11.2026 тип не ограничен: кнопка «Добавить ещё» берёт из каталога
+   * любую вещь — «вкладыш в спальник, грелка, губка для мытья посуды».
+   * Повторное добавление **своей же** вещи ничего не ломает (возвращаем
+   * вкладку), количество вещей не ограничено.
    */
   async addSleeping(
     userId: string,
@@ -169,17 +181,27 @@ export class TripRouteService {
     );
     await this.assertSleepingItem(manager, userId, dto.gearItemId);
 
-    await manager
-      .createQueryBuilder()
-      .insert()
-      .into(TripRouteSleeping)
-      .values({
-        tripId: trip.id,
-        userId,
-        gearItemId: dto.gearItemId,
-      })
-      .orIgnore()
-      .execute();
+    /**
+     * Одна вещь — одно использование (10.11.2026, вечер). Проверки идут
+     * до вставки, чтобы ответ был человеческим: уникальный индекс базы
+     * сказал бы «duplicate key», а человеку нужно «уже занято».
+     */
+    await this.assertItemFree(manager, trip.id, userId, dto.gearItemId);
+
+    const existing = await manager.findOne(TripRouteSleeping, {
+      where: { tripId: trip.id, gearItemId: dto.gearItemId },
+    });
+
+    // Своя же вещь уже в ночёвке — повтор ничего не меняет.
+    if (existing === null) {
+      await manager.save(
+        manager.create(TripRouteSleeping, {
+          tripId: trip.id,
+          userId,
+          gearItemId: dto.gearItemId,
+        }),
+      );
+    }
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -507,30 +529,80 @@ export class TripRouteService {
   }
 
   /**
-   * Вещь для ночёвки — своя и из каталога.
+   * Вещь для ночёвки — своя или родного, из каталога.
    *
    * Ограничения по типу больше нет (01.11.2026): «Добавить ещё» берёт любую
-   * личную вещь. Остаются два правила: чужую вещь сюда не положить
-   * (каталог личный) и одноразовая вещь похода каталогу не принадлежит —
-   * её строка живёт в снаряжении похода, а не в ночёвке.
+   * личную вещь. Остаются два правила: вещь берут из своего каталога
+   * **или каталога родного** (10.11.2026, вечер) и одноразовая вещь похода
+   * каталогу не принадлежит — её строка живёт в снаряжении похода,
+   * а не в ночёвке.
    */
   private async assertSleepingItem(
     manager: EntityManager,
     userId: string,
     gearItemId: string,
   ): Promise<void> {
+    const relatives = await this.users.familyMembers(userId);
+    const ownerIds = [userId, ...relatives.map((person) => person.id)];
+
     const rows = (await manager.query(
       `SELECT gi.id
          FROM gear_items gi
         WHERE gi.id = $1::bigint
-          AND gi.owner_user_id = $2
-          AND gi.is_trip_only = false`,
-      [gearItemId, userId],
+          AND gi.is_trip_only = false
+          AND gi.owner_user_id = ANY($2::uuid[])`,
+      [gearItemId, ownerIds],
     )) as { id: string }[];
 
     if (rows[0] === undefined) {
       throw new BadRequestException(
-        'В ночёвку берут вещь из вашего каталога снаряжения',
+        'В ночёвку берут вещь из своего каталога снаряжения или каталога родного',
+      );
+    }
+  }
+
+  /**
+   * Одна вещь — одно использование **в личном снаряжении** (10.11.2026).
+   *
+   * Правило заказчика: «если один задействовал что-то, то второму нельзя,
+   * нельзя один спальник обоим взять». Спальники и «Взял» — две личные
+   * таблицы, и одна вещь не должна стоять в обеих у двух людей: это
+   * двойное «я её взял» и двойной вес.
+   *
+   * **Только у другого человека.** Своя же строка в «Взял» не мешает —
+   * «общественная вещь и её личная копия» (решение 06.11.2026) касается
+   * одного человека, и ломать его этим шагом незачем. Общественное
+   * снаряжение (`trip_gear`) здесь тоже не проверяется: вещь похода мог
+   * предложить кто угодно, и «Берём» — решение состава, а не личная вещь.
+   */
+  private async assertItemFree(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+    gearItemId: string,
+  ): Promise<void> {
+    const personal = (await manager.query(
+      `SELECT user_id::text AS "userId"
+         FROM trip_personal_gear
+        WHERE trip_id = $1 AND gear_item_id = $2`,
+      [tripId, gearItemId],
+    )) as Array<{ userId: string }>;
+    if (personal[0] !== undefined && personal[0].userId !== userId) {
+      throw new ConflictException(
+        'Эту вещь уже взял родной в «Взял» — второй раз её не взять',
+      );
+    }
+
+    const sleeping = (await manager.query(
+      `SELECT user_id::text AS "userId"
+         FROM trip_route_sleeping
+        WHERE trip_id = $1 AND gear_item_id = $2`,
+      [tripId, gearItemId],
+    )) as Array<{ userId: string }>;
+
+    if (sleeping[0] !== undefined && sleeping[0].userId !== userId) {
+      throw new ConflictException(
+        'Эту вещь уже взял родной — один спальник двоим не взять',
       );
     }
   }

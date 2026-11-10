@@ -521,9 +521,22 @@ describe('Родные и люди без аккаунта (e2e)', () => {
     const list = await call('get', '/api/users/me/virtual', annaToken).expect(
       200,
     );
-    expect(
-      (list.body.users as Array<{ id: string }>).map((user) => user.id),
-    ).toContain(virtualId);
+    const rows = list.body.users as Array<{
+      id: string;
+      canDelete: boolean;
+      blockedByTrip: { title: string; startedAt: string } | null;
+    }>;
+    expect(rows.map((user) => user.id)).toContain(virtualId);
+
+    /**
+     * Причина запрета — словами (10.11.2026, вечер). Заказчик спросил,
+     * по каким датам считается подпись «уже был в походе», и она оказалась
+     * непонятной: экран получает не только флаг, но и поход с датой.
+     */
+    const blockedRow = rows.find((user) => user.id === virtualId);
+    expect(blockedRow?.canDelete).toBe(false);
+    expect(blockedRow?.blockedByTrip?.title).toBe('Вершина для родных');
+    expect(blockedRow?.blockedByTrip?.startedAt).toContain('2026-01-01');
 
     const participants = await call(
       'get',

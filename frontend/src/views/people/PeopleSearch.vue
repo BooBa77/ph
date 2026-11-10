@@ -344,16 +344,33 @@ async function deletePerson(person: VirtualUser): Promise<void> {
   }
 }
 
-/** Почему удалить нельзя — полная формулировка для `title`. */
+/**
+ * Почему удалить нельзя — полная формулировка для `title`.
+ *
+ * Заказчик 10.11.2026: подпись «уже был в походе» непонятна, и справедливо —
+ * запрет определяется **датами**: поход, который уже начался или прошёл
+ * (`COALESCE(actual_started_at, starts_at) <= now()`), и участие `going`.
+ * Сервер присылает этот поход, поэтому подсказка говорит не «был», а когда
+ * именно начался поход и почему запись остаётся.
+ */
 function deleteBlockedReason(person: VirtualUser): string {
-  return person.tripsCount > 1
-    ? 'Уже был в походах — запись нужна истории'
-    : 'Уже был в походе — запись нужна истории'
+  const trip = person.blockedByTrip
+  // `!trip`, а не `=== null`: старый dev-бэкенд (bind-mount не подхватил
+  // код) и ответ из кеша приходят без поля, и падать на этом экран нельзя.
+  if (!trip) return 'Запись нужна истории похода'
+
+  const started = new Date(trip.startedAt).toLocaleDateString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  })
+
+  return `Поход «${trip.title}» уже начался ${started} — запись нужна его истории`
 }
 
-/** Та же мысль коротко: в строке списка длинный текст не помещается. */
+/** Та же причина коротко: в строке списка длинный текст не помещается. */
 function deleteBlockedLabel(): string {
-  return 'уже был в походе'
+  return 'поход уже начался'
 }
 
 // ────────────────────────── общий запуск действия ──────────────────────────
@@ -410,7 +427,6 @@ async function runAction(
         <summary class="cursor-pointer select-none text-sm font-medium text-orange-900">
           <span class="inline-block max-w-full truncate align-bottom">
             Родные
-            <span class="ml-1 text-xs font-normal" data-test="family-count">{{ family.family.length }}</span>
             <span
               v-if="family.incoming.length > 0"
               class="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-orange-900"
@@ -634,7 +650,6 @@ async function runAction(
         <summary class="cursor-pointer select-none text-sm font-medium text-blue-900">
           <span class="inline-block max-w-full truncate align-bottom">
             Люди без аккаунта, под моим управлением
-            <span class="ml-1 text-xs font-normal" data-test="virtual-count">{{ virtuals.length }}</span>
           </span>
         </summary>
 

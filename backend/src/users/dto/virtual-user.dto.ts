@@ -67,11 +67,33 @@ export class VirtualUserDto {
   })
   canDelete: boolean;
 
+  /**
+   * Поход, который закрывает удаление (10.11.2026, вечер).
+   *
+   * Заказчик спросил, по каким датам определяется подпись «уже был в походе»,
+   * и она оказалась непонятной: человек не «был», а поход уже начался —
+   * иногда вчера. Поэтому экран получает не только флаг, но и **причину**:
+   * название и дату начала ближайшего начавшегося похода. Правило прежнее
+   * и считается по датам (`COALESCE(actual_started_at, starts_at) <= now()`,
+   * не отменён, участие `going`), но теперь его можно объяснить словами.
+   */
+  @ApiProperty({
+    description: 'Поход, который закрывает удаление. null — удалить можно',
+    nullable: true,
+    example: { id: '679', title: 'Витязь', startedAt: '2026-11-01T00:00:00.000Z' },
+  })
+  blockedByTrip: { id: string; title: string; startedAt: string } | null;
+
   static from(
     user: User,
-    stats: { tripsCount?: number; startedTripsCount?: number } = {},
+    stats: {
+      tripsCount?: number;
+      startedTripsCount?: number;
+      blockedByTrip?: { id: string; title: string; startedAt: Date } | null;
+    } = {},
   ): VirtualUserDto {
     const tripsCount = stats.tripsCount ?? 0;
+    const trip = stats.blockedByTrip ?? null;
 
     return {
       id: user.id,
@@ -80,6 +102,14 @@ export class VirtualUserDto {
       createdAt: user.createdAt.toISOString(),
       tripsCount,
       canDelete: (stats.startedTripsCount ?? 0) === 0,
+      blockedByTrip:
+        trip === null
+          ? null
+          : {
+              id: trip.id,
+              title: trip.title,
+              startedAt: trip.startedAt.toISOString(),
+            },
     };
   }
 }

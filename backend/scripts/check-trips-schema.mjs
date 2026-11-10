@@ -2052,6 +2052,20 @@ await check(
 );
 
 // Личная вещь: своя вещь каталога, повторно — нельзя.
+/**
+ * Проверка «только участник» идёт **до** первой вставки: с 10.11.2026
+ * уникальность считается по (trip, item), и после первой строки этот же
+ * предмет упал бы на ней, а не на внешнем ключе участника — проверка
+ * перестала бы проверять то, что написано в её названии.
+ */
+await check(
+  'ночёвки: спальник бывает только у участника похода',
+  'fail',
+  `INSERT INTO trip_route_sleeping (trip_id, user_id, gear_item_id)
+   VALUES ($1, '00000000-0000-0000-0000-000000000000', $2)`,
+  [tripId, routeAxeItemId],
+);
+
 await check(
   'ночёвки: личный спальник — участник и вещь каталога',
   'ok',
@@ -2068,20 +2082,25 @@ await check(
   [tripId, user1, routeAxeItemId],
 );
 
+/**
+ * «Нельзя один спальник обоим взять» (10.11.2026, вечер) — дословно
+ * правило заказчика. Второй участник с той же вещью падает на индексе
+ * по (trip, item): вещь в походе занимает один человек.
+ */
+await check(
+  'ночёвки: один спальник не взять двоим',
+  'fail',
+  `INSERT INTO trip_route_sleeping (trip_id, user_id, gear_item_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, user2, routeAxeItemId],
+);
+
 await check(
   'ночёвки: спальник не ссылается на несуществующую вещь',
   'fail',
   `INSERT INTO trip_route_sleeping (trip_id, user_id, gear_item_id)
    VALUES ($1, $2, $3)`,
   [tripId, user1, '999999999'],
-);
-
-await check(
-  'ночёвки: спальник бывает только у участника похода',
-  'fail',
-  `INSERT INTO trip_route_sleeping (trip_id, user_id, gear_item_id)
-   VALUES ($1, '00000000-0000-0000-0000-000000000000', $2)`,
-  [tripId, routeAxeItemId],
 );
 
 // Убрали вещь каталога — ушла и её строка в ночёвке.
@@ -2555,7 +2574,7 @@ const personalShape = await client.query(
      (SELECT 1 FROM pg_trigger
        WHERE tgname = 'trg_trip_personal_gear_section') AS has_trigger,
      (SELECT 1 FROM pg_indexes
-       WHERE indexname = 'UQ_trip_personal_gear_item') AS has_unique`,
+       WHERE indexname = 'UQ_trip_personal_gear_trip_item') AS has_unique`,
 );
 
 const personalShapeRow = personalShape.rows[0];
@@ -2592,6 +2611,21 @@ await check(
   `INSERT INTO trip_personal_gear (trip_id, user_id, gear_item_id)
    VALUES ($1, $2, $3)`,
   [tripId, user1, routeExtraItemId],
+);
+
+/**
+ * Снаряжение родных (10.11.2026, вечер): вещь одного человека берёт
+ * другой — «у родных снаряжение общее». Запрет при этом остаётся:
+ * «нельзя один спальник обоим взять». Поэтому та же вещь на второго
+ * участника похода падает на уникальном индексе по (trip, item),
+ * а не по (trip, user, item).
+ */
+await check(
+  'личные вещи: одну вещь не взять двум людям',
+  'fail',
+  `INSERT INTO trip_personal_gear (trip_id, user_id, gear_item_id)
+   VALUES ($1, $2, $3)`,
+  [tripId, user2, routeExtraItemId],
 );
 
 const personalLocalSectionId = (

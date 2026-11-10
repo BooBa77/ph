@@ -29,6 +29,7 @@ import TripGearExtraPicker from '@/components/gear/TripGearExtraPicker.vue'
 import TripGearItemModal from '@/components/gear/TripGearItemModal.vue'
 import TripGearManualModal from '@/components/gear/TripGearManualModal.vue'
 import TripGearSectionList from '@/components/gear/TripGearSectionList.vue'
+import { pickableGear } from '@/utils/gearCatalog'
 import { TRIP_GEAR_STATUS_LABELS } from '@/types/gear'
 import type { Checklist, TripChecklists } from '@/types/checklists'
 import type {
@@ -1739,7 +1740,7 @@ async function openPickerBase(): Promise<void> {
 
   try {
     const list = await listGear()
-    catalog.value = list.items
+    catalog.value = pickableGear(list)
     isCatalogLoaded.value = true
   } catch (problem) {
     catalogError.value =

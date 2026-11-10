@@ -30,6 +30,7 @@ import type {
   TripRoute,
 } from '@/types/trips'
 import { formatWeight, weightInGrams } from '@/utils/gearWeight'
+import { pickableGear } from '@/utils/gearCatalog'
 
 /**
  * «Палатки» — распределение участников по палаткам (29.10.2026).
@@ -663,7 +664,7 @@ async function openAwningDialog(): Promise<void> {
     const list = await listGear()
     const taken = new Set(props.gear.map((item) => item.gearItemId))
 
-    myAwnings.value = list.items.filter(
+    myAwnings.value = pickableGear(list).filter(
       (item) => item.typeCode === GEAR_TYPE_CODES.shelter && !taken.has(item.id),
     )
   } catch (problem) {
@@ -698,11 +699,23 @@ async function saveAwning(): Promise<void> {
   }
 }
 
+/**
+ * Подпись вещи: у вещи родного (10.11.2026, вечер) — с именем владельца.
+ *
+ * Общее снаряжение семьи приходит тем же списком, и без подписи чужой
+ * тент выглядел бы своим. `ownerName` заполняет только сервер и только
+ * у вещей родных; у своих его нет.
+ */
+function itemLabel(item: GearItem): string {
+  return item.ownerName ? `${item.title} · ${item.ownerName}` : item.title
+}
+
 /** Строка выбора: «Тент 3×4 · 3000 гр.». */
 function awningOptionText(item: GearItem): string {
   const weight = weightInGrams(item.weightGrams)
+  const head = itemLabel(item)
 
-  return weight === null ? item.title : `${item.title} · ${weight}`
+  return weight === null ? head : `${head} · ${weight}`
 }
 
 /** Пилюля тента в формате заказчика: «Тент - 3000 гр. (Олег)». */
@@ -751,7 +764,7 @@ async function openDialog(): Promise<void> {
     const list = await listGear()
     const inTrip = new Set(props.gear.map((item) => item.gearItemId))
 
-    myTents.value = list.items.filter(
+    myTents.value = pickableGear(list).filter(
       (item) => item.typeCode === GEAR_TYPE_CODES.tent && !inTrip.has(item.id),
     )
   } catch (problem) {
@@ -900,7 +913,7 @@ async function openExtra(): Promise<void> {
   isExtraLoading.value = true
 
   try {
-    extraCatalog.value = (await listGear()).items
+    extraCatalog.value = pickableGear(await listGear())
   } catch (problem) {
     extraError.value =
       problem instanceof ApiError ? problem.message : 'Не удалось загрузить снаряжение'
@@ -1359,7 +1372,7 @@ async function pickExtra(item: GearItem): Promise<void> {
             >
               <option value="">выберите…</option>
               <option v-for="item in myTents" :key="item.id" :value="item.id">
-                {{ item.title }}
+                {{ itemLabel(item) }}
               </option>
             </select>
           </label>

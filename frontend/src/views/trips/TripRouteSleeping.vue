@@ -14,6 +14,7 @@ import { GEAR_TYPE_CODES, SLEEPING_TYPE_CODES } from '@/types/gear'
 import type { GearItem } from '@/types/gear'
 import type { Trip, TripRoute, RouteSleeping } from '@/types/trips'
 import { parseWeightGrams, weightInGrams } from '@/utils/gearWeight'
+import { pickableGear } from '@/utils/gearCatalog'
 
 /**
  * «Спальник» — личная секция ночёвки (01.11.2026).
@@ -98,11 +99,18 @@ function pillText(row: RouteSleeping): string {
   return weight === null ? row.title : `${row.title} - ${weight}`
 }
 
-/** Строка в списке выбора: «Спальник зимний - 1200 гр.». */
+/**
+ * Строка в списке выбора: «Спальник зимний - 1200 гр.»
+ *
+ * У вещи родного (10.11.2026, вечер) — с именем владельца: «- 1200 гр. (Анна)».
+ * Заказчик: «у родных снаряжение общее… нельзя один спальник обоим взять»;
+ * чтобы это правило было видно до нажатия, чужой спальник подписан.
+ */
 function gearOptionText(item: GearItem): string {
   const weight = weightInGrams(item.weightGrams)
+  const base = weight === null ? item.title : `${item.title} - ${weight}`
 
-  return weight === null ? item.title : `${item.title} - ${weight}`
+  return item.ownerName ? `${base} (${item.ownerName})` : base
 }
 
 // ───────────────────────────── добавление ─────────────────────────────
@@ -142,7 +150,7 @@ async function openDialog(type: SleepingType): Promise<void> {
 
     const inTrip = new Set(props.sleeping.map((row) => row.gearItemId))
 
-    myGear.value = list.items.filter(
+    myGear.value = pickableGear(list).filter(
       (item) => item.typeCode === type.code && !inTrip.has(item.id),
     )
 
@@ -241,7 +249,7 @@ async function openExtra(): Promise<void> {
   isExtraLoading.value = true
 
   try {
-    extraCatalog.value = (await listGear()).items
+    extraCatalog.value = pickableGear(await listGear())
   } catch (problem) {
     extraError.value =
       problem instanceof ApiError ? problem.message : 'Не удалось загрузить снаряжение'

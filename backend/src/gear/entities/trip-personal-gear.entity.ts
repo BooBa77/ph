@@ -35,9 +35,18 @@ import { Trip } from '../../trips/entities/trip.entity';
  * **Спальник «Ночёвок» здесь не дублируется.** Он живёт в
  * `trip_route_sleeping` и показывается в «в палатку» отдельными строками:
  * одна вещь — одна таблица, иначе вес задвоился бы.
+ *
+ * **Вещь может быть вещью родного (10.11.2026).** Заказчик: «у родных
+ * снаряжение общее… если один задействовал что-то, то второму нельзя,
+ * нельзя один спальник обоим взять». Поэтому `gear_item_id` — предмет
+ * каталога **меня или моего родного**, а `user_id` — тот, кто взял.
+ * Уникальность здесь не «на человека», а **на поход**: одна вещь не может
+ * стоять в двух «Взял» сразу. Каталог остаётся личным: родной видит свою
+ * вещь у себя, а я — только там, где снаряжение используется, то есть
+ * в походе.
  */
 @Entity('trip_personal_gear')
-@Index('UQ_trip_personal_gear_item', ['tripId', 'userId', 'gearItemId'], {
+@Index('UQ_trip_personal_gear_trip_item', ['tripId', 'gearItemId'], {
   unique: true,
 })
 @Index('IDX_trip_personal_gear_person', ['tripId', 'userId'])
@@ -59,7 +68,6 @@ export class TripPersonalGear {
   /** Чья вещь: личные вещи чужим не показываются — правило «Ночёвок». */
   @Column({ name: 'user_id', type: 'uuid' })
   userId: string;
-
   @ManyToOne(() => TripParticipant, { onDelete: 'CASCADE' })
   @JoinColumn([
     {

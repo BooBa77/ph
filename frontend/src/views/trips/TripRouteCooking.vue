@@ -30,6 +30,7 @@ import type {
 } from '@/types/gear'
 import type { Trip, TripParticipant } from '@/types/trips'
 import { weightInGrams } from '@/utils/gearWeight'
+import { pickableGear } from '@/utils/gearCatalog'
 
 /**
  * «Готовка» — снаряжение для еды, тремя группами (01.11.2026).
@@ -365,11 +366,18 @@ function nameOf(userId: string): string {
   return people.value.find((person) => person.userId === userId)?.displayName ?? 'Участник'
 }
 
-/** Строка в списке выбора: «Топор Fiskars X7 · 900 гр.». */
+/**
+ * Строка в списке выбора: «Топор Fiskars X7 · 900 гр.».
+ *
+ * У вещи родного (10.11.2026, вечер) — с именем владельца: общее
+ * снаряжение семьи приходит тем же списком, и без подписи чужой котёл
+ * выглядел бы своим.
+ */
 function gearOptionText(item: GearItem): string {
   const weight = weightInGrams(item.weightGrams)
+  const base = weight === null ? item.title : `${item.title} · ${weight}`
 
-  return weight === null ? item.title : `${item.title} · ${weight}`
+  return item.ownerName ? `${base} · ${item.ownerName}` : base
 }
 
 /**
@@ -540,7 +548,7 @@ async function openDialog(type: CookingType): Promise<void> {
     const list = await listGear()
     const inTrip = takenGearIds()
 
-    myGear.value = list.items.filter(
+    myGear.value = pickableGear(list).filter(
       (item) => item.typeCode === type.code && !inTrip.has(item.id),
     )
   } catch (problem) {
@@ -588,7 +596,7 @@ async function openExtra(group: CookingGroupView): Promise<void> {
   isExtraLoading.value = true
 
   try {
-    extraCatalog.value = (await listGear()).items
+    extraCatalog.value = pickableGear(await listGear())
   } catch (problem) {
     extraError.value =
       problem instanceof ApiError ? problem.message : 'Не удалось загрузить снаряжение'
@@ -739,7 +747,7 @@ async function openDishDialog(): Promise<void> {
       ...personalDishes.value.map((row) => row.gearItemId),
       ...items.value.map((row) => row.gearItemId),
     ])
-    dishCatalog.value = list.items.filter(
+    dishCatalog.value = pickableGear(list).filter(
       (item) => item.typeCode === KLMN_TYPE_CODE && !taken.has(item.id),
     )
   } catch (problem) {

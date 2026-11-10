@@ -29,3 +29,15 @@
 export const FAMILY_LINK_STATUSES = ['pending', 'accepted'] as const;
 
 export type FamilyLinkStatus = (typeof FAMILY_LINK_STATUSES)[number];
+
+/**
+ * Действующий родной — id и имя (10.11.2026, вечер).
+ *
+ * Нужен там, где родство — не экран «Контактов», а правило: снаряжение
+ * родных в походе. Имя приходит вместе с id, чтобы «Снаряжение» подписало
+ * чужую вещь («Палатка · Анна»), не заводя второй запрос за составом.
+ */
+export interface FamilyPerson {
+  id: string;
+  displayName: string;
+}

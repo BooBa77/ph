@@ -25,6 +25,7 @@ import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
 import { GearTypeGroup } from './entities/gear-type-group.entity';
 import { TripGear } from './entities/trip-gear.entity';
+import { UsersService } from '../users/users.service';
 
 /** Шаг личного порядка: между двумя вещами всегда есть место для вставки. */
 const SORT_STEP = 10;
@@ -82,6 +83,12 @@ export class GearService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly gearGroups: GearGroupsService,
+    /**
+     * Родные (10.11.2026): у семьи снаряжение общее. `UsersService` —
+     * единственный, кто знает про `family_links`, поэтому «мои родные»
+     * спрашиваются у него, а не копией SQL в снаряжении.
+     */
+    private readonly users: UsersService,
   ) {}
 
   /** Мой список и итог по весу. Одноразовые вещи похода сюда не входят. */
@@ -113,7 +120,90 @@ export class GearService {
       return Number(left.id) - Number(right.id);
     });
 
-    return this.toList(items, grouping);
+    return {
+      ...this.toList(items, grouping),
+      familyItems: await this.familyItems(userId),
+    };
+  }
+
+  /**
+   * Снаряжение родных — «общая полка» семьи (10.11.2026, вечер).
+   *
+   * Заказчик: «у родных снаряжение общее… В походе родные равноправно
+   * могут использовать снаряжение, но если один задействовал что-то,
+   * то второму нельзя». Поэтому каталог не сливается: `items` — мои вещи,
+   * здесь — вещи родных, и обе половины доступны **только в походе**.
+   * Мой вес (`totalWeightGrams`) чужие вещи не увеличивают.
+   *
+   * **Полка одна и синтетическая.** Полки каталога личные; раскладывать
+   * чужую вещь по своим группам значило бы утверждать, что тип родного
+   * лежит в моей «Снаряге». В выборе снаряжения похода вещи родных стоят
+   * одной группой «Снаряжение родных», и подпись «· Анна» отделяет их
+   * от своих.
+   *
+   * Одноразовые вещи похода (`is_trip_only`) не отдаются: они не каталог,
+   * а строка конкретного похода, и «общей полки» у них нет.
+   */
+  async familyItems(userId: string): Promise<GearItemDto[]> {
+    const relatives = await this.users.familyMembers(userId);
+    if (relatives.length === 0) return [];
+
+    const byId = new Map(relatives.map((person) => [person.id, person.displayName]));
+
+    const items = await this.dataSource.manager.find(GearItem, {
+      where: { ownerUserId: In(relatives.map((person) => person.id)), isTripOnly: false },
+      relations: {
+        gearType: true,
+        attributes: { gearTypeAttribute: true },
+      },
+    });
+
+    for (const item of items) this.sortValues(item);
+
+    items.sort(
+      (left, right) =>
+        left.gearType.name.localeCompare(right.gearType.name, 'ru') ||
+        left.title.localeCompare(right.title, 'ru'),
+    );
+
+    return items.map((item) =>
+      GearItemDto.fromFamily(
+        item,
+        item.ownerUserId,
+        byId.get(item.ownerUserId) ?? 'Родной',
+      ),
+    );
+  }
+
+  /**
+   * Предмет каталога, доступный человеку: свой или родного (10.11.2026).
+   *
+   * Правило «чужой предмет не существует» осталось, но «чужой» теперь
+   * значит «не мой и не родного». Одноразовые вещи похода сюда не
+   * попадают: у них нет каталога, а в `trip_gear` они приходят ручкой
+   * `addManual`, а не этим путём.
+   *
+   * Возвращает имя владельца, если вещь родного, — чтобы экран сказал,
+   * чья она, а сервис в тексте ошибки не гадал.
+   */
+  async findAvailable(
+    manager: EntityManager,
+    userId: string,
+    gearItemId: string,
+  ): Promise<{ item: GearItem; ownerName: string | null } | null> {
+    const item = await manager.findOne(GearItem, {
+      where: { id: gearItemId, isTripOnly: false },
+      relations: { gearType: true, attributes: { gearTypeAttribute: true } },
+    });
+    if (!item) return null;
+    if (item.ownerUserId === userId) return { item, ownerName: null };
+
+    const relative = (await this.users.familyMembers(userId)).find(
+      (person) => person.id === item.ownerUserId,
+    );
+    if (!relative) return null;
+
+    return { item, ownerName: relative.displayName };
   }
 
   /** Новый предмет каталога. */
@@ -710,7 +800,10 @@ export class GearService {
   }
 
   /** Список с итогом: сумма известных весов и сколько осталось без веса. */
-  private toList(items: GearItem[], grouping: UserGrouping): GearListDto {
+  private toList(
+    items: GearItem[],
+    grouping: UserGrouping,
+  ): Omit<GearListDto, 'familyItems'> {
     let totalWeightGrams = 0;
     let itemsWithoutWeight = 0;
 
