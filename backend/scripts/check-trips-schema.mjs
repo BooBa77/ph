@@ -1528,6 +1528,115 @@ rows.push([
 ]);
 
 await client.query(`DELETE FROM gear_items WHERE id = $1`, [modelItemId]);
+// ─── Семейный каталог: ключ вещи и мягкое удаление (11.11.2026) ───
+/**
+ * Инварианты `gear_uid`, `origin_user_id`, `deleted_at`.
+ *
+ * Заказчик: «Один физический предмет — один неизменный `gear_uid`… Удаление —
+ * `deleted_at` на клонах текущей компоненты». Проверяется то, из-за чего
+ * данные придётся чинить руками: ключ выдан каждой вещи, автор записан,
+ * два клона одной вещи у одного человека невозможны, а удаление строку
+ * не уносит — иначе история походов осталась бы без вещи.
+ *
+ * Заодно проверяется страховка для сырых вставок: у вещи, заведённой
+ * без ключа и автора (так делают e2e и этот скрипт), ключ выдаёт DEFAULT,
+ * а автора — триггер.
+ */
+const familyColumns = await client.query(
+  `SELECT column_name, is_nullable, column_default
+     FROM information_schema.columns
+    WHERE table_name = 'gear_items'
+      AND column_name IN ('gear_uid', 'origin_user_id', 'deleted_at')
+    ORDER BY column_name`,
+);
+const familyColumnsOk =
+  familyColumns.rows.length === 3 &&
+  familyColumns.rows.every((row) =>
+    row.column_name === 'deleted_at'
+      ? row.is_nullable === 'YES'
+      : row.is_nullable === 'NO',
+  ) &&
+  familyColumns.rows.some(
+    (row) => row.column_name === 'gear_uid' && row.column_default === 'gen_random_uuid()',
+  );
+if (!familyColumnsOk) failed += 1;
+rows.push([
+  familyColumnsOk ? 'ok' : 'НЕТ КОЛОНОК КЛОНА',
+  'вещь: gear_uid и origin_user_id обязательны, deleted_at — мягкое удаление',
+  familyColumns.rows
+    .map((row) => `${row.column_name}(${row.is_nullable})`)
+    .join(', '),
+]);
+
+const cloneIndex = await client.query(
+  `SELECT indexdef FROM pg_indexes
+    WHERE tablename = 'gear_items' AND indexname = 'UQ_gear_items_uid_owner'`,
+);
+const cloneIndexOk =
+  cloneIndex.rows.length === 1 && cloneIndex.rows[0].indexdef.includes('UNIQUE');
+if (!cloneIndexOk) failed += 1;
+rows.push([
+  cloneIndexOk ? 'ok' : 'НЕТ ИНДЕКСА КЛОНОВ',
+  'вещь: один клон на человека — UNIQUE (gear_uid, owner_user_id)',
+  cloneIndex.rows[0]?.indexdef ?? '',
+]);
+
+const cloneParent = (
+  await client.query(
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
+     VALUES ($1, $2, 'Вещь с ключом')
+     RETURNING id, gear_uid, origin_user_id`,
+    [user1, itemTypeId],
+  )
+).rows[0];
+const cloneKeyFilled =
+  cloneParent.gear_uid !== null &&
+  cloneParent.origin_user_id === user1;
+if (!cloneKeyFilled) failed += 1;
+rows.push([
+  cloneKeyFilled ? 'ok' : 'КЛЮЧ НЕ ВЫДАН',
+  'вещь: без ключа и автора в INSERT — оба выданы базой',
+  `gear_uid=${cloneParent.gear_uid}, автор=${cloneParent.origin_user_id}`,
+]);
+
+await check(
+  'вещь: второй клон той же вещи тому же человеку запрещён',
+  'fail',
+  `INSERT INTO gear_items (owner_user_id, gear_type_id, title, gear_uid)
+   VALUES ($1, $2, 'Второй клон', $3)`,
+  [user1, itemTypeId, cloneParent.gear_uid],
+);
+
+const cloneForSecondOwner = (
+  await client.query(
+    `INSERT INTO gear_items (owner_user_id, gear_type_id, title, gear_uid, origin_user_id)
+     VALUES ($1, $2, 'Клон у второго', $3, $4)
+     RETURNING id`,
+    [user2, itemTypeId, cloneParent.gear_uid, user1],
+  )
+).rows[0];
+
+await client.query(`UPDATE gear_items SET deleted_at = now() WHERE id = $1`, [
+  cloneParent.id,
+]);
+const softDeleted = await client.query(
+  `SELECT deleted_at FROM gear_items WHERE id = $1`,
+  [cloneParent.id],
+);
+const softDeleteOk =
+  softDeleted.rows.length === 1 && softDeleted.rows[0].deleted_at !== null;
+if (!softDeleteOk) failed += 1;
+rows.push([
+  softDeleteOk ? 'ok' : 'СТРОКА ИСЧЕЗЛА',
+  'вещь: удаление ставит deleted_at, строку не уносит',
+  '',
+]);
+
+await client.query(
+  `DELETE FROM gear_items WHERE id = ANY($1::bigint[])`,
+  [[cloneParent.id, cloneForSecondOwner.id]],
+);
+
 // «Вещь без полки» из проверки выше осталась висеть на типе — без этой
 // уборки тип с вещами не удалить (RESTRICT), и скрипт падал бы на своей же
 // проверке.

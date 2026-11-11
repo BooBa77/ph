@@ -20,6 +20,7 @@ import { GearController } from './gear.controller';
 import { GearGroupTemplatesService } from './gear-group-templates.service';
 import { GearGroupsController } from './gear-groups.controller';
 import { GearGroupsService } from './gear-groups.service';
+import { FamilyGearService } from './family-gear.service';
 import { GearService } from './gear.service';
 import { GearTypesController } from './gear-types.controller';
 import { GearTypesService } from './gear-types.service';
@@ -40,9 +41,9 @@ import { TripGearService } from './trip-gear.service';
  * матрицы прав здесь означала бы, что однажды завхоза назначат иначе,
  * а снаряжение об этом не узнает.
  *
- * `TripGear` в `GearService` нужен для одного запрета: предмет, который
- * уже едет в походе, нельзя удалить из каталога (409 вместо ошибки
- * внешнего ключа).
+ * `TripGear` в `GearService` нужен был для запрета «предмет, который уже
+ * едет в походе, не удалить». С 11.11.2026 удаление мягкое и блокирует его
+ * только живой решённый поход — правило живёт в `FamilyGearService`.
  *
  * `UsersModule` — ради родных (10.11.2026, вечер): «мои родные» знает
  * только `UsersService` (`family_links`), и снаряжение спрашивает список
@@ -84,6 +85,7 @@ import { TripGearService } from './trip-gear.service';
   ],
   providers: [
     GearService,
+    FamilyGearService,
     TripGearService,
     GearTypesService,
     GearGroupsService,
@@ -91,6 +93,7 @@ import { TripGearService } from './trip-gear.service';
   ],
   exports: [
     GearService,
+    FamilyGearService,
     TripGearService,
     GearTypesService,
     GearGroupsService,

@@ -1,10 +1,12 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager, In } from 'typeorm';
+import { DataSource, EntityManager, In, IsNull } from 'typeorm';
 
 import {
   CreateGearItemDto,
@@ -18,17 +20,13 @@ import {
   type GearValueColumns,
 } from './gear-attribute-values';
 import { GearGroupsService, type UserGrouping } from './gear-groups.service';
+import { SORT_STEP, nextSortOrder, typeIdsOfTypeGroup } from './gear-sort';
+import { FamilyGearService } from './family-gear.service';
 import type { GearGroup } from './entities/gear-group.entity';
 import { GearItem } from './entities/gear-item.entity';
 import { GearItemAttribute } from './entities/gear-item-attribute.entity';
 import { GearType } from './entities/gear-type.entity';
 import { GearTypeAttribute } from './entities/gear-type-attribute.entity';
-import { GearTypeGroup } from './entities/gear-type-group.entity';
-import { TripGear } from './entities/trip-gear.entity';
-import { UsersService } from '../users/users.service';
-
-/** Шаг личного порядка: между двумя вещами всегда есть место для вставки. */
-const SORT_STEP = 10;
 
 /**
  * Данные для заведения вещи — общие для каталога и для «вручную» в походе.
@@ -73,10 +71,11 @@ export interface CreateItemData {
  * чтобы записать её в список.
  *
  * **В поход предмет попадает через `TripGearService`** (вкладка
- * «Снаряжение», Ф7): участник выбирает предмет из этого списка, и в походе
- * появляется строка со ссылкой на каталог. Обратная связь — один запрет:
- * предмет, который уже едет в походе, отсюда не удалить (409), иначе он
- * исчез бы из подготовки молча.
+ * «Снаряжение», Ф7): участник выбирает свой клон вещи, и в походе
+ * появляется строка со ссылкой на каталог. С 11.11.2026 каталог — общий
+ * у родных (клоны `gear_uid`), а удаление — мягкое: строка не исчезает,
+ * потому что на неё ссылается история походов. Блокирует удаление только
+ * живой решённый поход (409), а не любая строка `trip_gear`, как раньше.
  */
 @Injectable()
 export class GearService {
@@ -84,18 +83,21 @@ export class GearService {
     private readonly dataSource: DataSource,
     private readonly gearGroups: GearGroupsService,
     /**
-     * Родные (10.11.2026): у семьи снаряжение общее. `UsersService` —
-     * единственный, кто знает про `family_links`, поэтому «мои родные»
-     * спрашиваются у него, а не копией SQL в снаряжении.
+     * Клоны вещи в каталогах родных (11.11.2026): создание при добавлении,
+     * зеркало при правке, мягкое удаление по компоненте связей.
      */
-    private readonly users: UsersService,
+    private readonly familyGear: FamilyGearService,
   ) {}
 
-  /** Мой список и итог по весу. Одноразовые вещи похода сюда не входят. */
+  /** Мой список и итог по весу. Одноразовые и удалённые вещи сюда не входят. */
   async list(userId: string): Promise<GearListDto> {
     const grouping = await this.gearGroups.ensure(userId);
     const items = await this.dataSource.manager.find(GearItem, {
-      where: { ownerUserId: userId, isTripOnly: false },
+      where: {
+        ownerUserId: userId,
+        isTripOnly: false,
+        deletedAt: IsNull(),
+      },
       relations: {
         gearType: true,
         attributes: { gearTypeAttribute: true },
@@ -120,71 +122,25 @@ export class GearService {
       return Number(left.id) - Number(right.id);
     });
 
-    return {
-      ...this.toList(items, grouping),
-      familyItems: await this.familyItems(userId),
-    };
+    return this.toList(items, grouping);
   }
 
   /**
-   * Снаряжение родных — «общая полка» семьи (10.11.2026, вечер).
+   * Предмет каталога, который человек вправе поставить в поход (11.11.2026).
    *
-   * Заказчик: «у родных снаряжение общее… В походе родные равноправно
-   * могут использовать снаряжение, но если один задействовал что-то,
-   * то второму нельзя». Поэтому каталог не сливается: `items` — мои вещи,
-   * здесь — вещи родных, и обе половины доступны **только в походе**.
-   * Мой вес (`totalWeightGrams`) чужие вещи не увеличивают.
+   * Раньше «доступный» значил «свой или родного»: вещь родного лежала
+   * в его каталоге, и в поход её ставили ссылкой на чужую строку. Теперь
+   * у каждого родного **свой клон** вещи (та же `gear_uid`), поэтому
+   * в поход ставится свой клон, а `owner_user_id` строки похода — владелец
+   * клона, то есть тот, кто её выставил. Чужая строка для человека больше
+   * не существует: 404, как любая чужая вещь.
    *
-   * **Полка одна и синтетическая.** Полки каталога личные; раскладывать
-   * чужую вещь по своим группам значило бы утверждать, что тип родного
-   * лежит в моей «Снаряге». В выборе снаряжения похода вещи родных стоят
-   * одной группой «Снаряжение родных», и подпись «· Анна» отделяет их
-   * от своих.
+   * Мягко удалённая вещь (`deleted_at`) не находится — иначе её можно было
+   * бы поставить в поход по старому id, хотя из каталога она исчезла.
    *
-   * Одноразовые вещи похода (`is_trip_only`) не отдаются: они не каталог,
-   * а строка конкретного похода, и «общей полки» у них нет.
-   */
-  async familyItems(userId: string): Promise<GearItemDto[]> {
-    const relatives = await this.users.familyMembers(userId);
-    if (relatives.length === 0) return [];
-
-    const byId = new Map(relatives.map((person) => [person.id, person.displayName]));
-
-    const items = await this.dataSource.manager.find(GearItem, {
-      where: { ownerUserId: In(relatives.map((person) => person.id)), isTripOnly: false },
-      relations: {
-        gearType: true,
-        attributes: { gearTypeAttribute: true },
-      },
-    });
-
-    for (const item of items) this.sortValues(item);
-
-    items.sort(
-      (left, right) =>
-        left.gearType.name.localeCompare(right.gearType.name, 'ru') ||
-        left.title.localeCompare(right.title, 'ru'),
-    );
-
-    return items.map((item) =>
-      GearItemDto.fromFamily(
-        item,
-        item.ownerUserId,
-        byId.get(item.ownerUserId) ?? 'Родной',
-      ),
-    );
-  }
-
-  /**
-   * Предмет каталога, доступный человеку: свой или родного (10.11.2026).
-   *
-   * Правило «чужой предмет не существует» осталось, но «чужой» теперь
-   * значит «не мой и не родного». Одноразовые вещи похода сюда не
-   * попадают: у них нет каталога, а в `trip_gear` они приходят ручкой
-   * `addManual`, а не этим путём.
-   *
-   * Возвращает имя владельца, если вещь родного, — чтобы экран сказал,
-   * чья она, а сервис в тексте ошибки не гадал.
+   * Возвращаемое имя владельца всегда `null`: оно осталось в сигнатуре,
+   * пока походные вызовы не переписаны (следующий шаг), и уходит вместе
+   * с ними.
    */
   async findAvailable(
     manager: EntityManager,
@@ -192,18 +148,17 @@ export class GearService {
     gearItemId: string,
   ): Promise<{ item: GearItem; ownerName: string | null } | null> {
     const item = await manager.findOne(GearItem, {
-      where: { id: gearItemId, isTripOnly: false },
+      where: {
+        id: gearItemId,
+        ownerUserId: userId,
+        isTripOnly: false,
+        deletedAt: IsNull(),
+      },
       relations: { gearType: true, attributes: { gearTypeAttribute: true } },
     });
     if (!item) return null;
-    if (item.ownerUserId === userId) return { item, ownerName: null };
 
-    const relative = (await this.users.familyMembers(userId)).find(
-      (person) => person.id === item.ownerUserId,
-    );
-    if (!relative) return null;
-
-    return { item, ownerName: relative.displayName };
+    return { item, ownerName: null };
   }
 
   /** Новый предмет каталога. */
@@ -275,8 +230,10 @@ export class GearService {
     const saved = await manager.save(
       manager.create(GearItem, {
         ownerUserId,
+        gearUid: randomUUID(),
+        originUserId: ownerUserId,
         gearTypeId: type.id,
-        sortOrder: await this.nextSortOrder(manager, ownerUserId, type.id),
+        sortOrder: await nextSortOrder(manager, ownerUserId, type.id),
         title,
         weightGrams: data.weightGrams ?? null,
         location: this.normalizeLocation(data.location),
@@ -296,6 +253,13 @@ export class GearService {
     if (!item) throw new NotFoundException('Предмет не найден');
 
     this.sortValues(item);
+
+    // Клоны в каталоги родных — в той же транзакции, что и сама вещь:
+    // «вещь добавлена, а у жены её нет» — недопустимое промежуточное
+    // состояние. Одноразовые вещи похода не клонируются.
+    if (!item.isTripOnly) {
+      await this.familyGear.syncClones(manager, item);
+    }
 
     return item;
   }
@@ -403,7 +367,7 @@ export class GearService {
         changes.gearTypeId = typeId;
         // Вещь переехала в группу нового типа — встаёт в её конец, иначе
         // оказалась бы посреди чужого порядка.
-        changes.sortOrder = await this.nextSortOrder(tx, userId, typeId);
+        changes.sortOrder = await nextSortOrder(tx, userId, typeId);
       }
 
       if (values !== null) await this.writeValues(tx, current.id, values);
@@ -414,36 +378,61 @@ export class GearService {
       if (Object.keys(changes).length > 0) {
         await tx.update(GearItem, { id: current.id }, changes);
       }
+
+      // Зеркало по активным клонам текущей компоненты: правка вещи у одного
+      // родного видна всем. `sort_order` и личная группа (через тип) —
+      // у каждого свои, они не зеркалятся.
+      await this.familyGear.mirror(
+        tx,
+        current,
+        changes,
+        typeChanged || values !== null,
+      );
     });
 
     return this.loadItem(manager, userId, String(id));
   }
 
   /**
-   * Удалить предмет.
+   * Удалить предмет — **мягко** и по всей текущей компоненте родных
+   * (11.11.2026).
    *
-   * Вещь, которая уже предложена в поход, удалить нельзя: в походе она
-   * ссылается на каталог (`trip_gear`), и «удалить молча» значило бы
-   * выдернуть палатку из подготовки, о которой договорились. Отвечаем
-   * 409 и говорим, что делать: сначала убрать её из похода.
+   * Заказчик: «удаление — `deleted_at` на клонах текущей компоненты;
+   * у бывшего остаётся его копия. Восстановления нет». Поэтому строка
+   * не исчезает физически: история походов ссылается на неё, а физическое
+   * удаление выдернуло бы вещь из прошлых походов (каскады) или вообще
+   * не дало бы удалить вещь, которая где-то ездила (`trip_gear` — RESTRICT).
    *
-   * Значения характеристик уходят каскадом (`ON DELETE CASCADE`) —
-   * отдельного удаления не нужно.
+   * **Блокирует только живой поход.** Если хоть один из удаляемых клонов
+   * стоит в решённом (`decided`), не отменённом и ещё не закончившемся
+   * походе — 409 с названием похода: «сначала уберите её из подготовки».
+   * Предложенная в планирующем походе вещь не блокирует (поход ещё не
+   * решён), а прошедший поход не блокирует по решению заказчика.
+   *
+   * У бывшего родного его копия остаётся активной: компонента уже другая,
+   * и его каталог мы не трогаем.
    */
   async remove(userId: string, id: number): Promise<void> {
-    const manager = this.dataSource.manager;
-    const item = await this.findOwned(manager, userId, id);
+    await this.dataSource.transaction(async (tx) => {
+      const item = await this.findOwned(tx, userId, id);
+      const componentIds = (await this.familyGear.componentOf(userId, tx))
+        .filter((person) => !person.isVirtual)
+        .map((person) => person.id);
 
-    const usedInTrips = await manager.count(TripGear, {
-      where: { gearItemId: item.id },
-    });
-    if (usedInTrips > 0) {
-      throw new ConflictException(
-        'Предмет уже едет в походе — сначала уберите его из снаряжения похода',
+      const blocked = await this.familyGear.blockingTrip(
+        tx,
+        item.gearUid,
+        componentIds,
       );
-    }
+      if (blocked) {
+        throw new ConflictException(
+          `Вещь стоит в походе «${blocked.title}», который ещё не закончился, — ` +
+            'сначала уберите её из снаряжения похода',
+        );
+      }
 
-    await manager.delete(GearItem, { id: item.id });
+      await this.familyGear.softDelete(tx, item.gearUid, componentIds);
+    });
   }
 
   /**
@@ -471,9 +460,13 @@ export class GearService {
     await this.dataSource.transaction(async (tx) => {
       // Группа вещи выводится из её типа: соседи — вещи всех типов,
       // которые человек сложил в эту группу.
-      const typeIds = await this.typeIdsOfTypeGroup(tx, userId, item.gearTypeId);
+      const typeIds = await typeIdsOfTypeGroup(tx, userId, item.gearTypeId);
       const siblings = await tx.find(GearItem, {
-        where: { ownerUserId: userId, gearTypeId: In(typeIds) },
+        where: {
+          ownerUserId: userId,
+          gearTypeId: In(typeIds),
+          deletedAt: IsNull(),
+        },
         order: { sortOrder: 'ASC', id: 'ASC' },
       });
       const index = siblings.findIndex((row) => row.id === item.id);
@@ -524,56 +517,6 @@ export class GearService {
         'Тип снаряжения в архиве — выберите действующий',
       );
     }
-  }
-
-  /**
-   * Следующая позиция в конце группы: «добавил — встало вниз».
-   *
-   * Группа выводится из типа, поэтому максимум считается по всем вещам
-   * типов, сложенных в ту же группу. Считается по максимуму, а не по
-   * количеству: вещи удаляют, и позиция `count + 1` однажды совпала бы
-   * с уже занятой.
-   */
-  private async nextSortOrder(
-    manager: EntityManager,
-    ownerUserId: string,
-    typeId: number,
-  ): Promise<number> {
-    const typeIds = await this.typeIdsOfTypeGroup(manager, ownerUserId, typeId);
-    const row: { max: string | null } | undefined = await manager
-      .createQueryBuilder(GearItem, 'item')
-      .select('MAX(item.sort_order)', 'max')
-      .where('item.owner_user_id = :ownerUserId', { ownerUserId })
-      .andWhere('item.gear_type_id IN (:...typeIds)', { typeIds })
-      .getRawOne();
-
-    return Number(row?.max ?? 0) + SORT_STEP;
-  }
-
-  /**
-   * Типы, которые у человека лежат в одной группе с указанным типом.
-   *
-   * Для одноразовой вещи виртуального участника раскладки может не быть
-   * вовсе (каталога у него нет) — тогда группа — он сам: порядок считается
-   * внутри типа, а в каталог такая вещь всё равно не попадает.
-   */
-  private async typeIdsOfTypeGroup(
-    manager: EntityManager,
-    ownerUserId: string,
-    typeId: number,
-  ): Promise<number[]> {
-    const mapping = await manager.findOne(GearTypeGroup, {
-      where: { ownerUserId, gearTypeId: typeId },
-    });
-    if (!mapping) return [typeId];
-
-    const siblings = await manager.find(GearTypeGroup, {
-      where: { ownerUserId, groupId: mapping.groupId },
-    });
-
-    return siblings.length > 0
-      ? siblings.map((row) => row.gearTypeId)
-      : [typeId];
   }
 
   /** Группа вещи в раскладке человека; без раскладки — «Прочее». */
@@ -767,7 +710,12 @@ export class GearService {
   ): Promise<GearItemDto> {
     const grouping = await this.gearGroups.ensure(userId);
     const item = await manager.findOne(GearItem, {
-      where: { id, ownerUserId: userId, isTripOnly: false },
+      where: {
+        id,
+        ownerUserId: userId,
+        isTripOnly: false,
+        deletedAt: IsNull(),
+      },
       relations: {
         gearType: true,
         attributes: { gearTypeAttribute: true },
@@ -792,7 +740,12 @@ export class GearService {
     id: number,
   ): Promise<GearItem> {
     const item = await manager.findOne(GearItem, {
-      where: { id: String(id), ownerUserId: userId, isTripOnly: false },
+      where: {
+        id: String(id),
+        ownerUserId: userId,
+        isTripOnly: false,
+        deletedAt: IsNull(),
+      },
     });
     if (!item) throw new NotFoundException('Предмет не найден');
 
@@ -803,7 +756,7 @@ export class GearService {
   private toList(
     items: GearItem[],
     grouping: UserGrouping,
-  ): Omit<GearListDto, 'familyItems'> {
+  ): GearListDto {
     let totalWeightGrams = 0;
     let itemsWithoutWeight = 0;
 

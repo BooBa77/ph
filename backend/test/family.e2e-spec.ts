@@ -305,12 +305,20 @@ describe('Родные и люди без аккаунта (e2e)', () => {
     }).expect(400);
   });
 
-  it('убрать из родных может любая сторона', async () => {
+  it('разорвать одну связь нельзя: выход — из всей семьи', async () => {
+    // С 11.11.2026 родство — строгая пара, а семья — компонента связей.
+    // «Удалить одного родного» больше нет: это оставило бы полу-связи.
     await call(
       'delete',
       `/api/users/me/family/${annaId}`,
       ivanToken,
-    ).expect(204);
+    ).expect(409);
+
+    expect((await familyOf(annaToken)).map((row) => row.userId)).toEqual([
+      ivanId,
+    ]);
+
+    await call('delete', '/api/users/me/family', ivanToken).expect(204);
 
     expect(await familyOf(annaToken)).toEqual([]);
     expect(await familyOf(ivanToken)).toEqual([]);

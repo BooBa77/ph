@@ -10,32 +10,32 @@ import { EmailCodeService } from './../src/email/services/email-code.service';
 import { SmtpService } from './../src/email/services/smtp.service';
 
 /**
- * Общее снаряжение родных (e2e) — 10.11.2026, вечер.
+ * Семейный каталог: клоны вещи у родных (e2e) — 11.11.2026.
  *
- * Заказчик: «у родных снаряжение общее… В походе родные равноправно могут
- * использовать снаряжение, но если один задействовал что-то, то второму
- * нельзя, нельзя один спальник обоим взять. Кто выставил снарягу для
- * общественных нужд, тот считается и владельцем».
+ * Заказчик: «Один физический предмет — один неизменный `gear_uid`. В каталоге
+ * каждого члена семьи лежит свой клон с тем же `gear_uid`… Правка обновляет
+ * все активные клоны `gear_uid` в текущей компоненте… Удаление — `deleted_at`
+ * на клонах текущей компоненты; у бывшего остаётся его копия».
  *
- * Проверяем ровно четыре следствия, которых не видно в unit-тестах:
+ * Здесь проверяются следствия, которых не видно в unit-тестах:
  *
- * 1. **Каталог остаётся личным, а общая полка — отдельной.** `GET /gear`
- *    отдаёт мои вещи в `items`, вещи родных — в `familyItems` с именем
- *    владельца; чужое (не родного) туда не попадает.
- * 2. **В поход вещь родного берут как свою.** Предложить её в «Берём»,
- *    взять в «Взял» и положить в «Спальник» может любой из родных.
- * 3. **Владелец строки похода — тот, кто выставил,** даже если вещь лежит
- *    в каталоге родного: `ownerUserId` строки — автор запроса.
- * 4. **Одна вещь — одно использование.** Второй родной получает 409:
- *    и в «Взял», и в «Спальнике», и при попытке предложить занятую вещь
- *    в общественное снаряжение. Это правило стоит и в базе (уникальные
- *    индексы по `trip_id, gear_item_id`), и в сервисе (человеческий текст).
+ * 1. добавленная вещь сразу появляется клоном у родного, с тем же `gear_uid`
+ *    и тем же автором (`origin_user_id`);
+ * 2. правка (включая характеристики) зеркалится по компоненте, в какую
+ *    сторону её ни сделай;
+ * 3. удаление — мягкое и по компоненте: вещь исчезает из обоих каталогов,
+ *    но строки походов остаются (проверяется `deleted_at`, а не отсутствием
+ *    строки);
+ * 4. вещь в живом решённом походе удалить нельзя (409), а после окончания
+ *    похода — можно;
+ * 5. выход из семьи рвёт все связи, но **не** удаляет клоны: копии остаются,
+ *    а правки перестают зеркалиться;
+ * 6. в поход ставится свой клон: вещь родного по её id не предлагается (404).
  *
- * Поход, типы и вещи тест заводит напрямую в базе: правила состава
- * и справочника проверены в `trips.e2e-spec.ts` и `gear-types.e2e-spec.ts`,
- * а здесь важна общая полка семьи.
+ * Поход, типы и объект тест заводит напрямую в базе: правила состава
+ * и справочника проверены в `trips.e2e-spec.ts` и `gear-types.e2e-spec.ts`.
  */
-describe('Общее снаряжение родных (e2e)', () => {
+describe('Семейный каталог: клоны вещи (e2e)', () => {
   let app: NestExpressApplication;
   let dataSource: DataSource;
 
@@ -44,28 +44,24 @@ describe('Общее снаряжение родных (e2e)', () => {
   let ivanId: string;
   let ivanToken: string;
   let strangerId: string;
+  let strangerToken: string;
 
   let objectId: string;
   let tripId: string;
 
   let tentTypeId: number;
-  let bagTypeId: number;
 
-  /** Мои вещи Анны и Ивана: палатки и спальники. */
+  /** Мои вещи Анны и клон Ивана: ключ один, строки разные. */
   let annaTentId: string;
-  let ivanTentId: string;
-  let annaBagId: string;
-  let ivanBagId: string;
-  /** Вещь постороннего: родным она не принадлежит. */
-  let strangerTentId: string;
+  let ivanTentCloneId: string;
 
   const realUserIds: string[] = [];
 
   let lastCode: string | null = null;
 
-  const annaEmail = `family-gear-e2e-anna-${Date.now()}@example.com`;
-  const ivanEmail = `family-gear-e2e-ivan-${Date.now()}@example.com`;
-  const strangerEmail = `family-gear-e2e-stranger-${Date.now()}@example.com`;
+  const annaEmail = `family-clones-e2e-anna-${Date.now()}@example.com`;
+  const ivanEmail = `family-clones-e2e-ivan-${Date.now()}@example.com`;
+  const strangerEmail = `family-clones-e2e-stranger-${Date.now()}@example.com`;
 
   async function login(mail: string): Promise<{ token: string; id: string }> {
     await request(app.getHttpServer())
@@ -98,11 +94,6 @@ describe('Общее снаряжение родных (e2e)', () => {
     return body === undefined ? agent : agent.send(body as object);
   }
 
-  /**
-   * Тип снаряжения — прямой вставкой: справочник типов проверяется
-   * в своей спеке, а здесь нужны два стабильных кода. `ON CONFLICT`
-   * оставляет прежнюю строку, поэтому повторный прогон не спорит.
-   */
   async function makeType(code: string, name: string): Promise<number> {
     await dataSource.query(
       `INSERT INTO gear_types (code, name) VALUES ($1, $2)
@@ -117,27 +108,25 @@ describe('Общее снаряжение родных (e2e)', () => {
     return rows[0].id;
   }
 
-  /** Предмет каталога: имя, тип и владелец. */
-  async function makeItem(
-    ownerUserId: string,
-    gearTypeId: number,
-    title: string,
-  ): Promise<string> {
-    const rows: Array<{ id: string }> = await dataSource.query(
-      `INSERT INTO gear_items (owner_user_id, gear_type_id, title)
-       VALUES ($1, $2, $3) RETURNING id`,
-      [ownerUserId, gearTypeId, title],
+  /** Характеристика типа: «вместимость» числом, чтобы проверить зеркало. */
+  async function makeAttribute(typeId: number): Promise<void> {
+    await dataSource.query(
+      `INSERT INTO gear_type_attributes (gear_type_id, code, name, value_kind)
+       VALUES ($1, 'seats', 'Мест', 'number')
+       ON CONFLICT DO NOTHING`,
+      [typeId],
     );
-
-    return rows[0].id;
   }
 
-  /** Поход, где оба родных идут: только в походе вещь родного доступна. */
-  async function makeTrip(): Promise<string> {
+  /** Поход, где оба родных идут; даты — чтобы решённый поход был живым. */
+  async function makeTrip(status: 'planning' | 'decided'): Promise<string> {
     const rows: Array<{ id: string }> = await dataSource.query(
-      `INSERT INTO trips (organizer_user_id, goal_object_id, status)
-       VALUES ($1, $2, 'planning') RETURNING id`,
-      [annaId, objectId],
+      `INSERT INTO trips
+         (organizer_user_id, goal_object_id, status, announcement, starts_at, ends_at)
+       VALUES ($1, $2, $3, 'Витязь', now() + interval '1 day',
+               now() + interval '2 days')
+       RETURNING id`,
+      [annaId, objectId, status],
     );
     const id = rows[0].id;
 
@@ -150,9 +139,54 @@ describe('Общее снаряжение родных (e2e)', () => {
     return id;
   }
 
-  /** Имя в каталоге — по нему экран подписывает чужую вещь. */
-  async function rename(token: string, displayName: string): Promise<void> {
-    await call('patch', '/api/users/me', token, { displayName }).expect(200);
+  /** Строка каталога как она лежит в базе: ключ, автор, мягкое удаление. */
+  async function gearRow(id: string) {
+    const rows: Array<{
+      id: string;
+      gear_uid: string;
+      origin_user_id: string;
+      deleted_at: Date | null;
+      title: string;
+      weight_grams: number | null;
+      location: string | null;
+      note: string | null;
+    }> = await dataSource.query(
+      `SELECT id, gear_uid, origin_user_id, deleted_at, title, weight_grams,
+              location, note
+         FROM gear_items
+        WHERE id = $1`,
+      [id],
+    );
+
+    return rows[0];
+  }
+
+  /** Вещь из ответа `GET /gear` по названию. */
+  async function itemByTitle(
+    token: string,
+    title: string,
+  ): Promise<{
+    id: string;
+    title: string;
+    weightGrams: number | null;
+    note: string | null;
+    location: string | null;
+    attributes: Array<{ code: string; value: number | string | boolean }>;
+  }> {
+    const list = await call('get', '/api/gear', token).expect(200);
+    const item = (
+      list.body.items as Array<{
+        id: string;
+        title: string;
+        weightGrams: number | null;
+        note: string | null;
+        location: string | null;
+        attributes: Array<{ code: string; value: number | string | boolean }>;
+      }>
+    ).find((row) => row.title === title);
+
+    if (!item) throw new Error(`В каталоге нет вещи «${title}»`);
+    return item;
   }
 
   async function familyOf(token: string) {
@@ -191,27 +225,19 @@ describe('Общее снаряжение родных (e2e)', () => {
 
     const stranger = await login(strangerEmail);
     strangerId = stranger.id;
+    strangerToken = stranger.token;
 
     realUserIds.push(annaId, ivanId, strangerId);
-
-    await rename(annaToken, 'Анна');
-    await rename(ivanToken, 'Иван');
 
     objectId = (
       await dataSource.query(
         `INSERT INTO objects (name, type)
-         VALUES ('Озеро для общих вещей', 'озеро') RETURNING id`,
+         VALUES ('Озеро для семейного каталога', 'озеро') RETURNING id`,
       )
     )[0].id;
 
-    tentTypeId = await makeType('e2e_family_tent', 'Палатка семьи');
-    bagTypeId = await makeType('e2e_family_bag', 'Спальник семьи');
-
-    annaTentId = await makeItem(annaId, tentTypeId, 'Палатка Анны');
-    ivanTentId = await makeItem(ivanId, tentTypeId, 'Палатка Ивана');
-    annaBagId = await makeItem(annaId, bagTypeId, 'Спальник Анны');
-    ivanBagId = await makeItem(ivanId, bagTypeId, 'Спальник Ивана');
-    strangerTentId = await makeItem(strangerId, tentTypeId, 'Палатка постороннего');
+    tentTypeId = await makeType('e2e_family_clone_tent', 'Палатка семьи');
+    await makeAttribute(tentTypeId);
 
     // Родство по-настоящему: запрос и согласие, как в «Контактах».
     await call('post', '/api/users/me/family', annaToken, {
@@ -222,8 +248,6 @@ describe('Общее снаряжение родных (e2e)', () => {
       `/api/users/me/family/${annaId}/accept`,
       ivanToken,
     ).expect(200);
-
-    tripId = await makeTrip();
   });
 
   afterAll(async () => {
@@ -231,12 +255,11 @@ describe('Общее снаряжение родных (e2e)', () => {
       await dataSource.query('DELETE FROM trips WHERE id = $1', [tripId]);
       // Вещи — раньше людей: `gear_items.owner_user_id` держит RESTRICT.
       await dataSource.query(
-        `DELETE FROM gear_items
-          WHERE id = ANY($1::bigint[])`,
-        [[annaTentId, ivanTentId, annaBagId, ivanBagId, strangerTentId]],
+        'DELETE FROM gear_items WHERE owner_user_id = ANY($1::uuid[])',
+        [realUserIds],
       );
       await dataSource.query(
-        `DELETE FROM gear_types WHERE code IN ('e2e_family_tent', 'e2e_family_bag')`,
+        `DELETE FROM gear_types WHERE code = 'e2e_family_clone_tent'`,
       );
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
         realUserIds,
@@ -246,153 +269,167 @@ describe('Общее снаряжение родных (e2e)', () => {
     await app?.close();
   });
 
-  // ─────────────────────────── общая полка ───────────────────────────
-
-  it('родство подтверждено, поход общий', async () => {
+  it('родство подтверждено', async () => {
     expect((await familyOf(annaToken)).map((row) => row.userId)).toEqual([
       ivanId,
     ]);
   });
 
-  it('GET /gear отдаёт вещи родных отдельным списком и с именем владельца', async () => {
-    const anna = await call('get', '/api/gear', annaToken).expect(200);
+  // ───────────────────────────── клоны ─────────────────────────────
 
-    const mine = (anna.body.items as Array<{ id: string }>).map((row) => row.id);
-    expect(mine).toContain(annaTentId);
-    expect(mine).toContain(annaBagId);
-    expect(mine).not.toContain(ivanTentId);
+  it('новая вещь Анны встаёт Ивану клоном с тем же ключом и тем же автором', async () => {
+    const created = await call('post', '/api/gear', annaToken, {
+      typeId: tentTypeId,
+      title: 'Палатка семьи',
+      weightGrams: 2400,
+      location: 'балкон',
+      note: 'проклеена',
+      attributes: { seats: 3 },
+    }).expect(201);
 
-    const family = anna.body.familyItems as Array<{
-      id: string;
-      ownerUserId: string;
-      ownerName: string;
-      groupName: string;
-    }>;
-    const ivanTent = family.find((row) => row.id === ivanTentId);
-    expect(ivanTent?.ownerUserId).toBe(ivanId);
-    expect(ivanTent?.ownerName).toBe('Иван');
-    // Полка синтетическая: чужие вещи не разложены по моим группам.
-    expect(ivanTent?.groupName).toBe('Снаряжение родных');
+    annaTentId = created.body.id as string;
 
-    // Вещь постороннего в семью не попала.
-    expect(family.map((row) => row.id)).not.toContain(strangerTentId);
+    const clone = await itemByTitle(ivanToken, 'Палатка семьи');
+    ivanTentCloneId = clone.id;
+
+    expect(clone.id).not.toBe(annaTentId);
+    expect(clone.weightGrams).toBe(2400);
+    expect(clone.attributes.find((row) => row.code === 'seats')?.value).toBe(3);
+
+    const annaRow = await gearRow(annaTentId);
+    const ivanRow = await gearRow(ivanTentCloneId);
+    expect(ivanRow.gear_uid).toBe(annaRow.gear_uid);
+    expect(ivanRow.origin_user_id).toBe(annaId);
+    // У Анны ключ тот же: это одна и та же физическая вещь.
+    expect(annaRow.origin_user_id).toBe(annaId);
   });
 
-  it('вещи постороннего родному недоступны — 404', async () => {
+  it('вещь постороннему не видна', async () => {
+    const stranger = await call('get', '/api/gear', strangerToken).expect(200);
+
+    expect(stranger.body.items).toEqual([]);
+  });
+
+  it('правка клона у Ивана зеркалится Анне — включая характеристики', async () => {
+    await call('patch', `/api/gear/${ivanTentCloneId}`, ivanToken, {
+      title: 'Палатка на четверых',
+      weightGrams: 2600,
+      location: 'гараж',
+      note: 'новая молния',
+      attributes: { seats: 4 },
+    }).expect(200);
+
+    const anna = await itemByTitle(annaToken, 'Палатка на четверых');
+    expect(anna.id).toBe(annaTentId);
+    expect(anna.weightGrams).toBe(2600);
+    expect(anna.location).toBe('гараж');
+    expect(anna.note).toBe('новая молния');
+    expect(anna.attributes.find((row) => row.code === 'seats')?.value).toBe(4);
+  });
+
+  it('в поход ставится свой клон: вещь родного по её id — 404', async () => {
+    tripId = await makeTrip('planning');
+
+    // Анна не может предложить вещь Ивана: в её каталоге лежит свой клон.
     await call('post', `/api/trips/${tripId}/gear`, annaToken, {
-      gearItemId: Number(strangerTentId),
+      gearItemId: Number(ivanTentCloneId),
     }).expect(404);
-  });
 
-  // ─────────────────────── общественное снаряжение ───────────────────────
-
-  it('родной предлагает вещь родного в «Берём», и владельцем становится он сам', async () => {
+    // А свой клон — может.
     const created = await call(
       'post',
       `/api/trips/${tripId}/gear`,
       annaToken,
-      { gearItemId: Number(ivanTentId) },
+      { gearItemId: Number(annaTentId) },
     ).expect(201);
-
-    // «Кто выставил снарягу для общественных нужд, тот считается и владельцем».
     expect(created.body.ownerUserId).toBe(annaId);
-    expect(created.body.title).toBe('Палатка Ивана');
 
-    const list = await call('get', `/api/trips/${tripId}/gear`, ivanToken).expect(
-      200,
+    await dataSource.query('DELETE FROM trip_gear WHERE trip_id = $1', [
+      tripId,
+    ]);
+  });
+
+  it('удаление мягкое и по компоненте: вещь уходит из обоих каталогов', async () => {
+    await call('delete', `/api/gear/${ivanTentCloneId}`, ivanToken).expect(204);
+
+    await expect(itemByTitle(annaToken, 'Палатка на четверых')).rejects.toThrow(
+      'нет вещи',
     );
-    const row = (list.body.items as Array<{ gearItemId: string; ownerUserId: string }>).find(
-      (item) => item.gearItemId === ivanTentId,
+    await expect(
+      itemByTitle(ivanToken, 'Палатка на четверых'),
+    ).rejects.toThrow('нет вещи');
+
+    // Строка не исчезла: история походов ссылается на неё.
+    const annaRow = await gearRow(annaTentId);
+    const ivanRow = await gearRow(ivanTentCloneId);
+    expect(annaRow.deleted_at).not.toBeNull();
+    expect(ivanRow.deleted_at).not.toBeNull();
+  });
+
+  it('вещь в живом решённом походе удалить нельзя, после окончания — можно', async () => {
+    const created = await call('post', '/api/gear', annaToken, {
+      typeId: tentTypeId,
+      title: 'Походная палатка',
+    }).expect(201);
+    const annaItemId = created.body.id as string;
+    const ivanClone = await itemByTitle(ivanToken, 'Походная палатка');
+
+    await dataSource.query(
+      `UPDATE trips SET status = 'decided', cancelled_at = NULL WHERE id = $1`,
+      [tripId],
     );
-    expect(row?.ownerUserId).toBe(annaId);
-  });
 
-  it('занятую в «Берём» вещь второй родной в «Взял» не возьмёт — 409', async () => {
-    const response = await call(
-      'post',
-      `/api/trips/${tripId}/gear/personal`,
+    await call('post', `/api/trips/${tripId}/gear`, ivanToken, {
+      gearItemId: Number(ivanClone.id),
+    }).expect(201);
+
+    const blocked = await call(
+      'delete',
+      `/api/gear/${ivanClone.id}`,
       ivanToken,
-      { gearItemId: Number(ivanTentId) },
     ).expect(409);
+    expect(blocked.body.message).toContain('Витязь');
 
-    expect(response.body.message).toContain('общественном');
-  });
-
-  // ─────────────────────────── личные вещи ───────────────────────────
-
-  it('спальник родного берут в «Взял» как свою вещь', async () => {
-    const created = await call(
-      'post',
-      `/api/trips/${tripId}/gear/personal`,
-      annaToken,
-      { gearItemId: Number(ivanBagId) },
-    ).expect(201);
-
-    expect(created.body.gearItemId).toBe(ivanBagId);
-    expect(created.body.title).toBe('Спальник Ивана');
-  });
-
-  it('ту же вещь второй родной в «Взял» не возьмёт — 409', async () => {
-    const response = await call(
-      'post',
-      `/api/trips/${tripId}/gear/personal`,
-      ivanToken,
-      { gearItemId: Number(ivanBagId) },
-    ).expect(409);
-
-    expect(response.body.message).toContain('родной');
-  });
-
-  it('вещь из «Взял» не встаёт в «Спальник» — 409', async () => {
-    await call(
-      'post',
-      `/api/trips/${tripId}/route/sleeping`,
-      ivanToken,
-      { gearItemId: ivanBagId },
-    ).expect(409);
-  });
-
-  it('один спальник двоим не взять: второй родной получает 409', async () => {
-    // Свой спальник Анны — в её «Спальник»: это обычный путь, не родной.
-    await call(
-      'post',
-      `/api/trips/${tripId}/route/sleeping`,
-      annaToken,
-      { gearItemId: annaBagId },
-    ).expect(200);
-
-    // Иван видит спальник Анны в общей полке и пробует взять его себе.
-    const response = await call(
-      'post',
-      `/api/trips/${tripId}/route/sleeping`,
-      ivanToken,
-      { gearItemId: annaBagId },
-    ).expect(409);
-
-    expect(response.body.message).toContain('родной');
-
-    // Повтор своего же спальника ничего не ломает — вкладка возвращается.
-    await call(
-      'post',
-      `/api/trips/${tripId}/route/sleeping`,
-      annaToken,
-      { gearItemId: annaBagId },
-    ).expect(200);
-  });
-
-  it('в «Спальнике» у каждого свои строки: чужих не видно', async () => {
-    const anna = await call('get', `/api/trips/${tripId}/route`, annaToken).expect(
-      200,
+    // Поход закончился — вещь больше не занята, удаление разрешено.
+    await dataSource.query(
+      `UPDATE trips
+          SET actual_started_at = now() - interval '2 days',
+              actual_finished_at = now() - interval '1 day'
+        WHERE id = $1`,
+      [tripId],
     );
-    const ivan = await call('get', `/api/trips/${tripId}/route`, ivanToken).expect(
-      200,
+
+    await call('delete', `/api/gear/${ivanClone.id}`, ivanToken).expect(204);
+    expect((await gearRow(annaItemId)).deleted_at).not.toBeNull();
+  });
+
+  // ─────────────────────────── выход из семьи ───────────────────────────
+
+  it('выход из семьи рвёт связи, но оставляет клоны и прекращает зеркало', async () => {
+    const created = await call('post', '/api/gear', annaToken, {
+      typeId: tentTypeId,
+      title: 'Палатка до развода',
+    }).expect(201);
+    const annaItemId = created.body.id as string;
+    const ivanClone = await itemByTitle(ivanToken, 'Палатка до развода');
+
+    await call('delete', '/api/users/me/family', ivanToken).expect(204);
+
+    expect(await familyOf(ivanToken)).toEqual([]);
+    expect(await familyOf(annaToken)).toEqual([]);
+
+    // Копия у Ивана осталась.
+    expect((await itemByTitle(ivanToken, 'Палатка до развода')).id).toBe(
+      ivanClone.id,
     );
+
+    // Компонента распалась — правка Анны до Ивана не доезжает.
+    await call('patch', `/api/gear/${annaItemId}`, annaToken, {
+      weightGrams: 3000,
+    }).expect(200);
 
     expect(
-      (anna.body.sleeping as Array<{ gearItemId: string }>).map(
-        (row) => row.gearItemId,
-      ),
-    ).toEqual([annaBagId]);
-    expect(ivan.body.sleeping).toEqual([]);
+      (await itemByTitle(ivanToken, 'Палатка до развода')).weightGrams,
+    ).toBeNull();
   });
 });

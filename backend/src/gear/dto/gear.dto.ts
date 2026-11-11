@@ -128,31 +128,9 @@ export class GearItemDto {
   @ApiProperty({ description: 'Создан', example: '2026-10-21T08:00:00.000Z' })
   createdAt: string;
 
-  /**
-   * Чья вещь, если это снаряжение родного (10.11.2026, вечер).
-   *
-   * У своих вещей оба поля `null`: каталог отвечает на вопрос «что у меня»,
-   * и подписывать каждую строку своим же именем незачем. Поля заполняются
-   * только в `familyItems` — вещах родных, которые можно взять в поход.
-   */
-  @ApiProperty({
-    description: 'Владелец — родной. null — вещь моя',
-    nullable: true,
-    example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
-  })
-  ownerUserId: string | null;
-
-  @ApiProperty({
-    description: 'Имя родного-владельца. null — вещь моя',
-    nullable: true,
-    example: 'Анна',
-  })
-  ownerName: string | null;
-
   static from(
     item: GearItem,
     group: Pick<GearGroup, 'id' | 'templateCode' | 'name'>,
-    owner: { id: string; name: string } | null = null,
   ): GearItemDto {
     return {
       id: item.id,
@@ -174,30 +152,7 @@ export class GearItemDto {
         GearItemAttributeDto.from(row),
       ),
       createdAt: item.createdAt.toISOString(),
-      ownerUserId: owner?.id ?? null,
-      ownerName: owner?.name ?? null,
     };
-  }
-
-  /**
-   * Вещь родного: та же форма, но отдельная полка.
-   *
-   * Полка **синтетическая** (`family`, «Снаряжение родных»): полки каталога
-   * личные, и раскладывать чужую вещь по своим группам значило бы делать
-   * вид, что тип родного лежит в моей «Снаряге». В выборе снаряжения похода
-   * вещи родных стоят одной группой в конце списка — их видно и не путают
-   * со своими.
-   */
-  static fromFamily(
-    item: GearItem,
-    ownerUserId: string,
-    ownerName: string,
-  ): GearItemDto {
-    return GearItemDto.from(
-      item,
-      { id: 0, templateCode: 'family', name: 'Снаряжение родных' },
-      { id: ownerUserId, name: ownerName },
-    );
   }
 }
 
@@ -211,21 +166,6 @@ export class GearItemDto {
 export class GearListDto {
   @ApiProperty({ description: 'Предметы', type: [GearItemDto] })
   items: GearItemDto[];
-
-  /**
-   * Снаряжение родных (10.11.2026, вечер).
-   *
-   * Каталог остаётся **личным**: `items` — «что есть у меня», и правки
-   * с удалением работают только по нему. Родные вещи приходят отдельным
-   * списком и нужны там, где снаряжение используется, — в выборе вещи
-   * для похода. В сумму `totalWeightGrams` они не входят: это не мой
-   * рюкзак, а общая полка семьи.
-   */
-  @ApiProperty({
-    description: 'Вещи родных — для выбора в походе. В мой вес не входят',
-    type: [GearItemDto],
-  })
-  familyItems: GearItemDto[];
 
   @ApiProperty({
     description: 'Сумма известных весов, граммы',

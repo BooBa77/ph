@@ -40,4 +40,12 @@ export type FamilyLinkStatus = (typeof FAMILY_LINK_STATUSES)[number];
 export interface FamilyPerson {
   id: string;
   displayName: string;
+  /**
+   * Человек без аккаунта (11.11.2026).
+   *
+   * Нужен семейному каталогу: клоны вещей создаются только живым родным,
+   * у виртуального каталога нет. В «Контактах» флаг уже приходит другим
+   * полем, здесь он нужен правилу, а не экрану.
+   */
+  isVirtual: boolean;
 }

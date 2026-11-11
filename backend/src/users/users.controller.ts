@@ -367,11 +367,32 @@ export class UsersController {
     );
   }
 
-  /** Убрать из родных — или отменить свой запрос, или отклонить входящий. */
+  /**
+   * Выйти из семьи — разорвать все семейные связи.
+   *
+   * Отдельная ручка без `:userId` намеренно: разрыв одной пары внутри
+   * компоненты оставил бы «полу-связи», а заказчик решил, что выход —
+   * всегда целиком (11.11.2026). Каталог не трогается: у каждого остаётся
+   * его копия вещи.
+   */
+  @Delete('me/family')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Выйти из семьи — все связи' })
+  @ApiNoContentResponse({ description: 'Семейных связей больше нет' })
+  async leaveFamily(@CurrentUser() authUser: AuthUser): Promise<void> {
+    return this.usersService.leaveFamily(authUser.id);
+  }
+
+  /**
+   * Отменить свою заявку в родные.
+   *
+   * Принятую связь эта ручка не разрывает (409): выйти из семьи можно
+   * только целиком. Отказ на входящую заявку — `POST …/decline`.
+   */
   @Delete('me/family/:userId')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Убрать человека из родных' })
-  @ApiNoContentResponse({ description: 'Связи больше нет' })
+  @ApiOperation({ summary: 'Отменить заявку в родные' })
+  @ApiNoContentResponse({ description: 'Заявки больше нет' })
   async removeFamilyMember(
     @CurrentUser() authUser: AuthUser,
     @Param('userId', ParseUUIDPipe) userId: string,

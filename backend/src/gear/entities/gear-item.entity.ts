@@ -3,6 +3,7 @@ import {
   Column,
   CreateDateColumn,
   Entity,
+  Generated,
   Index,
   JoinColumn,
   ManyToOne,
@@ -68,6 +69,11 @@ import { GearType } from './gear-type.entity';
  * не «одна вещь на тип», а обычный список предметов.
  */
 @Entity('gear_items')
+// Порядок колонок — как в таблице (`owner_user_id` заведён раньше
+// `gear_uid`): TypeORM сравнивает индексы по порядку колонок в `pg_attribute`,
+// и обратный порядок давал бы вечный дрейф `schema:log`.
+@Index('UQ_gear_items_uid_owner', ['ownerUserId', 'gearUid'], { unique: true })
+@Index('IDX_gear_items_gear_uid', ['gearUid'])
 @Index('IDX_gear_items_owner_type', ['ownerUserId', 'gearTypeId', 'id'])
 @Index('IDX_gear_items_owner_trip_only', ['ownerUserId', 'isTripOnly'])
 @Index('IDX_gear_items_owner_type_sort', [
@@ -102,6 +108,58 @@ export class GearItem {
     foreignKeyConstraintName: 'FK_gear_items_owner',
   })
   owner: User;
+
+  /**
+   * Ключ **физической** вещи, общий для всех её клонов (11.11.2026).
+   *
+   * Заказчик: «у родных снаряжение общее». С 11.11.2026 общее — это не
+   * доступ к чужой строке, а **свой клон** в каталоге каждого родного:
+   * та же палатка лежит у Анны и у Ивана двумя строками с одним `gear_uid`.
+   * Ключ не меняется никогда — ни при объединении семьи, ни при выходе
+   * из неё, ни при разводе: по нему находятся все клоны вещи.
+   *
+   * `DEFAULT gen_random_uuid()` — для сырых вставок (тесты, инварианты);
+   * сервис выдаёт ключ сам и клонам передаёт ключ источника.
+   */
+  @Generated('uuid')
+  @Column({
+    name: 'gear_uid',
+    type: 'uuid',
+  })
+  gearUid: string;
+
+  /**
+   * Кто вещь завёл (11.11.2026).
+   *
+   * Для клона это автор оригинала, а не владелец клона: так видно, чья это
+   * вещь. Нужен будущей заявке на объединение семьи: «for each origin-вещь
+   * каждой стороны» — upsert клонов по автору. У существующих вещей
+   * совпадает с владельцем.
+   */
+  @Column({ name: 'origin_user_id', type: 'uuid' })
+  originUserId: string;
+
+  @ManyToOne(() => User, { onDelete: 'RESTRICT' })
+  @JoinColumn({
+    name: 'origin_user_id',
+    foreignKeyConstraintName: 'FK_gear_items_origin',
+  })
+  originUser: User;
+
+  /**
+   * Мягкое удаление (11.11.2026): вещь убрана из каталога, но осталась
+   * в истории походов.
+   *
+   * Заказчик: «завершённые походы не занимают снаряжение» и архив похода
+   * должен уметь сказать «вещь удалена из каталога, но она есть у …».
+   * Поэтому строка не удаляется физически: иначе каскады `trip_personal_gear`
+   * и `trip_route_sleeping` выдернули бы вещь из прошлых походов, а
+   * `trip_gear` (RESTRICT) вообще не дал бы удалить вещь, которая где-то
+   * ездила. Удаление ставит `deleted_at` на **активных клонах текущей
+   * компоненты связей**; у бывшего родного его копия остаётся.
+   */
+  @Column({ name: 'deleted_at', type: 'timestamptz', nullable: true })
+  deletedAt: Date | null;
 
   /** Тип вещи: «Палатка», «Топор». Архивный тип у вещи остаётся допустимым. */
   @Column({ name: 'gear_type_id', type: 'integer' })

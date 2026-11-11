@@ -447,8 +447,9 @@ export class TripGearService {
     const trip = await this.trips.getVisibleTrip(userId, tripId);
     const participant = await this.assertParticipant(manager, trip.id, userId);
 
-    // Предмет ищется среди своих и родных; чужой не существует (404, как
-    // в каталоге): перебирать id чужих списков снаряжения нечего.
+    // Предмет ищется в своём каталоге (11.11.2026): у каждого родного
+    // лежит свой клон вещи с тем же `gear_uid`, поэтому «вещь родного»
+    // отдельным путём больше не берётся. Чужой предмет — 404, как в каталоге.
     const available = await this.gear.findAvailable(
       manager,
       userId,

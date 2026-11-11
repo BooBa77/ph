@@ -443,12 +443,70 @@ export class UsersService {
       const other = link.userAId === userId ? link.userB : link.userA;
       if (!other || other.deletedAt !== null) continue;
 
-      people.push({ id: other.id, displayName: other.displayName });
+      people.push({
+        id: other.id,
+        displayName: other.displayName,
+        isVirtual: other.isVirtual,
+      });
     }
 
     return people.sort((left, right) =>
       left.displayName.localeCompare(right.displayName, 'ru'),
     );
+  }
+
+  /**
+   * Компонента родства: я и все, кто связан со мной через подтверждённые
+   * пары (11.11.2026).
+   *
+   * Заказчик: «строгие пары, без сущности „семья“… семья — это компонента
+   * связей». Семьи как таблицы нет: `family_links` описывают рёбра,
+   * а компонента — это все люди, достижимые по подтверждённым рёбрам.
+   * Именно по ней зеркалятся правки вещи и удаляются её клоны: после
+   * разрыва одной связи компонента распадается на две, и копия бывшего
+   * родного перестаёт меняться.
+   *
+   * `UNION` (а не `UNION ALL`) — заодно защита от цикла: повторно
+   * найденный человек в рекурсию не попадает.
+   *
+   * Удалённые (мягко) люди не входят: у них нет каталога, а связь
+   * остаётся в таблице. Виртуальные входят — они часть компоненты, хотя
+   * клоны вещей им не создаются.
+   */
+  async familyComponent(
+    userId: string,
+    manager?: EntityManager,
+  ): Promise<FamilyPerson[]> {
+    const runner = manager ?? this.dataSource.manager;
+    const rows = (await runner.query(
+      `
+      WITH RECURSIVE component(id) AS (
+        SELECT $1::uuid
+        UNION
+        SELECT CASE
+                 WHEN fl.user_a_id = component.id THEN fl.user_b_id
+                 ELSE fl.user_a_id
+               END
+          FROM family_links fl
+          JOIN component
+            ON component.id = fl.user_a_id OR component.id = fl.user_b_id
+         WHERE fl.status = 'accepted'
+      )
+      SELECT u.id,
+             u.display_name AS "displayName",
+             u.is_virtual   AS "isVirtual"
+        FROM component
+        JOIN users u ON u.id = component.id
+       WHERE u.deleted_at IS NULL
+      `,
+      [userId],
+    )) as Array<{ id: string; displayName: string; isVirtual: boolean }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      displayName: row.displayName,
+      isVirtual: row.isVirtual,
+    }));
   }
 
   /**
@@ -612,12 +670,16 @@ export class UsersService {
   }
 
   /**
-   * Убрать человека из родных — в любую сторону и на любой стадии.
+   * Убрать человека из родных — **только пока это заявка** (11.11.2026).
    *
-   * Одна ручка на три действия: удалить родного, отменить свой запрос и
-   * отклонить входящий. Для человека это одно и то же — «связи нет»,
-   * а разные ручки заставляли бы экран угадывать, какая из них сейчас
-   * уместна.
+   * С 11.11.2026 родство — строгая пара, а семья — компонента связей.
+   * Разорвать одну связь изнутри компоненты нельзя: заказчик решил, что
+   * «выход из семьи — разрыв всех связей» (`leaveFamily`), иначе после
+   * развода остались бы полу-связи `A–C`, `B–C` и вопрос «выбери A или B».
+   *
+   * Эта ручка осталась для отмены **исходящей** заявки: родства ещё нет,
+   * каталог ни при чём, и «отменить» — не «развестись». Принятую связь она
+   * не трогает и отвечает 409 с подсказкой.
    */
   async removeFamilyMember(
     userId: string,
@@ -632,7 +694,32 @@ export class UsersService {
       throw new NotFoundException('Этого человека нет в родных');
     }
 
+    if (link.status === 'accepted') {
+      throw new ConflictException(
+        'Выйти из семьи можно только целиком — это разрывает все семейные связи',
+      );
+    }
+
     await this.familyRepository.delete(link.id);
+  }
+
+  /**
+   * Выйти из семьи — разорвать **все** связи человека (11.11.2026).
+   *
+   * Заказчик: «Выход из семьи — разрыв всех связей. `A` разрывает с `B` —
+   * уходят все связи `A`, компонента распадается. Никаких „полу-связей“…
+   * и запросов „выбери A или B“». Каталог при этом не трогается: клоны
+   * вещей остаются у каждого своей копией, ключи стабильны, а правки
+   * перестают зеркалиться просто потому, что компонента распалась.
+   *
+   * Заодно уходят и **неподтверждённые** заявки: после выхода человек
+   * не должен остаться в чьём-то списке «хочет стать родным».
+   */
+  async leaveFamily(userId: string): Promise<void> {
+    await this.dataSource.query(
+      'DELETE FROM family_links WHERE user_a_id = $1 OR user_b_id = $1',
+      [userId],
+    );
   }
 
   /**

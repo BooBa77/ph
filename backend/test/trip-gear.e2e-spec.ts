@@ -232,9 +232,12 @@ describe('Снаряжение похода (e2e)', () => {
       // Поход уносит снаряжение похода каскадом; предметы каталога —
       // после него (на них RESTRICT).
       await dataSource.query('DELETE FROM trips WHERE id = $1', [tripId]);
+      // Вещи заводят не только организатор и завхоз: «чужой предмет»
+      // и личные строки создаются от участника и постороннего. Всех их
+      // надо убрать до типа — иначе RESTRICT не даст удалить тип.
       await dataSource.query(
         'DELETE FROM gear_items WHERE owner_user_id = ANY($1::uuid[])',
-        [[organizerId, quartermasterId]],
+        [[organizerId, quartermasterId, memberId, maybeId, strangerId]],
       );
       await dataSource.query(`DELETE FROM gear_types WHERE code LIKE 'e2e\\_trip\\_%'`);
       await dataSource.query('DELETE FROM roles WHERE code = $1', [
@@ -525,7 +528,19 @@ describe('Снаряжение похода (e2e)', () => {
     expect(response.body.items).toHaveLength(1);
   });
 
-  it('каталог не теряет предмет, который едет в походе', async () => {
+  it('каталог не теряет предмет, который едет в живом походе', async () => {
+    // С 11.11.2026 удаление мягкое, а блокирует его только **решённый**
+    // и ещё не закончившийся поход. Планирующий — не блокирует: поход
+    // ещё не решён, и архив похода знает, что вещь удалена из каталога.
+    await dataSource.query(
+      `UPDATE trips
+          SET status = 'decided',
+              starts_at = now() + interval '1 day',
+              ends_at = now() + interval '2 days'
+        WHERE id = $1`,
+      [tripId],
+    );
+
     // Палатка ещё в походе — удалить её из каталога нельзя, иначе она
     // исчезла бы из подготовки молча.
     await call('delete', `/api/gear/${tentId}`, organizerToken).expect(409);
