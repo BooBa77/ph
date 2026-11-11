@@ -946,29 +946,25 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-taking-item-g6"]').exists()).toBe(true)
   })
 
-  it('в выборе снаряжения видны вещи родных — с именем владельца', async () => {
-    // Заказчик 10.11.2026: «у родных снаряжение общее». Каталог личный,
-    // вещи родных приходят отдельным списком — и попадают в выбор похода.
+  it('в выборе снаряжения видны клоны вещей родных — как свои', async () => {
+    // Заказчик 11.11.2026: у каждого родного свой клон вещи с тем же
+    // `gear_uid`, поэтому в каталоге это обычные мои вещи и отдельной
+    // полки «Снаряжение родных» больше нет.
     const own = gearItem({
       id: 'cat-1',
       title: 'Котёл',
       typeCode: 'kettle',
       typeName: 'Котёл',
     })
-    const relative = gearItem({
+    const clone = gearItem({
       id: 'cat-2',
-      title: 'Палатка Анны',
+      title: 'Палатка с дачи',
       typeCode: 'tent',
       typeName: 'Палатка',
-      groupCode: 'family',
-      groupName: 'Снаряжение родных',
-      ownerUserId: 'u-anna',
-      ownerName: 'Анна',
     })
 
     mocks.listGear.mockResolvedValue({
-      items: [own],
-      familyItems: [relative],
+      items: [own, clone],
       totalWeightGrams: 0,
       itemsWithoutWeight: 0,
     })
@@ -978,7 +974,7 @@ describe('вкладка «Снаряжение» похода', () => {
         gearItemId: 'cat-2',
         typeCode: 'tent',
         typeName: 'Палатка',
-        title: 'Палатка Анны',
+        title: 'Палатка с дачи',
         ownerUserId: ME,
         assignedUserId: ME,
         status: 'proposed',
@@ -993,9 +989,8 @@ describe('вкладка «Снаряжение» похода', () => {
     await wrapper.get('[data-test="route-extra-search"]').setValue('Палатка')
     await flushPromises()
 
-    // Вещь родного не выглядит своей: подписана его именем.
     expect(wrapper.get('[data-test="route-extra-item-cat-2"]').text()).toContain(
-      'Анна',
+      'Палатка с дачи',
     )
 
     await wrapper.get('[data-test="route-extra-item-cat-2"]').trigger('click')

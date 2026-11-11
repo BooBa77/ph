@@ -9,6 +9,7 @@ import {
   createVirtual,
   declineFamilyMember,
   getMyFamily,
+  leaveFamily,
   listMyVirtual,
   removeFamilyMember,
   removeVirtual,
@@ -36,10 +37,11 @@ import type { Gender } from '@/api/types'
  *   открыты: страница из двух закрытых рамок выглядит пустой, а сюда
  *   приходят именно за списком. Раскрытие помнится в
  *   `localStorage` (`ph.contacts.open`);
- * - **«Родные» — поиск, добавление и удаление.** Родство взаимно:
+ * - **«Родные» — поиск, добавление и выход из семьи.** Родство взаимно:
  *   настоящему человеку уходит запрос на подтверждение, и он же виден
  *   у него входящим. Свой человек без аккаунта становится родным сразу:
- *   подтверждать ему нечем;
+ *   подтверждать ему нечем. С 11.11.2026 разорвать одну связь нельзя —
+ *   «Выйти из семьи» рвёт все сразу;
  * - **«Люди без аккаунта»** — те же строки `users`, что и в «Походах →
  *   Участники», поэтому заведённый здесь человек появляется и там.
  *   Удалять можно только до начала похода: кто уже сходил, нужен истории.
@@ -167,12 +169,27 @@ const linkedIds = computed(() => {
   ])
 })
 
-async function removeMember(member: FamilyMember): Promise<void> {
+/**
+ * Выход из семьи — **все** связи сразу (11.11.2026).
+ *
+ * Заказчик: «Выход из семьи — разрыв всех связей. `A` разрывает с `B` —
+ * уходят все связи `A`, компонента распадается. Никаких полу-связей».
+ * Поэтому крестика у отдельного родного больше нет: разорвать одну пару
+ * изнутри компоненты нельзя, а «выбери A или B» — ровно тот вопрос,
+ * который заказчик запретил.
+ *
+ * Каталог при выходе не чистится: клоны вещей остаются у каждого, просто
+ * правки перестают зеркалиться. Об этом предупреждает блок под списком.
+ */
+const confirmingLeave = ref(false)
+
+async function leaveFamilyAction(): Promise<void> {
   await runAction(
-    () => removeFamilyMember(member.userId),
-    `«${member.displayName}» больше не родной`,
-    'Не удалось убрать из родных',
+    () => leaveFamily(),
+    'Вы вышли из семьи. Вещи остались у каждого своей копией',
+    'Не удалось выйти из семьи',
   )
+  confirmingLeave.value = false
 }
 
 async function cancelRequest(request: FamilyRequest): Promise<void> {
@@ -613,17 +630,6 @@ async function runAction(
               <span v-if="member.isVirtual" class="text-xs text-muted" data-test="family-member-virtual">
                 без аккаунта
               </span>
-
-              <button
-                type="button"
-                class="cursor-pointer rounded-lg border-0 bg-transparent px-1.5 py-0.5 text-base leading-none text-muted transition-colors hover:text-red-600"
-                :aria-label="`Убрать «${member.displayName}» из родных`"
-                title="Убрать из родных"
-                data-test="family-remove"
-                @click="removeMember(member)"
-              >
-                ×
-              </button>
             </li>
           </ul>
 
@@ -637,6 +643,47 @@ async function runAction(
           <p v-else class="text-sm text-muted" data-test="family-filter-empty">
             По этому имени никого нет.
           </p>
+
+          <!-- Выход из семьи: одна кнопка на все связи, а не крестик у родного. -->
+          <div
+            v-if="family.family.length > 0"
+            class="mt-3 rounded-xl border border-border bg-surface p-3"
+            data-test="family-leave-block"
+          >
+            <p class="text-xs text-muted">
+              Выйти из семьи — значит разорвать все семейные связи сразу: общий бюджет
+              и общее снаряжение прекращаются. Вещи остаются у каждого своей копией,
+              их не удаляют.
+            </p>
+
+            <div v-if="confirmingLeave" class="mt-2 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                class="cursor-pointer rounded-xl border border-red-600 bg-red-600 px-3 py-1.5 text-sm text-white transition-colors hover:bg-red-700 disabled:opacity-50"
+                data-test="family-leave-confirm"
+                @click="leaveFamilyAction"
+              >
+                Точно выйти
+              </button>
+              <button
+                type="button"
+                class="cursor-pointer rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-text"
+                data-test="family-leave-cancel"
+                @click="confirmingLeave = false"
+              >
+                Нет
+              </button>
+            </div>
+            <button
+              v-else
+              type="button"
+              class="mt-2 cursor-pointer rounded-xl border border-red-600 px-3 py-1.5 text-sm text-red-600 transition-colors hover:bg-red-600 hover:text-white"
+              data-test="family-leave"
+              @click="confirmingLeave = true"
+            >
+              Выйти из семьи
+            </button>
+          </div>
         </div>
       </details>
 

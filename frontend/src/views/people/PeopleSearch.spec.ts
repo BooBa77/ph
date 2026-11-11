@@ -28,6 +28,7 @@ vi.mock('@/api/users', () => ({
   acceptFamilyMember: vi.fn(),
   declineFamilyMember: vi.fn(),
   removeFamilyMember: vi.fn(),
+  leaveFamily: vi.fn(),
   createVirtual: vi.fn(),
   removeVirtual: vi.fn(),
 }))
@@ -244,14 +245,24 @@ describe('PeopleSearch (Контакты)', () => {
     expect(mocked.removeFamilyMember).toHaveBeenCalledWith('u-2')
   })
 
-  it('родного убирают крестиком', async () => {
+  it('из семьи выходят одной кнопкой, спросив подтверждение', async () => {
     const wrapper = mountSection()
     await flushPromises()
 
-    await wrapper.find('[data-test="family-remove"]').trigger('click')
+    // Крестика у отдельного родного больше нет: разорвать одну связь нельзя.
+    expect(wrapper.find('[data-test="family-remove"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="family-leave"]').trigger('click')
+    expect(mocked.leaveFamily).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test="family-leave-cancel"]').trigger('click')
+    expect(wrapper.find('[data-test="family-leave"]').exists()).toBe(true)
+
+    await wrapper.find('[data-test="family-leave"]').trigger('click')
+    await wrapper.find('[data-test="family-leave-confirm"]').trigger('click')
     await flushPromises()
 
-    expect(mocked.removeFamilyMember).toHaveBeenCalledWith('u-1')
+    expect(mocked.leaveFamily).toHaveBeenCalledTimes(1)
   })
 
   it('виртуального заводят из формы', async () => {

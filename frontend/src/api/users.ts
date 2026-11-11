@@ -293,11 +293,24 @@ export async function declineFamilyMember(userId: string): Promise<void> {
 }
 
 /**
- * DELETE /api/users/me/family/:userId — убрать из родных.
+ * DELETE /api/users/me/family/:userId — отменить **свою заявку**.
  *
- * Одна ручка на три действия: удалить родного, отменить свой запрос и
- * отклонить входящий. Связи после неё нет ни у одной стороны.
+ * С 11.11.2026 родство — строгая пара, а семья — компонента связей.
+ * Принятую связь эта ручка не рвёт (сервер ответит 409): выйти из семьи
+ * можно только целиком — `leaveFamily`. Здесь остаётся отмена исходящего
+ * запроса, когда родства ещё нет и каталог ни при чём.
  */
 export async function removeFamilyMember(userId: string): Promise<void> {
   await apiFetch<void>(`/users/me/family/${userId}`, { method: 'DELETE' })
+}
+
+/**
+ * DELETE /api/users/me/family — выйти из семьи целиком (11.11.2026).
+ *
+ * Заказчик: «Выход из семьи — разрыв всех связей. `A` разрывает с `B` —
+ * уходят все связи `A`, компонента распадается». Каталог не трогается:
+ * у каждого остаётся его копия вещи, просто правки перестают зеркалиться.
+ */
+export async function leaveFamily(): Promise<void> {
+  await apiFetch<void>('/users/me/family', { method: 'DELETE' })
 }

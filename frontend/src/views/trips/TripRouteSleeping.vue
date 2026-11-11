@@ -102,15 +102,14 @@ function pillText(row: RouteSleeping): string {
 /**
  * Строка в списке выбора: «Спальник зимний - 1200 гр.»
  *
- * У вещи родного (10.11.2026, вечер) — с именем владельца: «- 1200 гр. (Анна)».
- * Заказчик: «у родных снаряжение общее… нельзя один спальник обоим взять»;
- * чтобы это правило было видно до нажатия, чужой спальник подписан.
+ * Имени владельца больше нет (11.11.2026): вещи родных лежат в каталоге
+ * клонами — это мои вещи. Занятость по `gear_uid` проверяет сервер и
+ * отвечает 409, поэтому подпись владельцем до нажатия больше не нужна.
  */
 function gearOptionText(item: GearItem): string {
   const weight = weightInGrams(item.weightGrams)
-  const base = weight === null ? item.title : `${item.title} - ${weight}`
 
-  return item.ownerName ? `${base} (${item.ownerName})` : base
+  return weight === null ? item.title : `${item.title} - ${weight}`
 }
 
 // ───────────────────────────── добавление ─────────────────────────────

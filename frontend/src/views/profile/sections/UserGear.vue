@@ -1238,7 +1238,12 @@ async function removeVehicleById(vehicle: Vehicle) {
                     </div>
 
                     <template v-if="confirmingItemId === item.id">
-                      <span class="text-xs text-muted">Удалить?</span>
+                      <span
+                        class="text-xs text-muted"
+                        title="Вещь исчезнет из каталогов всех родных и из выбора в походах. В уже прошедших походах она останется."
+                      >
+                        Удалить у всех?
+                      </span>
                       <button
                         type="button"
                         :disabled="savingId === item.id"

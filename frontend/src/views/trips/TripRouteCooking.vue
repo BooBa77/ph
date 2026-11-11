@@ -369,15 +369,13 @@ function nameOf(userId: string): string {
 /**
  * Строка в списке выбора: «Топор Fiskars X7 · 900 гр.».
  *
- * У вещи родного (10.11.2026, вечер) — с именем владельца: общее
- * снаряжение семьи приходит тем же списком, и без подписи чужой котёл
- * выглядел бы своим.
+ * Имени владельца больше нет (11.11.2026): вещи родных лежат в каталоге
+ * клонами, то есть это мои вещи, и подписывать их чужим именем незачем.
  */
 function gearOptionText(item: GearItem): string {
   const weight = weightInGrams(item.weightGrams)
-  const base = weight === null ? item.title : `${item.title} · ${weight}`
 
-  return item.ownerName ? `${base} · ${item.ownerName}` : base
+  return weight === null ? item.title : `${item.title} · ${weight}`
 }
 
 /**
