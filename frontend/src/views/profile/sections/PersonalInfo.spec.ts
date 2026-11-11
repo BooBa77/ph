@@ -39,6 +39,8 @@ function makeUser(overrides: Partial<User> = {}): User {
     gender: 'm',
     isVegetarian: false,
     allergies: null,
+    paymentDetails: null,
+    paymentBank: null,
     sportExperience: null,
     isAdmin: false,
     ...overrides,
@@ -234,6 +236,56 @@ describe('PersonalInfo', () => {
     const wrapper = await mountSection()
 
     expect(editableFieldByLabel(wrapper, 'Мои аллергии').text()).toContain('— нет —')
+  })
+
+  /**
+   * Реквизиты для взаиморасчётов — подготовка «Бухгалтерии» (11.11.2026).
+   * Оба поля необязательные и очищаются пустой строкой: на бэк уходит null,
+   * чтобы в базе не появилось второе «не заполнено».
+   */
+  it('сохраняет телефон/карту и банк', async () => {
+    const wrapper = await mountSection(
+      makeUser({ paymentDetails: '+7 914 123-45-67', paymentBank: 'Сбербанк' }),
+    )
+
+    const details = editableFieldByLabel(wrapper, 'Телефон или карта')
+    await details.get('button').trigger('click')
+    await details.get('input').setValue('+7 914 000-11-22')
+    await details.get('input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(mocked.updateMe).toHaveBeenCalledWith({ paymentDetails: '+7 914 000-11-22' })
+
+    const bank = editableFieldByLabel(wrapper, 'Банк')
+    await bank.get('button').trigger('click')
+    await bank.get('input').setValue('ВТБ')
+    await bank.get('input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(mocked.updateMe).toHaveBeenCalledWith({ paymentBank: 'ВТБ' })
+  })
+
+  it('очищает реквизиты — на бэк уходит null', async () => {
+    const wrapper = await mountSection(
+      makeUser({ paymentDetails: '+7 914 123-45-67', paymentBank: 'Сбербанк' }),
+    )
+
+    const details = editableFieldByLabel(wrapper, 'Телефон или карта')
+    await details.get('button').trigger('click')
+    await details.get('input').setValue('')
+    await details.get('input').trigger('keydown', { key: 'Enter' })
+    await flushPromises()
+
+    expect(mocked.updateMe).toHaveBeenCalledWith({ paymentDetails: null })
+  })
+
+  it('пустые реквизиты показывает словами, а не прочерком', async () => {
+    const wrapper = await mountSection()
+
+    expect(editableFieldByLabel(wrapper, 'Телефон или карта').text()).toContain(
+      '— не заполнено —',
+    )
+    expect(editableFieldByLabel(wrapper, 'Банк').text()).toContain('— не заполнено —')
   })
 
   it('рисует поля ввода фоном полей, а не фоном страницы', async () => {

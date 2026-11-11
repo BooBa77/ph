@@ -85,6 +85,8 @@ function meUser(): User {
     isVegetarian: false,
     allergies: null,
     sportExperience: null,
+    paymentDetails: null,
+    paymentBank: null,
     isAdmin: false,
   }
 }

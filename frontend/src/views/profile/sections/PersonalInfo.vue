@@ -27,6 +27,8 @@ const avatarUrl = computed(() => auth.user?.avatarUrl ?? null)
 const gender = computed<Gender>(() => auth.user?.gender ?? 'm')
 const isVegetarian = computed(() => auth.user?.isVegetarian ?? false)
 const allergies = computed(() => auth.user?.allergies ?? '')
+const paymentDetails = computed(() => auth.user?.paymentDetails ?? '')
+const paymentBank = computed(() => auth.user?.paymentBank ?? '')
 
 /**
  * Варианты пола: значение — словарь кода (`m` / `f` на бэкенде),
@@ -105,6 +107,16 @@ async function onVegetarianChange(event: Event) {
 /** Аллергии: свободный текст. Пустая строка → null (очистить). */
 async function saveAllergies(value: string) {
   await saveProfile({ allergies: value === '' ? null : value })
+}
+
+/** Реквизиты для расчётов: пустая строка → null (очистить). */
+async function savePaymentDetails(value: string) {
+  await saveProfile({ paymentDetails: value === '' ? null : value })
+}
+
+/** Банк: пустая строка → null (очистить). */
+async function savePaymentBank(value: string) {
+  await saveProfile({ paymentBank: value === '' ? null : value })
 }
 
 /**
@@ -352,6 +364,44 @@ async function removeAvatar() {
           </button>
         </div>
       </div>
+    </div>
+
+    <h2 class="mt-8 mb-2 border-t border-border pt-6 text-xl font-semibold text-text">
+      Реквизиты для взаиморасчётов
+    </h2>
+
+    <!--
+      Свои реквизиты человек показывает сам: в «Бухгалтерии» похода они
+      всплывают подсказкой тому, кто переводит ему компенсацию. В чужой
+      профиль и поиск людей не попадают — их отдаёт только /users/me
+      и состав общего похода.
+    -->
+    <p class="mb-2 text-sm text-muted">
+      Пригодятся, когда в походе будете рассчитываться друг с другом: участники
+      ваших совместных походов увидят их подсказкой при переводе. В публичный
+      профиль они не попадают.
+    </p>
+
+    <div>
+      <EditableField
+        label="Телефон или карта"
+        :model-value="paymentDetails"
+        :max-length="40"
+        allow-empty
+        placeholder="+7 914 123-45-67"
+        empty-text="— не заполнено —"
+        @save="savePaymentDetails"
+      />
+
+      <EditableField
+        label="Банк"
+        :model-value="paymentBank"
+        :max-length="100"
+        allow-empty
+        placeholder="Сбербанк"
+        empty-text="— не заполнено —"
+        @save="savePaymentBank"
+      />
     </div>
 
     <p v-if="error" class="mt-4 text-sm text-red-600">

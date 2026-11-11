@@ -121,6 +121,8 @@ describe('личные вещи ночёвки', () => {
         isVegetarian: false,
         allergies: null,
         sportExperience: null,
+        paymentDetails: null,
+        paymentBank: null,
         isAdmin: false,
       },
       'token',

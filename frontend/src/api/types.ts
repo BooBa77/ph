@@ -35,6 +35,14 @@ export interface User {
   isVegetarian: boolean
   /** Аллергии: свободный текст пользователя. */
   allergies: string | null
+  /**
+   * Реквизиты для взаиморасчётов по походу: телефон или номер карты одной
+   * строкой. Видны только владельцу и участникам совместных походов
+   * (подсказка в «Бухгалтерии»); в публичный профиль не попадают.
+   */
+  paymentDetails: string | null
+  /** Банк получателя. null — не заполнен. */
+  paymentBank: string | null
   /** Спортивный опыт. null — пользователь его не заполнял. */
   sportExperience: SportExperience | null
   /**
@@ -103,5 +111,9 @@ export interface UpdateUserRequest {
   gender?: Gender
   isVegetarian?: boolean
   allergies?: string | null
+  /** Телефон или номер карты; `null` — очистить. */
+  paymentDetails?: string | null
+  /** Банк; `null` — очистить. */
+  paymentBank?: string | null
   sportExperience?: SportExperiencePatch | null
 }
