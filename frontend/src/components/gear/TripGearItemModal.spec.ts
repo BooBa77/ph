@@ -80,4 +80,36 @@ describe('карточка вещи снаряжения', () => {
     expect(wrapper.find('[data-test="gear-item-assignee-words"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="gear-item-section"]').exists()).toBe(true)
   })
+
+  // ───────────────────────── архив похода (11.11.2026) ─────────────────────────
+
+  it('у удалённой вещи называет, у кого она есть', () => {
+    const wrapper = mounted({
+      item: makeItem({
+        itemDeleted: true,
+        itemHolders: [{ userId: 'ivan', name: 'Иван' }],
+      }),
+    })
+
+    const text = wrapper.get('[data-test="gear-item-archive"]').text()
+
+    expect(text).toContain('Вещь удалена из каталога владельца')
+    expect(text).toContain('Она есть у Иван')
+  })
+
+  it('удалена у всех — говорит «снаряжение недоступно»', () => {
+    const wrapper = mounted({
+      item: makeItem({ itemDeleted: true, itemHolders: [] }),
+    })
+
+    expect(wrapper.get('[data-test="gear-item-archive"]').text()).toBe(
+      'Вещь удалена из каталогов — снаряжение недоступно.',
+    )
+  })
+
+  it('у живой вещи блока про удаление нет', () => {
+    const wrapper = mounted()
+
+    expect(wrapper.find('[data-test="gear-item-archive"]').exists()).toBe(false)
+  })
 })

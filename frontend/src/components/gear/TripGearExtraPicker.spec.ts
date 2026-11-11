@@ -372,4 +372,39 @@ describe('TripGearExtraPicker («Добавить ещё»)', () => {
     expect(groupsText(wrapper)).toEqual(['Кухня', 'Прочее'])
     expect(itemsText(wrapper)).toEqual([])
   })
+
+  // ─────────────────── занятость и ошибка внутри модалки ───────────────────
+
+  it('бейдж «занята» стоит под вещью, а не в её строке', () => {
+    const wrapper = mounted({
+      busy: [{ gearItemId: '1', tripId: '679', tripTitle: 'Витязь' }],
+    })
+
+    expect(wrapper.get('[data-test="route-extra-busy-1"]').text()).toBe(
+      'Занята в «Витязь» на эти даты',
+    )
+    // Строка вещи осталась прежней: вес и тип, без пометки о занятости.
+    expect(itemsText(wrapper)).toEqual(['Котёл 5 л · Котёл', 'Лодка надувная · Прочее'])
+    expect(wrapper.find('[data-test="route-extra-busy-2"]').exists()).toBe(false)
+  })
+
+  it('бейджа нет, если для похода каталог не спрашивали', () => {
+    const wrapper = mounted()
+
+    expect(wrapper.findAll('[data-test^="route-extra-busy-"]')).toEqual([])
+  })
+
+  it('ошибка сохранения приходит внутрь модалки, а не под затемнение', () => {
+    const wrapper = mounted({
+      error: '«Котёл 5 л» уже в походе «Витязь» на те же даты — в этот поход её взять нельзя',
+    })
+
+    expect(wrapper.get('[data-test="route-extra-error"]').text()).toContain('уже в походе «Витязь»')
+  })
+
+  it('без ошибки блока ошибки нет', () => {
+    const wrapper = mounted()
+
+    expect(wrapper.find('[data-test="route-extra-error"]').exists()).toBe(false)
+  })
 })

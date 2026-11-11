@@ -1531,6 +1531,7 @@ async function pickExtra(item: GearItem): Promise<void> {
         :preferred-group-codes="['roof']"
         :preferred-type-codes="TENT_TYPE_CODES"
         :loading="isExtraLoading"
+        :error="extraError"
         @pick="pickExtra"
         @manual="openExtraManual"
         @close="isExtraOpen = false"

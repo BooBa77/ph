@@ -405,6 +405,7 @@ async function remove(row: RouteSleeping): Promise<void> {
       :exclude-ids="sleeping.map((row) => row.gearItemId)"
       :preferred-type-codes="SLEEPING_TYPE_CODES"
       :loading="isExtraLoading"
+      :error="extraError"
       @pick="pickExtra"
       @manual="openManualExtra"
       @close="isExtraOpen = false"

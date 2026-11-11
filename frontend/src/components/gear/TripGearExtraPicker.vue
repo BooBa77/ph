@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 
-import type { GearItem } from '@/types/gear'
+import type { GearBusyItem, GearItem } from '@/types/gear'
 import { weightInGrams } from '@/utils/gearWeight'
 
 /**
@@ -88,6 +88,22 @@ const props = defineProps<{
   storageKey?: string
   /** Каталог ещё едет: показываем «Загружаем…», а не пустой список. */
   loading?: boolean
+  /**
+   * Вещи, занятые в других походах на даты этого (11.11.2026, шаг 2).
+   *
+   * Подсказка, а не запрет: сервер всё равно ответит 409, и текст придёт
+   * в `error`. Но узнать о занятости до нажатия честнее — вещь в это время
+   * уже едет в другом походе.
+   */
+  busy?: readonly GearBusyItem[]
+  /**
+   * Ошибка сохранения **внутри** модалки.
+   *
+   * Раньше текст стоял на странице под оверлеем: человек нажимал вещь,
+   * получал 409 и не видел ни строчки. Поэтому текст приезжает сюда пропом,
+   * а не рисуется родителем под затемнением.
+   */
+  error?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -352,6 +368,24 @@ function itemText(item: GearItem): string {
 function pick(item: GearItem): void {
   emit('pick', item)
 }
+
+/**
+ * Где вещь занята — или `undefined`, если свободна (11.11.2026, шаг 2).
+ *
+ * Считается по id предмета **моего** каталога: подсказка приходит вместе
+ * с каталогом для этого похода, и своей полки в ней нет.
+ */
+const busyById = computed(() => {
+  const byId = new Map<string, GearBusyItem>()
+
+  for (const row of props.busy ?? []) byId.set(row.gearItemId, row)
+
+  return byId
+})
+
+function busyOf(item: GearItem): GearBusyItem | undefined {
+  return busyById.value.get(item.id)
+}
 </script>
 
 <template>
@@ -520,16 +554,32 @@ function pick(item: GearItem): void {
               class="flex flex-col gap-1"
               :data-test="`route-extra-items-${group.code}`"
             >
-              <button
+              <!--
+                Бейдж «занята» стоит **под** кнопкой, а не внутри её текста:
+                строку вещи читают и тесты, и человек — «Котёл 5 л · 900 гр.»
+                не должно превращаться в «… · занята в „Витязь“».
+              -->
+              <div
                 v-for="item in group.items"
                 :key="item.id"
-                type="button"
-                class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-left text-sm text-text transition-colors hover:border-primary"
-                :data-test="`route-extra-item-${item.id}`"
-                @click="pick(item)"
+                class="flex flex-col gap-0.5"
               >
-                {{ itemText(item) }}
-              </button>
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-left text-sm text-text transition-colors hover:border-primary"
+                  :data-test="`route-extra-item-${item.id}`"
+                  @click="pick(item)"
+                >
+                  {{ itemText(item) }}
+                </button>
+                <span
+                  v-if="busyOf(item)"
+                  class="px-3 text-xs text-muted"
+                  :data-test="`route-extra-busy-${item.id}`"
+                >
+                  Занята в «{{ busyOf(item)?.tripTitle }}» на эти даты
+                </span>
+              </div>
             </div>
           </div>
         </div>
@@ -547,6 +597,19 @@ function pick(item: GearItem): void {
       >
         Добавить вручную
       </button>
+
+      <!--
+        Ошибка сохранения — здесь, а не на странице под затемнением
+        (11.11.2026): 409 «занята в походе» человек должен увидеть там же,
+        где нажимал вещь.
+      -->
+      <p
+        v-if="error"
+        class="shrink-0 text-sm text-red-600"
+        data-test="route-extra-error"
+      >
+        {{ error }}
+      </p>
 
       <div class="flex shrink-0 flex-wrap items-center gap-2">
         <button

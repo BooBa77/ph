@@ -157,6 +157,30 @@ const typeLine = computed(() => {
 const statusWords = computed(() => TRIP_GEAR_STATUS_LABELS[props.item.status])
 
 /**
+ * Архив похода: что делать с вещью, удалённой из каталога (11.11.2026).
+ *
+ * Заказчик: «если строка ссылается на удалённую вещь, сначала ищем активные
+ * клоны по `gear_uid`. Есть — пишем „вещь удалена из каталога, но она есть
+ * у …“». Владелец в строке остаётся прежним (кто выставил) — это решение
+ * заказчика, поэтому текст говорит не «вещь не найдена», а где она теперь.
+ *
+ * Пустой список держателей — «снаряжение недоступно»: удалена у всех,
+ * и спросить действительно некого.
+ */
+const archiveText = computed<string | null>(() => {
+  if (props.item.itemDeleted !== true) return null
+
+  const holders = props.item.itemHolders ?? []
+  if (holders.length === 0) {
+    return 'Вещь удалена из каталогов — снаряжение недоступно.'
+  }
+
+  const names = holders.map((person) => person.name).join(', ')
+
+  return `Вещь удалена из каталога владельца. Она есть у ${names} — можно спросить.`
+})
+
+/**
  * Поле «Раздел» — только если есть из чего выбирать. В новой секции без
  * разделов оно состояло бы из одного «Без раздела»: поле, которое нечего
  * заполнять.
@@ -239,8 +263,20 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </button>
       </div>
 
-      <dl class="grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">
-        <dt class="text-muted">Владелец</dt>
+      <!--
+        Архив похода (11.11.2026): строка осталась, а каталог вещь уже
+        не отдаёт. Экран не молчит и не пишет «недоступно» всем подряд:
+        если клон жив у родного, человек узнаёт, у кого спросить.
+      -->
+      <p
+        v-if="archiveText"
+        class="rounded-xl border border-border bg-field px-3 py-2 text-sm text-muted"
+        data-test="gear-item-archive"
+      >
+        {{ archiveText }}
+      </p>
+
+      <dl class="grid gap-x-3 gap-y-1 text-sm sm:grid-cols-[auto_1fr]">        <dt class="text-muted">Владелец</dt>
         <dd data-test="gear-item-owner">{{ ownerName }}</dd>
 
         <!--

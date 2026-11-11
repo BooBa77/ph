@@ -33,6 +33,7 @@ import { pickableGear } from '@/utils/gearCatalog'
 import { TRIP_GEAR_STATUS_LABELS } from '@/types/gear'
 import type { Checklist, TripChecklists } from '@/types/checklists'
 import type {
+  GearBusyItem,
   GearItem,
   TripGearItem,
   TripGearLoad,
@@ -352,6 +353,12 @@ const pickerScope = ref<'shared' | 'personal'>('shared')
 /** Раздел «Взял», в который положат следующую личную вещь. */
 const personalAddTargetSection = ref<string | null>(null)
 const catalog = ref<GearItem[]>([])
+/**
+ * Вещи каталога, занятые в других походах на даты этого (11.11.2026, шаг 2).
+ * Приходят вместе с каталогом (`GET /gear?tripId=`), а не считаются на экране:
+ * занятость зависит от дат и от трёх таблиц похода.
+ */
+const catalogBusy = ref<GearBusyItem[]>([])
 const isCatalogLoading = ref(false)
 const isCatalogLoaded = ref(false)
 const catalogError = ref<string | null>(null)
@@ -1733,14 +1740,18 @@ function startPersonalDrag(item: TripGearItem, event: DragEvent): void {
 async function openPickerBase(): Promise<void> {
   isPickerOpen.value = true
   catalogError.value = null
+  // Ошибка прошлого действия к новому выбору не относится: иначе она
+  // всплывала бы в модалке, которую человек только что открыл.
+  actionError.value = null
 
   if (isCatalogLoaded.value || isCatalogLoading.value) return
 
   isCatalogLoading.value = true
 
   try {
-    const list = await listGear()
+    const list = await listGear(props.trip.id)
     catalog.value = pickableGear(list)
+    catalogBusy.value = list.busyGear ?? []
     isCatalogLoaded.value = true
   } catch (problem) {
     catalogError.value =
@@ -2814,7 +2825,9 @@ const excludedIds = computed(() => {
       v-if="isPickerOpen"
       :items="catalog"
       :exclude-ids="excludedIds"
+      :busy="catalogBusy"
       :loading="isCatalogLoading"
+      :error="actionError"
       title="Добавить снаряжение"
       storage-key="ph.tripGear.picker"
       @pick="onPick"

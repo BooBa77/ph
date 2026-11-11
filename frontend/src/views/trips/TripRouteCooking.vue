@@ -1108,6 +1108,7 @@ function dishText(row: TripGearItem): string {
       :preferred-group-codes="[extraGroup.preferredGroupCode]"
       :preferred-type-codes="extraGroup.types.map((type) => type.code)"
       :loading="isExtraLoading"
+      :error="extraError"
       @pick="pickExtra"
       @manual="openExtraManual"
       @close="isExtraOpen = false"

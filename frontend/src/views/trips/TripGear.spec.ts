@@ -946,8 +946,53 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-taking-item-g6"]').exists()).toBe(true)
   })
 
-  it('в выборе снаряжения видны клоны вещей родных — как свои', async () => {
-    // Заказчик 11.11.2026: у каждого родного свой клон вещи с тем же
+  it('занятая вещь помечена в выборе, а 409 виден внутри модалки (11.11.2026)', async () => {
+    // Заказчик: «нельзя один спальник обоим взять» — вещь едет в другом
+    // походе, и человек должен узнать об этом до нажатия, а текст 409
+    // увидеть там же, где нажимал.
+    const catalog = [
+      gearItem({ id: 'cat-1', typeCode: 'other', typeName: 'Прочее', title: 'Грелка' }),
+    ]
+    mocks.listGear.mockResolvedValue({
+      items: catalog,
+      totalWeightGrams: 0,
+      itemsWithoutWeight: 0,
+      busyGear: [{ gearItemId: 'cat-1', tripId: '42', tripTitle: 'Витязь' }],
+    })
+    mocks.proposeTripGear.mockRejectedValue(
+      new ApiError(
+        409,
+        '«Грелка» уже в походе «Витязь» на те же даты — в этот поход её взять нельзя',
+      ),
+    )
+
+    const wrapper = await mounted()
+
+    await wrapper.get('[data-test="gear-add"]').trigger('click')
+    await flushPromises()
+
+    // Группы каталога в модалке свёрнуты: сначала раскрываем «Прочее».
+    await wrapper.get('[data-test="route-extra-toggle-other"]').trigger('click')
+
+    expect(wrapper.get('[data-test="route-extra-busy-cat-1"]').text()).toBe(
+      'Занята в «Витязь» на эти даты',
+    )
+
+    await wrapper.get('[data-test="route-extra-search"]').setValue('Грелка')
+    await flushPromises()
+    await wrapper.get('[data-test="route-extra-item-cat-1"]').trigger('click')
+    await flushPromises()
+
+    // Каталог спрошен для этого похода — иначе занятости было бы не узнать.
+    expect(mocks.listGear).toHaveBeenCalledWith('1')
+    expect(wrapper.get('[data-test="route-extra-error"]').text()).toContain(
+      'уже в походе «Витязь»',
+    )
+    // Модалка осталась открытой: человек выбирает дальше.
+    expect(wrapper.find('[data-test="route-extra-picker"]').exists()).toBe(true)
+  })
+
+  it('в выборе снаряжения видны клоны вещей родных — как свои', async () => {    // Заказчик 11.11.2026: у каждого родного свой клон вещи с тем же
     // `gear_uid`, поэтому в каталоге это обычные мои вещи и отдельной
     // полки «Снаряжение родных» больше нет.
     const own = gearItem({

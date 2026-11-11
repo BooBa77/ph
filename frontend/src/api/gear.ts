@@ -27,9 +27,17 @@ import type {
  * которые читали вид, — с этого шага тип единственный.
  */
 
-/** GET /api/gear — мои предметы и итог по весу. */
-export async function listGear(): Promise<GearList> {
-  return apiFetch<GearList>('/gear')
+/**
+ * GET /api/gear — мои предметы и итог по весу.
+ *
+ * `tripId` — каталог открыт для выбора в походе (11.11.2026, шаг 2): тогда
+ * ответ несёт `busyGear`, и в выборе появляется подсказка «занята в „…“».
+ * Обычный каталог про походы ничего не знает.
+ */
+export async function listGear(tripId?: string): Promise<GearList> {
+  const query = tripId === undefined ? '' : `?tripId=${encodeURIComponent(tripId)}`
+
+  return apiFetch<GearList>(`/gear${query}`)
 }
 
 /**
