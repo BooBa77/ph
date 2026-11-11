@@ -49,6 +49,23 @@ function attributeDtos(item: GearItem): GearItemAttributeDto[] {
 }
 
 /**
+ * Держатель клона вещи — «она есть у Анны» (11.11.2026, архив похода).
+ *
+ * Мягко удалённая вещь остаётся в истории похода: строку не выдернуть, иначе
+ * прошедший поход потерял бы снаряжение. Но у бывшего родного копия осталась
+ * (заказчик: «владелец — жена, характеристики есть, она знает, что ответить»),
+ * поэтому экран не говорит «недоступно», а называет людей, у которых вещь
+ * жива, и предлагает спросить у них.
+ */
+export class GearHolderDto {
+  @ApiProperty({ description: 'Кто держит клон', example: '90ca6b06-…' })
+  userId: string;
+
+  @ApiProperty({ description: 'Имя держателя', example: 'Анна' })
+  name: string;
+}
+
+/**
  * Вещь в общественном снаряжении похода — как её видит вкладка.
  *
  * Название, вид и вес приходят из каталога владельца: строка похода —
@@ -194,11 +211,44 @@ export class TripGearItemDto {
   createdAt: string;
 
   /**
+   * Вещь удалена из каталога, но осталась в строке похода (11.11.2026).
+   *
+   * Удаление каталога мягкое, и строки истории никто не вычищает: иначе
+   * прошедший поход потерял бы снаряжение. Флаг говорит экрану, что
+   * из каталога вещь исчезла, и заменяет «снаряжение недоступно» на
+   * человеческий ответ — см. `itemHolders`.
+   */
+  @ApiProperty({
+    description: 'Вещь мягко удалена из каталога, но осталась в походе',
+    example: false,
+  })
+  itemDeleted: boolean;
+
+  /**
+   * У кого вещь жива сейчас — по `gear_uid`, среди активных клонов.
+   *
+   * Пусто — значит вещь удалена у всех: «снаряжение недоступно».
+   */
+  @ApiProperty({
+    description: 'Активные держатели удалённой вещи — «она есть у Анны»',
+    type: [GearHolderDto],
+  })
+  itemHolders: GearHolderDto[];
+
+  /**
    * `viewerId` нужен личному разделу: он виден только своему владельцу,
    * и чужой id в ответе был бы утечкой чужой раскладки. У остальных
    * полей от смотрящего ничего не зависит.
+   *
+   * `holders` передаются только для мягко удалённой вещи: каталог отвечает
+   * ими на вопрос «где она теперь», и считать их для каждой живой строки
+   * значило бы делать лишний запрос на весь список.
    */
-  static from(row: TripGear, viewerId?: string): TripGearItemDto {
+  static from(
+    row: TripGear,
+    viewerId?: string,
+    holders?: GearHolderDto[],
+  ): TripGearItemDto {
     return {
       id: row.id,
       gearItemId: row.gearItemId,
@@ -220,6 +270,8 @@ export class TripGearItemDto {
       ownerUserId: row.ownerUserId,
       assignedUserId: row.assignedUserId,
       createdAt: row.createdAt.toISOString(),
+      itemDeleted: row.gearItem.deletedAt !== null,
+      itemHolders: row.gearItem.deletedAt === null ? [] : (holders ?? []),
     };
   }
 }
@@ -302,7 +354,22 @@ export class TripGearPersonalDto {
   @ApiProperty({ description: 'Когда вещь добавили' })
   createdAt: string;
 
-  static from(row: TripPersonalGear): TripGearPersonalDto {
+  @ApiProperty({
+    description: 'Вещь мягко удалена из каталога, но осталась в походе',
+    example: false,
+  })
+  itemDeleted: boolean;
+
+  @ApiProperty({
+    description: 'Активные держатели удалённой вещи — «она есть у Анны»',
+    type: [GearHolderDto],
+  })
+  itemHolders: GearHolderDto[];
+
+  static from(
+    row: TripPersonalGear,
+    holders?: GearHolderDto[],
+  ): TripGearPersonalDto {
     return {
       id: row.id,
       gearItemId: row.gearItemId,
@@ -321,6 +388,8 @@ export class TripGearPersonalDto {
       ownerUserId: row.userId,
       assignedUserId: row.userId,
       createdAt: row.createdAt.toISOString(),
+      itemDeleted: row.gearItem.deletedAt !== null,
+      itemHolders: row.gearItem.deletedAt === null ? [] : (holders ?? []),
     };
   }
 }
@@ -425,6 +494,43 @@ export class TripGearSleepingDto {
     nullable: true,
   })
   weightGrams: number | null;
+
+  @ApiProperty({
+    description: 'Вещь мягко удалена из каталога, но осталась в походе',
+    example: false,
+  })
+  itemDeleted: boolean;
+
+  @ApiProperty({
+    description: 'Активные держатели удалённой вещи — «она есть у Анны»',
+    type: [GearHolderDto],
+  })
+  itemHolders: GearHolderDto[];
+
+  static from(
+    row: {
+      id: string;
+      gear_item_id: string;
+      type_code: string;
+      type_name: string;
+      title: string;
+      weight_grams: number | null;
+      deleted_at: Date | null;
+    },
+    holders?: GearHolderDto[],
+  ): TripGearSleepingDto {
+    return {
+      id: row.id,
+      gearItemId: row.gear_item_id,
+      typeCode: row.type_code,
+      typeName: row.type_name,
+      title: row.title,
+      weightGrams:
+        row.weight_grams === null ? null : Number(row.weight_grams),
+      itemDeleted: row.deleted_at !== null,
+      itemHolders: row.deleted_at === null ? [] : (holders ?? []),
+    };
+  }
 }
 
 /**

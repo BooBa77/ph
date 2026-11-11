@@ -21,6 +21,8 @@ import {
 } from './gear-attribute-values';
 import { GearGroupsService, type UserGrouping } from './gear-groups.service';
 import { SORT_STEP, nextSortOrder, typeIdsOfTypeGroup } from './gear-sort';
+import { busyCatalogForViewer } from './gear-uid';
+import { TripsService } from '../trips/trips.service';
 import { FamilyGearService } from './family-gear.service';
 import type { GearGroup } from './entities/gear-group.entity';
 import { GearItem } from './entities/gear-item.entity';
@@ -87,10 +89,23 @@ export class GearService {
      * зеркало при правке, мягкое удаление по компоненте связей.
      */
     private readonly familyGear: FamilyGearService,
+    /**
+     * Поход — только ради подсказки «занята» в выборе снаряжения
+     * (11.11.2026, шаг 2): занятость считается по датам похода, и каталог
+     * спрашивает их у того же правила видимости, что вкладка.
+     */
+    private readonly trips: TripsService,
   ) {}
 
-  /** Мой список и итог по весу. Одноразовые и удалённые вещи сюда не входят. */
-  async list(userId: string): Promise<GearListDto> {
+  /**
+   * Мой список и итог по весу.
+   *
+   * `tripId` — «каталог для выбора в этом походе» (11.11.2026, шаг 2):
+   * тогда ответ несёт `busyGear` — вещи, которые на даты этого похода уже
+   * заняты в другом живом решённом походе. Обычный каталог про походы
+   * ничего не знает, и подсказки в нём нет.
+   */
+  async list(userId: string, tripId?: number): Promise<GearListDto> {
     const grouping = await this.gearGroups.ensure(userId);
     const items = await this.dataSource.manager.find(GearItem, {
       where: {
@@ -122,11 +137,28 @@ export class GearService {
       return Number(left.id) - Number(right.id);
     });
 
-    return this.toList(items, grouping);
+    const list = this.toList(items, grouping);
+    if (tripId === undefined) return list;
+
+    /**
+     * Поход проверяется тем же правилом, что и вкладка «Снаряжение»:
+     * приватный чужой — 404, а не «занятости нет». Иначе подсказка стала бы
+     * способом узнать даты чужого похода.
+     */
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+
+    return {
+      ...list,
+      busyGear: await busyCatalogForViewer(
+        this.dataSource.manager,
+        trip,
+        userId,
+      ),
+    };
   }
 
   /**
-   * Предмет каталога, который человек вправе поставить в поход (11.11.2026).
+   * Предмет своего каталога, который человек вправе поставить в поход.
    *
    * Раньше «доступный» значил «свой или родного»: вещь родного лежала
    * в его каталоге, и в поход её ставили ссылкой на чужую строку. Теперь
@@ -138,16 +170,16 @@ export class GearService {
    * Мягко удалённая вещь (`deleted_at`) не находится — иначе её можно было
    * бы поставить в поход по старому id, хотя из каталога она исчезла.
    *
-   * Возвращаемое имя владельца всегда `null`: оно осталось в сигнатуре,
-   * пока походные вызовы не переписаны (следующий шаг), и уходит вместе
-   * с ними.
+   * Отдельного «доступного» вида больше нет: в поход ставится **свой** клон,
+   * а за то, что тот же физический предмет не занят в другом походе,
+   * отвечает проверка по `gear_uid` (`gear-uid.ts`).
    */
-  async findAvailable(
+  async findCatalogItem(
     manager: EntityManager,
     userId: string,
     gearItemId: string,
-  ): Promise<{ item: GearItem; ownerName: string | null } | null> {
-    const item = await manager.findOne(GearItem, {
+  ): Promise<GearItem | null> {
+    return manager.findOne(GearItem, {
       where: {
         id: gearItemId,
         ownerUserId: userId,
@@ -156,9 +188,6 @@ export class GearService {
       },
       relations: { gearType: true, attributes: { gearTypeAttribute: true } },
     });
-    if (!item) return null;
-
-    return { item, ownerName: null };
   }
 
   /** Новый предмет каталога. */

@@ -8,6 +8,7 @@ import {
 import { DataSource, EntityManager } from 'typeorm';
 
 import { GEAR_TYPE_CODES } from '../gear/gear.types';
+import { assertGearUidFree } from '../gear/gear-uid';
 import {
   AddSleepingDto,
   LodgeRouteDto,
@@ -172,7 +173,11 @@ export class TripRouteService {
       userId,
       'Спальник в ночёвку добавляет только тот, кто идёт в поход',
     );
-    await this.assertSleepingItem(manager, userId, dto.gearItemId);
+    const sleepingItem = await this.assertSleepingItem(
+      manager,
+      userId,
+      dto.gearItemId,
+    );
 
     /**
      * Одна вещь — одно использование (10.11.2026, вечер). Проверки идут
@@ -180,6 +185,20 @@ export class TripRouteService {
      * сказал бы «duplicate key», а человеку нужно «уже занято».
      */
     await this.assertItemFree(manager, trip.id, userId, dto.gearItemId);
+
+    /**
+     * Занятость по ключу физической вещи (11.11.2026, шаг 2): второй клон
+     * той же вещи в этом походе и живые решённые чужие походы на тех же
+     * датах. Раньше это правило держалось на «только свой каталог», теперь
+     * у родных свои клоны — проверять надо по `gear_uid`.
+     */
+    await assertGearUidFree(
+      manager,
+      trip,
+      sleepingItem.gear_uid,
+      sleepingItem.title,
+      sleepingItem.id,
+    );
 
     const existing = await manager.findOne(TripRouteSleeping, {
       where: { tripId: trip.id, gearItemId: dto.gearItemId },
@@ -535,22 +554,32 @@ export class TripRouteService {
     manager: EntityManager,
     userId: string,
     gearItemId: string,
-  ): Promise<void> {
+  ): Promise<{ id: string; gear_uid: string; title: string }> {
     const rows = (await manager.query(
-      `SELECT gi.id
+      `SELECT gi.id::text AS id,
+              gi.gear_uid::text AS gear_uid,
+              COALESCE(NULLIF(gi.title, ''), gt.name) AS title
          FROM gear_items gi
+         JOIN gear_types gt ON gt.id = gi.gear_type_id
         WHERE gi.id = $1::bigint
           AND gi.is_trip_only = false
           AND gi.deleted_at IS NULL
           AND gi.owner_user_id = $2`,
       [gearItemId, userId],
-    )) as { id: string }[];
+    )) as Array<{ id: string; gear_uid: string; title: string }>;
 
     if (rows[0] === undefined) {
       throw new BadRequestException(
         'В ночёвку берут вещь из своего каталога снаряжения',
       );
     }
+
+    /**
+     * Ключ вещи нужен вызывающему (`addSleeping`): по нему проверяется
+     * занятость в других походах (11.11.2026). Второй запрос за теми же
+     * полями был бы лишним кругом до базы.
+     */
+    return rows[0];
   }
 
   /**

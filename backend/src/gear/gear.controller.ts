@@ -9,6 +9,7 @@ import {
   ParseIntPipe,
   Patch,
   Post,
+  Query,
 } from '@nestjs/common';
 import {
   ApiCreatedResponse,
@@ -41,12 +42,22 @@ import { GearService } from './gear.service';
 export class GearController {
   constructor(private readonly gearService: GearService) {}
 
-  /** Мой список с итогом по весу. */
+  /**
+   * Мой список с итогом по весу.
+   *
+   * `?tripId=` — каталог открыт для выбора в походе (11.11.2026, шаг 2):
+   * ответ несёт `busyGear`, чтобы выбранная вещь не оказалась занятой
+   * в другом походе на те же даты. Без параметра каталог ведёт себя как
+   * прежде.
+   */
   @Get()
   @ApiOperation({ summary: 'Моё снаряжение' })
   @ApiOkResponse({ type: GearListDto })
-  async list(@CurrentUser() authUser: AuthUser): Promise<GearListDto> {
-    return this.gearService.list(authUser.id);
+  async list(
+    @CurrentUser() authUser: AuthUser,
+    @Query('tripId', new ParseIntPipe({ optional: true })) tripId?: number,
+  ): Promise<GearListDto> {
+    return this.gearService.list(authUser.id, tripId);
   }
 
   /** Новый предмет. Вес можно не указывать — он попадёт в список «не взвешено». */

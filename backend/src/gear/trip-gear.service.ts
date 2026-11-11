@@ -24,6 +24,7 @@ import {
   AddTripGearPersonalDto,
   AssignTripGearPackageDto,
   CreateTripGearSectionDto,
+  GearHolderDto,
   ProposeTripGearDto,
   TripGearItemDto,
   TripGearListDto,
@@ -50,6 +51,11 @@ import {
   FIRST_AID_TYPE_CODE,
   PERSONAL_FOOD_PACKAGE_ID,
 } from './gear.types';
+import {
+  activeHolders,
+  assertGearUidFree,
+  gearTitleOf,
+} from './gear-uid';
 import { GearService } from './gear.service';
 import {
   allocateLoad,
@@ -105,6 +111,24 @@ const CAMP_SECTION_CODE = 'camp';
 interface SectionTemplate {
   code: string;
   title: string;
+}
+
+/**
+ * Строка личной вещи из «Спальника» — как её читает SQL.
+ *
+ * `gear_uid` и `deleted_at` нужны архиву (11.11.2026): по ключу ищутся живые
+ * клоны мягко удалённой вещи, чтобы ответить «она есть у Анны», а не
+ * «снаряжение недоступно».
+ */
+interface SleepingRow {
+  id: string;
+  gear_item_id: string;
+  gear_uid: string;
+  deleted_at: Date | null;
+  type_code: string;
+  type_name: string;
+  title: string;
+  weight_grams: number | null;
 }
 
 /**
@@ -193,7 +217,8 @@ export class TripGearService {
   }
 
   /** Весь список вещей похода и разделы. Видят участники. */
-  async list(userId: string, tripId: number): Promise<TripGearListDto> {    const manager = this.dataSource.manager;
+  async list(userId: string, tripId: number): Promise<TripGearListDto> {
+    const manager = this.dataSource.manager;
     const trip = await this.trips.getVisibleTrip(userId, tripId);
     const participant = await this.assertParticipant(manager, trip.id, userId);
 
@@ -225,10 +250,32 @@ export class TripGearService {
      * поэтому они приезжают отдельным массивом — экран не склеивает
      * две таблицы сам.
      */
-    const sleeping = await this.sleepingRows(manager, trip.id, userId);
-    const personalItems = await this.personalRows(manager, trip.id, userId);
+    const sleepingRows = await this.sleepingRows(manager, trip.id, userId);
+    const personalRows = await this.personalRows(manager, trip.id, userId);
 
-    return this.toList(rows, sections, sleeping, personalItems, userId);
+    /**
+     * Архив похода (11.11.2026): у мягко удалённой вещи ищем живые клоны
+     * по `gear_uid`. Один запрос на весь ответ: строк с удалёнными вещами
+     * в живом походе единицы, а по запросу на строку вкладка грузилась бы
+     * заметно дольше.
+     */
+    const deletedUids = new Set<string>([
+      ...rows
+        .filter((row) => row.gearItem.deletedAt !== null)
+        .map((row) => row.gearItem.gearUid),
+      ...personalRows
+        .filter((row) => row.gearItem.deletedAt !== null)
+        .map((row) => row.gearItem.gearUid),
+      ...sleepingRows
+        .filter((row) => row.deleted_at !== null)
+        .map((row) => row.gear_uid),
+    ]);
+    const holders = await activeHolders(manager, [...deletedUids]);
+    const holdersOf = (gearUid: string) => holders.get(gearUid) ?? [];
+
+    return this.toList(rows, sections, sleepingRows, personalRows, userId, {
+      holdersOf,
+    });
   }
 
   /**
@@ -450,13 +497,12 @@ export class TripGearService {
     // Предмет ищется в своём каталоге (11.11.2026): у каждого родного
     // лежит свой клон вещи с тем же `gear_uid`, поэтому «вещь родного»
     // отдельным путём больше не берётся. Чужой предмет — 404, как в каталоге.
-    const available = await this.gear.findAvailable(
+    const item = await this.gear.findCatalogItem(
       manager,
       userId,
       String(dto.gearItemId),
     );
-    if (!available) throw new NotFoundException('Предмет не найден');
-    const item = available.item;
+    if (!item) throw new NotFoundException('Предмет не найден');
 
     const existing = await manager.findOne(TripGear, {
       where: { tripId: trip.id, gearItemId: item.id },
@@ -464,6 +510,17 @@ export class TripGearService {
     if (existing) {
       throw new ConflictException('Этот предмет уже предложен в походе');
     }
+
+    /**
+     * Занятость по ключу физической вещи (11.11.2026, шаг 2).
+     *
+     * Своя строка этого похода уже проверена выше, а здесь — второй клон
+     * той же вещи в этом походе (у родных он свой) и живые решённые чужие
+     * походы на пересекающихся датах. Без этой проверки одну палатку
+     * ставили бы в два похода сразу, и «занято» выяснялось бы только
+     * при выезде.
+     */
+    await assertGearUidFree(manager, trip, item.gearUid, gearTitleOf(item), item.id);
 
     const saved = await manager.save(
       manager.create(TripGear, {
@@ -778,13 +835,12 @@ export class TripGearService {
       );
     }
 
-    const available = await this.gear.findAvailable(
+    const item = await this.gear.findCatalogItem(
       manager,
       userId,
       String(dto.gearItemId),
     );
-    if (!available) throw new NotFoundException('Предмет не найден');
-    const item = available.item;
+    if (!item) throw new NotFoundException('Предмет не найден');
 
     /**
      * Одна вещь не может быть одновременно общественной и личной
@@ -838,6 +894,14 @@ export class TripGearService {
           : 'Эту вещь уже взял родной — одну вещь вдвоём не взять',
       );
     }
+
+    /**
+     * Занятость по `gear_uid` (11.11.2026, шаг 2): второй клон той же вещи
+     * в этом походе и живые решённые чужие походы на пересекающихся датах.
+     * Проверка стоит последней, чтобы точные тексты выше («уже в вашем
+     * личном», «уже взял родной») не заменялись общим «уже в этом походе».
+     */
+    await assertGearUidFree(manager, trip, item.gearUid, gearTitleOf(item), item.id);
 
     const saved = await manager.save(
       manager.create(TripPersonalGear, {
@@ -1522,7 +1586,8 @@ export class TripGearService {
         kind: 'sleeping' as const,
         id: row.id,
         title: row.title,
-        weightGrams: row.weightGrams,
+        weightGrams:
+          row.weight_grams === null ? null : Number(row.weight_grams),
       })),
       ...personalFirstAidRow,
     ];
@@ -1971,22 +2036,21 @@ export class TripGearService {
    * Сервер отдаёт только строки смотрящего — личное чужим не показывается
    * даже организатору, это правило «Ночёвок» и здесь оно не меняется.
    * Вес и название — из каталога: спальник взвешивают один раз.
+   *
+   * С 11.11.2026 сюда же приезжают `gear_uid` и `deleted_at`: по первому
+   * ищутся живые клоны удалённой вещи, по второму экран понимает, что
+   * каталог вещь уже не отдаёт («она есть у Анны»).
    */
   private async sleepingRows(
     manager: EntityManager,
     tripId: string,
     userId: string,
-  ): Promise<TripGearSleepingDto[]> {
-    const rows: Array<{
-      id: string;
-      gear_item_id: string;
-      type_code: string;
-      type_name: string;
-      title: string;
-      weight_grams: number | null;
-    }> = await manager.query(
+  ): Promise<SleepingRow[]> {
+    return (await manager.query(
       `SELECT s.id::text AS id,
               s.gear_item_id::text AS gear_item_id,
+              gi.gear_uid::text AS gear_uid,
+              gi.deleted_at AS deleted_at,
               gt.code AS type_code,
               gt.name AS type_name,
               gi.title,
@@ -2000,16 +2064,7 @@ export class TripGearService {
           AND u.is_virtual = false
         ORDER BY s.id ASC`,
       [tripId, userId],
-    );
-
-    return rows.map((row) => ({
-      id: row.id,
-      gearItemId: row.gear_item_id,
-      typeCode: row.type_code,
-      typeName: row.type_name,
-      title: row.title,
-      weightGrams: row.weight_grams === null ? null : Number(row.weight_grams),
-    }));
+    )) as SleepingRow[];
   }
 
   /**
@@ -2023,23 +2078,32 @@ export class TripGearService {
     manager: EntityManager,
     tripId: string,
     userId: string,
-  ): Promise<TripGearPersonalDto[]> {
-    const rows = await manager.find(TripPersonalGear, {
+  ): Promise<TripPersonalGear[]> {
+    return manager.find(TripPersonalGear, {
       where: { tripId, userId },
       relations: { gearItem: { gearType: true, attributes: { gearTypeAttribute: true } } },
       order: { id: 'ASC' },
     });
-
-    return rows.map((row) => TripGearPersonalDto.from(row));
   }
 
-  /** Список с итогом: сумма только утверждённых весов. */
+  /**
+   * Список с итогом: сумма только утверждённых весов.
+   *
+   * `archive` — не данные, а подсказка для ответа (11.11.2026):
+   * у мягко удалённой вещи `holdersOf` отдаёт живые клоны («есть у Анны»).
+   * Считается в `list` заранее: у `TripGearItemDto.from` нет доступа
+   * к базе, и делать его асинхронным ради двух полей значило бы переписать
+   * все места, где DTO собирается при правке одной строки.
+   */
   private toList(
     rows: TripGear[],
     sections: TripGearSection[],
-    sleeping: TripGearSleepingDto[],
-    personalItems: TripGearPersonalDto[],
+    sleeping: SleepingRow[],
+    personal: TripPersonalGear[],
     viewerId: string,
+    archive: {
+      holdersOf: (gearUid: string) => GearHolderDto[];
+    },
   ): TripGearListDto {
     let totalWeightGrams = 0;
     let itemsWithoutWeight = 0;
@@ -2052,12 +2116,25 @@ export class TripGearService {
     }
 
     return {
-      items: rows.map((row) => TripGearItemDto.from(row, viewerId)),
+      items: rows.map((row) =>
+        TripGearItemDto.from(
+          row,
+          viewerId,
+          archive.holdersOf(row.gearItem.gearUid),
+        ),
+      ),
       sections: sections.map((section) => TripGearSectionDto.from(section)),
       totalWeightGrams,
       itemsWithoutWeight,
-      sleeping,
-      personalItems,
+      sleeping: sleeping.map((row) =>
+        TripGearSleepingDto.from(row, archive.holdersOf(row.gear_uid)),
+      ),
+      personalItems: personal.map((row) =>
+        TripGearPersonalDto.from(
+          row,
+          archive.holdersOf(row.gearItem.gearUid),
+        ),
+      ),
     };
   }
 }

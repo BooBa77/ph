@@ -156,6 +156,18 @@ export class GearItemDto {
   }
 }
 
+/** Занятая вещь каталога: где именно она занята на даты похода. */
+export class GearBusyDto {
+  @ApiProperty({ description: 'Id предмета каталога', example: '5' })
+  gearItemId: string;
+
+  @ApiProperty({ description: 'Id похода, где вещь занята', example: '679' })
+  tripId: string;
+
+  @ApiProperty({ description: 'Название похода', example: 'Витязь' })
+  tripTitle: string;
+}
+
 /**
  * Мой список снаряжения и итог по весу.
  *
@@ -178,6 +190,22 @@ export class GearListDto {
     example: 2,
   })
   itemsWithoutWeight: number;
+
+  /**
+   * Занятые вещи — только когда список запросили для похода
+   * (`GET /gear?tripId=…`, 11.11.2026, шаг 2).
+   *
+   * Каталог сам по себе про походы ничего не знает: «занята» зависит
+   * от дат похода и от того, что вещь не едет в нём же. Поэтому подсказка
+   * приезжает вместе со списком, который открывается в выборе снаряжения
+   * похода, и стоит пустой в обычном каталоге.
+   */
+  @ApiProperty({
+    description: 'Занятые вещи: где именно занята каждая (вне прямого каталога)',
+    type: [GearBusyDto],
+    required: false,
+  })
+  busyGear?: GearBusyDto[];
 }
 
 /**

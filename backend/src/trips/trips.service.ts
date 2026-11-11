@@ -57,6 +57,7 @@ import { TripRouteElement } from './entities/trip-route-element.entity';
 import { TripRouteNight } from './entities/trip-route-night.entity';
 import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
+import { conflictMessage, removeConflictingGear } from '../gear/gear-uid';
 import { extractObjectIds } from './route-links';
 import {
   MEMBERS_TAB,
@@ -82,6 +83,7 @@ import {
   type TripWhen,
 } from './trip.types';
 import { nextWeekendRange } from './weekend';
+import { TripEventsService } from './trip-events.service';
 
 /** Размер страницы ленты по умолчанию и потолок — в DTO. */
 const DEFAULT_PAGE_SIZE = 20;
@@ -104,9 +106,20 @@ function dayDistance(from: Date, to: Date): number {
   return Math.round((end - start) / 86_400_000);
 }
 
+/**
+ * Совпадают ли два момента времени (включая «оба null»).
+ *
+ * Нужно, чтобы отличить «даты похода изменились» от «прислали те же даты»:
+ * `PATCH` формы присылает их всегда, а снимать снаряжение из-за повторной
+ * отправки того же числа нельзя (11.11.2026).
+ */
+function sameInstant(left: Date | null, right: Date | null): boolean {
+  if (left === null || right === null) return left === right;
+  return left.getTime() === right.getTime();
+}
+
 /** Как статус участия читается в системном сообщении чата. */
-function statusText(status: ParticipantStatus): string {
-  switch (status) {
+function statusText(status: ParticipantStatus): string {  switch (status) {
     case 'going':
       return 'идёт';
     case 'maybe':
@@ -144,6 +157,12 @@ export class TripsService {
      * быть одно. Здесь — только состав похода.
      */
     private readonly users: UsersService,
+    /**
+     * Смена дат решённого похода снимает ставшие занятыми строки снаряжения
+     * (11.11.2026, шаг 2). Вкладка «Снаряжение» должна об этом узнать без
+     * перезагрузки — канал тот же, что у перетаскивания вещи.
+     */
+    private readonly events: TripEventsService,
   ) {}
 
   /**
@@ -1257,181 +1276,237 @@ export class TripsService {
     id: number,
     dto: UpdateTripDto,
   ): Promise<TripResponseDto> {
-    return this.dataSource.transaction(async (manager) => {
-      const trip = await this.findOwnedTrip(manager, userId, id);
+    const { response, gearChanged } = await this.dataSource.transaction(
+      async (manager) => {
+        const trip = await this.findOwnedTrip(manager, userId, id);
 
-      /**
-       * Правила готовности (`tabs.md` §7) требуют знать, чем поход был:
-       * из «Мечты» в «Планирую» достраивается состав и чаты, а обратно
-       * и к «без конкретного числа» пути нет. Оба факта снимаем до правок.
-       */
-      const previousStatus = trip.status;
-      const previousHasConcreteDate = await this.hasConcreteDate(manager, trip);
-
-      const isCommercial = dto.isCommercial ?? trip.isCommercial;
-
-      const priceRub =
-        dto.priceRub !== undefined ? dto.priceRub : trip.priceRub;
-      const priceNote =
-        dto.priceNote !== undefined ? dto.priceNote : trip.priceNote;
-      const status = dto.status ?? trip.status;
-      const startsAt =
-        dto.startsAt !== undefined ? this.toDate(dto.startsAt) : trip.startsAt;
-      const endsAt =
-        dto.endsAt !== undefined ? this.toDate(dto.endsAt) : trip.endsAt;
-      const actualStartedAt =
-        dto.actualStartedAt !== undefined
-          ? this.toDate(dto.actualStartedAt)
-          : trip.actualStartedAt;
-      const actualFinishedAt =
-        dto.actualFinishedAt !== undefined
-          ? this.toDate(dto.actualFinishedAt)
-          : trip.actualFinishedAt;
-
-      this.assertPriceRules(isCommercial, priceRub, priceNote);
-      this.assertDates(status, startsAt, endsAt);
-      this.assertActualDates(actualStartedAt, actualFinishedAt);
-
-      /**
-       * Назад в «Мечту» нельзя: поход уже готовится, у него есть состав
-       * и подготовка, а «мечта» — это вишлист без данных (`tabs.md` §7).
-       */
-      if (status === 'idea' && previousStatus !== 'idea') {
-        throw new BadRequestException(
-          'Поход уже запланирован, назад пути нет',
+        /**
+         * Правила готовности (`tabs.md` §7) требуют знать, чем поход был:
+         * из «Мечты» в «Планирую» достраивается состав и чаты, а обратно
+         * и к «без конкретного числа» пути нет. Оба факта снимаем до правок.
+         */
+        const previousStatus = trip.status;
+        const previousStartsAt = trip.startsAt;
+        const previousEndsAt = trip.endsAt;
+        const previousHasConcreteDate = await this.hasConcreteDate(
+          manager,
+          trip,
         );
-      }
 
-      /**
-       * Конкретное число — точка невозврата: как только по нему открылись
-       * закладки подготовки, убрать его нельзя. Вернуться к «без числа»
-       * значит вернуть поход в состояние, из которого он вышел.
-       */
-      const nextVariants =
-        dto.dateVariants !== undefined
-          ? dto.dateVariants
-          : await manager.find(TripDateVariant, { where: { tripId: trip.id } });
-      const willHaveConcreteDate =
-        startsAt !== null || nextVariants.some((variant) => variant.day != null);
+        const isCommercial = dto.isCommercial ?? trip.isCommercial;
 
-      if (previousHasConcreteDate && !willHaveConcreteDate) {
-        throw new BadRequestException(
-          'Конкретное число у похода уже было — вернуться к «без числа» нельзя',
-        );
-      }
+        const priceRub =
+          dto.priceRub !== undefined ? dto.priceRub : trip.priceRub;
+        const priceNote =
+          dto.priceNote !== undefined ? dto.priceNote : trip.priceNote;
+        const status = dto.status ?? trip.status;
+        const startsAt =
+          dto.startsAt !== undefined ? this.toDate(dto.startsAt) : trip.startsAt;
+        const endsAt =
+          dto.endsAt !== undefined ? this.toDate(dto.endsAt) : trip.endsAt;
+        const actualStartedAt =
+          dto.actualStartedAt !== undefined
+            ? this.toDate(dto.actualStartedAt)
+            : trip.actualStartedAt;
+        const actualFinishedAt =
+          dto.actualFinishedAt !== undefined
+            ? this.toDate(dto.actualFinishedAt)
+            : trip.actualFinishedAt;
 
-      /**
-       * Типы похода — тоже «замена целиком», как варианты дат ниже:
-       * у пары нет стабильного внешнего идентификатора, и «третий тип»
-       * после правки списка означал бы уже другой. Поэтому присланный
-       * массив снимается и вставляется заново, а `null` — «не трогать»,
-       * иначе `PATCH` без поля стирал бы типы.
-       */
-      const activityTypeIds =
-        dto.activityTypeIds !== undefined
-          ? [...new Set(dto.activityTypeIds)]
-          : null;
-      if (activityTypeIds !== null) {
-        await this.assertActivityTypes(manager, activityTypeIds);
-      }
+        this.assertPriceRules(isCommercial, priceRub, priceNote);
+        this.assertDates(status, startsAt, endsAt);
+        this.assertActualDates(actualStartedAt, actualFinishedAt);
 
-      if (dto.goalObjectId !== undefined) {
-        const goal = await manager.findOne(GeoObject, {
-          where: { id: String(dto.goalObjectId) },
-        });
-        if (!goal) {
+        /**
+         * Назад в «Мечту» нельзя: поход уже готовится, у него есть состав
+         * и подготовка, а «мечта» — это вишлист без данных (`tabs.md` §7).
+         */
+        if (status === 'idea' && previousStatus !== 'idea') {
           throw new BadRequestException(
-            'Цель не найдена в справочнике географических объектов',
+            'Поход уже запланирован, назад пути нет',
           );
         }
-        trip.goalObjectId = goal.id;
-        trip.goalObject = goal;
-      }
 
-      if (dto.announcement !== undefined) trip.announcement = dto.announcement;
-      if (dto.requirementsText !== undefined) {
-        trip.requirementsText = dto.requirementsText;
-      }
-      if (dto.hasGuitar !== undefined) trip.hasGuitar = dto.hasGuitar;
-      if (dto.visibility !== undefined) trip.visibility = dto.visibility;
-      if (dto.isRecruitmentClosed !== undefined) {
-        trip.isRecruitmentClosed = dto.isRecruitmentClosed;
-      }
-      if (dto.routeText !== undefined) trip.routeText = dto.routeText;
+        /**
+         * Конкретное число — точка невозврата: как только по нему открылись
+         * закладки подготовки, убрать его нельзя. Вернуться к «без числа»
+         * значит вернуть поход в состояние, из которого он вышел.
+         */
+        const nextVariants =
+          dto.dateVariants !== undefined
+            ? dto.dateVariants
+            : await manager.find(TripDateVariant, { where: { tripId: trip.id } });
+        const willHaveConcreteDate =
+          startsAt !== null ||
+          nextVariants.some((variant) => variant.day != null);
 
-      trip.status = status;
-      trip.startsAt = startsAt;
-      trip.endsAt = endsAt;
-      trip.actualStartedAt = actualStartedAt;
-      trip.actualFinishedAt = actualFinishedAt;
-      trip.isCommercial = isCommercial;
-      if (dto.isOfficial !== undefined) trip.isOfficial = dto.isOfficial;
-      trip.priceRub = priceRub;
-      trip.priceNote = priceNote;
-
-      const saved = await manager.save(trip);
-
-      if (dto.routeText !== undefined) {
-        await this.syncRouteElements(manager, saved.id, saved.routeText);
-      }
-
-      /**
-       * Присланный массив вариантов заменяет прежний целиком, пустой —
-       * убирает все. Патчить отдельные варианты нечем: у них нет
-       * стабильного внешнего идентификатора, и «вариант №2» после правки
-       * списка означал бы уже другое.
-       */
-      if (dto.dateVariants !== undefined) {
-        await manager.delete(TripDateVariant, { tripId: saved.id });
-        if (dto.dateVariants.length > 0) {
-          await manager.insert(
-            TripDateVariant,
-            dto.dateVariants.map((variant) => ({
-              tripId: saved.id,
-              year: variant.year ?? null,
-              month: variant.month ?? null,
-              day: variant.day ?? null,
-              durationDays: variant.durationDays ?? null,
-              durationDelta: variant.durationDelta ?? 0,
-            })),
+        if (previousHasConcreteDate && !willHaveConcreteDate) {
+          throw new BadRequestException(
+            'Конкретное число у похода уже было — вернуться к «без числа» нельзя',
           );
         }
-      }
 
-      // Мечта становится походом: состав, роль организатора и членский чат
-      // появляются здесь — до этого их не было.
-      if (previousStatus === 'idea' && status !== 'idea') {
-        await this.prepareTripFromIdea(manager, saved);
-      }
+        /**
+         * Типы похода — тоже «замена целиком», как варианты дат ниже:
+         * у пары нет стабильного внешнего идентификатора, и «третий тип»
+         * после правки списка означал бы уже другой. Поэтому присланный
+         * массив снимается и вставляется заново, а `null` — «не трогать»,
+         * иначе `PATCH` без поля стирал бы типы.
+         */
+        const activityTypeIds =
+          dto.activityTypeIds !== undefined
+            ? [...new Set(dto.activityTypeIds)]
+            : null;
+        if (activityTypeIds !== null) {
+          await this.assertActivityTypes(manager, activityTypeIds);
+        }
 
-      // Снимаем и ставим заново в той же транзакции: половина типов
-      // в ответе была бы хуже прежних, а `UPDATE` на связке не выдаётся.
-      if (activityTypeIds !== null) {
-        await manager.delete(TripType, { tripId: saved.id });
-        if (activityTypeIds.length > 0) {
-          await manager.insert(
-            TripType,
-            activityTypeIds.map((activityTypeId) => ({
-              tripId: saved.id,
-              activityTypeId,
-            })),
+        if (dto.goalObjectId !== undefined) {
+          const goal = await manager.findOne(GeoObject, {
+            where: { id: String(dto.goalObjectId) },
+          });
+          if (!goal) {
+            throw new BadRequestException(
+              'Цель не найдена в справочнике географических объектов',
+            );
+          }
+          trip.goalObjectId = goal.id;
+          trip.goalObject = goal;
+        }
+
+        if (dto.announcement !== undefined) trip.announcement = dto.announcement;
+        if (dto.requirementsText !== undefined) {
+          trip.requirementsText = dto.requirementsText;
+        }
+        if (dto.hasGuitar !== undefined) trip.hasGuitar = dto.hasGuitar;
+        if (dto.visibility !== undefined) trip.visibility = dto.visibility;
+        if (dto.isRecruitmentClosed !== undefined) {
+          trip.isRecruitmentClosed = dto.isRecruitmentClosed;
+        }
+        if (dto.routeText !== undefined) trip.routeText = dto.routeText;
+
+        trip.status = status;
+        trip.startsAt = startsAt;
+        trip.endsAt = endsAt;
+        trip.actualStartedAt = actualStartedAt;
+        trip.actualFinishedAt = actualFinishedAt;
+        trip.isCommercial = isCommercial;
+        if (dto.isOfficial !== undefined) trip.isOfficial = dto.isOfficial;
+        trip.priceRub = priceRub;
+        trip.priceNote = priceNote;
+
+        const saved = await manager.save(trip);
+
+        if (dto.routeText !== undefined) {
+          await this.syncRouteElements(manager, saved.id, saved.routeText);
+        }
+
+        /**
+         * Присланный массив вариантов заменяет прежний целиком, пустой —
+         * убирает все. Патчить отдельные варианты нечем: у них нет
+         * стабильного внешнего идентификатора, и «вариант №2» после правки
+         * списка означал бы уже другое.
+         */
+        if (dto.dateVariants !== undefined) {
+          await manager.delete(TripDateVariant, { tripId: saved.id });
+          if (dto.dateVariants.length > 0) {
+            await manager.insert(
+              TripDateVariant,
+              dto.dateVariants.map((variant) => ({
+                tripId: saved.id,
+                year: variant.year ?? null,
+                month: variant.month ?? null,
+                day: variant.day ?? null,
+                durationDays: variant.durationDays ?? null,
+                durationDelta: variant.durationDelta ?? 0,
+              })),
+            );
+          }
+        }
+
+        // Мечта становится походом: состав, роль организатора и членский чат
+        // появляются здесь — до этого их не было.
+        if (previousStatus === 'idea' && status !== 'idea') {
+          await this.prepareTripFromIdea(manager, saved);
+        }
+
+        // Снимаем и ставим заново в той же транзакции: половина типов
+        // в ответе была бы хуже прежних, а `UPDATE` на связке не выдаётся.
+        if (activityTypeIds !== null) {
+          await manager.delete(TripType, { tripId: saved.id });
+          if (activityTypeIds.length > 0) {
+            await manager.insert(
+              TripType,
+              activityTypeIds.map((activityTypeId) => ({
+                tripId: saved.id,
+                activityTypeId,
+              })),
+            );
+          }
+        }
+
+        /**
+         * Смена дат решённого похода и переход в `decided` (11.11.2026,
+         * шаг 2). Заказчик: «сдвигаемый поход теряет вещь, второй
+         * сохраняет», а в чаты `trip_route` и `trip_gear` уходит одно
+         * сообщение со списком. Снимаем строки здесь же, в транзакции:
+         * между правкой дат и уборкой вещь успела бы «поехать» в двух
+         * походах.
+         */
+        const becameDecided =
+          previousStatus !== 'decided' && status === 'decided';
+        const datesChanged =
+          !sameInstant(previousStartsAt, startsAt) ||
+          !sameInstant(previousEndsAt, endsAt);
+
+        const conflictText =
+          status === 'decided' && (becameDecided || datesChanged)
+            ? conflictMessage(
+                await removeConflictingGear(manager, saved),
+                becameDecided ? 'decided' : 'dates',
+              )
+            : null;
+
+        if (conflictText !== null) {
+          // Одно сообщение в оба чата: правка одна, и два разных текста
+          // в двух чатах читались бы как два события.
+          await postTripSystemMessage(
+            manager,
+            saved.id,
+            'trip_route',
+            conflictText,
+          );
+          await postTripSystemMessage(
+            manager,
+            saved.id,
+            'trip_gear',
+            conflictText,
           );
         }
-      }
 
-      // Читаем типы из базы, а не подставляем присланные: `PATCH` без поля
-      // типов их не меняет, и ответ должен показать то, что реально лежит.
-      await this.fillTypes(manager, [saved]);
+        // Читаем типы из базы, а не подставляем присланные: `PATCH` без поля
+        // типов их не меняет, и ответ должен показать то, что реально лежит.
+        await this.fillTypes(manager, [saved]);
 
-      // Ответ несёт варианты: форма правки инициализирует ими черновики,
-      // иначе смена готовности теряла бы продолжительность.
-      const savedVariants = await manager.find(TripDateVariant, {
-        where: { tripId: saved.id },
-        order: { id: 'ASC' },
-      });
+        // Ответ несёт варианты: форма правки инициализирует ими черновики,
+        // иначе смена готовности теряла бы продолжительность.
+        const savedVariants = await manager.find(TripDateVariant, {
+          where: { tripId: saved.id },
+          order: { id: 'ASC' },
+        });
 
-      return TripResponseDto.from(saved, savedVariants);
-    });
+        return {
+          response: TripResponseDto.from(saved, savedVariants),
+          gearChanged: conflictText !== null,
+        };
+      },
+    );
+
+    // Вкладка «Снаряжение» перечитывает данные сама, без перезагрузки:
+    // строки снял сервер, и человек должен увидеть это сразу.
+    if (gearChanged) this.events.emitGear(String(id), userId);
+
+    return response;
   }
 
   /** Отменить поход. Отмена — отдельная ось, статус она не затирает. */
@@ -1460,29 +1535,66 @@ export class TripsService {
     id: number,
     cancelled: boolean,
   ): Promise<TripResponseDto> {
-    return this.dataSource.transaction(async (manager) => {
-      const trip = await this.findOwnedTrip(manager, userId, id);
+    const { response, gearChanged } = await this.dataSource.transaction(
+      async (manager) => {
+        const trip = await this.findOwnedTrip(manager, userId, id);
 
-      // Типы заполняем один раз, до всех выходов: поле не персистентное,
-      // `save` его не тронет, поэтому и повторная отмена, и настоящая
-      // отмена отдают одинаково полный ответ.
-      await this.fillTypes(manager, [trip]);
+        // Типы заполняем один раз, до всех выходов: поле не персистентное,
+        // `save` его не тронет, поэтому и повторная отмена, и настоящая
+        // отмена отдают одинаково полный ответ.
+        await this.fillTypes(manager, [trip]);
 
-      if (cancelled && trip.status === 'idea') {
-        throw new BadRequestException(
-          'Идею не отменяют: у неё нет дат и договорённостей — её просто забывают',
-        );
-      }
+        if (cancelled && trip.status === 'idea') {
+          throw new BadRequestException(
+            'Идею не отменяют: у неё нет дат и договорённостей — её просто забывают',
+          );
+        }
 
-      if (cancelled === (trip.cancelledAt !== null)) {
-        return TripResponseDto.from(trip);
-      }
+        if (cancelled === (trip.cancelledAt !== null)) {
+          return { response: TripResponseDto.from(trip), gearChanged: false };
+        }
 
-      trip.cancelledAt = cancelled ? new Date() : null;
-      const saved = await manager.save(trip);
+        trip.cancelledAt = cancelled ? new Date() : null;
+        const saved = await manager.save(trip);
 
-      return TripResponseDto.from(saved);
-    });
+        /**
+         * Возврат в строй (11.11.2026, шаг 2). Отменённый поход не занимает
+         * снаряжение, поэтому за время отмены вещь могли взять в другой
+         * решённый поход. Тогда строка этого похода снимается, как при смене
+         * дат: «сдвигаемый поход теряет вещь, второй сохраняет».
+         */
+        const conflictText = !cancelled
+          ? conflictMessage(
+              await removeConflictingGear(manager, saved),
+              'restore',
+            )
+          : null;
+
+        if (conflictText !== null) {
+          await postTripSystemMessage(
+            manager,
+            saved.id,
+            'trip_route',
+            conflictText,
+          );
+          await postTripSystemMessage(
+            manager,
+            saved.id,
+            'trip_gear',
+            conflictText,
+          );
+        }
+
+        return {
+          response: TripResponseDto.from(saved),
+          gearChanged: conflictText !== null,
+        };
+      },
+    );
+
+    if (gearChanged) this.events.emitGear(String(id), userId);
+
+    return response;
   }
 
   /**
