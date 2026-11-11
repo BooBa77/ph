@@ -6,7 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   FamilyList,
   FamilyMember,
-  FamilyRequest,
+  FamilyUnion,
+  FamilyUnionPreview,
   UserSearchResult,
   VirtualUser,
 } from '@/api/users'
@@ -15,19 +16,22 @@ import PeopleSearch from '@/views/people/PeopleSearch.vue'
 /**
  * Тесты «Контактов» — родные и люди без аккаунта (10.11.2026).
  *
- * Проверяем то, что видно только на экране: две секции, поиск по своим,
- * запрос с подтверждением, удаление в два нажатия и запрет удалять того,
- * кто уже сходил в поход. Правила сервера — в e2e
+ * С 11.11.2026 заявка — на объединение **двух семей целиком**, поэтому
+ * проверяем то, что видно только на экране: состав обеих семей до
+ * подтверждения, предупреждение «снаряжение станет общим», ответ на
+ * входящую заявку, отмену только своей, удаление в два нажатия и запрет
+ * удалять того, кто уже сходил в поход. Правила сервера — в e2e
  * (`backend/test/family.e2e-spec.ts`).
  */
 vi.mock('@/api/users', () => ({
   getMyFamily: vi.fn(),
   listMyVirtual: vi.fn(),
   searchUsers: vi.fn(),
+  getFamilyUnionPreview: vi.fn(),
   addFamilyMember: vi.fn(),
-  acceptFamilyMember: vi.fn(),
-  declineFamilyMember: vi.fn(),
-  removeFamilyMember: vi.fn(),
+  acceptFamilyUnion: vi.fn(),
+  declineFamilyUnion: vi.fn(),
+  cancelFamilyUnion: vi.fn(),
   leaveFamily: vi.fn(),
   createVirtual: vi.fn(),
   removeVirtual: vi.fn(),
@@ -48,13 +52,60 @@ function makeMember(overrides: Partial<FamilyMember> = {}): FamilyMember {
   }
 }
 
-function makeRequest(overrides: Partial<FamilyRequest> = {}): FamilyRequest {
+function makeUnion(overrides: Partial<FamilyUnion> = {}): FamilyUnion {
   return {
-    userId: 'u-2',
-    displayName: 'Иван',
-    avatarUrl: null,
-    direction: 'incoming',
-    requestedAt: '2026-11-10T00:00:00.000Z',
+    id: 'union-1',
+    status: 'pending',
+    initiatorUserId: 'u-2',
+    initiatorName: 'Иван',
+    createdAt: '2026-11-11T00:00:00.000Z',
+    myConsent: 'pending',
+    isInitiator: false,
+    members: [
+      {
+        userId: 'u-1',
+        displayName: 'Анна',
+        avatarUrl: null,
+        isVirtual: false,
+        consent: 'accepted',
+        isInitiator: false,
+        mine: true,
+      },
+      {
+        userId: 'u-2',
+        displayName: 'Иван',
+        avatarUrl: null,
+        isVirtual: false,
+        consent: 'pending',
+        isInitiator: true,
+        mine: false,
+      },
+    ],
+    ...overrides,
+  }
+}
+
+function makePreview(overrides: Partial<FamilyUnionPreview> = {}): FamilyUnionPreview {
+  return {
+    targetUserId: 'u-2',
+    targetName: 'Иван',
+    pending: false,
+    members: [
+      {
+        userId: 'u-1',
+        displayName: 'Анна',
+        avatarUrl: null,
+        isVirtual: false,
+        mine: true,
+      },
+      {
+        userId: 'u-2',
+        displayName: 'Иван',
+        avatarUrl: null,
+        isVirtual: false,
+        mine: false,
+      },
+    ],
     ...overrides,
   }
 }
@@ -91,10 +142,11 @@ describe('PeopleSearch (Контакты)', () => {
     mocked.getMyFamily.mockResolvedValue(makeFamily())
     mocked.listMyVirtual.mockResolvedValue([makeVirtual()])
     mocked.searchUsers.mockResolvedValue([])
-    mocked.addFamilyMember.mockResolvedValue({ userId: 'u-2', status: 'pending' })
-    mocked.acceptFamilyMember.mockResolvedValue({ userId: 'u-2', status: 'accepted' })
-    mocked.declineFamilyMember.mockResolvedValue(undefined)
-    mocked.removeFamilyMember.mockResolvedValue(undefined)
+    mocked.getFamilyUnionPreview.mockResolvedValue(makePreview())
+    mocked.addFamilyMember.mockResolvedValue({ unionId: 'union-1', status: 'pending' })
+    mocked.acceptFamilyUnion.mockResolvedValue({ unionId: 'union-1', status: 'pending' })
+    mocked.declineFamilyUnion.mockResolvedValue(undefined)
+    mocked.cancelFamilyUnion.mockResolvedValue(undefined)
     mocked.createVirtual.mockResolvedValue(makeVirtual())
     mocked.removeVirtual.mockResolvedValue(undefined)
   })
@@ -154,7 +206,7 @@ describe('PeopleSearch (Контакты)', () => {
     expect(wrapper.find('[data-test="family-filter-empty"]').exists()).toBe(true)
   })
 
-  it('поиск человека уходит в сервер от двух символов и добавляет его', async () => {
+  it('поиск человека уходит в сервер от двух символов', async () => {
     mocked.searchUsers.mockResolvedValue([
       { id: 'u-2', displayName: 'Иван', avatarUrl: null } as UserSearchResult,
     ])
@@ -168,15 +220,7 @@ describe('PeopleSearch (Контакты)', () => {
     await flushPromises()
 
     expect(mocked.searchUsers).toHaveBeenCalledWith('Иван')
-
-    const option = wrapper.find('[data-test="family-add-option"]')
-    expect(option.exists()).toBe(true)
-    await option.trigger('click')
-    await flushPromises()
-
-    expect(mocked.addFamilyMember).toHaveBeenCalledWith('u-2')
-    // Список перечитан: «ждём подтверждения» — это состояние сервера.
-    expect(mocked.getMyFamily).toHaveBeenCalledTimes(2)
+    expect(wrapper.find('[data-test="family-add-option"]').exists()).toBe(true)
   })
 
   it('до двух символов запрос не уходит', async () => {
@@ -191,7 +235,82 @@ describe('PeopleSearch (Контакты)', () => {
     expect(wrapper.find('[data-test="family-add-hint"]').exists()).toBe(true)
   })
 
-  it('своего человека без аккаунта можно добавить в родные из поиска', async () => {
+  it('перед заявкой показывает состав обеих семей и предупреждение', async () => {
+    mocked.searchUsers.mockResolvedValue([
+      { id: 'u-2', displayName: 'Иван', avatarUrl: null } as UserSearchResult,
+    ])
+
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.find('[data-test="family-add-toggle"]').trigger('click')
+    await wrapper.find('[data-test="family-add-search"]').setValue('Иван')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+
+    await wrapper.find('[data-test="family-add-option"]').trigger('click')
+    await flushPromises()
+
+    expect(mocked.getFamilyUnionPreview).toHaveBeenCalledWith('u-2')
+
+    const preview = wrapper.find('[data-test="family-union-preview"]')
+    expect(preview.exists()).toBe(true)
+    expect(preview.text()).toContain('Иван')
+    expect(preview.text()).toContain('Анна')
+    // «Снаряжение станет общим» — не формальность, а смысл объединения.
+    expect(preview.text()).toContain('Снаряжение станет общим')
+
+    // Заявка до подтверждения не создаётся.
+    expect(mocked.addFamilyMember).not.toHaveBeenCalled()
+  })
+
+  it('подтверждение в предпросмотре создаёт заявку', async () => {
+    mocked.searchUsers.mockResolvedValue([
+      { id: 'u-2', displayName: 'Иван', avatarUrl: null } as UserSearchResult,
+    ])
+
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.find('[data-test="family-add-toggle"]').trigger('click')
+    await wrapper.find('[data-test="family-add-search"]').setValue('Иван')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+
+    await wrapper.find('[data-test="family-add-option"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-test="family-union-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(mocked.addFamilyMember).toHaveBeenCalledWith('u-2')
+    // Список перечитан: заявка — состояние сервера, а не память экрана.
+    expect(mocked.getMyFamily).toHaveBeenCalledTimes(2)
+  })
+
+  it('отмена в предпросмотре заявку не создаёт', async () => {
+    mocked.searchUsers.mockResolvedValue([
+      { id: 'u-2', displayName: 'Иван', avatarUrl: null } as UserSearchResult,
+    ])
+
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.find('[data-test="family-add-toggle"]').trigger('click')
+    await wrapper.find('[data-test="family-add-search"]').setValue('Иван')
+    await vi.advanceTimersByTimeAsync(400)
+    await flushPromises()
+
+    await wrapper.find('[data-test="family-add-option"]').trigger('click')
+    await flushPromises()
+
+    await wrapper.find('[data-test="family-union-cancel"]').trigger('click')
+
+    expect(mocked.addFamilyMember).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="family-union-preview"]').exists()).toBe(false)
+  })
+
+  it('своего человека без аккаунта можно добавить из поиска сразу', async () => {
     const wrapper = mountSection()
     await flushPromises()
 
@@ -202,24 +321,44 @@ describe('PeopleSearch (Контакты)', () => {
     await option.trigger('click')
     await flushPromises()
 
+    // Виртуальному подтверждать нечем — предпросмотра нет.
+    expect(mocked.getFamilyUnionPreview).not.toHaveBeenCalled()
     expect(mocked.addFamilyMember).toHaveBeenCalledWith('v-1')
   })
 
-  it('входящий запрос можно принять', async () => {
-    mocked.getMyFamily.mockResolvedValue(makeFamily({ incoming: [makeRequest()] }))
+  it('входящая заявка показывает обе семьи и принимается', async () => {
+    mocked.getMyFamily.mockResolvedValue(makeFamily({ incoming: [makeUnion()] }))
 
     const wrapper = mountSection()
     await flushPromises()
 
-    expect(wrapper.find('[data-test="family-incoming"]').exists()).toBe(true)
+    const block = wrapper.find('[data-test="family-incoming"]')
+    expect(block.exists()).toBe(true)
+    expect(block.text()).toContain('Иван')
+    expect(block.text()).toContain('Ваша семья: Анна')
+    expect(block.text()).toContain('Другая семья: Иван')
+
     await wrapper.find('[data-test="family-accept"]').trigger('click')
     await flushPromises()
 
-    expect(mocked.acceptFamilyMember).toHaveBeenCalledWith('u-2')
+    expect(mocked.acceptFamilyUnion).toHaveBeenCalledWith('union-1')
   })
 
-  it('входящий запрос можно отклонить', async () => {
-    mocked.getMyFamily.mockResolvedValue(makeFamily({ incoming: [makeRequest()] }))
+  it('после согласия всех сообщает, что семьи объединены', async () => {
+    mocked.getMyFamily.mockResolvedValue(makeFamily({ incoming: [makeUnion()] }))
+    mocked.acceptFamilyUnion.mockResolvedValue({ unionId: 'union-1', status: 'accepted' })
+
+    const wrapper = mountSection()
+    await flushPromises()
+
+    await wrapper.find('[data-test="family-accept"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="contacts-notice"]').text()).toContain('объединены')
+  })
+
+  it('входящую заявку можно отклонить', async () => {
+    mocked.getMyFamily.mockResolvedValue(makeFamily({ incoming: [makeUnion()] }))
 
     const wrapper = mountSection()
     await flushPromises()
@@ -227,12 +366,16 @@ describe('PeopleSearch (Контакты)', () => {
     await wrapper.find('[data-test="family-decline"]').trigger('click')
     await flushPromises()
 
-    expect(mocked.declineFamilyMember).toHaveBeenCalledWith('u-2')
+    expect(mocked.declineFamilyUnion).toHaveBeenCalledWith('union-1')
   })
 
-  it('свой запрос виден и отменяется', async () => {
+  it('свою заявку видно и можно отменить', async () => {
     mocked.getMyFamily.mockResolvedValue(
-      makeFamily({ outgoing: [makeRequest({ direction: 'outgoing' })] }),
+      makeFamily({
+        outgoing: [
+          makeUnion({ isInitiator: true, myConsent: 'accepted' }),
+        ],
+      }),
     )
 
     const wrapper = mountSection()
@@ -242,7 +385,22 @@ describe('PeopleSearch (Контакты)', () => {
     await wrapper.find('[data-test="family-cancel"]').trigger('click')
     await flushPromises()
 
-    expect(mocked.removeFamilyMember).toHaveBeenCalledWith('u-2')
+    expect(mocked.cancelFamilyUnion).toHaveBeenCalledWith('union-1')
+  })
+
+  it('у чужой заявки, где я только согласился, отмены нет', async () => {
+    mocked.getMyFamily.mockResolvedValue(
+      makeFamily({
+        outgoing: [makeUnion({ isInitiator: false, myConsent: 'accepted' })],
+      }),
+    )
+
+    const wrapper = mountSection()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="family-outgoing-item"]').exists()).toBe(true)
+    // Отменить заявку может только тот, кто её создал.
+    expect(wrapper.find('[data-test="family-cancel"]').exists()).toBe(false)
   })
 
   it('из семьи выходят одной кнопкой, спросив подтверждение', async () => {

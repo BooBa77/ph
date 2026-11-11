@@ -229,79 +229,131 @@ export interface FamilyMember {
   displayName: string
   avatarUrl: string | null
   isVirtual: boolean
-  /** Когда родство подтвердили (у виртуального — когда завели). */
+  /** Когда родство возникло (у виртуального — когда завели). */
   since: string
 }
 
-/** Запрос в родные: отправленный мной или ожидающий моего ответа. */
-export interface FamilyRequest {
+/** Согласие участника заявки: не ответил, согласен, отказался. */
+export type FamilyUnionConsent = 'pending' | 'accepted' | 'declined'
+
+/** Участник заявки на объединение семей — обе семьи целиком. */
+export interface FamilyUnionMember {
   userId: string
   displayName: string
   avatarUrl: string | null
-  direction: 'incoming' | 'outgoing'
-  requestedAt: string
+  isVirtual: boolean
+  consent: FamilyUnionConsent
+  /** Автор заявки: у него согласие не спрашивают. */
+  isInitiator: boolean
+  /** Из моей семьи, а не из присоединяющейся. */
+  mine: boolean
+}
+
+/**
+ * Заявка на объединение семей (11.11.2026).
+ *
+ * Одна заявка — не пара «кто кого добавил», а состав из двух семей:
+ * новый родственник тянет всю свою компоненту, поэтому подтверждать
+ * приходится каждому (`people.md` §2).
+ */
+export interface FamilyUnion {
+  id: string
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled'
+  initiatorUserId: string
+  initiatorName: string
+  createdAt: string
+  myConsent: FamilyUnionConsent
+  isInitiator: boolean
+  members: FamilyUnionMember[]
 }
 
 /** Три списка «Родных» — ровно как их отдаёт сервер. */
 export interface FamilyList {
   family: FamilyMember[]
-  incoming: FamilyRequest[]
-  outgoing: FamilyRequest[]
+  incoming: FamilyUnion[]
+  outgoing: FamilyUnion[]
 }
 
-/** Что ответила ручка добавления: родство сразу или запрос на подтверждение. */
-export interface FamilyLinkResult {
-  userId: string
+/** Что ответила ручка добавления: заявка или родство сразу. */
+export interface FamilyUnionResult {
+  unionId: string | null
   status: 'pending' | 'accepted'
 }
 
+/** Человек в предварительном составе объединения. */
+export interface FamilyPreviewMember {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  isVirtual: boolean
+  mine: boolean
+}
+
+/** Состав обеих семей до подтверждения: кого именно впускаем. */
+export interface FamilyUnionPreview {
+  targetUserId: string
+  targetName: string
+  /** Заявка с этим составом уже ждёт ответа. */
+  pending: boolean
+  members: FamilyPreviewMember[]
+}
+
 /**
- * GET /api/users/me/family — мои родные и запросы.
+ * GET /api/users/me/family — мои родные и заявки на объединение семей.
  *
  * Родство взаимно, поэтому сервер ищет его по обеим сторонам пары: вторая
- * сторона видит человека без второго запроса. Входящие запросы приходят
- * сюда же — отдельного экрана уведомлений пока нет.
+ * сторона видит человека без второго запроса. Заявки приходят сюда же —
+ * отдельного экрана уведомлений пока нет.
  */
 export async function getMyFamily(): Promise<FamilyList> {
   return apiFetch<FamilyList>('/users/me/family')
 }
 
 /**
+ * GET /api/users/me/family/preview/:userId — что будет, если добавить.
+ *
+ * Нужен до создания заявки: заказчик попросил показывать список людей
+ * и предупреждение «снаряжение станет общим», а не добавлять вслепую.
+ */
+export async function getFamilyUnionPreview(userId: string): Promise<FamilyUnionPreview> {
+  return apiFetch<FamilyUnionPreview>(`/users/me/family/preview/${userId}`)
+}
+
+/**
  * POST /api/users/me/family — добавить в родные.
  *
- * Настоящему человеку уходит запрос на подтверждение (`pending`); свой
- * человек без аккаунта становится родным сразу (`accepted`) — подтверждать
- * ему нечем.
+ * Настоящему человеку создаётся заявка на объединение **обеих семей**
+ * (`pending`); свой человек без аккаунта становится родным сразу
+ * (`accepted`) — подтверждать ему нечем.
  */
-export async function addFamilyMember(userId: string): Promise<FamilyLinkResult> {
-  return apiFetch<FamilyLinkResult>('/users/me/family', {
+export async function addFamilyMember(userId: string): Promise<FamilyUnionResult> {
+  return apiFetch<FamilyUnionResult>('/users/me/family', {
     method: 'POST',
     body: JSON.stringify({ userId }),
   })
 }
 
-/** Принять входящий запрос в родные. */
-export async function acceptFamilyMember(userId: string): Promise<FamilyLinkResult> {
-  return apiFetch<FamilyLinkResult>(`/users/me/family/${userId}/accept`, {
+/** Принять входящую заявку: когда согласны все, семьи сливаются. */
+export async function acceptFamilyUnion(unionId: string): Promise<FamilyUnionResult> {
+  return apiFetch<FamilyUnionResult>(`/users/me/family/unions/${unionId}/accept`, {
     method: 'POST',
   })
 }
 
-/** Отклонить входящий запрос: строки не останется. */
-export async function declineFamilyMember(userId: string): Promise<void> {
-  await apiFetch<void>(`/users/me/family/${userId}/decline`, { method: 'POST' })
+/** Отклонить заявку: заявка закрывается, связей не появляется. */
+export async function declineFamilyUnion(unionId: string): Promise<void> {
+  await apiFetch<void>(`/users/me/family/unions/${unionId}/decline`, { method: 'POST' })
 }
 
 /**
- * DELETE /api/users/me/family/:userId — отменить **свою заявку**.
+ * DELETE /api/users/me/family/unions/:unionId — отменить **свою** заявку.
  *
- * С 11.11.2026 родство — строгая пара, а семья — компонента связей.
- * Принятую связь эта ручка не рвёт (сервер ответит 409): выйти из семьи
- * можно только целиком — `leaveFamily`. Здесь остаётся отмена исходящего
- * запроса, когда родства ещё нет и каталог ни при чём.
+ * Отменить может только автор заявки: ответивший родственник не «передумывает»
+ * за остальных. Принятую связь эта ручка не рвёт — выйти из семьи можно
+ * только целиком (`leaveFamily`).
  */
-export async function removeFamilyMember(userId: string): Promise<void> {
-  await apiFetch<void>(`/users/me/family/${userId}`, { method: 'DELETE' })
+export async function cancelFamilyUnion(unionId: string): Promise<void> {
+  await apiFetch<void>(`/users/me/family/unions/${unionId}`, { method: 'DELETE' })
 }
 
 /**
@@ -310,6 +362,7 @@ export async function removeFamilyMember(userId: string): Promise<void> {
  * Заказчик: «Выход из семьи — разрыв всех связей. `A` разрывает с `B` —
  * уходят все связи `A`, компонента распадается». Каталог не трогается:
  * у каждого остаётся его копия вещи, просто правки перестают зеркалиться.
+ * Висящие заявки с участием человека закрываются.
  */
 export async function leaveFamily(): Promise<void> {
   await apiFetch<void>('/users/me/family', { method: 'DELETE' })

@@ -4,19 +4,21 @@ import { RouterLink } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
 import {
-  acceptFamilyMember,
+  acceptFamilyUnion,
   addFamilyMember,
+  cancelFamilyUnion,
   createVirtual,
-  declineFamilyMember,
+  declineFamilyUnion,
+  getFamilyUnionPreview,
   getMyFamily,
   leaveFamily,
   listMyVirtual,
-  removeFamilyMember,
   removeVirtual,
   searchUsers,
   type FamilyList,
   type FamilyMember,
-  type FamilyRequest,
+  type FamilyUnion,
+  type FamilyUnionPreview,
   type UserSearchResult,
   type VirtualUser,
 } from '@/api/users'
@@ -24,7 +26,8 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import type { Gender } from '@/api/types'
 
 /**
- * «Контакты» — родные и люди без аккаунта (10.11.2026).
+ * «Контакты» — родные и люди без аккаунта (10.11.2026, переделано
+ * 11.11.2026 под заявку на объединение семей).
  *
  * Заказчик: «Вводим понятие „родные“, это члены семьи, с которыми общий
  * бюджет и снаряжение. В разделе Контакты заводим первые две секции
@@ -37,11 +40,13 @@ import type { Gender } from '@/api/types'
  *   открыты: страница из двух закрытых рамок выглядит пустой, а сюда
  *   приходят именно за списком. Раскрытие помнится в
  *   `localStorage` (`ph.contacts.open`);
- * - **«Родные» — поиск, добавление и выход из семьи.** Родство взаимно:
- *   настоящему человеку уходит запрос на подтверждение, и он же виден
- *   у него входящим. Свой человек без аккаунта становится родным сразу:
- *   подтверждать ему нечем. С 11.11.2026 разорвать одну связь нельзя —
- *   «Выйти из семьи» рвёт все сразу;
+ * - **заявка — на две семьи целиком.** Новый родственник тянет всю свою
+ *   компоненту связей, поэтому «Добавить родного» сначала показывает
+ *   состав обеих семей и предупреждение «снаряжение станет общим»,
+ *   а заявку подтверждает каждый участник в «Контактах». Свой человек
+ *   без аккаунта становится родным сразу — подтверждать ему нечем;
+ * - **разорвать одну связь нельзя:** «Выйти из семьи» рвёт все сразу
+ *   (11.11.2026), а висящие заявки закрываются;
  * - **«Люди без аккаунта»** — те же строки `users`, что и в «Походах →
  *   Участники», поэтому заведённый здесь человек появляется и там.
  *   Удалять можно только до начала похода: кто уже сходил, нужен истории.
@@ -160,14 +165,52 @@ const filteredFamily = computed<FamilyMember[]>(() => {
   )
 })
 
-/** Кого уже связали — чтобы поиск не предлагал добавить повторно. */
+/**
+ * Кого уже связали — чтобы поиск не предлагал добавить повторно.
+ *
+ * Берутся не только действующие родные, но и все участники висящих заявок:
+ * «добавить» человека, который уже ждёт ответа в чужой заявке, — это второй
+ * такой же запрос на тот же состав.
+ */
 const linkedIds = computed(() => {
-  return new Set([
-    ...family.value.family.map((member) => member.userId),
-    ...family.value.incoming.map((request) => request.userId),
-    ...family.value.outgoing.map((request) => request.userId),
-  ])
+  const ids = new Set<string>(family.value.family.map((member) => member.userId))
+
+  for (const union of [...family.value.incoming, ...family.value.outgoing]) {
+    for (const member of union.members) ids.add(member.userId)
+  }
+
+  return ids
 })
+
+/** Имена участников заявки: моя семья или присоединяющаяся. */
+function unionNames(union: FamilyUnion, mine: boolean): string {
+  const names = union.members
+    .filter((member) => member.mine === mine)
+    .map((member) => member.displayName)
+
+  return names.length > 0 ? names.join(', ') : 'никого'
+}
+
+/** Кого ещё ждём: у заявки не бывает «согласны все» и висящей одновременно. */
+function pendingNames(union: FamilyUnion): string {
+  return union.members
+    .filter((member) => member.consent === 'pending')
+    .map((member) => member.displayName)
+    .join(', ')
+}
+
+/** Плашка входящих заявок: количество с правильной формой слова. */
+function incomingLabel(count: number): string {
+  const last = count % 10
+  const tens = count % 100
+
+  if (last === 1 && tens !== 11) return `${count} заявка: ответьте`
+  if (last >= 2 && last <= 4 && (tens < 12 || tens > 14)) {
+    return `${count} заявки: ответьте`
+  }
+
+  return `${count} заявок: ответьте`
+}
 
 /**
  * Выход из семьи — **все** связи сразу (11.11.2026).
@@ -192,25 +235,43 @@ async function leaveFamilyAction(): Promise<void> {
   confirmingLeave.value = false
 }
 
-async function cancelRequest(request: FamilyRequest): Promise<void> {
-  await runAction(
-    () => removeFamilyMember(request.userId),
-    'Запрос отменён',
-    'Не удалось отменить запрос',
-  )
+/**
+ * Ответ на заявку об объединении семей.
+ *
+ * Пока согласны не все, заявка остаётся висеть — и моё «принять» только
+ * записывает согласие. Поэтому сообщение различает два исхода: «ждём
+ * остальных» и «семьи объединены» (тогда и каталоги уже слиты).
+ */
+async function answerUnion(union: FamilyUnion, accept: boolean): Promise<void> {
+  actionError.value = null
+  notice.value = null
+
+  try {
+    if (accept) {
+      const result = await acceptFamilyUnion(union.id)
+      notice.value = result.status === 'accepted'
+        ? 'Семьи объединены — снаряжение теперь общее'
+        : 'Согласие записано — ждём остальных участников'
+    } else {
+      await declineFamilyUnion(union.id)
+      notice.value = 'Заявка отклонена'
+    }
+
+    await loadFamily()
+  } catch (problem) {
+    actionError.value = errorText(
+      problem,
+      accept ? 'Не удалось принять заявку' : 'Не удалось отклонить заявку',
+    )
+  }
 }
 
-async function answerRequest(request: FamilyRequest, accept: boolean): Promise<void> {
+/** Отменить может только автор заявки — кнопка есть только у него. */
+async function cancelUnion(union: FamilyUnion): Promise<void> {
   await runAction(
-    async () => {
-      if (accept) {
-        await acceptFamilyMember(request.userId)
-      } else {
-        await declineFamilyMember(request.userId)
-      }
-    },
-    accept ? `«${request.displayName}» теперь родной` : 'Запрос отклонён',
-    accept ? 'Не удалось принять запрос' : 'Не удалось отклонить запрос',
+    () => cancelFamilyUnion(union.id),
+    'Заявка отменена',
+    'Не удалось отменить заявку',
   )
 }
 
@@ -222,6 +283,15 @@ const searchResults = ref<UserSearchResult[]>([])
 const isSearching = ref(false)
 const searchError = ref<string | null>(null)
 const addingUserId = ref<string | null>(null)
+
+/**
+ * Что будет, если добавить выбранного человека.
+ *
+ * Показывается до создания заявки: «снаряжение станет общим» — не
+ * формальность, а весь смысл объединения семей (заказчик: «инициатор
+ * собирает обе компоненты; показывает список людей и предупреждение»).
+ */
+const preview = ref<FamilyUnionPreview | null>(null)
 
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
@@ -237,6 +307,7 @@ function toggleAdding(): void {
   adding.value = !adding.value
   actionError.value = null
   notice.value = null
+  preview.value = null
 
   if (!adding.value) {
     if (searchTimer) clearTimeout(searchTimer)
@@ -279,6 +350,75 @@ onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
 })
 
+/** Имена в предпросмотре: моя семья или присоединяющаяся. */
+function previewNames(mine: boolean): string {
+  const names = (preview.value?.members ?? [])
+    .filter((member) => member.mine === mine)
+    .map((member) => member.displayName)
+
+  return names.length > 0 ? names.join(', ') : 'никого'
+}
+
+/**
+ * Нажали «Добавить»: свой человек без аккаунта — сразу родной, настоящий —
+ * сначала предпросмотр состава обеих семей.
+ */
+async function requestAdd(
+  person: UserSearchResult | VirtualUser,
+  isVirtual: boolean,
+): Promise<void> {
+  if (addingUserId.value !== null) return
+
+  actionError.value = null
+  notice.value = null
+  preview.value = null
+
+  if (isVirtual) {
+    await addPerson(person.id)
+    return
+  }
+
+  addingUserId.value = person.id
+
+  try {
+    preview.value = await getFamilyUnionPreview(person.id)
+  } catch (problem) {
+    actionError.value = errorText(problem, 'Не удалось подготовить заявку')
+  } finally {
+    addingUserId.value = null
+  }
+}
+
+/** «Отправить заявку»: сервер сам соберёт состав и спросит остальных. */
+async function confirmAdd(): Promise<void> {
+  const target = preview.value
+  if (target === null || addingUserId.value !== null) return
+
+  addingUserId.value = target.targetUserId
+  actionError.value = null
+
+  try {
+    const result = await addFamilyMember(target.targetUserId)
+    await loadFamily()
+
+    preview.value = null
+    search.value = ''
+    searchResults.value = []
+    notice.value = result.status === 'accepted'
+      ? 'Родной добавлен'
+      : 'Заявка отправлена — её должен подтвердить каждый участник'
+  } catch (problem) {
+    actionError.value = errorText(problem, 'Не удалось добавить родного')
+  } finally {
+    addingUserId.value = null
+  }
+}
+
+function cancelPreview(): void {
+  preview.value = null
+  actionError.value = null
+}
+
 async function addPerson(userId: string): Promise<void> {
   if (addingUserId.value !== null) return
 
@@ -293,7 +433,7 @@ async function addPerson(userId: string): Promise<void> {
     notice.value =
       result.status === 'accepted'
         ? 'Родной добавлен'
-        : 'Запрос отправлен — ждём подтверждения'
+        : 'Заявка отправлена — её должен подтвердить каждый участник'
 
     search.value = ''
     searchResults.value = []
@@ -449,46 +589,62 @@ async function runAction(
               class="ml-2 rounded-full bg-white px-2 py-0.5 text-xs font-normal text-orange-900"
               data-test="family-incoming-count"
             >
-              {{ family.incoming.length }} запросов: ответьте
+              {{ incomingLabel(family.incoming.length) }}
             </span>
           </span>
         </summary>
 
         <div class="flex flex-col gap-3 rounded-xl border border-border bg-white p-3">
-          <!-- Входящие запросы — первыми: это действие человека, а не список. -->
+          <!-- Входящие заявки — первыми: это действие человека, а не список. -->
           <div v-if="family.incoming.length > 0" class="flex flex-col gap-2" data-test="family-incoming">
-            <h3 class="text-sm font-medium text-text">Хотят стать родными</h3>
+            <h3 class="text-sm font-medium text-text">Хотят объединить семьи</h3>
 
             <div
-              v-for="request in family.incoming"
-              :key="request.userId"
-              class="flex flex-wrap items-center gap-2 rounded-xl border border-border bg-surface p-2"
+              v-for="union in family.incoming"
+              :key="union.id"
+              class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-2"
               data-test="family-incoming-item"
             >
-              <UserAvatar :src="request.avatarUrl" :alt="request.displayName" :size="32" />
-              <RouterLink
-                :to="{ name: 'person', params: { id: request.userId } }"
-                class="min-w-0 flex-1 truncate text-sm text-text"
-              >
-                {{ request.displayName }}
-              </RouterLink>
+              <p class="text-sm text-text">
+                «{{ union.initiatorName }}» предлагает объединить семьи
+              </p>
 
-              <button
-                type="button"
-                class="cursor-pointer rounded-lg border border-primary bg-primary px-2 py-1 text-xs text-white transition-opacity hover:opacity-90"
-                data-test="family-accept"
-                @click="answerRequest(request, true)"
+              <p class="text-xs text-muted" data-test="family-union-mine">
+                Ваша семья: {{ unionNames(union, true) }}
+              </p>
+              <p class="text-xs text-muted" data-test="family-union-theirs">
+                Другая семья: {{ unionNames(union, false) }}
+              </p>
+              <p class="text-xs text-muted" data-test="family-union-warning">
+                После согласия всех снаряжение станет общим: у каждого появится копия
+                вещей другой семьи.
+              </p>
+              <p
+                v-if="pendingNames(union)"
+                class="text-xs text-muted"
+                data-test="family-union-waiting"
               >
-                Принять
-              </button>
-              <button
-                type="button"
-                class="cursor-pointer rounded-lg border border-border bg-white px-2 py-1 text-xs text-muted transition-colors hover:border-primary hover:text-text"
-                data-test="family-decline"
-                @click="answerRequest(request, false)"
-              >
-                Отклонить
-              </button>
+                Ждём ответа: {{ pendingNames(union) }}
+              </p>
+
+              <div class="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-lg border border-primary bg-primary px-2 py-1 text-xs text-white transition-opacity hover:opacity-90"
+                  data-test="family-accept"
+                  @click="answerUnion(union, true)"
+                >
+                  Принять
+                </button>
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-lg border border-border bg-white px-2 py-1 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+                  data-test="family-decline"
+                  @click="answerUnion(union, false)"
+                >
+                  Отклонить
+                </button>
+              </div>
             </div>
           </div>
 
@@ -524,82 +680,146 @@ async function runAction(
               />
             </label>
 
-            <p v-if="searchError" class="text-sm text-red-600" data-test="family-add-error">
-              {{ searchError }}
-            </p>
-            <p v-else-if="isSearching" class="text-sm text-muted" data-test="family-add-loading">Ищем…</p>
+            <template v-if="preview === null">
+              <p v-if="searchError" class="text-sm text-red-600" data-test="family-add-error">
+                {{ searchError }}
+              </p>
+              <p v-else-if="isSearching" class="text-sm text-muted" data-test="family-add-loading">Ищем…</p>
 
-            <ul v-else-if="availableResults.length > 0" class="flex flex-col gap-2" data-test="family-add-results">
-              <li v-for="person in availableResults" :key="person.id">
-                <div class="flex items-center gap-2">
-                  <UserAvatar :src="person.avatarUrl" :alt="person.displayName" :size="32" />
+              <ul v-else-if="availableResults.length > 0" class="flex flex-col gap-2" data-test="family-add-results">
+                <li v-for="person in availableResults" :key="person.id">
+                  <div class="flex items-center gap-2">
+                    <UserAvatar :src="person.avatarUrl" :alt="person.displayName" :size="32" />
+                    <span class="min-w-0 flex-1 truncate text-sm text-text">{{ person.displayName }}</span>
+                    <button
+                      type="button"
+                      class="cursor-pointer rounded-lg border border-primary bg-white px-2 py-1 text-xs text-primary transition-colors hover:bg-primary hover:text-white"
+                      :disabled="addingUserId !== null"
+                      data-test="family-add-option"
+                      @click="requestAdd(person, false)"
+                    >
+                      Добавить
+                    </button>
+                  </div>
+                </li>
+              </ul>
+
+              <p
+                v-else-if="search.trim().length >= MIN_LENGTH"
+                class="text-sm text-muted"
+                data-test="family-add-empty"
+              >
+                Никого не нашлось. Имена чувствительны к опечаткам — попробуйте часть имени.
+              </p>
+              <p v-else class="text-sm text-muted" data-test="family-add-hint">
+                Начните вводить имя — от двух символов.
+              </p>
+
+              <div v-if="availableVirtuals.length > 0" class="flex flex-col gap-2">
+                <h3 class="text-sm font-medium text-text">Или из моих людей без аккаунта</h3>
+
+                <div
+                  v-for="person in availableVirtuals"
+                  :key="person.id"
+                  class="flex items-center gap-2"
+                  data-test="family-add-virtual"
+                >
+                  <UserAvatar :src="null" :alt="person.displayName" :size="32" />
                   <span class="min-w-0 flex-1 truncate text-sm text-text">{{ person.displayName }}</span>
+                  <span class="text-xs text-muted">без аккаунта</span>
                   <button
                     type="button"
                     class="cursor-pointer rounded-lg border border-primary bg-white px-2 py-1 text-xs text-primary transition-colors hover:bg-primary hover:text-white"
                     :disabled="addingUserId !== null"
-                    data-test="family-add-option"
-                    @click="addPerson(person.id)"
+                    data-test="family-add-virtual-option"
+                    @click="requestAdd(person, true)"
                   >
                     Добавить
                   </button>
                 </div>
-              </li>
-            </ul>
+              </div>
+            </template>
 
-            <p
-              v-else-if="search.trim().length >= MIN_LENGTH"
-              class="text-sm text-muted"
-              data-test="family-add-empty"
+            <!--
+              Снаряжение станет общим — это весь смысл объединения, поэтому
+              состав обеих семей показывается до создания заявки.
+            -->
+            <div
+              v-else
+              class="flex flex-col gap-2 rounded-xl border border-orange-300 bg-orange-50 p-3"
+              data-test="family-union-preview"
             >
-              Никого не нашлось. Имена чувствительны к опечаткам — попробуйте часть имени.
-            </p>
-            <p v-else class="text-sm text-muted" data-test="family-add-hint">
-              Начните вводить имя — от двух символов.
-            </p>
+              <h3 class="text-sm font-medium text-text">
+                Объединить семьи с «{{ preview.targetName }}»?
+              </h3>
 
-            <div v-if="availableVirtuals.length > 0" class="flex flex-col gap-2">
-              <h3 class="text-sm font-medium text-text">Или из моих людей без аккаунта</h3>
-
-              <div
-                v-for="person in availableVirtuals"
-                :key="person.id"
-                class="flex items-center gap-2"
-                data-test="family-add-virtual"
+              <p class="text-xs text-muted" data-test="family-union-preview-mine">
+                Ваша семья: {{ previewNames(true) }}
+              </p>
+              <p class="text-xs text-muted" data-test="family-union-preview-theirs">
+                Другая семья: {{ previewNames(false) }}
+              </p>
+              <p class="text-xs text-muted" data-test="family-union-preview-warning">
+                Снаряжение станет общим: у каждого появится копия вещей другой семьи.
+                Заявку должен подтвердить каждый участник — она будет видна в «Контактах».
+              </p>
+              <p
+                v-if="preview.pending"
+                class="text-xs text-muted"
+                data-test="family-union-preview-pending"
               >
-                <UserAvatar :src="null" :alt="person.displayName" :size="32" />
-                <span class="min-w-0 flex-1 truncate text-sm text-text">{{ person.displayName }}</span>
-                <span class="text-xs text-muted">без аккаунта</span>
+                Такая заявка уже висит — ваше согласие будет зачтено.
+              </p>
+
+              <div class="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  class="cursor-pointer rounded-lg border border-primary bg-white px-2 py-1 text-xs text-primary transition-colors hover:bg-primary hover:text-white"
+                  class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
                   :disabled="addingUserId !== null"
-                  data-test="family-add-virtual-option"
-                  @click="addPerson(person.id)"
+                  data-test="family-union-confirm"
+                  @click="confirmAdd"
                 >
-                  Добавить
+                  Отправить заявку
+                </button>
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-text"
+                  data-test="family-union-cancel"
+                  @click="cancelPreview"
+                >
+                  Отмена
                 </button>
               </div>
             </div>
           </div>
 
-          <!-- Исходящие запросы: ждут ответа другого человека. -->
+          <!-- Исходящие заявки: ждут ответа остальных участников. -->
           <div v-if="family.outgoing.length > 0" class="flex flex-col gap-2" data-test="family-outgoing">
             <h3 class="text-sm font-medium text-text">Ждут подтверждения</h3>
 
             <div
-              v-for="request in family.outgoing"
-              :key="request.userId"
-              class="flex items-center gap-2 rounded-xl border border-dashed border-border p-2"
+              v-for="union in family.outgoing"
+              :key="union.id"
+              class="flex flex-col gap-2 rounded-xl border border-dashed border-border p-2"
               data-test="family-outgoing-item"
             >
-              <UserAvatar :src="request.avatarUrl" :alt="request.displayName" :size="32" />
-              <span class="min-w-0 flex-1 truncate text-sm text-muted">{{ request.displayName }}</span>
+              <p class="text-sm text-muted">
+                Другая семья: {{ unionNames(union, false) }}
+              </p>
+              <p
+                v-if="pendingNames(union)"
+                class="text-xs text-muted"
+                data-test="family-union-waiting"
+              >
+                Ждут ответа: {{ pendingNames(union) }}
+              </p>
+
               <button
+                v-if="union.isInitiator"
                 type="button"
-                class="cursor-pointer rounded-lg border border-border bg-white px-2 py-1 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+                class="w-fit cursor-pointer rounded-lg border border-border bg-white px-2 py-1 text-xs text-muted transition-colors hover:border-primary hover:text-text"
                 data-test="family-cancel"
-                @click="cancelRequest(request)"
+                @click="cancelUnion(union)"
               >
                 Отменить
               </button>
@@ -638,7 +858,8 @@ async function runAction(
             class="text-sm text-muted"
             data-test="family-empty"
           >
-            Пока никого. Добавьте родного по имени — он подтвердит, и вы увидите друг друга.
+            Пока никого. Добавьте родного по имени — заявку подтвердят все участники
+            обеих семей, и вы увидите друг друга.
           </p>
           <p v-else class="text-sm text-muted" data-test="family-filter-empty">
             По этому имени никого нет.
