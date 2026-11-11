@@ -2,8 +2,8 @@ import { Injectable } from '@nestjs/common';
 import { DataSource, EntityManager, In, IsNull } from 'typeorm';
 
 import { nextSortOrder } from './gear-sort';
+import { copyCloneAttributes, createClone } from './gear-clone';
 import { GearItem } from './entities/gear-item.entity';
-import { GearItemAttribute } from './entities/gear-item-attribute.entity';
 import { UsersService } from '../users/users.service';
 import type { FamilyPerson } from '../users/family.types';
 
@@ -85,26 +85,7 @@ export class FamilyGearService {
       });
       if (existing) continue;
 
-      const clone = await manager.save(
-        manager.create(GearItem, {
-          ownerUserId: person.id,
-          gearUid: source.gearUid,
-          originUserId: source.originUserId,
-          gearTypeId: source.gearTypeId,
-          sortOrder: await nextSortOrder(
-            manager,
-            person.id,
-            source.gearTypeId,
-          ),
-          title: source.title,
-          weightGrams: source.weightGrams,
-          location: source.location,
-          note: source.note,
-          isTripOnly: false,
-        }),
-      );
-
-      await this.copyAttributes(manager, source.id, clone.id);
+      await createClone(manager, source, person.id);
     }
   }
 
@@ -170,8 +151,7 @@ export class FamilyGearService {
       }
 
       if (mirrorAttributes) {
-        await manager.delete(GearItemAttribute, { gearItemId: clone.id });
-        await this.copyAttributes(manager, source.id, clone.id);
+        await copyCloneAttributes(manager, source.id, clone.id, true);
       }
     }
   }
@@ -245,28 +225,5 @@ export class FamilyGearService {
     )) as Array<{ id: string; title: string }>;
 
     return rows[0] ?? null;
-  }
-
-  /** Значения характеристики — копией: тип тот же, набор полей тот же. */
-  private async copyAttributes(
-    manager: EntityManager,
-    sourceItemId: string,
-    targetItemId: string,
-  ): Promise<void> {
-    const values = await manager.find(GearItemAttribute, {
-      where: { gearItemId: sourceItemId },
-    });
-    if (values.length === 0) return;
-
-    await manager.insert(
-      GearItemAttribute,
-      values.map((row) => ({
-        gearItemId: targetItemId,
-        gearTypeAttributeId: row.gearTypeAttributeId,
-        numberValue: row.numberValue,
-        textValue: row.textValue,
-        boolValue: row.boolValue,
-      })),
-    );
   }
 }

@@ -16,7 +16,7 @@ import { SportExperience } from './entities/sport-experience.entity';
 import { DisplayNameHistory } from './entities/display-name-history.entity';
 import { FamilyLink } from './entities/family-link.entity';
 import { detachTripParticipant } from '../trips/trip-participant-detach';
-import type { FamilyLinkStatus, FamilyPerson } from './family.types';
+import type { FamilyPerson } from './family.types';
 import type { UserGender } from './gender.types';
 import type { SportExperienceData } from './sport-experience.types';
 import {
@@ -24,12 +24,7 @@ import {
   type CreateVirtualUserDto,
   type UpdateVirtualUserDto,
 } from './dto/virtual-user.dto';
-import {
-  FamilyListDto,
-  FamilyMemberDto,
-  FamilyRequestDto,
-  type FamilyLinkResultDto,
-} from './dto/family.dto';
+import { FamilyMemberDto } from './dto/family.dto';
 
 /** Сколько людей отдавать в поиске: список выбора, а не справочник. */
 const SEARCH_LIMIT = 20;
@@ -429,10 +424,7 @@ export class UsersService {
    */
   async familyMembers(userId: string): Promise<FamilyPerson[]> {
     const links = await this.familyRepository.find({
-      where: [
-        { userAId: userId, status: 'accepted' },
-        { userBId: userId, status: 'accepted' },
-      ],
+      where: [{ userAId: userId }, { userBId: userId }],
       relations: { userA: true, userB: true },
       order: { createdAt: 'ASC' },
     });
@@ -490,7 +482,6 @@ export class UsersService {
           FROM family_links fl
           JOIN component
             ON component.id = fl.user_a_id OR component.id = fl.user_b_id
-         WHERE fl.status = 'accepted'
       )
       SELECT u.id,
              u.display_name AS "displayName",
@@ -510,17 +501,17 @@ export class UsersService {
   }
 
   /**
-   * Мои родные: подтверждённые, входящие запросы и исходящие.
+   * Действующие родные — для списка «Контактов».
    *
-   * Родство взаимно, поэтому ищем по обеим сторонам пары. Удалённые
-   * (мягко) люди не показываются: о них нечего рассказывать, но сама
-   * связь остаётся — человек вернётся, и родство вернётся с ним.
+   * Заявки на объединение семей сюда не входят: они живут
+   * в `FamilyUnionService`, и экран собирает три списка из двух ответов
+   * (родные здесь, входящие и исходящие — там). Так «ждём ответа» не
+   * смешивается с «уже родные» ни в DTO, ни в запросах.
    *
-   * Три списка, а не один с полем «статус»: у каждого свои действия
-   * («удалить», «принять / отклонить», «отменить»), и раскладывать их
-   * по статусу на клиенте — значит повторять правило в каждом экране.
+   * Удалённые (мягко) люди не показываются: о них нечего рассказывать,
+   * но сама связь остаётся — человек вернётся, и родство вернётся с ним.
    */
-  async listFamily(userId: string): Promise<FamilyListDto> {
+  async familyOf(userId: string): Promise<FamilyMemberDto[]> {
     const links = await this.familyRepository.find({
       where: [{ userAId: userId }, { userBId: userId }],
       relations: { userA: true, userB: true },
@@ -528,197 +519,16 @@ export class UsersService {
     });
 
     const family: FamilyMemberDto[] = [];
-    const incoming: FamilyRequestDto[] = [];
-    const outgoing: FamilyRequestDto[] = [];
 
     for (const link of links) {
       const other = link.userAId === userId ? link.userB : link.userA;
       if (!other || other.deletedAt !== null) continue;
 
-      if (link.status === 'accepted') {
-        family.push(
-          FamilyMemberDto.from(other, link.respondedAt ?? link.createdAt),
-        );
-      } else if (link.requestedByUserId === userId) {
-        outgoing.push(FamilyRequestDto.from(other, 'outgoing', link.createdAt));
-      } else {
-        incoming.push(FamilyRequestDto.from(other, 'incoming', link.createdAt));
-      }
+      family.push(FamilyMemberDto.from(other, link.acceptedAt));
     }
 
-    family.sort((left, right) =>
+    return family.sort((left, right) =>
       left.displayName.localeCompare(right.displayName, 'ru'),
-    );
-
-    return { family, incoming, outgoing };
-  }
-
-  /**
-   * Добавить человека в родные.
-   *
-   * Настоящему пользователю уходит запрос (`pending`) — родство вступает
-   * в силу, когда он подтвердит. **Уведомления об этом пока нет**: личных
-   * сообщений на фронте не существует (`people.md` §5), поэтому запрос
-   * виден у получателя в «Контактах», в разделе «Родные». Отправка
-   * сообщением или письмом — техдолг до появления мессенджера.
-   *
-   * Свой человек без аккаунта подтвердить ничего не может — им управляет
-   * тот же человек, который его завёл, поэтому такая связь создаётся
-   * сразу `accepted`.
-   *
-   * **Встречная заявка — это согласие.** Если Иван уже отправил запрос
-   * Анне, а Анна добавляет Ивана, второй запрос не создаётся и ждать
-   * нечего: оба выразили желание. Это дешевле, чем две встречные строки
-   * и вопрос «кто теперь подтверждает».
-   */
-  async addFamilyMember(
-    userId: string,
-    targetUserId: string,
-  ): Promise<FamilyLinkResultDto> {
-    if (userId === targetUserId) {
-      throw new BadRequestException('Себя в родные добавить нельзя');
-    }
-
-    const target = await this.usersRepository.findOne({
-      where: { id: targetUserId },
-    });
-    if (!target || target.deletedAt !== null) {
-      throw new NotFoundException('Пользователь не найден');
-    }
-    if (target.isVirtual && target.virtualOwnerUserId !== userId) {
-      // Чужой человек без аккаунта для этого человека не существует.
-      throw new NotFoundException('Человек без аккаунта не найден');
-    }
-
-    const [userAId, userBId] = familyPair(userId, targetUserId);
-
-    return this.dataSource.transaction(async (manager) => {
-      const repo = manager.getRepository(FamilyLink);
-      const existing = await repo.findOne({
-        where: { userAId, userBId },
-      });
-
-      if (existing?.status === 'accepted') {
-        throw new ConflictException('Вы уже родные');
-      }
-      if (existing && existing.requestedByUserId === userId) {
-        throw new ConflictException('Запрос уже отправлен — ждём подтверждения');
-      }
-      if (existing) {
-        // Встречная заявка: оба хотим — подтверждаем сразу.
-        existing.status = 'accepted';
-        existing.respondedAt = new Date();
-        await repo.save(existing);
-
-        return { userId: targetUserId, status: 'accepted' as const };
-      }
-
-      const status: FamilyLinkStatus = target.isVirtual ? 'accepted' : 'pending';
-      await repo.save(
-        repo.create({
-          userAId,
-          userBId,
-          requestedByUserId: userId,
-          status,
-          respondedAt: status === 'accepted' ? new Date() : null,
-        }),
-      );
-
-      return { userId: targetUserId, status };
-    });
-  }
-
-  /**
-   * Ответ на входящий запрос: принять или отклонить.
-   *
-   * Принять может только вторая сторона и только висящий запрос:
-   * «принять» собственный исходящий запрос означало бы родство с самим
-   * собой в обход согласия. Отказ удаляет строку целиком — отдельного
-   * статуса `declined` нет (`family.types.ts`).
-   */
-  async respondToFamilyRequest(
-    userId: string,
-    otherUserId: string,
-    accept: boolean,
-  ): Promise<FamilyLinkResultDto | null> {
-    const [userAId, userBId] = familyPair(userId, otherUserId);
-
-    return this.dataSource.transaction(async (manager) => {
-      const repo = manager.getRepository(FamilyLink);
-      const link = await repo.findOne({ where: { userAId, userBId } });
-
-      if (
-        !link ||
-        link.status !== 'pending' ||
-        link.requestedByUserId === userId
-      ) {
-        throw new NotFoundException('Запрос в родные не найден');
-      }
-
-      if (!accept) {
-        await repo.delete(link.id);
-
-        return null;
-      }
-
-      link.status = 'accepted';
-      link.respondedAt = new Date();
-      await repo.save(link);
-
-      return { userId: otherUserId, status: 'accepted' as const };
-    });
-  }
-
-  /**
-   * Убрать человека из родных — **только пока это заявка** (11.11.2026).
-   *
-   * С 11.11.2026 родство — строгая пара, а семья — компонента связей.
-   * Разорвать одну связь изнутри компоненты нельзя: заказчик решил, что
-   * «выход из семьи — разрыв всех связей» (`leaveFamily`), иначе после
-   * развода остались бы полу-связи `A–C`, `B–C` и вопрос «выбери A или B».
-   *
-   * Эта ручка осталась для отмены **исходящей** заявки: родства ещё нет,
-   * каталог ни при чём, и «отменить» — не «развестись». Принятую связь она
-   * не трогает и отвечает 409 с подсказкой.
-   */
-  async removeFamilyMember(
-    userId: string,
-    otherUserId: string,
-  ): Promise<void> {
-    const [userAId, userBId] = familyPair(userId, otherUserId);
-
-    const link = await this.familyRepository.findOne({
-      where: { userAId, userBId },
-    });
-    if (!link) {
-      throw new NotFoundException('Этого человека нет в родных');
-    }
-
-    if (link.status === 'accepted') {
-      throw new ConflictException(
-        'Выйти из семьи можно только целиком — это разрывает все семейные связи',
-      );
-    }
-
-    await this.familyRepository.delete(link.id);
-  }
-
-  /**
-   * Выйти из семьи — разорвать **все** связи человека (11.11.2026).
-   *
-   * Заказчик: «Выход из семьи — разрыв всех связей. `A` разрывает с `B` —
-   * уходят все связи `A`, компонента распадается. Никаких „полу-связей“…
-   * и запросов „выбери A или B“». Каталог при этом не трогается: клоны
-   * вещей остаются у каждого своей копией, ключи стабильны, а правки
-   * перестают зеркалиться просто потому, что компонента распалась.
-   *
-   * Заодно уходят и **неподтверждённые** заявки: после выхода человек
-   * не должен остаться в чьём-то списке «хочет стать родным».
-   */
-  async leaveFamily(userId: string): Promise<void> {
-    await this.dataSource.query(
-      'DELETE FROM family_links WHERE user_a_id = $1 OR user_b_id = $1',
-      [userId],
     );
   }
 
@@ -989,20 +799,4 @@ function isSportExperienceEmpty(row: SportExperience): boolean {
   ];
 
   return values.every((value) => value === null || value === undefined);
-}
-
-/**
- * Канонический порядок пары для `family_links` (10.11.2026).
- *
- * В базе пара хранится один раз, `user_a_id < user_b_id`
- * (`chk_family_links_pair`), чтобы встречные запросы не создавали две
- * строки об одном и том же родстве. Postgres сравнивает `uuid` побайтно,
- * а каноническая запись uuid — нижний регистр; `ParseUUIDPipe` регистр
- * не меняет, поэтому приводим обе стороны сами.
- */
-function familyPair(left: string, right: string): [string, string] {
-  const first = left.toLowerCase();
-  const second = right.toLowerCase();
-
-  return first < second ? [first, second] : [second, first];
 }

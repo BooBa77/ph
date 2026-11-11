@@ -264,13 +264,14 @@ describe('Занятость снаряжения и архив похода (e2
     );
     typeId = typeRows[0].id;
 
-    // Родство: у каждого своя копия вещи с тем же `gear_uid`.
-    await call('post', '/api/users/me/family', annaToken, {
+    // Родство: у каждого своя копия вещи с тем же `gear_uid`. Заявка
+    // собирает обе семьи (11.11.2026), здесь семьи — по одному человеку.
+    const union = await call('post', '/api/users/me/family', annaToken, {
       userId: ivanId,
     }).expect(201);
     await call(
       'post',
-      `/api/users/me/family/${annaId}/accept`,
+      `/api/users/me/family/unions/${union.body.unionId}/accept`,
       ivanToken,
     ).expect(200);
 

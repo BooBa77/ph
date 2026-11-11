@@ -1786,47 +1786,84 @@ rows.push([
   '',
 ]);
 
-// ─── Родные (10.11.2026) ───
+// ─── Родные и объединение семей (10–11.11.2026) ───
 /**
- * Инварианты родства (`family_links`).
+ * Инварианты родства и заявок на объединение семей.
  *
  * Правила, которые нельзя доказать тестом API: пара хранится один раз
- * в каноническом порядке, запрос отправила одна из двух сторон, а
- * `accepted` без даты согласия невозможен. Если из базы убрать CHECK,
- * e2e останутся зелёными, а данные поедут: появятся две встречные строки
+ * в каноническом порядке (`family_links`), заявка собирает состав
+ * (`family_unions` + `family_union_members`), а «согласен» без даты и
+ * «закрыта» без `closed_at` невозможны. Если из базы убрать CHECK, e2e
+ * останутся зелёными, а данные поедут: появятся две встречные строки
  * об одном родстве или «согласие», которого никто не давал.
+ *
+ * С 11.11.2026 у `family_links` **нет** статуса: заявки переехали
+ * в `family_unions`, и проверка «колонки нет» здесь так же важна, как
+ * наличие новых таблиц — иначе одна и та же мысль снова жила бы в двух
+ * местах.
  */
 const familyShape = await client.query(
   `SELECT
-     (SELECT count(*)::int FROM information_schema.tables
-       WHERE table_name = 'family_links') AS table_exists,
-     (SELECT column_default FROM information_schema.columns
-       WHERE table_name = 'family_links' AND column_name = 'status') AS status_default,
      (SELECT 1 FROM pg_indexes
        WHERE indexname = 'UQ_family_links_pair') AS has_unique,
      (SELECT confdeltype FROM pg_constraint
        WHERE conname = 'FK_family_links_user_a') AS delete_a,
      (SELECT confdeltype FROM pg_constraint
        WHERE conname = 'FK_family_links_user_b') AS delete_b,
-     (SELECT confdeltype FROM pg_constraint
-       WHERE conname = 'FK_family_links_requested_by') AS delete_requester`,
+     (SELECT count(*)::int FROM information_schema.columns
+       WHERE table_name = 'family_links' AND column_name = 'status') AS status_column,
+     (SELECT count(*)::int FROM information_schema.columns
+       WHERE table_name = 'family_links'
+         AND column_name = 'accepted_at') AS accepted_column`,
 );
 const familyShapeRow = familyShape.rows[0];
 const familyShapeOk =
-  familyShapeRow.table_exists === 1 &&
-  (familyShapeRow.status_default ?? '').includes('pending') &&
   familyShapeRow.has_unique === 1 &&
   familyShapeRow.delete_a === 'c' &&
   familyShapeRow.delete_b === 'c' &&
-  familyShapeRow.delete_requester === 'c';
+  familyShapeRow.status_column === 0 &&
+  familyShapeRow.accepted_column === 1;
 
 if (!familyShapeOk) failed += 1;
 rows.push([
   familyShapeOk ? 'ok' : 'НЕТ СХЕМЫ',
-  'родные: таблица, значение по умолчанию, уникальная пара и каскады',
+  'родные: пара уникальна, каскады есть, статуса нет, дата родства есть',
   familyShapeOk
     ? ''
-    : `table=${familyShapeRow.table_exists}, default=${familyShapeRow.status_default}, unique=${familyShapeRow.has_unique}, delete=${familyShapeRow.delete_a}/${familyShapeRow.delete_b}/${familyShapeRow.delete_requester}`,
+    : `unique=${familyShapeRow.has_unique}, delete=${familyShapeRow.delete_a}/${familyShapeRow.delete_b}, status=${familyShapeRow.status_column}, accepted_at=${familyShapeRow.accepted_column}`,
+]);
+
+const unionShape = await client.query(
+  `SELECT
+     (SELECT count(*)::int FROM information_schema.tables
+       WHERE table_name IN ('family_unions', 'family_union_members')) AS tables,
+     (SELECT 1 FROM pg_constraint
+       WHERE conname = 'PK_family_union_members') AS has_pk,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_family_union_members_union') AS delete_member,
+     (SELECT confdeltype FROM pg_constraint
+       WHERE conname = 'FK_family_union_members_user') AS delete_user,
+     (SELECT 1 FROM pg_constraint
+       WHERE conname = 'chk_family_unions_closed') AS has_closed,
+     (SELECT 1 FROM pg_constraint
+       WHERE conname = 'chk_family_union_members_responded') AS has_consent`,
+);
+const unionShapeRow = unionShape.rows[0];
+const unionShapeOk =
+  unionShapeRow.tables === 2 &&
+  unionShapeRow.has_pk === 1 &&
+  unionShapeRow.delete_member === 'c' &&
+  unionShapeRow.delete_user === 'c' &&
+  unionShapeRow.has_closed === 1 &&
+  unionShapeRow.has_consent === 1;
+
+if (!unionShapeOk) failed += 1;
+rows.push([
+  unionShapeOk ? 'ok' : 'НЕТ СХЕМЫ',
+  'объединение: две таблицы, PK участника, каскады и CHECK-и',
+  unionShapeOk
+    ? ''
+    : `tables=${unionShapeRow.tables}, pk=${unionShapeRow.has_pk}, delete=${unionShapeRow.delete_member}/${unionShapeRow.delete_user}, closed=${unionShapeRow.has_closed}, consent=${unionShapeRow.has_consent}`,
 ]);
 
 const familyThirdId = (
@@ -1838,65 +1875,96 @@ const familyThirdId = (
 // Канонический порядок пары — как его держит база: меньший uuid первым.
 const [familyA, familyB] =
   user1 < user2 ? [user1, user2] : [user2, user1];
-const [familyThirdA, familyThirdB] =
-  familyA < familyThirdId
-    ? [familyA, familyThirdId]
-    : [familyThirdId, familyA];
 
 await check(
   'родные: пара в обратном порядке запрещена',
   'fail',
-  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id)
-   VALUES ($1, $2, $1)`,
+  `INSERT INTO family_links (user_a_id, user_b_id)
+   VALUES ($1, $2)`,
   [familyB, familyA],
 );
 
 await check(
-  'родные: отправитель запроса обязан быть стороной пары',
-  'fail',
-  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id)
-   VALUES ($1, $2, $3)`,
-  [familyA, familyB, familyThirdId],
-);
-
-await check(
-  'родные: запрос со стороной пары принимается',
+  'родные: пара принимается',
   'ok',
-  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id)
-   VALUES ($1, $2, $1)`,
+  `INSERT INTO family_links (user_a_id, user_b_id)
+   VALUES ($1, $2)`,
   [familyA, familyB],
 );
 
 await check(
   'родные: вторая строка о той же паре запрещена',
   'fail',
-  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id, status, responded_at)
-   VALUES ($1, $2, $2, 'accepted', now())`,
+  `INSERT INTO family_links (user_a_id, user_b_id)
+   VALUES ($1, $2)`,
   [familyA, familyB],
-);
-
-await check(
-  'родные: согласие без даты запрещено',
-  'fail',
-  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id, status)
-   VALUES ($1, $2, $1, 'accepted')`,
-  [familyThirdA, familyThirdB],
-);
-
-await check(
-  'родные: согласие с датой принимается',
-  'ok',
-  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id, status, responded_at)
-   VALUES ($1, $2, $1, 'accepted', now())`,
-  [familyThirdA, familyThirdB],
 );
 
 await check(
   'родные: родство с самим собой невозможно',
   'fail',
-  `INSERT INTO family_links (user_a_id, user_b_id, requested_by_user_id)
-   VALUES ($1, $1, $1)`,
+  `INSERT INTO family_links (user_a_id, user_b_id)
+   VALUES ($1, $1)`,
   [familyA],
+);
+
+await check(
+  'объединение: заявка без даты закрытия принимается',
+  'ok',
+  `INSERT INTO family_unions (initiator_user_id) VALUES ($1)`,
+  [user1],
+);
+
+await check(
+  'объединение: закрытая заявка без даты закрытия запрещена',
+  'fail',
+  `INSERT INTO family_unions (initiator_user_id, status)
+   VALUES ($1, 'accepted')`,
+  [user1],
+);
+
+await check(
+  'объединение: неизвестный статус заявки запрещён',
+  'fail',
+  `INSERT INTO family_unions (initiator_user_id, status)
+   VALUES ($1, 'family')`,
+  [user1],
+);
+
+await check(
+  'объединение: согласие участника без даты запрещено',
+  'fail',
+  `WITH created AS (
+     INSERT INTO family_unions (initiator_user_id) VALUES ($1) RETURNING id
+   )
+   INSERT INTO family_union_members (union_id, user_id, consent)
+   SELECT created.id, $2, 'accepted' FROM created`,
+  [user1, user2],
+);
+
+await check(
+  'объединение: согласие участника с датой принимается',
+  'ok',
+  `WITH created AS (
+     INSERT INTO family_unions (initiator_user_id) VALUES ($1) RETURNING id
+   )
+   INSERT INTO family_union_members (union_id, user_id, consent, responded_at)
+   SELECT created.id, $2, 'accepted', now() FROM created`,
+  [user1, familyThirdId],
+);
+
+await check(
+  'объединение: один участник дважды в заявке запрещён',
+  'fail',
+  `WITH created AS (
+     INSERT INTO family_unions (initiator_user_id) VALUES ($1) RETURNING id
+   ), member AS (
+     INSERT INTO family_union_members (union_id, user_id, consent, responded_at)
+     SELECT created.id, $2, 'accepted', now() FROM created RETURNING union_id
+   )
+   INSERT INTO family_union_members (union_id, user_id)
+   SELECT union_id, $2 FROM member`,
+  [user1, familyThirdId],
 );
 
 const manualTypeId = (

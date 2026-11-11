@@ -39,8 +39,15 @@ describe('Родные и люди без аккаунта (e2e)', () => {
 
   let annaId: string;
   let annaToken: string;
+  /** Имя из профиля: вход заводит человека с именем из адреса почты. */
+  let annaName: string;
   let ivanId: string;
   let ivanToken: string;
+  let ivanName: string;
+  /** Третий настоящий человек: проверка «спрашиваем и свою семью». */
+  let peterId: string;
+  let peterToken: string;
+  let strangerId: string;
   let strangerToken: string;
 
   let objectId: string;
@@ -53,9 +60,12 @@ describe('Родные и люди без аккаунта (e2e)', () => {
 
   const annaEmail = `family-e2e-anna-${Date.now()}@example.com`;
   const ivanEmail = `family-e2e-ivan-${Date.now()}@example.com`;
+  const peterEmail = `family-e2e-peter-${Date.now()}@example.com`;
   const strangerEmail = `family-e2e-stranger-${Date.now()}@example.com`;
 
-  async function login(mail: string): Promise<{ token: string; id: string }> {
+  async function login(
+    mail: string,
+  ): Promise<{ token: string; id: string; displayName: string }> {
     await request(app.getHttpServer())
       .post('/api/auth/request-code')
       .send({ email: mail })
@@ -69,6 +79,7 @@ describe('Родные и люди без аккаунта (e2e)', () => {
     return {
       token: verified.body.accessToken as string,
       id: verified.body.user.id as string,
+      displayName: verified.body.user.displayName as string,
     };
   }
 
@@ -173,15 +184,22 @@ describe('Родные и люди без аккаунта (e2e)', () => {
     const anna = await login(annaEmail);
     annaToken = anna.token;
     annaId = anna.id;
+    annaName = anna.displayName;
 
     const ivan = await login(ivanEmail);
     ivanToken = ivan.token;
     ivanId = ivan.id;
+    ivanName = ivan.displayName;
 
     const stranger = await login(strangerEmail);
     strangerToken = stranger.token;
+    strangerId = stranger.id;
 
-    realUserIds.push(annaId, ivanId, stranger.id);
+    const peter = await login(peterEmail);
+    peterToken = peter.token;
+    peterId = peter.id;
+
+    realUserIds.push(annaId, ivanId, stranger.id, peter.id);
 
     objectId = (
       await dataSource.query(
@@ -214,18 +232,54 @@ describe('Родные и люди без аккаунта (e2e)', () => {
     await app?.close();
   });
 
-  // ───────────────────────────── родные ─────────────────────────────
+  // ────────────────── родные: заявка на объединение семей ──────────────────
 
-  it('сначала родных нет', async () => {
-    const response = await call(
-      'get',
-      '/api/users/me/family',
-      annaToken,
-    ).expect(200);
+  /**
+   * Заявки из ответа `GET /users/me/family`.
+   *
+   * Три списка, а не один с полем «статус»: у каждого свои действия
+   * («принять», «отменить»), и раскладывать их на клиенте — повторять
+   * правило в каждом экране.
+   */
+  async function unionsOf(token: string): Promise<{
+    incoming: Array<{
+      id: string;
+      initiatorUserId: string;
+      initiatorName: string;
+      myConsent: string;
+      isInitiator: boolean;
+      members: Array<{
+        userId: string;
+        consent: string;
+        isInitiator: boolean;
+        mine: boolean;
+      }>;
+    }>;
+    outgoing: Array<{
+      id: string;
+      initiatorUserId: string;
+      initiatorName: string;
+      myConsent: string;
+      isInitiator: boolean;
+      members: Array<{
+        userId: string;
+        consent: string;
+        isInitiator: boolean;
+        mine: boolean;
+      }>;
+    }>;
+  }> {
+    const response = await call('get', '/api/users/me/family', token).expect(200);
 
-    expect(response.body.family).toEqual([]);
-    expect(response.body.incoming).toEqual([]);
-    expect(response.body.outgoing).toEqual([]);
+    return { incoming: response.body.incoming, outgoing: response.body.outgoing };
+  }
+
+  it('сначала родных и заявок нет', async () => {
+    const anna = await call('get', '/api/users/me/family', annaToken).expect(200);
+
+    expect(anna.body.family).toEqual([]);
+    expect(anna.body.incoming).toEqual([]);
+    expect(anna.body.outgoing).toEqual([]);
 
     // У постороннего свой список: родство не общее на весь сайт.
     const stranger = await call(
@@ -234,57 +288,70 @@ describe('Родные и люди без аккаунта (e2e)', () => {
       strangerToken,
     ).expect(200);
     expect(stranger.body.family).toEqual([]);
+    expect(stranger.body.incoming).toEqual([]);
   });
 
-  it('добавление настоящего человека создаёт запрос, а не родство', async () => {
+  it('заявка собирает обе семьи, а родства пока нет', async () => {
     const added = await call('post', '/api/users/me/family', annaToken, {
       userId: ivanId,
     }).expect(201);
 
-    expect(added.body).toEqual({ userId: ivanId, status: 'pending' });
+    expect(added.body.status).toBe('pending');
+    expect(typeof added.body.unionId).toBe('string');
 
-    const anna = await call('get', '/api/users/me/family', annaToken).expect(
-      200,
-    );
+    const anna = await call('get', '/api/users/me/family', annaToken).expect(200);
     expect(anna.body.family).toEqual([]);
-    expect(anna.body.outgoing).toHaveLength(1);
-    expect(anna.body.outgoing[0].userId).toBe(ivanId);
     expect(anna.body.incoming).toEqual([]);
+    expect(anna.body.outgoing).toHaveLength(1);
 
-    const ivan = await call('get', '/api/users/me/family', ivanToken).expect(
-      200,
+    const sent = anna.body.outgoing[0];
+    expect(sent.initiatorUserId).toBe(annaId);
+    expect(sent.initiatorName).toBe(annaName);
+    expect(sent.isInitiator).toBe(true);
+    expect(sent.myConsent).toBe('accepted');
+    // Состав — обе семьи: инициатор уже согласен, второй ждёт ответа.
+    expect(
+      (sent.members as Array<{ userId: string; consent: string; mine: boolean }>)
+        .map((member) => `${member.userId}:${member.consent}:${member.mine}`)
+        .sort(),
+    ).toEqual(
+      [`${annaId}:accepted:true`, `${ivanId}:pending:false`].sort(),
     );
+
+    const ivan = await call('get', '/api/users/me/family', ivanToken).expect(200);
     expect(ivan.body.family).toEqual([]);
     expect(ivan.body.incoming).toHaveLength(1);
-    expect(ivan.body.incoming[0].userId).toBe(annaId);
-    expect(ivan.body.incoming[0].direction).toBe('incoming');
+    expect(ivan.body.incoming[0].initiatorName).toBe(annaName);
+    expect(ivan.body.incoming[0].myConsent).toBe('pending');
+    expect(ivan.body.incoming[0].isInitiator).toBe(false);
   });
 
-  it('подтверждение делает родство взаимным', async () => {
-    await call(
-      'post',
-      `/api/users/me/family/${annaId}/accept`,
-      ivanToken,
+  it('предпросмотр показывает обе стороны и что заявка уже висит', async () => {
+    const preview = await call(
+      'get',
+      `/api/users/me/family/preview/${ivanId}`,
+      annaToken,
     ).expect(200);
 
-    const annaFamily = await familyOf(annaToken);
-    const ivanFamily = await familyOf(ivanToken);
-
-    expect(annaFamily.map((row) => row.userId)).toEqual([ivanId]);
-    expect(ivanFamily.map((row) => row.userId)).toEqual([annaId]);
-
-    // Входящих и исходящих больше нет: связь одна.
-    const anna = await call('get', '/api/users/me/family', annaToken).expect(
-      200,
-    );
-    expect(anna.body.incoming).toEqual([]);
-    expect(anna.body.outgoing).toEqual([]);
+    expect(preview.body.targetName).toBe(ivanName);
+    expect(preview.body.pending).toBe(true);
+    expect(
+      (
+        preview.body.members as Array<{
+          userId: string;
+          mine: boolean;
+        }>
+      )
+        .map((member) => `${member.userId}:${member.mine}`)
+        .sort(),
+    ).toEqual([`${annaId}:true`, `${ivanId}:false`].sort());
   });
 
-  it('повторное добавление уже родного — 409', async () => {
-    await call('post', '/api/users/me/family', annaToken, {
+  it('повторная заявка того же состава — 409', async () => {
+    const response = await call('post', '/api/users/me/family', annaToken, {
       userId: ivanId,
     }).expect(409);
+    expect(response.body.message).toContain('уже отправлена');
   });
 
   it('себя в родные добавить нельзя — 400', async () => {
@@ -305,67 +372,62 @@ describe('Родные и люди без аккаунта (e2e)', () => {
     }).expect(400);
   });
 
-  it('разорвать одну связь нельзя: выход — из всей семьи', async () => {
-    // С 11.11.2026 родство — строгая пара, а семья — компонента связей.
-    // «Удалить одного родного» больше нет: это оставило бы полу-связи.
-    await call(
-      'delete',
-      `/api/users/me/family/${annaId}`,
-      ivanToken,
-    ).expect(409);
-
-    expect((await familyOf(annaToken)).map((row) => row.userId)).toEqual([
-      ivanId,
-    ]);
-
-    await call('delete', '/api/users/me/family', ivanToken).expect(204);
-
-    expect(await familyOf(annaToken)).toEqual([]);
-    expect(await familyOf(ivanToken)).toEqual([]);
-  });
-
-  it('свой запрос можно отменить, входящий — отклонить', async () => {
-    await call('post', '/api/users/me/family', annaToken, {
-      userId: ivanId,
-    }).expect(201);
-
-    await call(
-      'delete',
-      `/api/users/me/family/${ivanId}`,
-      annaToken,
-    ).expect(204);
-
-    const afterCancel = await call(
-      'get',
-      '/api/users/me/family',
-      ivanToken,
-    ).expect(200);
-    expect(afterCancel.body.incoming).toEqual([]);
-
-    // Теперь наоборот: заявка от Анны, Иван её отклоняет.
-    await call('post', '/api/users/me/family', annaToken, {
-      userId: ivanId,
-    }).expect(201);
+  it('отказ закрывает заявку: связей не появляется', async () => {
+    const ivan = await unionsOf(ivanToken);
+    const unionId = ivan.incoming[0].id;
 
     await call(
       'post',
-      `/api/users/me/family/${annaId}/decline`,
+      `/api/users/me/family/unions/${unionId}/decline`,
       ivanToken,
     ).expect(204);
 
-    const anna = await call('get', '/api/users/me/family', annaToken).expect(
-      200,
-    );
-    expect(anna.body.outgoing).toEqual([]);
-    expect(anna.body.family).toEqual([]);
+    expect(await familyOf(annaToken)).toEqual([]);
+    expect(await familyOf(ivanToken)).toEqual([]);
+
+    const anna = await unionsOf(annaToken);
+    expect(anna.outgoing).toEqual([]);
+
+    // Закрытую заявку нельзя ни принять, ни отклонить второй раз.
+    await call(
+      'post',
+      `/api/users/me/family/unions/${unionId}/decline`,
+      ivanToken,
+    ).expect(409);
   });
 
-  it('встречная заявка — это согласие, второй строки не появляется', async () => {
+  it('заявку отменяет только автор', async () => {
+    const added = await call('post', '/api/users/me/family', annaToken, {
+      userId: ivanId,
+    }).expect(201);
+    const unionId = added.body.unionId as string;
+
+    // Иван — участник, но не автор: отменить чужую заявку нельзя.
+    const forbidden = await call(
+      'delete',
+      `/api/users/me/family/unions/${unionId}`,
+      ivanToken,
+    ).expect(403);
+    expect(forbidden.body.message).toContain('только тот, кто её создал');
+
+    await call(
+      'delete',
+      `/api/users/me/family/unions/${unionId}`,
+      annaToken,
+    ).expect(204);
+
+    expect((await unionsOf(ivanToken)).incoming).toEqual([]);
+    expect((await unionsOf(annaToken)).outgoing).toEqual([]);
+    expect(await familyOf(annaToken)).toEqual([]);
+  });
+
+  it('встречная заявка того же состава — это согласие', async () => {
     await call('post', '/api/users/me/family', annaToken, {
       userId: ivanId,
     }).expect(201);
 
-    // Иван в это же время добавляет Анну — родство возникает сразу.
+    // Иван в это же время добавляет Анну: состав тот же, поэтому второй
+    // заявки не появляется, а его согласие засчитывается, и семьи сливаются.
     const response = await call('post', '/api/users/me/family', ivanToken, {
       userId: annaId,
     }).expect(201);
@@ -378,11 +440,108 @@ describe('Родные и люди без аккаунта (e2e)', () => {
       annaId,
     ]);
 
-    const anna = await call('get', '/api/users/me/family', annaToken).expect(
-      200,
+    const anna = await unionsOf(annaToken);
+    expect(anna.incoming).toEqual([]);
+    expect(anna.outgoing).toEqual([]);
+  });
+
+  it('повторное добавление уже родного — 409', async () => {
+    await call('post', '/api/users/me/family', annaToken, {
+      userId: ivanId,
+    }).expect(409);
+  });
+
+  it('заявка спрашивает и свою семью: третий участник подтверждает', async () => {
+    // Анна теперь родная Ивану, поэтому «добавить Петра» = позвать всю
+    // компоненту Анны: согласие нужно и Ивану — у него тоже появится
+    // доступ к чужому снаряжению.
+    const added = await call('post', '/api/users/me/family', annaToken, {
+      userId: peterId,
+    }).expect(201);
+    expect(added.body.status).toBe('pending');
+    const unionId = added.body.unionId as string;
+
+    const ivan = await unionsOf(ivanToken);
+    expect(ivan.incoming).toHaveLength(1);
+    expect(ivan.incoming[0].members).toHaveLength(3);
+    expect(
+      ivan.incoming[0].members
+        .map((member) => `${member.userId}:${member.mine}`)
+        .sort(),
+    ).toEqual(
+      [`${annaId}:true`, `${ivanId}:true`, `${peterId}:false`].sort(),
     );
-    expect(anna.body.incoming).toEqual([]);
-    expect(anna.body.outgoing).toEqual([]);
+
+    await call(
+      'post',
+      `/api/users/me/family/unions/${unionId}/accept`,
+      ivanToken,
+    ).expect(200);
+
+    // Ждём Петра: заявка ещё висит, родства с ним нет.
+    expect((await familyOf(annaToken)).map((row) => row.userId)).toEqual([
+      ivanId,
+    ]);
+
+    const accepted = await call(
+      'post',
+      `/api/users/me/family/unions/${unionId}/accept`,
+      peterToken,
+    ).expect(200);
+    expect(accepted.body.status).toBe('accepted');
+
+    // Полный граф: Иван и Пётр теперь родные напрямую, а не через Анну.
+    expect((await familyOf(ivanToken)).map((row) => row.userId).sort()).toEqual(
+      [annaId, peterId].sort(),
+    );
+    expect((await familyOf(peterToken)).map((row) => row.userId).sort()).toEqual(
+      [annaId, ivanId].sort(),
+    );
+  });
+
+  it('отказ одного из трёх закрывает заявку целиком', async () => {
+    const added = await call('post', '/api/users/me/family', annaToken, {
+      userId: strangerId,
+    }).expect(201);
+    const unionId = added.body.unionId as string;
+
+    const stranger = await unionsOf(strangerToken);
+    expect(stranger.incoming).toHaveLength(1);
+
+    await call(
+      'post',
+      `/api/users/me/family/unions/${unionId}/decline`,
+      strangerToken,
+    ).expect(204);
+
+    // Ни одной связи не появилось: даже ivan и пётр, которые согласились
+    // бы первыми, остаются при своих семьях.
+    expect((await familyOf(strangerToken)).map((row) => row.userId)).toEqual(
+      [],
+    );
+    const peter = await familyOf(peterToken);
+    expect(peter.map((row) => row.userId)).not.toContain(strangerId);
+  });
+
+  it('выход из семьи рвёт все связи и закрывает висящие заявки', async () => {
+    // Пётр заводит заявку со посторонним — она должна закрыться, когда
+    // Пётр выйдет из своей семьи.
+    await call('post', '/api/users/me/family', peterToken, {
+      userId: strangerId,
+    }).expect(201);
+
+    await call('delete', '/api/users/me/family', peterToken).expect(204);
+
+    expect(await familyOf(peterToken)).toEqual([]);
+    expect((await unionsOf(peterToken)).outgoing).toEqual([]);
+
+    const stranger = await unionsOf(strangerToken);
+    expect(stranger.incoming).toEqual([]);
+
+    // Связи Петра ушли у всех: у Анны остался только Иван.
+    expect((await familyOf(annaToken)).map((row) => row.userId)).toEqual([
+      ivanId,
+    ]);
   });
 
   it('без токена родные закрыты', async () => {

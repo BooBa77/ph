@@ -26,6 +26,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
 import { UsersService } from './users.service';
+import { FamilyUnionService } from './family-union.service';
 import { AvatarService } from './avatar.service';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
@@ -40,8 +41,9 @@ import {
 } from './dto/user-search.dto';
 import {
   AddFamilyMemberDto,
-  FamilyLinkResultDto,
   FamilyListDto,
+  FamilyUnionPreviewDto,
+  FamilyUnionResultDto,
 } from './dto/family.dto';
 import {
   CreateVirtualUserDto,
@@ -76,6 +78,7 @@ const avatarUploadOptions = {
 export class UsersController {
   constructor(
     private readonly usersService: UsersService,
+    private readonly familyUnions: FamilyUnionService,
     private readonly avatarService: AvatarService,
   ) {}
 
@@ -293,78 +296,106 @@ export class UsersController {
     return this.usersService.removeVirtual(authUser.id, userId);
   }
 
-  // ────────────────────────── родные (10.11.2026) ──────────────────────────
+  // ────────────────────── родные и объединение семей (10–11.11.2026) ──────────────────────
 
   /**
-   * Мои родные: подтверждённые, входящие и исходящие запросы.
+   * Мои родные, входящие и исходящие заявки на объединение семей.
    *
-   * «Родные» — члены семьи с общим бюджетом и снаряжением. Список строит
-   * сервер, а не клиент: родство взаимно, и вторая сторона видит человека
-   * без второго запроса. Входящие запросы видны здесь же — отдельного
-   * экрана уведомлений нет.
+   * С 11.11.2026 запрос — не пара «кто кого позвал», а состав из **двух
+   * семей целиком** (`FamilyUnionService`). Поэтому ответ собирается из
+   * двух источников: родные — `UsersService.familyOf`, заявки —
+   * `FamilyUnionService.listFor`. Так «ждём ответа» не смешивается
+   * с «уже родные» ни в DTO, ни в запросах к базе.
    */
   @Get('me/family')
-  @ApiOperation({ summary: 'Мои родные и запросы в родные' })
+  @ApiOperation({ summary: 'Мои родные и заявки на объединение семей' })
   @ApiOkResponse({ type: FamilyListDto })
   async listFamily(
     @CurrentUser() authUser: AuthUser,
   ): Promise<FamilyListDto> {
-    return this.usersService.listFamily(authUser.id);
+    const [family, unions] = await Promise.all([
+      this.usersService.familyOf(authUser.id),
+      this.familyUnions.listFor(authUser.id),
+    ]);
+
+    return { family, incoming: unions.incoming, outgoing: unions.outgoing };
+  }
+
+  /**
+   * Что будет, если добавить этого человека.
+   *
+   * Заказчик: «Инициатор собирает обе компоненты; показывает список людей
+   * и предупреждение „снаряжение станет общим“; подтверждает — заявка
+   * создана». Предпросмотр показывает состав до нажатия «Добавить».
+   */
+  @Get('me/family/preview/:userId')
+  @ApiOperation({ summary: 'Состав объединения семей до подтверждения' })
+  @ApiOkResponse({ type: FamilyUnionPreviewDto })
+  async previewFamilyUnion(
+    @CurrentUser() authUser: AuthUser,
+    @Param('userId', ParseUUIDPipe) userId: string,
+  ): Promise<FamilyUnionPreviewDto> {
+    return this.familyUnions.preview(authUser.id, userId);
   }
 
   /**
    * Добавить человека в родные.
    *
-   * Настоящему пользователю уходит запрос на подтверждение; свой человек
-   * без аккаунта становится родным сразу. Повтор и встречная заявка
-   * описаны в `UsersService.addFamilyMember`.
+   * Настоящему человеку создаётся заявка на объединение **обеих семей**;
+   * свой человек без аккаунта становится родным сразу. Повтор, встреча
+   * и «уже родные» описаны в `FamilyUnionService.create`.
    */
   @Post('me/family')
   @ApiOperation({ summary: 'Добавить человека в родные' })
-  @ApiCreatedResponse({ type: FamilyLinkResultDto })
+  @ApiCreatedResponse({ type: FamilyUnionResultDto })
   async addFamilyMember(
     @CurrentUser() authUser: AuthUser,
     @Body() dto: AddFamilyMemberDto,
-  ): Promise<FamilyLinkResultDto> {
-    return this.usersService.addFamilyMember(authUser.id, dto.userId);
+  ): Promise<FamilyUnionResultDto> {
+    return this.familyUnions.create(authUser.id, dto.userId);
   }
 
-  /** Принять входящий запрос в родные. */
-  @Post('me/family/:userId/accept')
+  /** Принять входящую заявку: моё согласие, а когда согласны все — слияние. */
+  @Post('me/family/unions/:unionId/accept')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Принять запрос в родные' })
-  @ApiOkResponse({ type: FamilyLinkResultDto })
-  async acceptFamilyMember(
+  @ApiOperation({ summary: 'Принять заявку на объединение семей' })
+  @ApiOkResponse({ type: FamilyUnionResultDto })
+  async acceptFamilyUnion(
     @CurrentUser() authUser: AuthUser,
-    @Param('userId', ParseUUIDPipe) userId: string,
-  ): Promise<FamilyLinkResultDto> {
-    const result = await this.usersService.respondToFamilyRequest(
-      authUser.id,
-      userId,
-      true,
-    );
-    if (!result) {
-      // Недостижимо: отказ — единственный путь, возвращающий null.
-      throw new NotFoundException('Запрос в родные не найден');
-    }
+    @Param('unionId', ParseUUIDPipe) unionId: string,
+  ): Promise<FamilyUnionResultDto> {
+    const result = await this.familyUnions.respond(authUser.id, unionId, true);
 
-    return result;
+    return { unionId, status: result.status === 'accepted' ? 'accepted' : 'pending' };
   }
 
-  /** Отклонить входящий запрос: связи не будет, строки не останется. */
-  @Post('me/family/:userId/decline')
+  /** Отклонить заявку: заявка закрывается, ни одной связи не появляется. */
+  @Post('me/family/unions/:unionId/decline')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Отклонить запрос в родные' })
-  @ApiNoContentResponse({ description: 'Запрос отклонён' })
-  async declineFamilyMember(
+  @ApiOperation({ summary: 'Отклонить заявку на объединение семей' })
+  @ApiNoContentResponse({ description: 'Заявка отклонена' })
+  async declineFamilyUnion(
     @CurrentUser() authUser: AuthUser,
-    @Param('userId', ParseUUIDPipe) userId: string,
+    @Param('unionId', ParseUUIDPipe) unionId: string,
   ): Promise<void> {
-    await this.usersService.respondToFamilyRequest(
-      authUser.id,
-      userId,
-      false,
-    );
+    await this.familyUnions.respond(authUser.id, unionId, false);
+  }
+
+  /**
+   * Отменить свою заявку — то есть заявку, которую я же и завёл.
+   *
+   * Принятую связь эта ручка не разрывает: выйти из семьи можно только
+   * целиком (`DELETE me/family`). Отказ на входящую — `…/decline`.
+   */
+  @Delete('me/family/unions/:unionId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Отменить заявку на объединение семей' })
+  @ApiNoContentResponse({ description: 'Заявка отменена' })
+  async cancelFamilyUnion(
+    @CurrentUser() authUser: AuthUser,
+    @Param('unionId', ParseUUIDPipe) unionId: string,
+  ): Promise<void> {
+    return this.familyUnions.cancel(authUser.id, unionId);
   }
 
   /**
@@ -373,30 +404,13 @@ export class UsersController {
    * Отдельная ручка без `:userId` намеренно: разрыв одной пары внутри
    * компоненты оставил бы «полу-связи», а заказчик решил, что выход —
    * всегда целиком (11.11.2026). Каталог не трогается: у каждого остаётся
-   * его копия вещи.
+   * его копия вещи. Висящие заявки с участием человека закрываются.
    */
   @Delete('me/family')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: 'Выйти из семьи — все связи' })
   @ApiNoContentResponse({ description: 'Семейных связей больше нет' })
   async leaveFamily(@CurrentUser() authUser: AuthUser): Promise<void> {
-    return this.usersService.leaveFamily(authUser.id);
-  }
-
-  /**
-   * Отменить свою заявку в родные.
-   *
-   * Принятую связь эта ручка не разрывает (409): выйти из семьи можно
-   * только целиком. Отказ на входящую заявку — `POST …/decline`.
-   */
-  @Delete('me/family/:userId')
-  @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: 'Отменить заявку в родные' })
-  @ApiNoContentResponse({ description: 'Заявки больше нет' })
-  async removeFamilyMember(
-    @CurrentUser() authUser: AuthUser,
-    @Param('userId', ParseUUIDPipe) userId: string,
-  ): Promise<void> {
-    return this.usersService.removeFamilyMember(authUser.id, userId);
+    return this.familyUnions.leaveFamily(authUser.id);
   }
 }

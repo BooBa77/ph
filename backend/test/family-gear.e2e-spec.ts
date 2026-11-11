@@ -239,13 +239,14 @@ describe('Семейный каталог: клоны вещи (e2e)', () => {
     tentTypeId = await makeType('e2e_family_clone_tent', 'Палатка семьи');
     await makeAttribute(tentTypeId);
 
-    // Родство по-настоящему: запрос и согласие, как в «Контактах».
-    await call('post', '/api/users/me/family', annaToken, {
+    // Родство по-настоящему: заявка на объединение семей и согласие,
+    // как в «Контактах» (с 11.11.2026 заявка собирает обе компоненты).
+    const union = await call('post', '/api/users/me/family', annaToken, {
       userId: ivanId,
     }).expect(201);
     await call(
       'post',
-      `/api/users/me/family/${annaId}/accept`,
+      `/api/users/me/family/unions/${union.body.unionId}/accept`,
       ivanToken,
     ).expect(200);
   });
@@ -431,5 +432,79 @@ describe('Семейный каталог: клоны вещи (e2e)', () => {
     expect(
       (await itemByTitle(ivanToken, 'Палатка до развода')).weightGrams,
     ).toBeNull();
+  });
+
+  // ─────────────────────── объединение семей (шаг 2) ───────────────────────
+
+  /**
+   * Слияние каталогов при объединении семей (11.11.2026, шаг 2).
+   *
+   * Заказчик: «For each origin-вещь каждой стороны — upsert клона для
+   * каждого участника другой стороны: нет строки — создать; мягко
+   * удалена — оживить и залить характеристики из активной копии».
+   * После выхода из семьи (тест выше) у Анны лежит **мягко удалённый**
+   * клон палатки, у Ивана — активная копия с новым весом, а ещё есть
+   * вещь, которую Анна никогда не видела. Одна новая заявка проверяет
+   * обе ветки `mergeClones`: создание и оживление.
+   */
+  it('объединение семей создаёт клоны новой стороны и оживляет удалённые', async () => {
+    // Иван завёл вещь уже после развода — Анна её не видела.
+    const created = await call('post', '/api/gear', ivanToken, {
+      typeId: tentTypeId,
+      title: 'Коврик Ивана',
+      weightGrams: 700,
+    }).expect(201);
+    const ivanMatId = created.body.id as string;
+
+    // После развода правки не зеркалятся: Анна взвесила свою копию палатки
+    // (3000), а у Ивана вес остался пустым. Теперь вес правит Иван — именно
+    // его активная копия станет источником при оживлении.
+    const ivanTent = await itemByTitle(ivanToken, 'Палатка до развода');
+    await call('patch', `/api/gear/${ivanTent.id}`, ivanToken, {
+      weightGrams: 3000,
+    }).expect(200);
+
+    // Анна удалила свою копию палатки: компоненты уже разные, поэтому
+    // у Ивана копия осталась активной.
+    const annaTent = await itemByTitle(annaToken, 'Палатка до развода');
+    await call('delete', `/api/gear/${annaTent.id}`, annaToken).expect(204);
+
+    const union = await call('post', '/api/users/me/family', ivanToken, {
+      userId: annaId,
+    }).expect(201);
+    await call(
+      'post',
+      `/api/users/me/family/unions/${union.body.unionId}/accept`,
+      annaToken,
+    ).expect(200);
+
+    // Родство взаимно: одна пара, вторая сторона видит без второго запроса.
+    expect((await familyOf(annaToken)).map((row) => row.userId)).toEqual([
+      ivanId,
+    ]);
+
+    // Создание: вещь Ивана приехала Анне клоном с тем же ключом и автором.
+    const annaMat = await itemByTitle(annaToken, 'Коврик Ивана');
+    expect(annaMat.weightGrams).toBe(700);
+    const ivanMatRow = await gearRow(ivanMatId);
+    const annaMatRow = await gearRow(annaMat.id);
+    expect(annaMatRow.gear_uid).toBe(ivanMatRow.gear_uid);
+    expect(annaMatRow.origin_user_id).toBe(ivanId);
+
+    // Оживление: строка Анны не задвоилась, `deleted_at` снят, а вес
+    // приехал из активной копии Ивана.
+    const annaTentRows = (await dataSource.query(
+      `SELECT id, deleted_at, weight_grams FROM gear_items
+        WHERE owner_user_id = $1 AND gear_uid = $2`,
+      [annaId, (await gearRow(annaTent.id)).gear_uid],
+    )) as Array<{
+      id: string;
+      deleted_at: Date | null;
+      weight_grams: number | null;
+    }>;
+
+    expect(annaTentRows).toHaveLength(1);
+    expect(annaTentRows[0].deleted_at).toBeNull();
+    expect(annaTentRows[0].weight_grams).toBe(3000);
   });
 });
