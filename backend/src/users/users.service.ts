@@ -55,6 +55,10 @@ export interface UpdateUserData {
   gender?: UserGender;
   isVegetarian?: boolean;
   allergies?: string | null;
+  /** Телефон или номер карты для расчётов; null — очистить. */
+  paymentDetails?: string | null;
+  /** Банк получателя; null — очистить. */
+  paymentBank?: string | null;
   /** undefined — не трогать, null — очистить весь спортивный опыт. */
   sportExperience?: SportExperienceData | null;
 }
@@ -605,6 +609,15 @@ export class UsersService {
     if (data.gender !== undefined) user.gender = data.gender;
     if (data.isVegetarian !== undefined) user.isVegetarian = data.isVegetarian;
     if (data.allergies !== undefined) user.allergies = data.allergies;
+    // Пустая строка — это «стереть»: реквизиты необязательные, и фронт
+    // очищает их той же отправкой, что и остальные текстовые поля.
+    // Хранить '' вместо NULL значило бы различать два «не заполнено».
+    if (data.paymentDetails !== undefined) {
+      user.paymentDetails = data.paymentDetails?.trim() || null;
+    }
+    if (data.paymentBank !== undefined) {
+      user.paymentBank = data.paymentBank?.trim() || null;
+    }
 
     const saved = await userRepo.save(user);
 

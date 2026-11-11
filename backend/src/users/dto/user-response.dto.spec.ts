@@ -27,6 +27,8 @@ function makeUser(overrides: Partial<User> = {}): User {
     calendarMode: null,
     isVegetarian: false,
     allergies: null,
+    paymentDetails: null,
+    paymentBank: null,
     sportExperience: null,
     deletedAt: null,
     createdAt: new Date('2026-10-30T10:00:00Z'),

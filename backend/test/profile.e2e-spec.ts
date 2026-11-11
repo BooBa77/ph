@@ -106,6 +106,8 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
 
     expect(response.body.isVegetarian).toBe(false);
     expect(response.body.allergies).toBeNull();
+    expect(response.body.paymentDetails).toBeNull();
+    expect(response.body.paymentBank).toBeNull();
     expect(response.body.sportExperience).toBeNull();
   });
 
@@ -469,6 +471,68 @@ describe('Профиль: диета и спортивный опыт (e2e)', ()
     expect(response.body.sportExperience.alpinism.instructorGuide).toBe(
       'Без категории (ИПбк)',
     );
+  });
+
+  /**
+   * Реквизиты для взаиморасчётов — шаг «Бухгалтерии» 11.11.2026.
+   *
+   * Проверяем три вещи, которые легко сломать: поле сохраняется и
+   * возвращается владельцу, пустая строка не остаётся в базе пустой
+   * строкой (два «не заполнено» нам не нужны), и в публичный профиль
+   * реквизиты не утекают — их видит только сам человек и участники
+   * его похода.
+   */
+  it('сохраняет реквизиты для взаиморасчётов', async () => {
+    const response = await patchMe({
+      paymentDetails: '+7 914 123-45-67',
+      paymentBank: 'Сбербанк',
+    }).expect(200);
+
+    expect(response.body.paymentDetails).toBe('+7 914 123-45-67');
+    expect(response.body.paymentBank).toBe('Сбербанк');
+
+    const reread = await auth(
+      request(app.getHttpServer()).get('/api/users/me'),
+    ).expect(200);
+
+    expect(reread.body.paymentDetails).toBe('+7 914 123-45-67');
+    expect(reread.body.paymentBank).toBe('Сбербанк');
+  });
+
+  it('пустая строка стирает реквизиты в NULL', async () => {
+    const response = await patchMe({
+      paymentDetails: '',
+      paymentBank: '',
+    }).expect(200);
+
+    expect(response.body.paymentDetails).toBeNull();
+    expect(response.body.paymentBank).toBeNull();
+
+    const rows = (await dataSource.query(
+      'SELECT payment_details, payment_bank FROM users WHERE id = $1',
+      [userId],
+    )) as { payment_details: string | null; payment_bank: string | null }[];
+
+    expect(rows[0].payment_details).toBeNull();
+    expect(rows[0].payment_bank).toBeNull();
+  });
+
+  it('в «телефон или карту» не проходит текст', async () => {
+    await patchMe({ paymentDetails: 'наличными при встрече' }).expect(400);
+  });
+
+  it('публичный профиль реквизитов не отдаёт', async () => {
+    await patchMe({
+      paymentDetails: '+7 914 000-00-00',
+      paymentBank: 'Сбербанк',
+    }).expect(200);
+
+    const publicProfile = await auth(
+      request(app.getHttpServer()).get(`/api/users/${userId}`),
+    ).expect(200);
+
+    expect(publicProfile.body).not.toHaveProperty('paymentDetails');
+    expect(publicProfile.body).not.toHaveProperty('paymentBank');
   });
 
   it('чужие поля профиля остались нетронутыми', async () => {

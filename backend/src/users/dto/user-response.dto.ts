@@ -76,6 +76,28 @@ export class UserResponseDto {
   })
   allergies: string | null;
 
+  /**
+   * Реквизиты для взаиморасчётов — только в своём профиле.
+   *
+   * В публичный профиль (`UserPublicProfileDto`) и в поиск людей они
+   * не попадают: чужие реквизиты человек показывает сам, когда просит
+   * перевести деньги, — через «Бухгалтерию» похода.
+   */
+  @ApiProperty({
+    description:
+      'Номер телефона или карты для взаиморасчётов. null — не заполнен.',
+    example: '+7 914 123-45-67',
+    nullable: true,
+  })
+  paymentDetails: string | null;
+
+  @ApiProperty({
+    description: 'Банк получателя. null — не заполнен.',
+    example: 'Сбербанк',
+    nullable: true,
+  })
+  paymentBank: string | null;
+
   @ApiProperty({
     description:
       'Спортивный опыт (альпинизм, скайраннинг, спортивный туризм). null — не заполнен.',
@@ -117,6 +139,8 @@ export class UserResponseDto {
     dto.avatarUrl = user.avatarUrl;
     dto.isVegetarian = user.isVegetarian;
     dto.allergies = user.allergies;
+    dto.paymentDetails = user.paymentDetails;
+    dto.paymentBank = user.paymentBank;
     dto.sportExperience = SportExperienceResponseDto.from(
       user.sportExperience ?? null,
     );
