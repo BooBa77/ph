@@ -8,7 +8,6 @@ import {
 import { DataSource, EntityManager } from 'typeorm';
 
 import { GEAR_TYPE_CODES } from '../gear/gear.types';
-import { UsersService } from '../users/users.service';
 import {
   AddSleepingDto,
   LodgeRouteDto,
@@ -92,12 +91,6 @@ export class TripRouteService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
-    /**
-     * Родные (10.11.2026, вечер): спальник берут из своего каталога **или
-     * из каталога родного** — «у родных снаряжение общее». Список родных
-     * знает только `UsersService`, поэтому спрашиваем у него.
-     */
-    private readonly users: UsersService,
   ) {}
 
   /** Вкладка целиком. Видят участники похода. */
@@ -529,34 +522,33 @@ export class TripRouteService {
   }
 
   /**
-   * Вещь для ночёвки — своя или родного, из каталога.
+   * Вещь для ночёвки — свой клон из каталога (11.11.2026).
    *
    * Ограничения по типу больше нет (01.11.2026): «Добавить ещё» берёт любую
-   * личную вещь. Остаются два правила: вещь берут из своего каталога
-   * **или каталога родного** (10.11.2026, вечер) и одноразовая вещь похода
-   * каталогу не принадлежит — её строка живёт в снаряжении похода,
-   * а не в ночёвке.
+   * личную вещь. Остаются два правила: вещь берут из **своего** каталога
+   * (у родных лежат свои клоны с тем же `gear_uid`, поэтому чужая строка —
+   * не «общая вещь», а чужая) и одноразовая вещь похода каталогу
+   * не принадлежит. Мягко удалённая вещь не находится: из каталога она
+   * исчезла, и в новую ночёвку её не поставить.
    */
   private async assertSleepingItem(
     manager: EntityManager,
     userId: string,
     gearItemId: string,
   ): Promise<void> {
-    const relatives = await this.users.familyMembers(userId);
-    const ownerIds = [userId, ...relatives.map((person) => person.id)];
-
     const rows = (await manager.query(
       `SELECT gi.id
          FROM gear_items gi
         WHERE gi.id = $1::bigint
           AND gi.is_trip_only = false
-          AND gi.owner_user_id = ANY($2::uuid[])`,
-      [gearItemId, ownerIds],
+          AND gi.deleted_at IS NULL
+          AND gi.owner_user_id = $2`,
+      [gearItemId, userId],
     )) as { id: string }[];
 
     if (rows[0] === undefined) {
       throw new BadRequestException(
-        'В ночёвку берут вещь из своего каталога снаряжения или каталога родного',
+        'В ночёвку берут вещь из своего каталога снаряжения',
       );
     }
   }
