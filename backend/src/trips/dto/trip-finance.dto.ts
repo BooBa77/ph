@@ -292,6 +292,12 @@ export class MyFinanceDto {
   @ApiProperty()
   remainingRub: number;
 
+  @ApiProperty({
+    description:
+      'Может ли текущий человек менять деньги: расход и компенсацию добавляет только идущий участник',
+  })
+  canSpend: boolean;
+
   @ApiProperty({ type: [CompensationOptionDto] })
   suggestions: CompensationOptionDto[];
 }

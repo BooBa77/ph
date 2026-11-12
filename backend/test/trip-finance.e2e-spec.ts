@@ -229,6 +229,7 @@ describe('Бухгалтерия похода (e2e)', () => {
       expect(response.body.compensations).toEqual([]);
       expect(response.body.members).toHaveLength(6);
       expect(response.body.me.balanceRub).toBe(0);
+      expect(response.body.me.canSpend).toBe(true);
       expect(response.body.me.suggestions).toEqual([]);
     });
 
@@ -255,7 +256,9 @@ describe('Бухгалтерия похода (e2e)', () => {
     });
 
     it('приглашённый видит, но тратить ещё не может', async () => {
-      await view(trip2, d);
+      // Экран по этому флагу выключает кнопки, а не узнаёт о запрете 403-й.
+      const invited = await view(trip2, d);
+      expect(invited.body.me.canSpend).toBe(false);
 
       await addExpense(
         trip2,

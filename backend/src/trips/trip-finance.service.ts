@@ -379,6 +379,9 @@ export class TripFinanceService {
     const me: MyFinanceDto = {
       balanceRub: balances.get(viewerId) ?? 0,
       remainingRub: remaining.get(viewerId) ?? 0,
+      // Приглашённый видит вкладку, но ещё не тратил: экран по этому флагу
+      // выключает кнопки. Проверка прав остаётся на сервере (`assertGoing`).
+      canSpend: memberIds.includes(viewerId),
       suggestions,
     };
 
