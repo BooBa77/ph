@@ -175,6 +175,39 @@ export class UpdateMyStatusDto {
 }
 
 /**
+ * Тело `PATCH /api/trips/:id/participants/:userId/diet` — питание человека
+ * без аккаунта.
+ *
+ * Флагов два и они из разных мест: «питается отдельно» — свойство **этого
+ * похода** (`trip_participants`), «вегетарианец» — свойство человека
+ * (`users`). Оба меняются одной ручкой, потому что на экране это две
+ * галочки в одной строке.
+ *
+ * Менять их может участник похода — тот, кто ведёт чужой аккаунт, а не
+ * только организатор (решение заказчика 12.11.2026).
+ */
+export class UpdateParticipantDietDto {
+  @ApiProperty({
+    description:
+      'Питается отдельно: не едок, пакеты еды не назначаются. Не задано — не трогаем',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг отдельного питания должен быть true или false' })
+  eatsSeparately?: boolean;
+
+  @ApiProperty({
+    description: 'Вегетарианец. Не задано — не трогаем',
+    example: false,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Флаг вегетарианца должен быть true или false' })
+  isVegetarian?: boolean;
+}
+
+/**
  * Тело `POST /api/trips/:id/requests/:userId/accept` — «иду» или «пока
  * не решил». Отказа здесь нет: отказ — это `DELETE` тикета.
  */

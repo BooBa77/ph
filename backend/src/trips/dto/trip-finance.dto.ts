@@ -85,7 +85,8 @@ export class SaveTripExpenseDto {
   participantIds?: string[];
 
   @ApiProperty({
-    description: 'Дата траты ГГГГ-ММ-ДД. Не передана — сегодня',
+    description:
+      'Дата траты ГГГГ-ММ-ДД. Не передана — сегодня',
     example: '2026-11-11',
     required: false,
   })
@@ -93,6 +94,16 @@ export class SaveTripExpenseDto {
   @IsString()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Дата — в виде ГГГГ-ММ-ДД' })
   spentAt?: string;
+
+  @ApiProperty({
+    description:
+      'Кто заплатил. Не передано — я. Можно человека без аккаунта, которого веду: за него платёж записывает участник похода',
+    example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID('all', { message: 'Плательщик должен быть человеком' })
+  payerUserId?: string;
 }
 
 /** Тело `POST /api/trips/:id/finance/compensations`. */
@@ -117,6 +128,16 @@ export class CreateTripCompensationDto {
     message: `Сумма не должна превышать ${MAX_AMOUNT_RUB} ₽`,
   })
   amountRub: number;
+
+  @ApiProperty({
+    description:
+      'Кто переводит. Не передано — я. Можно человека без аккаунта, которого веду',
+    example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID('all', { message: 'Отправитель должен быть человеком' })
+  fromUserId?: string;
 }
 
 /** Доля в ответе: имя рядом с суммой, чтобы таблица не собирала его сама. */
@@ -261,6 +282,17 @@ export class FinanceMemberDto {
   @ApiProperty({ description: 'Баланс с учётом ожидающих компенсаций' })
   remainingRub: number;
 
+  @ApiProperty({
+    description: 'Человек без аккаунта: за него платит и переводит ведущий',
+  })
+  isVirtual: boolean;
+
+  @ApiProperty({
+    description:
+      'Этого человека без аккаунта ведёт смотрящий: ему можно записать платёж и перевод',
+  })
+  managedByMe: boolean;
+
   @ApiProperty({ nullable: true })
   paymentDetails: string | null;
 
@@ -313,8 +345,7 @@ export class CompensationOptionDto implements CompensationOption {
 }
 
 /** Мой баланс и подсказки — то, что видит человек в шапке вкладки. */
-export class MyFinanceDto {
-  @ApiProperty()
+export class MyFinanceDto {  @ApiProperty()
   balanceRub: number;
 
   @ApiProperty()
@@ -340,6 +371,30 @@ export class MyFinanceDto {
   suggestions: CompensationOptionDto[];
 }
 
+/**
+ * Отправитель перевода, за которого может действовать смотрящий.
+ *
+ * С 12.11.2026 это человек без аккаунта: у него нет входа, поэтому платёж
+ * и компенсацию за него записывает тот, кто его ведёт. У семьи такого
+ * отдельного списка нет — «на пользователя всё вешаем».
+ */
+export class CompensationSenderDto {
+  @ApiProperty()
+  userId: string;
+
+  @ApiProperty({ example: 'Дядя Витя' })
+  displayName: string;
+
+  @ApiProperty({ description: 'Долг этого человека — по нему считается сумма' })
+  familyDebtRub: number;
+
+  @ApiProperty({ description: 'Кредит этого человека' })
+  familyCreditRub: number;
+
+  @ApiProperty({ type: [CompensationOptionDto] })
+  suggestions: CompensationOptionDto[];
+}
+
 /** Ответ `GET /api/trips/:id/finance` — вся вкладка одним запросом. */
 export class TripFinanceDto {
   @ApiProperty({ type: [TripExpenseDto] })
@@ -353,4 +408,11 @@ export class TripFinanceDto {
 
   @ApiProperty({ type: MyFinanceDto })
   me: MyFinanceDto;
+
+  @ApiProperty({
+    description:
+      'Люди без аккаунта, которых ведёт смотрящий: за них можно записать платёж и перевод',
+    type: [CompensationSenderDto],
+  })
+  managedSenders: CompensationSenderDto[];
 }

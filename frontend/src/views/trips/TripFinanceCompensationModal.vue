@@ -3,7 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { ApiError } from '@/api/errors'
 import { createTripCompensation } from '@/api/finance'
-import type { CompensationOption, TripFinance } from '@/types/finance'
+import type { CompensationSender, TripFinance } from '@/types/finance'
 import { compensationRequisites, noRequisitesPhrase } from '@/utils/finance'
 import { formatRub, parseRub } from '@/utils/money'
 
@@ -30,8 +30,13 @@ import { formatRub, parseRub } from '@/utils/money'
  */
 const props = defineProps<{
   tripId: string
-  /** Кому я должен: посчитано сервером, отсортировано по сумме долга. */
-  suggestions: CompensationOption[]
+  /** Я — смотрящий: первый отправитель в выборе. */
+  meId?: string
+  /**
+   * От кого можно переводить: я и люди без аккаунта, которых я веду.
+   * Варианты получателей считает сервер для каждого отправителя.
+   */
+  senders: CompensationSender[]
 }>()
 
 const emit = defineEmits<{
@@ -45,19 +50,42 @@ const emit = defineEmits<{
 /**
  * Выбранный вариант — по первому человеку семьи: он же уходит на сервер
  * как `toUserId`, а семью сервер восстановит по родству сам.
+ *
+ * **Отправителей может быть несколько** (12.11.2026): я и люди без
+ * аккаунта, которых я веду. У каждого свои подсказки — их посчитал сервер.
+ * По умолчанию выбираю себя, если мне есть кому переводить.
  */
-const selectedUserId = ref(props.suggestions[0]?.userIds[0] ?? '')
-const amount = ref(String(props.suggestions[0]?.amountRub ?? ''))
+const initialSender = computed(
+  () =>
+    props.senders.find(
+      (sender) =>
+        sender.userId === props.meId && sender.suggestions.length > 0,
+    ) ??
+    props.senders.find((sender) => sender.suggestions.length > 0) ??
+    props.senders[0] ??
+    null,
+)
+
+const selectedSenderId = ref(initialSender.value?.userId ?? '')
+
+const selectedSender = computed(
+  () => props.senders.find((sender) => sender.userId === selectedSenderId.value) ?? null,
+)
+
+const suggestions = computed(() => selectedSender.value?.suggestions ?? [])
+
+const selectedUserId = ref(suggestions.value[0]?.userIds[0] ?? '')
+const amount = ref(String(suggestions.value[0]?.amountRub ?? ''))
 
 const isSaving = ref(false)
 const error = ref<string | null>(null)
 
 const selected = computed(
   () =>
-    props.suggestions.find((option) => option.userIds[0] === selectedUserId.value) ?? null,
+    suggestions.value.find((option) => option.userIds[0] === selectedUserId.value) ?? null,
 )
 
-/** Потолок суммы — остаток долга моей семьи этой семье. */
+/** Потолок суммы — остаток долга выбранного отправителя этой семье. */
 const maxAmount = computed(() => selected.value?.amountRub ?? 0)
 
 const requisitesList = computed(() =>
@@ -75,8 +103,17 @@ const noRequisitesText = computed(() => {
  * своя, и прежняя цифра после переключения была бы суммой «не той».
  */
 watch(selectedUserId, (userId) => {
-  const option = props.suggestions.find((item) => item.userIds[0] === userId)
+  const option = suggestions.value.find((item) => item.userIds[0] === userId)
   if (option) amount.value = String(option.amountRub)
+  error.value = null
+})
+
+/** Смена отправителя — свои подсказки, значит и первый вариант свой. */
+watch(selectedSenderId, () => {
+  const first = suggestions.value[0]
+
+  selectedUserId.value = first?.userIds[0] ?? ''
+  amount.value = String(first?.amountRub ?? '')
   error.value = null
 })
 
@@ -85,25 +122,25 @@ watch(selectedUserId, (userId) => {
  * (перевод сделан, кредит забронирован). Не оставляем радиокнопку, которой
  * нет ни в списке, ни в ответе сервера, — выбираем первый живой вариант.
  */
-watch(
-  () => props.suggestions,
-  (suggestions) => {
-    if (suggestions.some((option) => option.userIds[0] === selectedUserId.value)) return
+watch(suggestions, (list) => {
+  if (list.some((option) => option.userIds[0] === selectedUserId.value)) return
 
-    selectedUserId.value = suggestions[0]?.userIds[0] ?? ''
-    amount.value = String(suggestions[0]?.amountRub ?? '')
+  selectedUserId.value = list[0]?.userIds[0] ?? ''
+  amount.value = String(list[0]?.amountRub ?? '')
+})
+
+/** Отправителя убрали из ответа (перевод подтвердили) — выбираем живого. */
+watch(
+  () => props.senders,
+  (list) => {
+    if (list.some((sender) => sender.userId === selectedSenderId.value)) return
+
+    selectedSenderId.value = initialSender.value?.userId ?? ''
   },
 )
 
 function messageOf(cause: unknown, fallback: string): string {
   return cause instanceof ApiError ? cause.message : fallback
-}
-
-/** Словами, кому переводим: человеку или семье. */
-function whoLabel(): string {
-  if (selected.value === null) return 'получателю'
-
-  return selected.value.members.length > 1 ? 'этой семье' : 'этому человеку'
 }
 
 async function save(): Promise<void> {
@@ -121,7 +158,7 @@ async function save(): Promise<void> {
     return
   }
   if (sum > maxAmount.value) {
-    error.value = `Больше остатка: ${whoLabel()} вы должны ${formatRub(maxAmount.value)}`
+    error.value = `Больше остатка — можно ${formatRub(maxAmount.value)}`
     return
   }
 
@@ -133,6 +170,11 @@ async function save(): Promise<void> {
       await createTripCompensation(props.tripId, {
         toUserId: selected.value.userIds[0]!,
         amountRub: sum,
+        // Себя сервер знает по токену; поле шлём, только когда переводит
+        // человек без аккаунта, которого мы ведём.
+        ...(selectedSenderId.value === '' || selectedSenderId.value === props.meId
+          ? {}
+          : { fromUserId: selectedSenderId.value }),
       }),
     )
   } catch (problem) {
@@ -194,6 +236,27 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           должен Коле
         </p>
       </div>
+
+      <!--
+        От кого перевод. Несколько отправителей — только люди без аккаунта,
+        которых ведёт смотрящий: у них нет входа, за них действует он.
+      -->
+      <label
+        v-if="senders.length > 1"
+        class="flex flex-col gap-1 text-xs text-muted"
+        data-test="finance-compensation-sender"
+      >
+        Кто переводит
+        <select
+          v-model="selectedSenderId"
+          class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+          data-test="finance-compensation-sender-select"
+        >
+          <option v-for="sender in senders" :key="sender.userId" :value="sender.userId">
+            {{ sender.displayName }}
+          </option>
+        </select>
+      </label>
 
       <p
         v-if="suggestions.length === 0"

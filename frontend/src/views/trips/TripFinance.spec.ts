@@ -64,6 +64,8 @@ function member(
     avatarUrl: null,
     balanceRub,
     remainingRub: balanceRub,
+    isVirtual: false,
+    managedByMe: false,
     paymentDetails: null,
     paymentBank: null,
     ...overrides,
@@ -118,6 +120,7 @@ function state(overrides: Partial<TripFinance> = {}): TripFinance {
       member(ANNA, 'Анна', 2000, { paymentDetails: '+7 999 000-00-00', paymentBank: 'Сбер' }),
       member(BORIS, 'Борис', -1000),
     ],
+    managedSenders: [],
     me: {
       balanceRub: -1000,
       remainingRub: -1000,
@@ -175,13 +178,22 @@ const ExpenseModalStub = defineComponent({
 let compensationModalEmit: ((event: string) => void) | null = null
 
 const CompensationModalStub = defineComponent({
-  props: { tripId: String, suggestions: Array },
+  props: { tripId: String, senders: Array },
   emits: ['saved', 'close', 'stale'],
   setup(props, { emit }) {
     compensationModalEmit = emit as (event: string) => void
 
     return () =>
-      h('div', { 'data-test': 'compensation-modal-stub' }, String(props.suggestions?.length ?? 0))
+      h(
+        'div',
+        { 'data-test': 'compensation-modal-stub' },
+        String(
+          (props.senders as { suggestions: unknown[] }[] | undefined)?.reduce(
+            (total, sender) => total + sender.suggestions.length,
+            0,
+          ) ?? 0,
+        ),
+      )
   },
 })
 
@@ -369,6 +381,53 @@ describe('вкладка «Бухгалтерия»', () => {
     )
   })
 
+  it('долг, занятый ожидающими переводами, объясняется без бухгалтерии', async () => {
+    mocks.getTripFinance.mockResolvedValue(
+      state({
+        me: meQuiet({ familyDebtRub: 1000 }),
+      }),
+    )
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(
+      wrapper.get('[data-test="finance-compensate"]').attributes('disabled'),
+    ).toBeDefined()
+    expect(wrapper.get('[data-test="finance-hint"]').text()).toBe(
+      'Ждём подтверждения переводов.',
+    )
+  })
+
+  it('долг человека без аккаунта открывает компенсацию его ведущему', async () => {
+    mocks.getTripFinance.mockResolvedValue(
+      state({
+        me: meQuiet(),
+        managedSenders: [
+          {
+            userId: 'vitya',
+            displayName: 'Дядя Витя',
+            familyDebtRub: 1000,
+            familyCreditRub: 0,
+            suggestions: state().me.suggestions,
+          },
+        ],
+      }),
+    )
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    expect(
+      wrapper.get('[data-test="finance-compensate"]').attributes('disabled'),
+    ).toBeUndefined()
+
+    await wrapper.get('[data-test="finance-compensate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="compensation-modal-stub"]').text()).toBe('1')
+  })
+
   it('«Вам должны» тоже не открывает компенсацию — перевод делает должник', async () => {
     mocks.getTripFinance.mockResolvedValue(
       state({
@@ -380,7 +439,7 @@ describe('вкладка «Бухгалтерия»', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-hint"]').text()).toBe(
-      'Вам должны — перевод делает должник, а не вы.',
+      'Перевод делает должник — не вы.',
     )
   })
 
@@ -501,7 +560,7 @@ describe('вкладка «Бухгалтерия»', () => {
 
     expect(wrapper.find('[data-test="compensation-modal-stub"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="finance-action-error"]').text()).toBe(
-      'Баланс обновился — переводить больше нечего.',
+      'Ты никому не должен.',
     )
   })
 

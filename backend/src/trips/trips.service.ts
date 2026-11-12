@@ -27,6 +27,7 @@ import {
   ParticipantListDto,
   TripParticipantDto,
   TripRoleDto,
+  UpdateParticipantDietDto,
 } from './dto/participant.dto';
 import {
   CreateRequestDto,
@@ -1782,6 +1783,65 @@ export class TripsService {
   }
 
   /**
+   * Питание человека без аккаунта: «отдельно» и «вегетарианец».
+   *
+   * **Почему отдельная ручка, а не `PATCH …/participants/me`.** Свой статус
+   * человек меняет сам, но у виртуального входа нет — за него это делает
+   * тот, кто его ведёт. Ограничение «только организатор» снято 12.11.2026
+   * по слову заказчика: завести и вести человека без аккаунта может любой
+   * идущий участник.
+   *
+   * Менять можно только виртуального: настоящий участник отмечает своё
+   * питание сам, и чужая галочка не должна менять чужую раскладку.
+   */
+  async updateParticipantDiet(
+    userId: string,
+    id: number,
+    targetUserId: string,
+    dto: UpdateParticipantDietDto,
+  ): Promise<TripParticipantDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const trip = await this.findVisibleTrip(manager, userId, id);
+      await this.assertCanManageParticipants(manager, trip, userId);
+
+      const participant = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: targetUserId },
+        relations: { user: true },
+      });
+      if (!participant || !participant.user) {
+        throw new NotFoundException('Такого участника нет в походе');
+      }
+      if (!participant.user.isVirtual) {
+        throw new BadRequestException(
+          'Питание участника с аккаунтом он отмечает сам',
+        );
+      }
+
+      const dietChanged =
+        dto.eatsSeparately !== undefined &&
+        participant.eatsSeparately !== dto.eatsSeparately;
+      const vegetarianChanged =
+        dto.isVegetarian !== undefined &&
+        participant.user.isVegetarian !== dto.isVegetarian;
+
+      if (dietChanged) {
+        participant.eatsSeparately = dto.eatsSeparately as boolean;
+        await manager.save(participant);
+      }
+      if (vegetarianChanged) {
+        participant.user.isVegetarian = dto.isVegetarian as boolean;
+        await manager.save(participant.user);
+      }
+
+      return TripParticipantDto.from(
+        participant,
+        await this.loadRoles(manager, trip.id, targetUserId),
+        trip.organizerUserId,
+      );
+    });
+  }
+
+  /**
    * Убрать человека из состава. Только организатор.
    *
    * Организатора убрать нельзя: он автор похода, и даже триггер в базе
@@ -1830,9 +1890,10 @@ export class TripsService {
    * Завести человека без аккаунта и сразу добавить его в поход (30.10.2026).
    *
    * Заказчик: «организаторам доступно добавление виртуальных участников —
-   * людей, не пользователей нашего сайта, он сам управляет ими». Поэтому
-   * доступно **организатору** (та же проверка, что на правку состава)
-   * и сразу со статусом `going`: приглашать виртуального некуда — входа
+   * людей, не пользователей нашего сайта, он сам управляет ими». С
+   * 12.11.2026 ограничение снято: «должен быть любой участник», поэтому
+   * заводит и ведёт его любой идущий (организатор — всегда).
+   * Статус — сразу `going`: приглашать виртуального некуда, входа
    * у него нет, и «приглашён» он не ответит никогда.
    *
    * Человек и участие создаются **одной транзакцией**: «завёл, но в состав
@@ -1850,8 +1911,9 @@ export class TripsService {
     dto: CreateVirtualUserDto,
   ): Promise<TripParticipantDto> {
     return this.dataSource.transaction(async (manager) => {
-      const trip = await this.findOwnedTrip(manager, userId, id);
+      const trip = await this.findVisibleTrip(manager, userId, id);
       this.assertNotIdea(trip);
+      await this.assertCanManageParticipants(manager, trip, userId);
 
       const user = await this.users.createVirtual(userId, dto, manager);
 
@@ -1878,10 +1940,11 @@ export class TripsService {
   /**
    * Добавить в этот поход **своего** человека без аккаунта.
    *
-   * «Своего» — заведённого этим организатором: чужой для него не существует
+   * «Своего» — заведённого этим участником: чужой для него не существует
    * (404, как чужой предмет каталога). Так работает обещанное заказчиком
    * «быстрое добавление в следующий поход»: одна строка `users` на человека,
-   * и в новый поход он приходит той же строкой, а не копией.
+   * и в новый поход он приходит той же строкой, а не копией. С 12.11.2026
+   * в поход его так же добавляет любой идущий участник — свой, а не чужой.
    *
    * Уже в составе — 409, а не молчаливое «ну и хорошо»: повторное нажатие
    * не должно выглядеть как добавление.
@@ -1892,8 +1955,9 @@ export class TripsService {
     targetUserId: string,
   ): Promise<TripParticipantDto> {
     return this.dataSource.transaction(async (manager) => {
-      const trip = await this.findOwnedTrip(manager, userId, id);
+      const trip = await this.findVisibleTrip(manager, userId, id);
       this.assertNotIdea(trip);
+      await this.assertCanManageParticipants(manager, trip, userId);
 
       const user = await this.users.findOwnedVirtual(
         userId,
@@ -1928,6 +1992,31 @@ export class TripsService {
 
       return TripParticipantDto.from(participant, [], trip.organizerUserId);
     });
+  }
+
+  /**
+   * Кто ведёт людей без аккаунта в походе.
+   *
+   * Организатор — всегда (даже если сам не идёт: он ведёт подготовку).
+   * Остальным — только идущим: приглашённый ещё не участник, и заводить
+   * людей в чужой состав ему рано. Это расширение 12.11.2026: раньше ручки
+   * требовали `organizerUserId`, заказчик попросил «любого участника».
+   */
+  private async assertCanManageParticipants(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<void> {
+    if (trip.organizerUserId === userId) return;
+
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId: trip.id, userId },
+    });
+    if (!participant || participant.status !== 'going') {
+      throw new ForbiddenException(
+        'Людей без аккаунта ведёт участник похода',
+      );
+    }
   }
 
   /**

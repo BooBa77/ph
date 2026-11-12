@@ -95,6 +95,7 @@ export class TripFinanceController {
       id,
       dto.toUserId,
       dto.amountRub,
+      dto.fromUserId,
     );
   }
 

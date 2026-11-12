@@ -61,6 +61,8 @@ describe('Виртуальные участники (e2e)', () => {
   let ideaTripId: string;
 
   let virtualId: string;
+  /** Человек без аккаунта, которого завёл обычный участник. */
+  let memberVirtualId: string;
 
   const roleCode = `virtualE2e${Date.now()}`;
 
@@ -216,17 +218,14 @@ describe('Виртуальные участники (e2e)', () => {
         'DELETE FROM trips WHERE id = ANY($1::bigint[])',
         [[tripId, secondTripId, ideaTripId, foreignTripId]],
       );
+      // Сначала люди без аккаунта: на них ссылается FK владельца.
       await dataSource.query(
         'DELETE FROM users WHERE id = ANY($1::uuid[])',
-        [
-          [
-            organizerId,
-            memberId,
-            otherOrganizerId,
-            virtualId,
-            foreignVirtualId,
-          ].filter(Boolean),
-        ],
+        [[virtualId, memberVirtualId, foreignVirtualId].filter(Boolean)],
+      );
+      await dataSource.query(
+        'DELETE FROM users WHERE id = ANY($1::uuid[])',
+        [[organizerId, memberId, otherOrganizerId].filter(Boolean)],
       );
       await dataSource.query('DELETE FROM roles WHERE code = $1', [roleCode]);
       await dataSource.query('DELETE FROM objects WHERE id = $1', [objectId]);
@@ -296,17 +295,21 @@ describe('Виртуальные участники (e2e)', () => {
     await call('get', `/api/users/${virtualId}`, organizerToken).expect(404);
   });
 
-  it('не организатор человека без аккаунта не заводит', async () => {
-    await call('post', `/api/trips/${tripId}/participants/virtual`, memberToken, {
-      displayName: 'Самозванец',
-    }).expect(403);
-
-    await call(
+  it('человека без аккаунта заводит любой идущий участник, посторонний — нет', async () => {
+    // 12.11.2026: заказчик попросил снять ограничение «только организатор».
+    const created = await call(
       'post',
       `/api/trips/${tripId}/participants/virtual`,
-      strangerToken,
-      { displayName: 'Посторонний' },
-    ).expect(403);
+      memberToken,
+      { displayName: 'Самозванец' },
+    ).expect(201);
+
+    memberVirtualId = created.body.userId as string;
+    expect(created.body.isVirtual).toBe(true);
+
+    await call('post', `/api/trips/${tripId}/participants/virtual`, strangerToken, {
+      displayName: 'Посторонний',
+    }).expect(403);
   });
 
   it('у мечты состава нет — 400', async () => {
@@ -318,7 +321,7 @@ describe('Виртуальные участники (e2e)', () => {
     ).expect(400);
   });
 
-  it('в моём списке он есть, у другого участника — нет', async () => {
+  it('в моём списке он есть, у другого участника — только свой', async () => {
     const mine = await call(
       'get',
       '/api/users/me/virtual',
@@ -328,13 +331,60 @@ describe('Виртуальные участники (e2e)', () => {
       (user) => user.id,
     );
     expect(ids).toContain(virtualId);
+    expect(ids).not.toContain(memberVirtualId);
 
     const others = await call(
       'get',
       '/api/users/me/virtual',
       memberToken,
     ).expect(200);
-    expect(others.body.users).toEqual([]);
+    expect(
+      (others.body.users as Array<{ id: string }>).map((user) => user.id),
+    ).toEqual([memberVirtualId]);
+  });
+
+  /**
+   * 12.11.2026: «в ту же секцию, где „Я буду питаться отдельно“, добавить
+   * чек-боксы „питается отдельно“ и „вегетарианец“ для виртуальных».
+   * За настоящего человека галочки ставить нельзя — он сам.
+   */
+  it('питание человека без аккаунта отмечает любой идущий участник', async () => {
+    await call(
+      'patch',
+      `/api/trips/${tripId}/participants/${virtualId}/diet`,
+      memberToken,
+      { eatsSeparately: true, isVegetarian: true },
+    ).expect(200);
+
+    // Раскладку не читаем: у похода нет дат, и `GET meal-plan` ответил бы
+    // 400 раньше, чем мы увидели бы флаги. Проверяем то, что записалось.
+    const participantRows = (await dataSource.query(
+      'SELECT eats_separately FROM trip_participants WHERE trip_id = $1 AND user_id = $2',
+      [tripId, virtualId],
+    )) as Array<{ eats_separately: boolean }>;
+    const userRows = (await dataSource.query(
+      'SELECT is_vegetarian FROM users WHERE id = $1',
+      [virtualId],
+    )) as Array<{ is_vegetarian: boolean }>;
+
+    expect(participantRows[0].eats_separately).toBe(true);
+    expect(userRows[0].is_vegetarian).toBe(true);
+
+    // За настоящего участника питание отмечает он сам.
+    await call(
+      'patch',
+      `/api/trips/${tripId}/participants/${organizerId}/diet`,
+      memberToken,
+      { isVegetarian: true },
+    ).expect(400);
+
+    // Посторонний не трогает чужой состав.
+    await call(
+      'patch',
+      `/api/trips/${tripId}/participants/${virtualId}/diet`,
+      strangerToken,
+      { isVegetarian: false },
+    ).expect(403);
   });
 
   it('переименование видно в составе: строка одна на человека', async () => {

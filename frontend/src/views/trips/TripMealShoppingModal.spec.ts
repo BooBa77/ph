@@ -68,6 +68,10 @@ describe('чек из «Списка общих продуктов»', () => {
     const wrapper = mountModal()
     await flushPromises()
 
+    // 12.11.2026: вместо блока с объяснением — одна кнопка «Чек за продукты».
+    expect(wrapper.get('[data-test="check-open"]').text()).toBe('Чек за продукты')
+    expect(wrapper.text()).not.toContain('Купили продукты на общие деньги')
+
     await wrapper.get('[data-test="check-open"]').trigger('click')
     await wrapper.get('[data-test="check-sum"]').setValue('3500')
     await wrapper.get('[data-test="check-form"]').trigger('submit')

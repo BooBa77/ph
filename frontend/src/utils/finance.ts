@@ -98,15 +98,18 @@ export function sharesPreview(amountRub: number, members: PreviewMember[]): stri
  * в винительном падеже пришлось бы склонять, а «на Анна, Борис» читается
  * хуже, чем список имён. Смысл подписи — показать, на кого разделили
  * и по сколько вышло; предлог ничего к этому не добавляет.
+ *
+ * **Остаток от деления в подписи не перечисляется.** 3 500 ₽ на шестерых —
+ * это «по 583 ₽», а не «584, 583, 584, 583, 583, 583»: рубль остатка
+ * уходит первым по составу, и список цифр на экране только мешал читать
+ * сумму. Заказчик 12.11.2026: «херня какая-то, „по 583 ₽“ и пересчитывается
+ * каждый раз». Цифра — меньшая доля: её получат все, кроме первых по составу.
  */
 export function splitCaption(expense: TripExpense): string {
   const shares = expense.shares
   if (shares.length === 0) return 'ни на кого'
 
-  const first = shares[0]?.amountRub ?? 0
-  const perPerson = shares.every((share) => share.amountRub === first)
-    ? `по ${formatRub(first)}`
-    : shares.map((share) => formatRub(share.amountRub)).join(', ')
+  const perPerson = `по ${formatRub(Math.min(...shares.map((share) => share.amountRub)))}`
 
   if (expense.split === 'all') return `на всех · ${perPerson}`
   if (expense.split === 'commonEaters') return `на питающихся с общего · ${perPerson}`

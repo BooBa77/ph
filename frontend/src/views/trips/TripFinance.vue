@@ -12,6 +12,7 @@ import {
 import { useAuthStore } from '@/stores/auth'
 import type {
   CompensationOption,
+  CompensationSender,
   TripCompensation,
   TripExpense,
   TripFinance,
@@ -174,26 +175,51 @@ const suggestions = computed<CompensationOption[]>(
   () => finance.value?.me.suggestions ?? [],
 )
 
-const canCompensate = computed(() => canSpend.value && suggestions.value.length > 0)
+/**
+ * От кого можно переводить: я и люди без аккаунта, которых я веду.
+ *
+ * За виртуального нет входа, поэтому платёж и перевод за него записывает
+ * участник похода. У семьи отдельного выбора нет — «на пользователя
+ * всё вешаем»: родные входят сами.
+ */
+const senders = computed<CompensationSender[]>(() => {
+  if (finance.value === null) return []
+
+  return [
+    {
+      userId: meId.value,
+      displayName: 'Я',
+      familyDebtRub: finance.value.me.familyDebtRub,
+      familyCreditRub: finance.value.me.familyCreditRub,
+      suggestions: suggestions.value,
+    },
+    ...(finance.value.managedSenders ?? []),
+  ]
+})
+
+const canCompensate = computed(
+  () => canSpend.value && senders.value.some((sender) => sender.suggestions.length > 0),
+)
 
 /**
  * Почему кнопка «Компенсация» выключена. Пустая строка — кнопка работает.
  * Одна фраза на один случай: «вам должны» и «всё в расчёте» — разные дела,
  * и человеку важно, какое именно у него.
  *
- * Считается по **семье**: с 12.11.2026 платит она, и личный остаток
- * смотрящего может быть нулевым, пока долг есть у его родных.
+ * Считается по **семье и по моим людям без аккаунта**: с 12.11.2026 платит
+ * семья, а за виртуального действует его ведущий; личный остаток смотрящего
+ * может быть нулевым, пока долг есть у родных или у подопечного.
  */
 const compensationHint = computed(() => {
   if (finance.value === null) return ''
   if (!canSpend.value) return 'Расходы и переводы может менять только идущий участник похода.'
-  if (suggestions.value.length > 0) return ''
+  if (senders.value.some((sender) => sender.suggestions.length > 0)) return ''
 
-  const debt = finance.value.me.familyDebtRub
-  const credit = finance.value.me.familyCreditRub
+  const debt = senders.value.some((sender) => sender.familyDebtRub > 0)
+  const credit = senders.value.some((sender) => sender.familyCreditRub > 0)
 
-  if (debt > 0) return 'Долг есть, но кредит уже забронирован ожидающими переводами.'
-  if (credit > 0) return 'Вам должны — перевод делает должник, а не вы.'
+  if (debt) return 'Ждём подтверждения переводов.'
+  if (credit) return 'Перевод делает должник — не вы.'
 
   return 'Всё в расчёте — переводить нечего.'
 })
@@ -331,7 +357,7 @@ async function openCompensation(): Promise<void> {
   await refreshQuietly()
 
   if (!canCompensate.value) {
-    actionError.value = 'Баланс обновился — переводить больше нечего.'
+    actionError.value = 'Ты никому не должен.'
     return
   }
 
@@ -576,6 +602,7 @@ function cancelRow(row: MoneyRowView): void {
       <TripFinanceExpenseModal
         v-if="expenseModalOpen"
         :trip-id="tripId"
+        :me-id="meId"
         :members="finance.members"
         :expense="editingExpense"
         @saved="applyView"
@@ -585,7 +612,8 @@ function cancelRow(row: MoneyRowView): void {
       <TripFinanceCompensationModal
         v-if="compensationOpen"
         :trip-id="tripId"
-        :suggestions="suggestions"
+        :me-id="meId"
+        :senders="senders"
         @saved="applyView"
         @stale="onCompensationStale"
         @close="compensationOpen = false"

@@ -184,6 +184,13 @@ export class TripEaterDto {
   @ApiProperty({ description: 'Вегетарианец', example: false })
   isVegetarian: boolean;
 
+  @ApiProperty({
+    description:
+      'Человек без аккаунта: его питание отмечает участник похода, а не он сам',
+    example: false,
+  })
+  isVirtual: boolean;
+
   @ApiProperty({ description: 'Аллергии, текст из профиля', nullable: true })
   allergies: string | null;
 

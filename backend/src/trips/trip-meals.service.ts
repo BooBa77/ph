@@ -1740,6 +1740,7 @@ export class TripMealsService {
       avatarUrl: participant.user?.avatarUrl ?? null,
       gender: participant.user?.gender ?? 'm',
       isVegetarian: participant.user?.isVegetarian ?? false,
+      isVirtual: participant.user?.isVirtual ?? false,
       allergies: participant.user?.allergies ?? null,
       eatsSeparately: participant.eatsSeparately,
     }));
@@ -1785,6 +1786,7 @@ export class TripMealsService {
       avatarUrl: participant.user?.avatarUrl ?? null,
       gender: participant.user?.gender ?? 'm',
       isVegetarian: participant.user?.isVegetarian ?? false,
+      isVirtual: participant.user?.isVirtual ?? false,
       allergies: participant.user?.allergies ?? null,
       eatsSeparately: participant.eatsSeparately,
     };

@@ -21,6 +21,7 @@ const mocks = vi.hoisted(() => ({
   setMealLine: vi.fn(),
   removeMealLine: vi.fn(),
   setMyStatus: vi.fn(),
+  setParticipantDiet: vi.fn(),
   createMealPackage: vi.fn(),
   updateMealPackage: vi.fn(),
   removeMealPackage: vi.fn(),
@@ -51,6 +52,7 @@ vi.mock('@/api/trips', () => ({
   setMealLine: mocks.setMealLine,
   removeMealLine: mocks.removeMealLine,
   setMyStatus: mocks.setMyStatus,
+  setParticipantDiet: mocks.setParticipantDiet,
   createMealPackage: mocks.createMealPackage,
   updateMealPackage: mocks.updateMealPackage,
   removeMealPackage: mocks.removeMealPackage,
@@ -122,6 +124,7 @@ function plan(): TripMealPlan {
           avatarUrl: null,
           gender: 'm',
           isVegetarian: false,
+          isVirtual: false,
           allergies: null,
           eatsSeparately: false,
         },
@@ -131,6 +134,7 @@ function plan(): TripMealPlan {
           avatarUrl: null,
           gender: 'f',
           isVegetarian: true,
+          isVirtual: false,
           allergies: 'орехи',
           eatsSeparately: false,
         },
@@ -283,6 +287,7 @@ function myPlan(): TripMealPlan {
           avatarUrl: null,
           gender: 'm',
           isVegetarian: false,
+          isVirtual: false,
           allergies: null,
           eatsSeparately: false,
         },
@@ -630,6 +635,33 @@ describe('TripMeals', () => {
     await flushPromises()
 
     expect(mocks.setMyStatus).toHaveBeenCalledWith('7', 'going', true)
+    expect(mocks.fetchMealPlan).toHaveBeenCalledTimes(2)
+  })
+
+  it('питание человека без аккаунта отмечает участник похода', async () => {
+    currentPlan.eaters.people.push({
+      userId: 'u-virtual',
+      displayName: 'Дядя Витя',
+      avatarUrl: null,
+      gender: 'm',
+      isVegetarian: false,
+      isVirtual: true,
+      allergies: null,
+      eatsSeparately: false,
+    })
+    mocks.setParticipantDiet.mockResolvedValue({})
+
+    const wrapper = await mountMeals()
+
+    expect(wrapper.find('[data-test="virtual-diet"]').exists()).toBe(true)
+    expect(wrapper.text()).toContain('Дядя Витя')
+
+    await wrapper.get('[data-test="virtual-vegetarian-u-virtual"]').setValue(true)
+    await flushPromises()
+
+    expect(mocks.setParticipantDiet).toHaveBeenCalledWith('7', 'u-virtual', {
+      isVegetarian: true,
+    })
     expect(mocks.fetchMealPlan).toHaveBeenCalledTimes(2)
   })
 

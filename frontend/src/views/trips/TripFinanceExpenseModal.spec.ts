@@ -34,6 +34,8 @@ function member(userId: string, displayName: string): FinanceMember {
     avatarUrl: null,
     balanceRub: 0,
     remainingRub: 0,
+    isVirtual: false,
+    managedByMe: false,
     paymentDetails: null,
     paymentBank: null,
   }
@@ -50,6 +52,7 @@ function view(): TripFinance {
     expenses: [],
     compensations: [],
     members: MEMBERS,
+    managedSenders: [],
     me: {
       balanceRub: 0,
       remainingRub: 0,
@@ -80,9 +83,9 @@ function joinExpense(overrides: Partial<TripExpense> = {}): TripExpense {
   }
 }
 
-function mountModal(expense: TripExpense | null = null) {
+function mountModal(expense: TripExpense | null = null, members = MEMBERS) {
   return mount(TripFinanceExpenseModal, {
-    props: { tripId: '7', members: MEMBERS, expense },
+    props: { tripId: '7', meId: 'anna', members, expense },
   })
 }
 
@@ -203,6 +206,35 @@ describe('модалка расхода', () => {
       description: 'Ужин',
       participantIds: ['anna', 'boris'],
     })
+  })
+
+  it('плательщиком можно выбрать своего человека без аккаунта', async () => {
+    const virtual = member('vitya', 'Дядя Витя')
+    virtual.isVirtual = true
+    virtual.managedByMe = true
+
+    const wrapper = mountModal(null, [...MEMBERS, virtual])
+
+    expect(wrapper.find('[data-test="finance-expense-payer"]').exists()).toBe(true)
+    await wrapper.get('[data-test="finance-expense-payer-select"]').setValue('vitya')
+    await fill(wrapper, '900', 'Бензин')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.createTripExpense).toHaveBeenCalledWith('7', {
+      amountRub: 900,
+      split: 'all',
+      spentAt: localToday(),
+      description: 'Бензин',
+      payerUserId: 'vitya',
+    })
+  })
+
+  it('без своих людей без аккаунта выбора плательщика нет', async () => {
+    const wrapper = mountModal()
+
+    expect(wrapper.find('[data-test="finance-expense-payer"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Плательщик — вы')
   })
 
   it('правка чека: третий сегмент на месте, пустой комментарий допустим', async () => {

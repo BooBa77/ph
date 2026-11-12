@@ -23,6 +23,7 @@ import {
   addMealLine,
   setMealLine,
   setMyStatus,
+  setParticipantDiet,
   updateMealPackage,
 } from '@/api/trips'
 import ProductPicker from '@/components/ui/ProductPicker.vue'
@@ -205,6 +206,35 @@ const me = computed(
       (person) => person.userId === auth.user?.id,
     ) ?? null,
 )
+
+/**
+ * Люди без аккаунта в раскладке (12.11.2026).
+ *
+ * Своих галочек у них нет — входа на сайт тоже. Отмечает тот, кто их ведёт:
+ * любой идущий участник или организатор (право вкладки). Раньше эти флаги
+ * было негде поставить вовсе, и «вегетарианец Дядя Витя» оставался мясоедом
+ * для всей раскладки.
+ */
+const virtualEaters = computed(() =>
+  (plan.value?.eaters.people ?? []).filter((person) => person.isVirtual),
+)
+
+/** Кто может менять питание виртуальных: организатор или идущий участник. */
+const canManageDiet = computed(
+  () => props.canEdit === true || me.value !== null,
+)
+
+async function toggleVirtualDiet(
+  userId: string,
+  field: 'eatsSeparately' | 'isVegetarian',
+  value: boolean,
+): Promise<void> {
+  await run(`diet:${userId}:${field}`, async () => {
+    await setParticipantDiet(props.trip.id, userId, { [field]: value })
+
+    return fetchMealPlan(props.trip.id)
+  })
+}
 
 /**
  * Блюда, которые уже стоят в общей раскладке.
@@ -1379,32 +1409,94 @@ onMounted(() => {
         </ul>
 
         <div
-          v-if="me || myPlan"
-          class="mt-2 flex flex-wrap items-center gap-2 border-t border-border pt-2"
+          v-if="me || myPlan || (virtualEaters.length > 0 && canManageDiet)"
+          class="mt-2 flex flex-col gap-2 border-t border-border pt-2"
           data-test="eats-separately-block"
         >
-          <label v-if="me" class="flex cursor-pointer items-center gap-2 text-sm text-text">
-            <input
-              type="checkbox"
-              class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
-              :checked="me.eatsSeparately"
-              :disabled="busy === 'separate'"
-              data-test="eats-separately"
-              @change="toggleSeparate"
-            />
-            Я буду питаться отдельно
-          </label>
+          <div class="flex flex-wrap items-center gap-2">
+            <label v-if="me" class="flex cursor-pointer items-center gap-2 text-sm text-text">
+              <input
+                type="checkbox"
+                class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                :checked="me.eatsSeparately"
+                :disabled="busy === 'separate'"
+                data-test="eats-separately"
+                @change="toggleSeparate"
+              />
+              Я буду питаться отдельно
+            </label>
 
-          <!-- Личный список продуктов — рядом с флагом: своя закупка -->
-          <button
-            v-if="myPlan"
-            type="button"
-            class="ml-auto cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
-            data-test="my-checklist-toggle"
-            @click="myShoppingOpen = true"
-          >
-            Список моих продуктов
-          </button>
+            <!-- Личный список продуктов — рядом с флагом: своя закупка -->
+            <button
+              v-if="myPlan"
+              type="button"
+              class="ml-auto cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
+              data-test="my-checklist-toggle"
+              @click="myShoppingOpen = true"
+            >
+              Список моих продуктов
+            </button>
+          </div>
+
+          <!--
+            Люди без аккаунта: за них галочки ставит тот, кто их ведёт.
+            «Отдельно» — свойство этого похода, «вегетарианец» — человека;
+            на экране это две галочки в одной строке (12.11.2026).
+          -->
+          <div v-if="virtualEaters.length > 0" class="flex flex-col gap-1" data-test="virtual-diet">
+            <span class="text-xs text-muted">Люди без аккаунта</span>
+
+            <div
+              v-for="person in virtualEaters"
+              :key="person.userId"
+              class="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-text"
+              data-test="virtual-diet-person"
+            >
+              <span>{{ person.displayName }}</span>
+
+              <label
+                v-if="canManageDiet"
+                class="flex cursor-pointer items-center gap-1 text-xs text-muted"
+              >
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                  :checked="person.eatsSeparately"
+                  :disabled="busy === `diet:${person.userId}:eatsSeparately`"
+                  :data-test="`virtual-eats-separately-${person.userId}`"
+                  @change="
+                    toggleVirtualDiet(
+                      person.userId,
+                      'eatsSeparately',
+                      !person.eatsSeparately,
+                    )
+                  "
+                />
+                питается отдельно
+              </label>
+
+              <label
+                v-if="canManageDiet"
+                class="flex cursor-pointer items-center gap-1 text-xs text-muted"
+              >
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                  :checked="person.isVegetarian"
+                  :disabled="busy === `diet:${person.userId}:isVegetarian`"
+                  :data-test="`virtual-vegetarian-${person.userId}`"
+                  @change="
+                    toggleVirtualDiet(
+                      person.userId,
+                      'isVegetarian',
+                      !person.isVegetarian,
+                    )
+                  "
+                />
+                вегетарианец
+              </label>
+            </div>
+          </div>
         </div>
       </div>
 

@@ -45,6 +45,8 @@ import { localToday, parseRub } from '@/utils/money'
  */
 const props = defineProps<{
   tripId: string
+  /** Я — смотрящий: плательщик по умолчанию и первый в выборе. */
+  meId?: string
   /** Идущие участники: из них выбирают, на кого разделить. */
   members: FinanceMember[]
   /** Правим существующий расход; `null` — добавляем новый. */
@@ -63,6 +65,22 @@ const amount = ref(props.expense ? String(props.expense.amountRub) : '')
 const description = ref(props.expense?.description ?? '')
 const spentAt = ref(props.expense?.spentAt ?? localToday())
 const split = ref<ExpenseSplit>(props.expense?.split ?? 'all')
+
+/**
+ * Плательщик. По умолчанию я, но трату мог сделать человек без аккаунта,
+ * которого я веду: у него нет входа, и платёж за него записываю я.
+ *
+ * Выбор показывается только когда есть из кого выбирать: «я и мои люди
+ * без аккаунта». Родные входят сами, за них платёж не пишут.
+ */
+const defaultPayerId = computed(() => props.meId ?? '')
+const payerOptions = computed(() =>
+  props.members.filter(
+    (member) => member.userId === defaultPayerId.value || member.managedByMe,
+  ),
+)
+const canChoosePayer = computed(() => payerOptions.value.length > 1)
+const payerUserId = ref(props.expense?.authorUserId ?? defaultPayerId.value)
 
 /**
  * Выбранные для `split = 'group'`. При правке группы берём прежние доли,
@@ -162,6 +180,9 @@ async function save(): Promise<void> {
   if (split.value === 'group') {
     body.participantIds = previewMembers.value.map((member) => member.userId)
   }
+  if (canChoosePayer.value && payerUserId.value !== '') {
+    body.payerUserId = payerUserId.value
+  }
 
   isSaving.value = true
 
@@ -236,7 +257,24 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </button>
       </div>
 
-      <p class="text-xs text-muted">
+      <label
+        v-if="canChoosePayer"
+        class="flex flex-col gap-1 text-xs text-muted"
+        data-test="finance-expense-payer"
+      >
+        Кто платил
+        <select
+          v-model="payerUserId"
+          class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+          data-test="finance-expense-payer-select"
+        >
+          <option v-for="member in payerOptions" :key="member.userId" :value="member.userId">
+            {{ member.displayName }}
+          </option>
+        </select>
+      </label>
+
+      <p v-else class="text-xs text-muted">
         Плательщик — вы: этот расход запишется на ваше имя.
       </p>
 

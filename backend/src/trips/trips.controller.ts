@@ -36,6 +36,7 @@ import {
   ParticipantListDto,
   TripParticipantDto,
   UpdateMyStatusDto,
+  UpdateParticipantDietDto,
 } from './dto/participant.dto';
 import {
   CreateRequestDto,
@@ -274,6 +275,27 @@ export class TripsController {
     );
   }
 
+  /**
+   * Питание человека без аккаунта. Меняет любой идущий участник —
+   * организатор или тот, кто ведёт этого человека.
+   */
+  @Patch(':id/participants/:userId/diet')
+  @ApiOperation({ summary: 'Питание человека без аккаунта' })
+  @ApiOkResponse({ type: TripParticipantDto })
+  async updateParticipantDiet(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('userId', ParseUUIDPipe) targetUserId: string,
+    @Body() dto: UpdateParticipantDietDto,
+  ): Promise<TripParticipantDto> {
+    return this.tripsService.updateParticipantDiet(
+      authUser.id,
+      id,
+      targetUserId,
+      dto,
+    );
+  }
+
   /** Убрать человека из состава. Только организатор, и только не себя. */
   @Delete(':id/participants/:userId')
   @HttpCode(HttpStatus.NO_CONTENT)
@@ -290,8 +312,8 @@ export class TripsController {
   /**
    * Завести человека без аккаунта и сразу добавить в поход (30.10.2026).
    *
-   * Только организатор: «виртуальные участники — людей, не пользователей
-   * нашего сайта, он сам управляет ими». Статус — сразу `going`:
+   * С 12.11.2026 это может любой идущий участник, а не только организатор:
+   * заказчик попросил «должен быть любой участник». Статус — сразу `going`:
    * приглашать некуда, входа у человека нет.
    */
   @Post(':id/participants/virtual')

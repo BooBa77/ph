@@ -9,6 +9,7 @@ import { DataSource, EntityManager, Not } from 'typeorm';
 
 import {
   CompensationOptionDto,
+  CompensationSenderDto,
   FinanceMemberDto,
   MyFinanceDto,
   SaveTripExpenseDto,
@@ -104,12 +105,15 @@ export class TripFinanceService {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
       await this.assertGoing(manager, String(trip.id), userId);
 
+      const payerId = dto.payerUserId ?? userId;
+      await this.assertCanActFor(manager, String(trip.id), userId, payerId);
+
       const participants = await this.goingParticipants(manager, String(trip.id));
       const shares = this.sharesFor(dto, participants);
 
       const expense = manager.create(TripExpense, {
         tripId: String(trip.id),
-        authorUserId: userId,
+        authorUserId: payerId,
         amountRub: dto.amountRub,
         description: this.descriptionFor(dto),
         split: dto.split,
@@ -141,8 +145,20 @@ export class TripFinanceService {
         where: { id: String(expenseId), tripId: String(trip.id) },
       });
       if (!expense) throw new NotFoundException('Расход не найден');
-      if (expense.authorUserId !== userId) {
+      if (!(await this.canManageExpense(manager, expense, userId))) {
         throw new ForbiddenException('Править расход может только автор');
+      }
+
+      // Плательщика можно сменить: чек, записанный на себя, нередко
+      // оказывается тратой человека без аккаунта, которого я веду.
+      if (dto.payerUserId !== undefined && dto.payerUserId !== expense.authorUserId) {
+        await this.assertCanActFor(
+          manager,
+          String(trip.id),
+          userId,
+          dto.payerUserId,
+        );
+        expense.authorUserId = dto.payerUserId;
       }
 
       const participants = await this.goingParticipants(manager, String(trip.id));
@@ -181,7 +197,7 @@ export class TripFinanceService {
         where: { id: String(expenseId), tripId: String(trip.id) },
       });
       if (!expense) throw new NotFoundException('Расход не найден');
-      if (expense.authorUserId !== userId) {
+      if (!(await this.canManageExpense(manager, expense, userId))) {
         throw new ForbiddenException('Удалить расход может только автор');
       }
 
@@ -213,12 +229,18 @@ export class TripFinanceService {
     tripId: number,
     toUserId: string,
     amountRub: number,
+    fromUserId?: string,
   ): Promise<TripFinanceDto> {
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
       await this.assertGoing(manager, String(trip.id), userId);
 
-      if (toUserId === userId) {
+      // «Папа платит за всех» и «я веду Дядю Витю»: отправителем может быть
+      // человек без аккаунта, но действует всегда вошедший участник.
+      const senderId = fromUserId ?? userId;
+      await this.assertCanActFor(manager, String(trip.id), userId, senderId);
+
+      if (toUserId === senderId) {
         throw new BadRequestException('Перевести компенсацию самому себе нельзя');
       }
 
@@ -239,20 +261,24 @@ export class TripFinanceService {
       );
       const families = await this.goingFamilies(manager, participants);
 
-      const myFamily = families.find((group) => group.includes(userId)) ?? [
-        userId,
+      const myFamily = families.find((group) => group.includes(senderId)) ?? [
+        senderId,
       ];
       const targetFamily = families.find((group) =>
         group.includes(toUserId),
       ) ?? [toUserId];
 
-      if (targetFamily.includes(userId)) {
+      if (targetFamily.includes(senderId)) {
         throw new BadRequestException('Своей семье переводить не нужно');
       }
 
       const debt = familyDebt(remaining, myFamily);
       if (debt <= 0) {
-        throw new BadRequestException('Вам не нужно ничего компенсировать');
+        throw new BadRequestException(
+          senderId === userId
+            ? 'Вам не нужно ничего компенсировать'
+            : 'Этому человеку нечего компенсировать',
+        );
       }
 
       const credit = familyCredit(remaining, targetFamily);
@@ -325,7 +351,8 @@ export class TripFinanceService {
       if (!compensation) throw new NotFoundException('Компенсация не найдена');
       if (
         compensation.toUserId !== userId &&
-        !(await this.isFamilyOf(manager, compensation.toUserId, userId))
+        !(await this.isFamilyOf(manager, compensation.toUserId, userId)) &&
+        !(await this.isManagedVirtual(manager, compensation.toUserId, userId))
       ) {
         throw new ForbiddenException(
           'Подтвердить получение может только получатель',
@@ -367,7 +394,8 @@ export class TripFinanceService {
       if (!compensation) throw new NotFoundException('Компенсация не найдена');
       if (
         compensation.fromUserId !== userId &&
-        !(await this.isFamilyOf(manager, compensation.fromUserId, userId))
+        !(await this.isFamilyOf(manager, compensation.fromUserId, userId)) &&
+        !(await this.isManagedVirtual(manager, compensation.fromUserId, userId))
       ) {
         throw new ForbiddenException(
           'Отменить компенсацию может только отправитель',
@@ -414,26 +442,42 @@ export class TripFinanceService {
     ];
     const myFamilySet = new Set(myFamily);
 
-    const suggestions: CompensationOptionDto[] = compensationOptions(
-      viewerId,
-      remaining,
-      families,
-    ).map((option) => {
-      const people = option.userIds.map((userId) => userById.get(userId)!);
+    /**
+     * Люди без аккаунта, которых ведёт смотрящий: за них он записывает
+     * платёж и перевод. Семейный случай сюда не входит — за родных
+     * действует семья, а не отдельный выбор.
+     */
+    const managedParticipants = participants.filter(
+      (participant) =>
+        participant.user?.isVirtual === true &&
+        participant.user.virtualOwnerUserId === viewerId,
+    );
+    const managedIds = new Set(
+      managedParticipants.map((participant) => participant.userId),
+    );
 
-      return {
-        userIds: [...option.userIds],
-        displayName: joinNames(people.map((person) => person.displayName)),
-        amountRub: option.amountRub,
-        members: people.map((person) => ({
-          userId: person.id,
-          displayName: person.displayName,
-          gender: person.gender,
-          paymentDetails: person.paymentDetails,
-          paymentBank: person.paymentBank,
-        })),
-      };
-    });
+    const familyOf = (userId: string): string[] =>
+      families.find((group) => group.includes(userId)) ?? [userId];
+
+    const optionsFor = (senderId: string): CompensationOptionDto[] =>
+      compensationOptions(senderId, remaining, families).map((option) => {
+        const people = option.userIds.map((userId) => userById.get(userId)!);
+
+        return {
+          userIds: [...option.userIds],
+          displayName: joinNames(people.map((person) => person.displayName)),
+          amountRub: option.amountRub,
+          members: people.map((person) => ({
+            userId: person.id,
+            displayName: person.displayName,
+            gender: person.gender,
+            paymentDetails: person.paymentDetails,
+            paymentBank: person.paymentBank,
+          })),
+        };
+      });
+
+    const suggestions = optionsFor(viewerId);
 
     const me: MyFinanceDto = {
       balanceRub: balances.get(viewerId) ?? 0,
@@ -454,29 +498,54 @@ export class TripFinanceService {
       avatarUrl: participant.user.avatarUrl,
       balanceRub: balances.get(participant.userId) ?? 0,
       remainingRub: remaining.get(participant.userId) ?? 0,
+      isVirtual: participant.user.isVirtual === true,
+      managedByMe: managedIds.has(participant.userId),
       paymentDetails: participant.user.paymentDetails,
       paymentBank: participant.user.paymentBank,
     }));
 
+    const managedSenders: CompensationSenderDto[] = managedParticipants.map(
+      (participant) => {
+        const senderFamily = familyOf(participant.userId);
+
+        return {
+          userId: participant.userId,
+          displayName: participant.user.displayName,
+          familyDebtRub: familyDebt(remaining, senderFamily),
+          familyCreditRub: familyCredit(remaining, senderFamily),
+          suggestions: optionsFor(participant.userId),
+        };
+      },
+    );
+
     return {
-      expenses: expenses.map((expense) =>
-        TripExpenseDto.from(expense, viewerId),
-      ),
+      expenses: expenses.map((expense) => {
+        const dto = TripExpenseDto.from(expense, viewerId);
+
+        // Расход человека без аккаунта правит тот, кто его ведёт.
+        if (managedIds.has(expense.authorUserId)) dto.canEdit = true;
+
+        return dto;
+      }),
       compensations: compensations.map((compensation) => {
         const dto = TripCompensationDto.from(compensation, viewerId);
 
         // Семья действует как один кошелёк: «папа перевёл за всех» —
         // значит отменить это может любой из семьи отправителя, а получить
-        // подтверждение — любой из семьи получателя.
+        // подтверждение — любой из семьи получателя. Перевод человека
+        // без аккаунта отменяет тот, кто его ведёт.
         if (compensation.status === 'pending') {
           if (myFamilySet.has(compensation.fromUserId)) dto.canCancel = true;
+          if (managedIds.has(compensation.fromUserId)) dto.canCancel = true;
           if (myFamilySet.has(compensation.toUserId)) dto.canConfirm = true;
+          if (managedIds.has(compensation.toUserId)) dto.canConfirm = true;
         }
 
         return dto;
       }),
       members,
       me,
+      managedSenders,
     };
   }
 
@@ -599,6 +668,67 @@ export class TripFinanceService {
     const component = await this.users.familyComponent(otherUserId, manager);
 
     return component.some((person) => person.id === userId);
+  }
+
+  /**
+   * «Этого человека без аккаунта веду я?» — для платежей и переводов.
+   *
+   * С 12.11.2026 у виртуального нет входа, поэтому записать за него платёж
+   * или компенсацию может только тот, кто его завёл. Чужой виртуальный
+   * и настоящий человек — нет: за настоящего он сам.
+   */
+  private async isManagedVirtual(
+    manager: EntityManager,
+    otherUserId: string,
+    userId: string,
+  ): Promise<boolean> {
+    if (otherUserId === userId) return true;
+
+    const participant = await manager.findOne(TripParticipant, {
+      where: { userId: otherUserId },
+      relations: { user: true },
+    });
+
+    return (
+      participant?.user?.isVirtual === true &&
+      participant.user.virtualOwnerUserId === userId
+    );
+  }
+
+  /** Можно ли записать действие за этого человека: за себя или за своего виртуального. */
+  private async assertCanActFor(
+    manager: EntityManager,
+    tripId: string,
+    actorId: string,
+    targetUserId: string,
+  ): Promise<void> {
+    if (targetUserId === actorId) return;
+
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId, userId: targetUserId, status: 'going' },
+      relations: { user: true },
+    });
+
+    if (
+      !participant ||
+      participant.user?.isVirtual !== true ||
+      participant.user.virtualOwnerUserId !== actorId
+    ) {
+      throw new ForbiddenException(
+        'Действовать можно только за себя или за своего человека без аккаунта',
+      );
+    }
+  }
+
+  /** Расход человека без аккаунта правит и удаляет тот, кто его ведёт. */
+  private async canManageExpense(
+    manager: EntityManager,
+    expense: TripExpense,
+    userId: string,
+  ): Promise<boolean> {
+    if (expense.authorUserId === userId) return true;
+
+    return this.isManagedVirtual(manager, expense.authorUserId, userId);
   }
 
   /**

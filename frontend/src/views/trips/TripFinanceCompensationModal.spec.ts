@@ -76,6 +76,7 @@ function view(): TripFinance {
     expenses: [],
     compensations: [],
     members: [],
+    managedSenders: [],
     me: {
       balanceRub: 0,
       remainingRub: 0,
@@ -105,10 +106,30 @@ const SUGGESTIONS = [
   }),
 ]
 
-function mountModal(suggestions = SUGGESTIONS) {
+function mountWithSenders(
+  senders: {
+    userId: string
+    displayName: string
+    familyDebtRub: number
+    familyCreditRub: number
+    suggestions: CompensationOption[]
+  }[],
+) {
   return mount(TripFinanceCompensationModal, {
-    props: { tripId: '7', suggestions },
+    props: { tripId: '7', meId: 'me', senders },
   })
+}
+
+function mountModal(suggestions = SUGGESTIONS) {
+  return mountWithSenders([
+    {
+      userId: 'me',
+      displayName: 'Я',
+      familyDebtRub: 0,
+      familyCreditRub: 0,
+      suggestions,
+    },
+  ])
 }
 
 describe('модалка компенсации', () => {
@@ -233,7 +254,7 @@ describe('модалка компенсации', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-compensation-error"]').text()).toBe(
-      'Больше остатка: этому человеку вы должны 1 000 ₽',
+      'Больше остатка — можно 1 000 ₽',
     )
     expect(mocks.createTripCompensation).not.toHaveBeenCalled()
   })
@@ -288,7 +309,17 @@ describe('модалка компенсации', () => {
   it('если свежие подсказки изменились, выбор не остаётся на исчезнувшей семье', async () => {
     const wrapper = mountModal()
 
-    await wrapper.setProps({ suggestions: [familyOption()] })
+    await wrapper.setProps({
+      senders: [
+        {
+          userId: 'me',
+          displayName: 'Я',
+          familyDebtRub: 1500,
+          familyCreditRub: 0,
+          suggestions: [familyOption()],
+        },
+      ],
+    })
     await flushPromises()
 
     expect(
@@ -299,6 +330,42 @@ describe('модалка компенсации', () => {
       (wrapper.get('[data-test="finance-compensation-amount"]').element as HTMLInputElement)
         .value,
     ).toBe('1500')
+  })
+
+  it('перевод можно записать от своего человека без аккаунта', async () => {
+    const wrapper = mountWithSenders([
+      {
+        userId: 'me',
+        displayName: 'Я',
+        familyDebtRub: 0,
+        familyCreditRub: 0,
+        suggestions: [],
+      },
+      {
+        userId: 'vitya',
+        displayName: 'Дядя Витя',
+        familyDebtRub: 500,
+        familyCreditRub: 0,
+        suggestions: [option({ userIds: ['anya'], displayName: 'Аня', amountRub: 500 })],
+      },
+    ])
+
+    await wrapper.get('[data-test="finance-compensation-sender-select"]').setValue('vitya')
+
+    expect(
+      (wrapper.get('[data-test="finance-compensation-amount"]').element as HTMLInputElement)
+        .value,
+    ).toBe('500')
+    expect(wrapper.get('[data-test="finance-compensation-people"]').text()).toContain('Аня')
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.createTripCompensation).toHaveBeenCalledWith('7', {
+      toUserId: 'anya',
+      amountRub: 500,
+      fromUserId: 'vitya',
+    })
   })
 
   it('некому переводить — список пуст и объясняет почему', () => {

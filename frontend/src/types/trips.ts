@@ -590,6 +590,11 @@ export interface TripEater {
   avatarUrl: string | null
   gender: 'm' | 'f'
   isVegetarian: boolean
+  /**
+   * Человек без аккаунта: его питание отмечает участник похода, а не он сам.
+   * С 12.11.2026 такие галочки есть в секции «Я буду питаться отдельно».
+   */
+  isVirtual: boolean
   allergies: string | null
   eatsSeparately: boolean
 }

@@ -60,6 +60,7 @@ function finance(overrides: Partial<TripFinance> = {}): TripFinance {
     expenses: [],
     compensations: [],
     members: [],
+    managedSenders: [],
     me: {
       balanceRub: 0,
       remainingRub: 0,
@@ -130,10 +131,11 @@ describe('splitCaption', () => {
     expect(splitCaption(expense())).toBe('на всех · по 2 000 ₽')
   })
 
-  it('«на всех» с остатком показывает каждую долю', () => {
+  it('«на всех» с остатком — одна цифра, а не список долей', () => {
     expect(
       splitCaption(
         expense({
+          amountRub: 1000,
           shares: [
             { userId: 'a', displayName: 'Анна', amountRub: 334 },
             { userId: 'b', displayName: 'Борис', amountRub: 333 },
@@ -141,7 +143,7 @@ describe('splitCaption', () => {
           ],
         }),
       ),
-    ).toBe('на всех · 334 ₽, 333 ₽, 333 ₽')
+    ).toBe('на всех · по 333 ₽')
   })
 
   it('на группу — имена без предлога: падежи не склоняем', () => {
@@ -172,6 +174,25 @@ describe('splitCaption', () => {
         }),
       ),
     ).toBe('на питающихся с общего · по 750 ₽')
+  })
+
+  it('чек с остатком от деления тоже подписан одной цифрой', () => {
+    expect(
+      splitCaption(
+        expense({
+          split: 'commonEaters',
+          amountRub: 3500,
+          shares: [
+            { userId: 'a', displayName: 'Анна', amountRub: 584 },
+            { userId: 'b', displayName: 'Борис', amountRub: 583 },
+            { userId: 'c', displayName: 'Вера', amountRub: 584 },
+            { userId: 'd', displayName: 'Глеб', amountRub: 583 },
+            { userId: 'e', displayName: 'Дина', amountRub: 583 },
+            { userId: 'f', displayName: 'Егор', amountRub: 583 },
+          ],
+        }),
+      ),
+    ).toBe('на питающихся с общего · по 583 ₽')
   })
 
   it('расход без долей не притворяется нулём', () => {

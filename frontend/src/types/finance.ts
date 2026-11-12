@@ -71,6 +71,10 @@ export interface FinanceMember {
   balanceRub: number
   /** То же с учётом ожидающих компенсаций. */
   remainingRub: number
+  /** Человек без аккаунта: за него платит и переводит ведущий. */
+  isVirtual: boolean
+  /** Этого человека без аккаунта веду я — ему можно записать платёж. */
+  managedByMe: boolean
   paymentDetails: string | null
   paymentBank: string | null
 }
@@ -117,12 +121,23 @@ export interface MyFinance {
   suggestions: CompensationOption[]
 }
 
+/** Отправитель перевода, за которого может действовать смотрящий. */
+export interface CompensationSender {
+  userId: string
+  displayName: string
+  familyDebtRub: number
+  familyCreditRub: number
+  suggestions: CompensationOption[]
+}
+
 /** Ответ `GET /api/trips/:id/finance` — вся вкладка одним запросом. */
 export interface TripFinance {
   expenses: TripExpense[]
   compensations: TripCompensation[]
   members: FinanceMember[]
   me: MyFinance
+  /** Люди без аккаунта, которых веду я: за них можно записать перевод. */
+  managedSenders: CompensationSender[]
 }
 
 /**
@@ -140,10 +155,14 @@ export interface SaveTripExpenseInput {
   participantIds?: string[]
   /** `ГГГГ-ММ-ДД`; не передано — сервер ставит сегодня. */
   spentAt?: string
+  /** Кто заплатил; не передано — я. */
+  payerUserId?: string
 }
 
 /** Тело `POST /api/trips/:id/finance/compensations`. */
 export interface CreateTripCompensationInput {
   toUserId: string
   amountRub: number
+  /** Кто переводит; не передано — я. */
+  fromUserId?: string
 }

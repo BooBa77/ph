@@ -215,6 +215,24 @@ export async function setMyStatus(
   })
 }
 
+/**
+ * PATCH /api/trips/:id/participants/:userId/diet — питание человека
+ * без аккаунта (12.11.2026).
+ *
+ * Два флага из разных мест: «отдельно» — свойство этого похода,
+ * «вегетарианец» — свойство человека. Менять может любой идущий участник.
+ */
+export async function setParticipantDiet(
+  tripId: string,
+  userId: string,
+  body: { eatsSeparately?: boolean; isVegetarian?: boolean },
+): Promise<TripParticipant> {
+  return apiFetch<TripParticipant>(`/trips/${tripId}/participants/${userId}/diet`, {
+    method: 'PATCH',
+    body: JSON.stringify(body),
+  })
+}
+
 /** DELETE /api/trips/:id/participants/:userId — убрать человека. Только организатор. */
 export async function removeParticipant(tripId: string, userId: string): Promise<void> {
   await apiFetch<void>(`/trips/${tripId}/participants/${userId}`, { method: 'DELETE' })
@@ -224,10 +242,9 @@ export async function removeParticipant(tripId: string, userId: string): Promise
  * POST /api/trips/:id/participants/virtual — завести человека без аккаунта
  * и сразу добавить в поход (31.10.2026).
  *
- * Только организатор: «организаторам доступно добавление виртуальных
- * участников — людей, не пользователей нашего сайта». Статус — сразу
- * `going`: приглашать некуда, входа у человека нет. Пол необязателен,
- * по умолчанию мужской; он нужен распределению веса.
+ * С 12.11.2026 завести человека может любой идущий участник, не только
+ * организатор. Статус — сразу `going`: приглашать некуда, входа у человека
+ * нет. Пол необязателен, по умолчанию мужской; он нужен распределению веса.
  */
 export async function createVirtualParticipant(
   tripId: string,

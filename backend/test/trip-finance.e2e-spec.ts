@@ -31,6 +31,9 @@ describe('Бухгалтерия похода (e2e)', () => {
   let trip1: string;
   let trip2: string;
   let trip3: string;
+  /** Поход с человеком без аккаунта: за него платит и переводит ведущий. */
+  let trip4: string;
+  let virtualPersonId: string;
   let lastCode: string | null = null;
 
   interface Person {
@@ -226,8 +229,14 @@ describe('Бухгалтерия похода (e2e)', () => {
     if (dataSource?.isInitialized) {
       // Расходы, доли и компенсации уходят каскадом вместе с походами.
       await dataSource.query('DELETE FROM trips WHERE id = ANY($1::bigint[])', [
-        [trip1, trip2, trip3].filter(Boolean),
+        [trip1, trip2, trip3, trip4].filter(Boolean),
       ]);
+      // Человек без аккаунта ссылается на владельца — удаляем его первым.
+      if (virtualPersonId) {
+        await dataSource.query('DELETE FROM users WHERE id = $1', [
+          virtualPersonId,
+        ]);
+      }
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
         [a, b, c, d, e, g].filter(Boolean).map((person) => person.id),
       ]);
@@ -867,6 +876,193 @@ describe('Бухгалтерия похода (e2e)', () => {
       )
         .send({ toUserId: g.id, amountRub: 601 })
         .expect(400);
+    });
+  });
+
+  /**
+   * 12.11.2026: «забыли про виртуальных участников… ведущий этот аккаунт
+   * пользователь должен получить возможность выбора от кого
+   * платёж/компенсация». Семью это не касается — «на пользователя всё
+   * вешаем»; здесь только человек без аккаунта.
+   */
+  describe('человек без аккаунта: платёж и перевод от ведущего', () => {
+    beforeAll(async () => {
+      trip4 = await createTrip('Бухгалтерия: человек без аккаунта');
+      await addGoing(trip4, b);
+
+      const created = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip4}/participants/virtual`,
+        ),
+        b.token,
+      )
+        .send({ displayName: 'Дядя Витя' })
+        .expect(201);
+
+      virtualPersonId = created.body.userId as string;
+    });
+
+    it('расход записывается на человека без аккаунта, правит его ведущий', async () => {
+      const response = await addExpense(trip4, b, {
+        amountRub: 900,
+        split: 'all',
+        description: 'Бензин',
+        payerUserId: virtualPersonId,
+      });
+
+      const expense = response.body.expenses[0];
+      expect(expense.authorUserId).toBe(virtualPersonId);
+      expect(expense.canEdit).toBe(true);
+
+      const member = response.body.members.find(
+        (item: { userId: string }) => item.userId === virtualPersonId,
+      );
+      expect(member.isVirtual).toBe(true);
+      expect(member.managedByMe).toBe(true);
+      expect(member.balanceRub).toBe(600);
+
+      // Организатор его не ведёт: править расход не может и выбора не видит.
+      const asOrganizer = await view(trip4, a);
+      expect(asOrganizer.body.expenses[0].canEdit).toBe(false);
+      expect(
+        asOrganizer.body.members.find(
+          (item: { userId: string }) => item.userId === virtualPersonId,
+        ).managedByMe,
+      ).toBe(false);
+      expect(asOrganizer.body.managedSenders).toEqual([]);
+    });
+
+    it('чужой человек без аккаунта плательщиком не становится', async () => {
+      await addExpense(
+        trip4,
+        a,
+        {
+          amountRub: 100,
+          split: 'all',
+          description: 'Чужой',
+          payerUserId: virtualPersonId,
+        },
+        403,
+      );
+    });
+
+    it('перевод от человека без аккаунта создаёт и отменяет его ведущий', async () => {
+      // Три расхода на одного виртуального делают его должником А на 300.
+      for (let index = 0; index < 3; index += 1) {
+        await addExpense(trip4, a, {
+          amountRub: 300,
+          split: 'group',
+          participantIds: [virtualPersonId],
+          description: `Долг ${index + 1}`,
+        });
+      }
+
+      const asManager = await view(trip4, b);
+      const sender = asManager.body.managedSenders.find(
+        (item: { userId: string }) => item.userId === virtualPersonId,
+      );
+
+      expect(sender.familyDebtRub).toBe(300);
+      expect(
+        sender.suggestions.map(
+          (option: { userIds: string[] }) => option.userIds,
+        ),
+      ).toEqual([[a.id]]);
+
+      // Чужой ведущий за него не переводит.
+      await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip4}/finance/compensations`,
+        ),
+        a.token,
+      )
+        .send({ toUserId: b.id, fromUserId: virtualPersonId, amountRub: 100 })
+        .expect(403);
+
+      const created = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip4}/finance/compensations`,
+        ),
+        b.token,
+      )
+        .send({ toUserId: a.id, fromUserId: virtualPersonId, amountRub: 300 })
+        .expect(201);
+
+      const compensation = created.body.compensations.find(
+        (item: { fromUserId: string }) => item.fromUserId === virtualPersonId,
+      );
+      expect(compensation.status).toBe('pending');
+      // Отменить перевод виртуального может его ведущий, хотя отправитель —
+      // не он сам.
+      expect(compensation.canCancel).toBe(true);
+
+      const cancelled = await auth(
+        request(app.getHttpServer()).delete(
+          `/api/trips/${trip4}/finance/compensations/${compensation.id}`,
+        ),
+        b.token,
+      ).expect(200);
+
+      expect(
+        cancelled.body.compensations.some(
+          (item: { id: string }) => item.id === compensation.id,
+        ),
+      ).toBe(false);
+    });
+
+    it('получение за человека без аккаунта подтверждает его ведущий', async () => {
+      // Виртуальный заплатил 600 за А: теперь он кредитор на 300 (после
+      // прежних долгов), А — должник.
+      await addExpense(trip4, b, {
+        amountRub: 600,
+        split: 'group',
+        participantIds: [a.id],
+        description: 'Палатка для А',
+        payerUserId: virtualPersonId,
+      });
+
+      // Б платит 300 за А: А снова должник, а у виртуального кредит.
+      await addExpense(trip4, b, {
+        amountRub: 300,
+        split: 'group',
+        participantIds: [a.id],
+        description: 'Долг А',
+      });
+
+      const created = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip4}/finance/compensations`,
+        ),
+        a.token,
+      )
+        .send({ toUserId: virtualPersonId, amountRub: 300 })
+        .expect(201);
+
+      const compensation = created.body.compensations.find(
+        (item: { toUserId: string }) => item.toUserId === virtualPersonId,
+      );
+      expect(compensation.status).toBe('pending');
+
+      // Получатель — виртуальный, войти не может; подтверждает ведущий.
+      const asManager = await view(trip4, b);
+      expect(
+        asManager.body.compensations.find(
+          (item: { id: string }) => item.id === compensation.id,
+        ).canConfirm,
+      ).toBe(true);
+
+      const confirmed = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip4}/finance/compensations/${compensation.id}/confirm`,
+        ),
+        b.token,
+      ).expect(200);
+
+      expect(
+        confirmed.body.compensations.find(
+          (item: { id: string }) => item.id === compensation.id,
+        ).status,
+      ).toBe('confirmed');
     });
   });
 });

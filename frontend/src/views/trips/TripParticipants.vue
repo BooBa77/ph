@@ -112,6 +112,16 @@ const me = computed(
   () => participants.value.find((person) => person.userId === auth.user?.id) ?? null,
 )
 
+/**
+ * Кто ведёт людей без аккаунта: организатор или идущий участник.
+ *
+ * С 12.11.2026 завести человека можно в любом походе, где ты идёшь, — не
+ * только организатору. Приглашённому рано: он ещё не участник.
+ */
+const canManageVirtuals = computed(
+  () => isOrganizer.value || me.value?.status === 'going',
+)
+
 /** Моя заявка, если я её подавал и она ещё висит. */
 const myRequest = computed(
   () => requests.value.find((request) => request.userId === auth.user?.id) ?? null,
@@ -214,7 +224,7 @@ async function load() {
  * чем нужно. Сказать словами важнее там, где действие не получилось.
  */
 async function loadVirtuals() {
-  if (!isOrganizer.value) {
+  if (!canManageVirtuals.value) {
     myVirtuals.value = []
 
     return
@@ -622,7 +632,7 @@ function invite(person: UserSearchResult) {
         личный список — «в следующий поход одним нажатием» — и правка имени.
       -->
       <div
-        v-if="isOrganizer"
+        v-if="canManageVirtuals"
         class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4"
         data-test="virtual-panel"
       >
@@ -630,7 +640,8 @@ function invite(person: UserSearchResult) {
           <h3 class="text-sm text-muted">Люди без аккаунта</h3>
           <p class="text-xs text-muted">
             Человек, которого нет на сайте: идёт в походе как обычный участник, но войти
-            не может. Снаряжение ему добавляет организатор.
+            не может. Завести его может любой участник похода, снаряжение ему добавляет
+            организатор.
           </p>
         </div>
 

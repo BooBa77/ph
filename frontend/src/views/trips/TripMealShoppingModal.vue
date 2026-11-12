@@ -210,30 +210,25 @@ onBeforeUnmount(() => {
       <p v-if="error" class="text-sm text-red-600" data-test="checklist-error">{{ error }}</p>
 
       <!--
-        «Чек» — расход на питающихся с общего. Стоит наверху списка: чек
-        записывают, когда вернулись из магазина, а не пролистав позиции.
+        «Чек за продукты» — одна кнопка вместо блока с объяснением
+        (заказчик 12.11.2026). Чек записывают, когда вернулись из магазина,
+        и лишний абзац над списком только отодвигал список.
       -->
       <div
         v-if="!personal"
-        class="flex flex-col gap-2 rounded-xl border border-border bg-field p-2"
+        class="flex flex-col gap-2"
         data-test="check-block"
       >
-        <div class="flex flex-wrap items-center justify-between gap-2">
-          <p class="text-xs text-muted">
-            Купили продукты на общие деньги — запишите чек в «Бухгалтерию».
-          </p>
-
-          <button
-            v-if="!checkOpen"
-            type="button"
-            class="cursor-pointer rounded-lg border border-primary bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="!canWriteCheck"
-            data-test="check-open"
-            @click="openCheck"
-          >
-            Чек
-          </button>
-        </div>
+        <button
+          v-if="!checkOpen"
+          type="button"
+          class="cursor-pointer self-start rounded-lg border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="!canWriteCheck"
+          data-test="check-open"
+          @click="openCheck"
+        >
+          Чек за продукты
+        </button>
 
         <p v-if="!canWriteCheck" class="text-xs text-muted" data-test="check-unavailable">
           Все питаются отдельно — делить чек не на кого.
