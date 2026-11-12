@@ -104,7 +104,7 @@ watch(
         class="self-start rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text no-underline transition-colors hover:border-primary"
         data-test="person-self-link"
       >
-        Это вы — открыть свой профиль
+        Это ты — открыть свой профиль
       </RouterLink>
     </div>
   </section>

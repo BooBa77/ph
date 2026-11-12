@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onMounted, ref } from 'vue'
 
 import {
@@ -182,7 +182,7 @@ async function addRow(dish: Dish) {
   const amount = Number(String(draft.amount).trim())
 
   if (!draft.product || !Number.isFinite(amount) || amount <= 0) {
-    error.value = 'Выберите продукт и укажите количество — число больше нуля.'
+    error.value = 'Выбери продукт и укажи количество — число больше нуля.'
     return
   }
 
@@ -289,7 +289,7 @@ onMounted(load)
       class="rounded-xl border border-dashed border-border p-4 text-sm text-muted"
       data-test="meals-empty"
     >
-      Рецептов пока нет. Заведите первое — и в следующий поход раскладка соберётся из готовых.
+      Рецептов пока нет. Заведи первое — и в следующий поход раскладка соберётся из готовых.
     </p>
 
     <ul v-else class="flex flex-col gap-4">
@@ -412,7 +412,7 @@ onMounted(load)
         </ul>
 
         <p v-else class="mb-3 text-sm text-muted" data-test="ingredients-empty">
-          Состав пуст — добавьте продукты.
+          Состав пуст — добавь продукты.
         </p>
 
         <!-- Новый продукт в составе -->

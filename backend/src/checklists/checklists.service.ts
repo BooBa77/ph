@@ -423,7 +423,7 @@ export class ChecklistsService {
       where: this.scopeWhere(String(trip.id), dto.scope, userId, area),
     });
     if (!target) {
-      throw new NotFoundException('Сначала заведите список в этом походе');
+      throw new NotFoundException('Сначала заведи список в этом походе');
     }
 
     /**
@@ -1097,7 +1097,7 @@ export class ChecklistsService {
       return 'В походе уже есть рекомендация личных вещей';
     }
 
-    return 'У вас уже есть личный чек-лист в этом походе';
+    return 'У тебя уже есть личный чек-лист в этом походе';
   }
 
   /** Участник похода: в составе и не отказался. */

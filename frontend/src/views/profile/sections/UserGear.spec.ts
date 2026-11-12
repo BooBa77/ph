@@ -640,7 +640,7 @@ describe('UserGear', () => {
 
     expect(mocked.createGearItem).not.toHaveBeenCalled()
     expect(wrapper.find('[data-test="gear-error"]').text()).toContain(
-      'Заполните обязательные характеристики: «Вместимость»',
+      'Заполни обязательные характеристики: «Вместимость»',
     )
   })
 

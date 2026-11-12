@@ -50,7 +50,7 @@ async function load(id: string) {
   } catch (problem) {
     loadError.value =
       problem instanceof ApiError && problem.status === 404
-        ? 'Поход не найден или закрыт для вас'
+        ? 'Поход не найден или закрыт для тебя'
         : 'Не удалось загрузить поход'
     trip.value = null
   } finally {

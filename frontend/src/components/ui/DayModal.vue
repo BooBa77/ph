@@ -69,7 +69,7 @@ async function run(action: () => Promise<unknown>) {
     await action()
   } catch (cause) {
     error.value =
-      cause instanceof ApiError ? cause.message : 'Не удалось сохранить. Попробуйте ещё раз.'
+      cause instanceof ApiError ? cause.message : 'Не удалось сохранить. Попробуй ещё раз.'
   } finally {
     isSaving.value = false
   }
@@ -216,7 +216,7 @@ async function closeWithSave() {
       error.value =
         cause instanceof ApiError
           ? cause.message
-          : 'Не удалось сохранить заметки. Попробуйте ещё раз.'
+          : 'Не удалось сохранить заметки. Попробуй ещё раз.'
       return
     }
   }
@@ -236,7 +236,7 @@ async function sendRequest() {
     requestSent.value = true
   } catch (cause) {
     error.value =
-      cause instanceof ApiError ? cause.message : 'Не удалось отправить запрос. Попробуйте ещё раз.'
+      cause instanceof ApiError ? cause.message : 'Не удалось отправить запрос. Попробуй ещё раз.'
   } finally {
     isRequesting.value = false
   }
@@ -310,7 +310,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           v-else
           id="day-modal-title"
           class="cursor-pointer text-lg font-semibold text-text hover:text-primary"
-          title="Нажмите, чтобы изменить метку"
+          title="Нажми, чтобы изменить метку"
           @click="startEditingLabel"
         >
           {{ title }}
@@ -354,7 +354,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             type="button"
             :disabled="isSaving"
             class="flex cursor-pointer items-center gap-1 rounded-lg border border-primary bg-primary/10 px-2 py-1 text-xs text-text disabled:opacity-50"
-            :title="`${type.label} — нажмите, чтобы убрать`"
+            :title="`${type.label} — нажми, чтобы убрать`"
             @click="toggleType(type.id)"
           >
             <span class="h-4 w-4" :style="{ color: type.color }">
@@ -423,7 +423,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <p v-else class="mt-2 text-xs text-muted">
           {{
             activeTab === 'favorites'
-              ? 'Здесь появятся ваши частые активности. Отметьте что-нибудь.'
+              ? 'Здесь появятся твои частые активности. Отметь что-нибудь.'
               : 'В этой группе всё уже отмечено.'
           }}
         </p>
@@ -483,7 +483,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           />
         </label>
         <label class="mt-2 flex flex-col gap-1 text-xs text-muted">
-          Поделиться (пока видно только вам — покажем другим, когда появятся чужие календари)
+          Поделиться (пока видно только тебе — покажем другим, когда появятся чужие календари)
           <textarea
             v-model="notePublicDraft"
             rows="2"

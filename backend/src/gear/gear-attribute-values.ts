@@ -98,8 +98,8 @@ export function parseAttributeValue(
       const list = optionNames.map((name) => `«${name}»`).join(', ');
       throw new BadRequestException(
         optionNames.length === 0
-          ? `«${attribute.name}»: у списка нет вариантов — сначала добавьте вариант в справочнике`
-          : `«${attribute.name}»: выберите один из вариантов — ${list}`,
+          ? `«${attribute.name}»: у списка нет вариантов — сначала добавь вариант в справочнике`
+          : `«${attribute.name}»: выбери один из вариантов — ${list}`,
       );
     }
   }

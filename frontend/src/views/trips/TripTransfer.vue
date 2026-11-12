@@ -209,7 +209,7 @@ async function run(
     return true
   } catch (problem) {
     const message =
-      problem instanceof ApiError ? problem.message : 'Не получилось — попробуйте ещё раз'
+      problem instanceof ApiError ? problem.message : 'Не получилось — попробуй ещё раз'
 
     if (onError) onError(message)
     else actionError.value = message
@@ -823,7 +823,7 @@ async function saveLeg() {
   const amount = rawAmount === '' ? null : Number(rawAmount)
 
   if (draft.compensation !== 'free' && (amount === null || amount <= 0)) {
-    legError.value = 'Укажите сумму компенсации'
+    legError.value = 'Укажи сумму компенсации'
     return
   }
 
@@ -1000,7 +1000,7 @@ const driverOptions = computed(() => {
                   data-test="transfer-passenger"
                 >
                   {{ person.displayName }}
-                  <span v-if="isMine(person)" class="text-xs text-amber-700">(вы)</span>
+                  <span v-if="isMine(person)" class="text-xs text-amber-700">(ты)</span>
 
                   <!--
                     Крестика у владельца ТС нет: он уходит вместе со своим
@@ -1087,7 +1087,7 @@ const driverOptions = computed(() => {
                   class="text-xs text-muted"
                   data-test="transfer-owner-hint"
                 >
-                  Ваше ТС — заявки принимаете вы
+                  Твоё ТС — заявки принимаешь ты
                 </span>
 
                 <select
@@ -1362,7 +1362,7 @@ const driverOptions = computed(() => {
               data-test="transfer-departure-input"
               @click="isPickingTime = true"
             >
-              {{ legDraft.departsAt ? legDraft.departsAt.replace('T', ' ') : 'Выберите дату и время' }}
+              {{ legDraft.departsAt ? legDraft.departsAt.replace('T', ' ') : 'Выбери дату и время' }}
             </button>
           </label>
 
@@ -1403,7 +1403,7 @@ const driverOptions = computed(() => {
               class="text-xs text-muted"
               data-test="transfer-own-hint"
             >
-              Свой транспорт попадёт как «наше ТС»: заявки будете принимать вы
+              Свой транспорт попадёт как «наше ТС»: заявки будешь принимать ты
             </p>
 
             <label

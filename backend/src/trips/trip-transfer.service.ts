@@ -345,7 +345,7 @@ export class TripTransferService {
 
     if (isOwnVehicle && !this.isPersonalMode(effectiveMode)) {
       throw new BadRequestException(
-        'У рейса (автобус, ж/д, корабль, вертолёт) не бывает владельца — снимите «наше ТС» или смените тип транспорта',
+        'У рейса (автобус, ж/д, корабль, вертолёт) не бывает владельца — сними «наше ТС» или смени тип транспорта',
       );
     }
 
@@ -611,7 +611,7 @@ export class TripTransferService {
       where: { legId: leg.id, userId },
     });
     if (existing) {
-      throw new ConflictException('Вы уже в этом рейсе');
+      throw new ConflictException('Ты уже в этом рейсе');
     }
 
     const status: TransferPassengerStatus = leg.isOwnVehicle
@@ -1033,13 +1033,13 @@ export class TripTransferService {
 
     if (from !== null && time < from) {
       throw new BadRequestException(
-        'Дата раньше, чем участник приезжает — поправьте время',
+        'Дата раньше, чем участник приезжает — поправь время',
       );
     }
 
     if (to !== null && time > to) {
       throw new BadRequestException(
-        'Дата позже, чем участник уезжает — поправьте время',
+        'Дата позже, чем участник уезжает — поправь время',
       );
     }
   }
@@ -1406,7 +1406,7 @@ export class TripTransferService {
     if (compensation === 'free') return;
 
     if (amount === null || amount <= 0) {
-      throw new BadRequestException('Укажите сумму компенсации');
+      throw new BadRequestException('Укажи сумму компенсации');
     }
   }
 
@@ -1453,13 +1453,13 @@ export class TripTransferService {
 
     if (own < day(trip.startsAt)) {
       throw new BadRequestException(
-        'Рейс раньше начала похода — поправьте время',
+        'Рейс раньше начала похода — поправь время',
       );
     }
 
     if (own > day(trip.endsAt)) {
       throw new BadRequestException(
-        'Рейс позже возвращения — поправьте время',
+        'Рейс позже возвращения — поправь время',
       );
     }
   }
@@ -1759,7 +1759,7 @@ export class TripTransferService {
     });
 
     if (!vehicle) {
-      throw new NotFoundException('Транспорт не найден в вашем каталоге');
+      throw new NotFoundException('Транспорт не найден в твоём каталоге');
     }
 
     return vehicle;

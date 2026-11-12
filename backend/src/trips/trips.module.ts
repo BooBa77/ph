@@ -38,6 +38,7 @@ import { TripsController } from './trips.controller';
 import { TripEventsService } from './trip-events.service';
 import { TripsService } from './trips.service';
 import { TripMealsController } from './trip-meals.controller';
+import { TripMealsEventsController } from './trip-meals-events.controller';
 import { TripMealsService } from './trip-meals.service';
 import { TripFinanceController } from './trip-finance.controller';
 import { TripFinanceEventsController } from './trip-finance-events.controller';
@@ -112,6 +113,7 @@ import { ObjectsService } from './objects.service';
   controllers: [
     TripsController,
     TripMealsController,
+    TripMealsEventsController,
     TripFinanceController,
     TripFinanceEventsController,
     TripMyMealsController,

@@ -85,6 +85,7 @@ import {
 } from './trip.types';
 import { nextWeekendRange } from './weekend';
 import { TripEventsService } from './trip-events.service';
+import { recalculateCommonEaterShares } from './trip-finance-shares';
 
 /** Размер страницы ленты по умолчанию и потолок — в DTO. */
 const DEFAULT_PAGE_SIZE = 20;
@@ -676,7 +677,7 @@ export class TripsService {
 
       if (codes.includes(ORGANIZER_ROLE_CODE) && !isTargetOrganizer) {
         throw new BadRequestException(
-          'Организатор у похода один — он автор похода; вместо этого назначьте соорганизатора',
+          'Организатор у похода один — он автор похода; вместо этого назначь соорганизатора',
         );
       }
 
@@ -689,7 +690,7 @@ export class TripsService {
 
       if (roles.length !== codes.length) {
         throw new BadRequestException(
-          'Среди ролей есть неизвестные — выберите из справочника',
+          'Среди ролей есть неизвестные — выбери из справочника',
         );
       }
 
@@ -937,7 +938,7 @@ export class TripsService {
     });
     if (found !== activityTypeIds.length) {
       throw new BadRequestException(
-        'Среди активностей есть несуществующие — проверьте идентификаторы',
+        'Среди активностей есть несуществующие — проверь идентификаторы',
       );
     }
   }
@@ -1725,6 +1726,14 @@ export class TripsService {
    * ситуация, ради которой у него и может быть `declined`. Смена статуса
    * попадает системным сообщением в чат участников: состав — общее дело,
    * и «пока не решил» через месяц должно быть видно, а не раствориться.
+   *
+   * **Смена питания пересобирает чеки с общего стола (12.11.2026).**
+   * Заказчик: «поставил галочки „питаюсь отдельно“ троим после закупки
+   * общих продуктов, балансы участников не изменились». Доли расхода
+   * `commonEaters` — проекция состава едоков, поэтому после смены флага
+   * они пересчитываются; расходы «на всех» и «на группу» не трогаются.
+   * События уходят после коммита: подписчики читают базу заново и должны
+   * увидеть уже сохранённое.
    */
   async updateMyStatus(
     userId: string,
@@ -1732,7 +1741,7 @@ export class TripsService {
     status: ParticipantStatus,
     eatsSeparately?: boolean,
   ): Promise<TripParticipantDto> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const trip = await this.findVisibleTrip(manager, userId, id);
 
       const participant = await manager.findOne(TripParticipant, {
@@ -1740,7 +1749,7 @@ export class TripsService {
         relations: { user: true },
       });
       if (!participant) {
-        throw new NotFoundException('Вы не в составе этого похода');
+        throw new NotFoundException('Ты не в составе этого похода');
       }
 
       const statusChanged = participant.status !== status;
@@ -1760,6 +1769,10 @@ export class TripsService {
         await manager.save(participant);
       }
 
+      if (dietChanged) {
+        await recalculateCommonEaterShares(manager, String(trip.id));
+      }
+
       if (statusChanged) {
         await this.postSystemMessage(
           manager,
@@ -1774,12 +1787,28 @@ export class TripsService {
         }
       }
 
-      return TripParticipantDto.from(
-        participant,
-        await this.loadRoles(manager, trip.id, userId),
-        trip.organizerUserId,
-      );
+      return {
+        participant: TripParticipantDto.from(
+          participant,
+          await this.loadRoles(manager, trip.id, userId),
+          trip.organizerUserId,
+        ),
+        dietChanged,
+        statusChanged,
+      };
     });
+
+    if (result.dietChanged) {
+      this.events.emitMeals(String(id), userId);
+      this.events.emitFinance(String(id), userId);
+    }
+    if (result.statusChanged) {
+      // Состав едоков и состав балансов меняются вместе с участием.
+      this.events.emitMeals(String(id), userId);
+      this.events.emitFinance(String(id), userId);
+    }
+
+    return result.participant;
   }
 
   /**
@@ -1800,7 +1829,7 @@ export class TripsService {
     targetUserId: string,
     dto: UpdateParticipantDietDto,
   ): Promise<TripParticipantDto> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const trip = await this.findVisibleTrip(manager, userId, id);
       await this.assertCanManageParticipants(manager, trip, userId);
 
@@ -1827,18 +1856,36 @@ export class TripsService {
       if (dietChanged) {
         participant.eatsSeparately = dto.eatsSeparately as boolean;
         await manager.save(participant);
+        // Едок вышел из общего котла — чеки с общего стола пересобираются
+        // на оставшихся (12.11.2026, см. `updateMyStatus`).
+        await recalculateCommonEaterShares(manager, String(trip.id));
       }
       if (vegetarianChanged) {
         participant.user.isVegetarian = dto.isVegetarian as boolean;
         await manager.save(participant.user);
       }
 
-      return TripParticipantDto.from(
-        participant,
-        await this.loadRoles(manager, trip.id, targetUserId),
-        trip.organizerUserId,
-      );
+      return {
+        participant: TripParticipantDto.from(
+          participant,
+          await this.loadRoles(manager, trip.id, targetUserId),
+          trip.organizerUserId,
+        ),
+        dietChanged,
+        vegetarianChanged,
+      };
     });
+
+    if (result.dietChanged) {
+      this.events.emitMeals(String(id), userId);
+      this.events.emitFinance(String(id), userId);
+    }
+    if (result.vegetarianChanged) {
+      // Вегетарианец меняет «надо» в раскладке и чек-листе.
+      this.events.emitMeals(String(id), userId);
+    }
+
+    return result.participant;
   }
 
   /**
@@ -1862,7 +1909,7 @@ export class TripsService {
 
       if (targetUserId === trip.organizerUserId) {
         throw new BadRequestException(
-          'Организатора нельзя убрать из состава: он автор похода. Если поход не состоится — отмените его',
+          'Организатора нельзя убрать из состава: он автор похода. Если поход не состоится — отмени его',
         );
       }
 
@@ -2429,7 +2476,7 @@ export class TripsService {
       throw new ForbiddenException(
         memberOnly
           ? 'Этот чат доступен только участникам похода'
-          : 'Этот чат похода вам недоступен',
+          : 'Этот чат похода тебе недоступен',
       );
     }
 

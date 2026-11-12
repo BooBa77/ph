@@ -219,7 +219,7 @@ const compensationHint = computed(() => {
   const credit = senders.value.some((sender) => sender.familyCreditRub > 0)
 
   if (debt) return 'Ждём подтверждения переводов.'
-  if (credit) return 'Перевод делает должник — не вы.'
+  if (credit) return 'Перевод делает должник — не ты.'
 
   return 'Всё в расчёте — переводить нечего.'
 })
@@ -238,7 +238,8 @@ const balanceClass = computed(() => {
  *
  * Заказчик 12.11.2026: «не нужно это некрасивое ВЫ ДОЛЖНЫ, пусть будет
  * в одну строку „Ваш баланс“ + красный 500 р». Знак и цвет говорят то же
- * самое, и строка не разъезжается на две.
+ * самое, и строка не разъезжается на две. С 12.11.2026 подпись — «Твой
+ * баланс»: интерфейс обращается на «ты».
  */
 const balanceText = computed(() => formatRubSigned(finance.value?.me.balanceRub ?? 0))
 
@@ -426,7 +427,7 @@ function cancelRow(row: MoneyRowView): void {
 
     <template v-else-if="finance && me">
       <!--
-        «Ваш баланс» — первое, что человек ищет в этой вкладке. Цифра стоит
+        «Твой баланс» — первое, что человек ищет в этой вкладке. Цифра стоит
         в той же строке: «Вы должны 500 ₽» заказчик забраковал — знак и цвет
         говорят то же самое короче. Вторая строка появляется только когда
         ожидающие переводы сдвинули цифру.
@@ -435,7 +436,7 @@ function cancelRow(row: MoneyRowView): void {
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="flex flex-col gap-1">
             <div class="flex flex-wrap items-baseline gap-x-2">
-              <h2 class="text-xs text-muted">Ваш баланс</h2>
+              <h2 class="text-xs text-muted">Твой баланс</h2>
               <p
                 class="text-2xl font-semibold whitespace-nowrap"
                 :class="balanceClass"

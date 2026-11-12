@@ -12,17 +12,19 @@ import { SmtpService } from './../src/email/services/smtp.service';
 import { TripEventsService } from './../src/trips/trip-events.service';
 
 /**
- * Живые изменения вкладки «Снаряжение» (e2e, 06.11.2026).
+ * Живые изменения вкладок «Снаряжение» и «Питание» (e2e, 06.11.2026,
+ * «Питание» — 12.11.2026).
  *
  * Заказчик: «пришло время SSE. Участники перетасовывают вещи и нужно видеть
- * изменения онлайн». Проверяем три вещи, которые нельзя проверить юнитом:
+ * изменения онлайн», а про закупку: две группы в соседних магазинах должны
+ * видеть отметки друг друга. Проверяем то, что нельзя проверить юнитом:
  *
  * 1. **HTTP-поток действительно открывается и отдаёт кадр** — заголовки,
  *    первый `retry:` и `event: trip` после чужого `PATCH`. Supertest
  *    незавершающийся ответ не умеет, поэтому приложение поднимается
  *    на настоящем порту, а поток читается `fetch`-ом.
  * 2. **Посторонний в поток не попадает** — 403 до первого байта: правило
- *    доступа то же, что у `GET /gear`.
+ *    доступа то же, что у `GET /gear` и `GET /meal-plan`.
  * 3. **Чат снаряжения открыт участнику и закрыт постороннему** — новый
  *    вид чата `trip_gear` и его подпись в списке чатов похода.
  *
@@ -292,6 +294,65 @@ describe('Живые изменения снаряжения (e2e)', () => {
     } finally {
       subscription.unsubscribe();
     }
+  });
+
+  it(
+    'участник получает событие «Питания» о чужой смене диеты',
+    async () => {
+      const controller = new AbortController();
+      const response = await fetch(
+        `${baseUrl}/api/trips/${tripId}/meals/events`,
+        {
+          headers: {
+            Accept: 'text/event-stream',
+            Authorization: `Bearer ${memberToken}`,
+          },
+          signal: controller.signal,
+        },
+      );
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get('content-type')).toContain(
+        'text/event-stream',
+      );
+      expect(response.headers.get('x-accel-buffering')).toBe('no');
+
+      const reader = response.body!.getReader();
+      const head = await readUntil(reader, 'retry:');
+      expect(head).toContain('retry: 3000');
+
+      // Организатор отмечает «питаюсь отдельно» — событие обеим вкладкам.
+      await call(
+        'patch',
+        `/api/trips/${tripId}/participants/me`,
+        organizerToken,
+        { status: 'going', eatsSeparately: true },
+      ).expect(200);
+
+      const frame = await readUntil(reader, '"scope":"meals"');
+      expect(frame).toContain('event: trip');
+      expect(frame).toContain(organizerId);
+
+      controller.abort();
+      await reader.cancel().catch(() => undefined);
+    },
+    15_000,
+  );
+
+  it('посторонний в поток «Питания» не попадает — 403 до первого байта', async () => {
+    const response = await fetch(
+      `${baseUrl}/api/trips/${tripId}/meals/events`,
+      {
+        headers: {
+          Accept: 'text/event-stream',
+          Authorization: `Bearer ${strangerToken}`,
+        },
+      },
+    );
+
+    expect(response.status).toBe(403);
+    expect(response.headers.get('content-type')).toContain('application/json');
+    await response.body?.cancel();
   });
 
   it('чат снаряжения виден участнику, но не постороннему', async () => {

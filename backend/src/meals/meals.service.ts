@@ -148,7 +148,7 @@ export class MealsService {
     });
     if (!product) {
       throw new BadRequestException(
-        'Такого продукта нет в справочнике — выберите из подсказок',
+        'Такого продукта нет в справочнике — выбери из подсказок',
       );
     }
 
@@ -157,7 +157,7 @@ export class MealsService {
     });
     if (existing) {
       throw new ConflictException(
-        'Этот продукт уже есть в блюде — измените количество',
+        'Этот продукт уже есть в блюде — измени количество',
       );
     }
 

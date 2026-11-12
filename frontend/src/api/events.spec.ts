@@ -39,6 +39,12 @@ describe('parseSseFrame', () => {
     )
   })
 
+  it('понимает события «Питания»', () => {
+    expect(parseSseFrame(frame(event({ scope: 'meals' })))).toEqual(
+      event({ scope: 'meals' }),
+    )
+  })
+
   it('пропускает heartbeat, retry и данные неизвестного вида', () => {    expect(parseSseFrame(': ping')).toBeNull()
     expect(parseSseFrame('retry: 3000')).toBeNull()
     // Чужое имя события не должно притворяться изменением снаряжения.
@@ -134,6 +140,27 @@ describe('subscribeTripEvents', () => {
     await vi.waitFor(() => expect(received).toHaveLength(1))
     expect(urls[0]).toBe('/api/trips/679/finance/events')
     expect(received[0]?.scope).toBe('finance')
+
+    stop()
+  })
+
+  it('«Питание» слушает свой поток', async () => {
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        urls.push(String(input))
+
+        return streamResponse([`${frame(event({ scope: 'meals' }))}\n\n`])
+      }),
+    )
+
+    const received: TripEvent[] = []
+    const stop = subscribeTripEvents('679', (incoming) => received.push(incoming), 'meals')
+
+    await vi.waitFor(() => expect(received).toHaveLength(1))
+    expect(urls[0]).toBe('/api/trips/679/meals/events')
+    expect(received[0]?.scope).toBe('meals')
 
     stop()
   })

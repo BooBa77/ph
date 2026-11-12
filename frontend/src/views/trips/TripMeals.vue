@@ -1880,7 +1880,7 @@ onMounted(() => {
                       :data-test="`my-meal-dish-select-${day.index}-${kind}`"
                       @change="addMyDish(day.index, kind)"
                     >
-                      <option value="" disabled hidden>Выберите рецепт блюда</option>
+                      <option value="" disabled hidden>Выбери рецепт блюда</option>
                       <option
                         v-for="dish in myDishesFor(myMealOf(day.index, kind))"
                         :key="dish.id"
@@ -1939,7 +1939,7 @@ onMounted(() => {
                         :data-test="`meal-dish-select-${day.index}-${kind}`"
                         @change="addDish(day.index, kind)"
                       >
-                        <option value="" disabled hidden>Выберите рецепт блюда</option>
+                        <option value="" disabled hidden>Выбери рецепт блюда</option>
                         <option
                           v-for="dish in dishesFor(mealOf(day.index, kind))"
                           :key="dish.id"

@@ -490,7 +490,7 @@ function onSectionToggle(section: TripGearSection, event: Event): void {
           <slot name="sectionExtra" :section="section" />
 
           <p v-if="!hasContent(section.id)" class="text-xs text-muted">
-            Пусто. Перенесите сюда вещи или добавьте новые.
+            Пусто. Перенеси сюда вещи или добавь новые.
           </p>
 
           <button

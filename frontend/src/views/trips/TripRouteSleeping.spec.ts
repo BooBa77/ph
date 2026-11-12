@@ -205,8 +205,8 @@ describe('личные вещи ночёвки', () => {
       .map((option) => option.text())
 
     // Свой спальник уже в ночёвке, коврик и палатка — другого типа.
-    expect(options).toEqual(['выберите…'])
-    expect(wrapper.get('[data-test="route-sleeping-no-gear"]').text()).toContain('заведите')
+    expect(options).toEqual(['выбери…'])
+    expect(wrapper.get('[data-test="route-sleeping-no-gear"]').text()).toContain('заведи')
   })
 
   it('выбранная вещь уходит в ночёвку, диалог закрывается', async () => {
@@ -277,7 +277,7 @@ describe('личные вещи ночёвки', () => {
   it('ошибку сервера видно в диалоге, а не под затемнением', async () => {
     mocks.listGear.mockResolvedValue(gearList([gearItem({ id: '11' })]))
     mocks.addRouteSleeping.mockRejectedValue(
-      new ApiError(400, 'Спальник и коврик — вещи из вашего каталога снаряжения'),
+      new ApiError(400, 'Спальник и коврик — вещи из твоего каталога снаряжения'),
     )
 
     const wrapper = mounted()
@@ -289,7 +289,7 @@ describe('личные вещи ночёвки', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="route-sleeping-dialog-error"]').text()).toContain(
-      'из вашего каталога',
+      'из твоего каталога',
     )
     expect(wrapper.find('[data-test="route-sleeping-dialog"]').exists()).toBe(true)
   })

@@ -875,7 +875,7 @@ describe('TripTransfer', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="transfer-leg-dialog"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="transfer-leg-error"]').text()).toContain('попробуйте')
+    expect(wrapper.find('[data-test="transfer-leg-error"]').text()).toContain('попробуй')
     expect(wrapper.find('[data-test="transfer-action-error"]').exists()).toBe(false)
   })
 
@@ -989,7 +989,7 @@ describe('TripTransfer', () => {
     await wrapper.find('[data-test="transfer-delete-confirm-1"]').trigger('click')
     await flushPromises()
 
-    expect(wrapper.find('[data-test="transfer-action-error"]').text()).toContain('попробуйте')
+    expect(wrapper.find('[data-test="transfer-action-error"]').text()).toContain('попробуй')
   })
 
   it('чат трансфера — часть вкладки', async () => {

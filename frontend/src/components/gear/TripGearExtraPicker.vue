@@ -513,7 +513,7 @@ function busyOf(item: GearItem): GearBusyItem | undefined {
           class="text-sm text-muted"
           data-test="route-extra-empty"
         >
-          В личном снаряжении ничего не осталось — заведите вещь вручную.
+          В личном снаряжении ничего не осталось — заведи вещь вручную.
         </p>
 
         <p
@@ -521,7 +521,7 @@ function busyOf(item: GearItem): GearBusyItem | undefined {
           class="text-sm text-muted"
           data-test="route-extra-not-found"
         >
-          Поиск ничего не нашёл — попробуйте другое слово или заведите вещь вручную.
+          Поиск ничего не нашёл — попробуй другое слово или заведи вещь вручную.
         </p>
 
         <div v-else class="flex flex-col gap-3">

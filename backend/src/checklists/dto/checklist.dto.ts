@@ -438,7 +438,7 @@ export class ImportChecklistItemsDto {
     example: [111, 112],
   })
   @IsArray({ message: 'Пункты должны быть списком id' })
-  @ArrayNotEmpty({ message: 'Выберите хотя бы один пункт' })
+  @ArrayNotEmpty({ message: 'Выбери хотя бы один пункт' })
   @IsInt({ each: true, message: 'Пункт должен быть id из справочника' })
   @Min(1, { each: true, message: 'Пункт должен быть id из справочника' })
   itemIds: number[];

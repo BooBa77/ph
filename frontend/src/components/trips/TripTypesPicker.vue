@@ -59,7 +59,7 @@ function toggle(id: number) {
     <legend class="mb-2 text-sm text-muted">{{ label }}</legend>
 
     <p v-if="types.length === 0" class="text-xs text-muted" data-test="trip-types-empty">
-      Справочник типов не загрузился — обновите страницу.
+      Справочник типов не загрузился — обнови страницу.
     </p>
 
     <div v-else class="flex flex-wrap gap-2">

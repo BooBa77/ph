@@ -991,7 +991,7 @@ async function pickExtra(item: GearItem): Promise<void> {
       </p>
 
       <p v-if="tents.length === 0" class="text-sm text-muted" data-test="route-tents-empty">
-        Пока никто не взял палатку — добавьте свою из личного снаряжения.
+        Пока никто не взял палатку — добавь свою из личного снаряжения.
       </p>
 
       <article
@@ -1054,7 +1054,7 @@ async function pickExtra(item: GearItem): Promise<void> {
             data-test="route-tent-member"
           >
             {{ person.displayName }}
-            <span v-if="isMine(person)" class="text-xs text-amber-700">(вы)</span>
+            <span v-if="isMine(person)" class="text-xs text-amber-700">(ты)</span>
 
             <!-- Владелец тоже уходит из палатки: палатка остаётся в походе. -->
             <button
@@ -1146,7 +1146,7 @@ async function pickExtra(item: GearItem): Promise<void> {
             class="text-xs text-muted"
             data-test="route-tent-owner-hint"
           >
-            Ваша палатка — заявки принимаете вы
+            Твоя палатка — заявки принимаешь ты
           </span>
 
           <!--
@@ -1370,7 +1370,7 @@ async function pickExtra(item: GearItem): Promise<void> {
               :disabled="isGearLoading"
               data-test="route-tent-gear"
             >
-              <option value="">выберите…</option>
+              <option value="">выбери…</option>
               <option v-for="item in myTents" :key="item.id" :value="item.id">
                 {{ itemLabel(item) }}
               </option>
@@ -1382,8 +1382,8 @@ async function pickExtra(item: GearItem): Promise<void> {
             class="text-xs text-muted"
             data-test="route-tent-no-gear"
           >
-            Свободной палатки в личном снаряжении нет — заведите её в профиле,
-            на вкладке «Снаряжение», или укажите вручную.
+            Свободной палатки в личном снаряжении нет — заведи её в профиле,
+            на вкладке «Снаряжение», или укажи вручную.
           </p>
 
           <!--
@@ -1410,7 +1410,7 @@ async function pickExtra(item: GearItem): Promise<void> {
             class="text-xs text-muted"
             data-test="route-tent-no-capacity"
           >
-            У этой палатки не заполнена вместимость — впишите её в профиле,
+            У этой палатки не заполнена вместимость — впиши её в профиле,
             на вкладке «Снаряжение». Пока плашка подпишется хозяином и весом.
           </p>
 
@@ -1467,7 +1467,7 @@ async function pickExtra(item: GearItem): Promise<void> {
               :disabled="isAwningLoading"
               data-test="route-awning-gear"
             >
-              <option value="">выберите…</option>
+              <option value="">выбери…</option>
               <option v-for="item in myAwnings" :key="item.id" :value="item.id">
                 {{ awningOptionText(item) }}
               </option>
@@ -1479,8 +1479,8 @@ async function pickExtra(item: GearItem): Promise<void> {
             class="text-xs text-muted"
             data-test="route-awning-no-gear"
           >
-            Тента в личном снаряжении нет — заведите вещь типа «Тент»
-            в профиле, на вкладке «Снаряжение», или укажите вручную.
+            Тента в личном снаряжении нет — заведи вещь типа «Тент»
+            в профиле, на вкладке «Снаряжение», или укажи вручную.
           </p>
 
           <button

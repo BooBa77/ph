@@ -101,7 +101,7 @@ onMounted(load)
     <p v-else-if="error" class="text-sm text-muted" data-test="chat-error">{{ error }}</p>
 
     <p v-else-if="messages.length === 0" class="text-sm text-muted" data-test="chat-empty">
-      Пока пусто — напишите первым.
+      Пока пусто — напиши первым.
     </p>
 
     <ol

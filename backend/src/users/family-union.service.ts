@@ -304,7 +304,7 @@ export class FamilyUnionService {
       });
       if (!member) throw new NotFoundException('Заявка не найдена');
       if (member.consent !== 'pending') {
-        throw new ConflictException('Вы уже ответили на эту заявку');
+        throw new ConflictException('На эту заявку уже есть твой ответ');
       }
 
       member.consent = accept ? 'accepted' : 'declined';

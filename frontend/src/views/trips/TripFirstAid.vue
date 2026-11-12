@@ -191,7 +191,7 @@ async function saveWeight(scope: FirstAidWeightScope): Promise<void> {
   const parsed = parseWeightGrams(raw)
 
   if (parsed === undefined) {
-    weightError.value = 'Вес — целое число граммов, больше нуля. Или оставьте поле пустым.'
+    weightError.value = 'Вес — целое число граммов, больше нуля. Или оставь поле пустым.'
     return
   }
 
@@ -282,7 +282,7 @@ function weightHint(section: FirstAidSection | null): string {
             :checklist="state.shared.checklist"
             scope="trip"
             area="first_aid"
-            empty-text="Аптечка ещё пуста — добавьте первый пункт."
+            empty-text="Аптечка ещё пуста — добавь первый пункт."
             add-placeholder="Добавить в аптечку"
             import-note="В общую аптечку вещи из шаблона попадут названиями типов."
             :can-manage="state.shared.canEdit"
@@ -360,7 +360,7 @@ function weightHint(section: FirstAidSection | null): string {
             :checklist="state.personal.checklist"
             scope="personal"
             area="first_aid"
-            empty-text="Личная аптечка ещё пуста — добавьте первый пункт."
+            empty-text="Личная аптечка ещё пуста — добавь первый пункт."
             add-placeholder="Добавить в аптечку"
             import-note="В личную аптечку вещи из шаблона попадут конкретными экземплярами — как в каталоге."
             :can-manage="true"

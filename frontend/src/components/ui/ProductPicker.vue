@@ -29,7 +29,7 @@ const props = withDefaults(
     /** Текст в поле: приходит от родителя, чтобы тот знал, что набрано. */
     query?: string
   }>(),
-  { placeholder: 'Введите название продукта', product: null },
+  { placeholder: 'Введи название продукта', product: null },
 )
 
 const emit = defineEmits<{

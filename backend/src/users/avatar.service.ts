@@ -155,7 +155,7 @@ export class AvatarService {
     if (file.size > MAX_UPLOAD_BYTES) {
       const megabytes = Math.round(MAX_UPLOAD_BYTES / (1024 * 1024));
       throw new PayloadTooLargeException(
-        `Файл больше ${megabytes} МБ. Выберите картинку поменьше.`,
+        `Файл больше ${megabytes} МБ. Выбери картинку поменьше.`,
       );
     }
 

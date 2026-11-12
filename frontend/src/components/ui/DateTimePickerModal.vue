@@ -244,7 +244,7 @@ onBeforeUnmount(() => {
         >
           <span aria-hidden="true">‹</span>
         </button>
-        <span class="text-xs text-muted">выберите день, затем время</span>
+        <span class="text-xs text-muted">выбери день, затем время</span>
         <button
           type="button"
           :class="STEP_BUTTON"
@@ -314,7 +314,7 @@ onBeforeUnmount(() => {
       </div>
 
       <p v-if="outOfRange" class="mt-2 text-xs text-red-600" data-test="datetime-range">
-        Эта дата вне похода — выберите день между выездом и возвращением
+        Эта дата вне похода — выбери день между выездом и возвращением
       </p>
 
       <div class="mt-4 flex items-center justify-end gap-2">

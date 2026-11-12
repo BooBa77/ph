@@ -261,7 +261,7 @@ export class ConversationsService {
       });
 
       if (!member) {
-        throw new ForbiddenException('Это не ваш диалог');
+        throw new ForbiddenException('Это не твой диалог');
       }
 
       return conversation;
@@ -274,7 +274,7 @@ export class ConversationsService {
       : null;
 
     if (!participant || participant.status === 'declined') {
-      throw new ForbiddenException('Этот чат вам недоступен');
+      throw new ForbiddenException('Этот чат тебе недоступен');
     }
 
     return conversation;

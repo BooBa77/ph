@@ -226,7 +226,7 @@ export class RouteNightInputDto {
     nullable: true,
   })
   @IsOptional()
-  @IsIn(NIGHT_KINDS, { message: 'Так ночевать нельзя — выберите вариант' })
+  @IsIn(NIGHT_KINDS, { message: 'Так ночевать нельзя — выбери вариант' })
   kind?: NightKind | null;
 
   @ApiProperty({

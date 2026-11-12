@@ -171,7 +171,7 @@ onBeforeUnmount(() => {
         class="rounded-xl border border-dashed border-border p-4 text-sm text-muted"
         data-test="gear-catalog-empty"
       >
-        В снаряжении пока ничего нет. Заведите вещь в
+        В снаряжении пока ничего нет. Заведи вещь в
         <RouterLink to="/profile/gear" class="text-primary underline">«Снаряжении»</RouterLink>
         — и она появится здесь.
       </p>

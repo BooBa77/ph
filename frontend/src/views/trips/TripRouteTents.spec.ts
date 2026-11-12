@@ -572,7 +572,7 @@ describe('секция «Палатки»', () => {
         .get('[data-test="route-awning-gear"]')
         .findAll('option')
         .map((node) => node.text()),
-    ).toEqual(['выберите…', 'Тент 3×4'])
+    ).toEqual(['выбери…', 'Тент 3×4'])
 
     await wrapper.get('[data-test="route-awning-gear"]').setValue('60')
     await wrapper.get('[data-test="route-awning-save"]').trigger('click')

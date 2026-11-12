@@ -117,7 +117,7 @@ export class VehiclesService {
 
     if ((await query.getOne()) !== null) {
       throw new ConflictException(
-        'Такая машина уже есть в вашем снаряжении — выберите её из списка',
+        'Такая машина уже есть в твоём снаряжении — выбери её из списка',
       );
     }
   }
@@ -162,7 +162,7 @@ export class VehiclesService {
 
       if (openTrips > 0) {
         throw new ConflictException(
-          'Этот транспорт задействован в походе, освободите его сперва',
+          'Этот транспорт задействован в походе, освободи его сперва',
         );
       }
 

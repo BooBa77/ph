@@ -204,12 +204,12 @@ function incomingLabel(count: number): string {
   const last = count % 10
   const tens = count % 100
 
-  if (last === 1 && tens !== 11) return `${count} заявка: ответьте`
+  if (last === 1 && tens !== 11) return `${count} заявка: ответь`
   if (last >= 2 && last <= 4 && (tens < 12 || tens > 14)) {
-    return `${count} заявки: ответьте`
+    return `${count} заявки: ответь`
   }
 
-  return `${count} заявок: ответьте`
+  return `${count} заявок: ответь`
 }
 
 /**
@@ -229,7 +229,7 @@ const confirmingLeave = ref(false)
 async function leaveFamilyAction(): Promise<void> {
   await runAction(
     () => leaveFamily(),
-    'Вы вышли из семьи. Вещи остались у каждого своей копией',
+    'Ты вышел из семьи. Вещи остались у каждого своей копией',
     'Не удалось выйти из семьи',
   )
   confirmingLeave.value = false
@@ -555,8 +555,8 @@ async function runAction(
     <h2 class="mb-2 text-xl font-semibold text-text">Контакты</h2>
 
     <p class="mb-4 text-sm text-muted">
-      Родные делят с вами бюджет и снаряжение. Люди без аккаунта живут в походах
-      под вашим управлением.
+      Родные делят с тобой бюджет и снаряжение. Люди без аккаунта живут в походах
+      под твоим управлением.
     </p>
 
     <p v-if="isLoading" class="text-sm text-muted" data-test="contacts-loading">Загружаем…</p>
@@ -610,7 +610,7 @@ async function runAction(
               </p>
 
               <p class="text-xs text-muted" data-test="family-union-mine">
-                Ваша семья: {{ unionNames(union, true) }}
+                Твоя семья: {{ unionNames(union, true) }}
               </p>
               <p class="text-xs text-muted" data-test="family-union-theirs">
                 Другая семья: {{ unionNames(union, false) }}
@@ -709,10 +709,10 @@ async function runAction(
                 class="text-sm text-muted"
                 data-test="family-add-empty"
               >
-                Никого не нашлось. Имена чувствительны к опечаткам — попробуйте часть имени.
+                Никого не нашлось. Имена чувствительны к опечаткам — попробуй часть имени.
               </p>
               <p v-else class="text-sm text-muted" data-test="family-add-hint">
-                Начните вводить имя — от двух символов.
+                Начни вводить имя — от двух символов.
               </p>
 
               <div v-if="availableVirtuals.length > 0" class="flex flex-col gap-2">
@@ -754,7 +754,7 @@ async function runAction(
               </h3>
 
               <p class="text-xs text-muted" data-test="family-union-preview-mine">
-                Ваша семья: {{ previewNames(true) }}
+                Твоя семья: {{ previewNames(true) }}
               </p>
               <p class="text-xs text-muted" data-test="family-union-preview-theirs">
                 Другая семья: {{ previewNames(false) }}
@@ -768,7 +768,7 @@ async function runAction(
                 class="text-xs text-muted"
                 data-test="family-union-preview-pending"
               >
-                Такая заявка уже висит — ваше согласие будет зачтено.
+                Такая заявка уже висит — твоё согласие будет зачтено.
               </p>
 
               <div class="flex flex-wrap items-center gap-2">
@@ -858,7 +858,7 @@ async function runAction(
             class="text-sm text-muted"
             data-test="family-empty"
           >
-            Пока никого. Добавьте родного по имени — заявку подтвердят все участники
+            Пока никого. Добавь родного по имени — заявку подтвердят все участники
             обеих семей, и вы увидите друг друга.
           </p>
           <p v-else class="text-sm text-muted" data-test="family-filter-empty">
@@ -874,7 +874,7 @@ async function runAction(
             <p class="text-xs text-muted">
               Выйти из семьи — значит разорвать все семейные связи сразу: общий бюджет
               и общее снаряжение прекращаются. У каждого останется по полной копии
-              снаряжения, удалите у себя то, что кому не досталось.
+              снаряжения, удали у себя то, что кому не досталось.
             </p>
 
             <div v-if="confirmingLeave" class="mt-2 flex flex-wrap items-center gap-2">
@@ -1014,7 +1014,7 @@ async function runAction(
           </ul>
 
           <p v-else class="text-sm text-muted" data-test="virtual-empty">
-            Пока никого. Заведите человека без аккаунта — он появится и в походах.
+            Пока никого. Заведи человека без аккаунта — он появится и в походах.
           </p>
         </div>
       </details>

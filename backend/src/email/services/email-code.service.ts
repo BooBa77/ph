@@ -67,7 +67,7 @@ export class EmailCodeService {
       this.logger.warn(
         `Повторный запрос кода для ${normalizedEmail} через ${remaining}с`,
       );
-      throw new Error(`Код уже отправлен. Повторите через ${remaining} секунд`);
+      throw new Error(`Код уже отправлен. Повтори через ${remaining} секунд`);
     }
 
     const code = this.generateCode();

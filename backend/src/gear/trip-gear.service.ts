@@ -890,7 +890,7 @@ export class TripGearService {
     if (existing) {
       throw new ConflictException(
         existing.userId === userId
-          ? 'Эта вещь уже в вашем личном снаряжении'
+          ? 'Эта вещь уже в твоём личном снаряжении'
           : 'Эту вещь уже взял родной — одну вещь вдвоём не взять',
       );
     }

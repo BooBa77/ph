@@ -190,7 +190,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <div class="flex flex-col gap-1">
           <h3 id="gear-grouping-title" class="text-base font-medium text-text">Настройка группировки снаряжения</h3>
           <p class="text-xs text-muted">
-            Группы собирают типы: переложите тип — его вещи переедут вместе с ним. «Прочее»
+            Группы собирают типы: переложи тип — его вещи переедут вместе с ним. «Прочее»
             удалить нельзя, и оно всегда последнее: туда попадает тип без своей группы.
           </p>
         </div>
@@ -316,7 +316,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </div>
 
           <p v-if="group.types.length === 0" class="text-xs text-muted" data-test="grouping-empty">
-            Типов нет — переложите сюда тип из другой группы.
+            Типов нет — переложи сюда тип из другой группы.
           </p>
 
           <ul v-else class="flex flex-col gap-1">

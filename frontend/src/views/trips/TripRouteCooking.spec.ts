@@ -521,7 +521,7 @@ describe('секция «Готовка»', () => {
     expect(wrapper.get('[data-test="route-cooking-dialog"] h3').text()).toBe('Топор')
     expect(
       wrapper.get('[data-test="route-cooking-gear"]').findAll('option').map((node) => node.text()),
-    ).toEqual(['выберите…', 'Топор Fiskars X7'])
+    ).toEqual(['выбери…', 'Топор Fiskars X7'])
   })
 
   it('предложение уходит на сервер, вещь появляется пилюлей и кнопка белеет', async () => {
@@ -591,7 +591,7 @@ describe('секция «Готовка»', () => {
 
     expect(
       wrapper.get('[data-test="route-cooking-gear"]').findAll('option').map((node) => node.text()),
-    ).toEqual(['выберите…'])
+    ).toEqual(['выбери…'])
   })
 
   it('нет подходящей вещи — подсказка, а не пустой список', async () => {

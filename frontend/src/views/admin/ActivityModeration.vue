@@ -188,7 +188,7 @@ onMounted(load)
           :key="type.id"
           type="button"
           class="flex cursor-pointer flex-col items-center gap-1 rounded-xl border border-border p-2 transition-colors hover:border-primary"
-          :title="`${type.groupLabel}: ${type.label}. Нажмите, чтобы убрать из работы`"
+          :title="`${type.groupLabel}: ${type.label}. Нажми, чтобы убрать из работы`"
           @click="toggle(type)"
         >
           <span class="h-10 w-10 text-text">

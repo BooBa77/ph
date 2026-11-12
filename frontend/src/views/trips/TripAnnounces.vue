@@ -286,9 +286,9 @@ watch(
 
     <p v-else-if="trips.length === 0" class="text-muted" data-test="announces-empty">
       <template v-if="hasFilters">
-        Под эти условия ничего не нашлось — попробуйте снять фильтры.
+        Под эти условия ничего не нашлось — попробуй снять фильтры.
       </template>
-      <template v-else>Анонсов пока нет. Начните первым — «Создать поход».</template>
+      <template v-else>Анонсов пока нет. Начни первым — «Создать поход».</template>
     </p>
 
     <template v-else>

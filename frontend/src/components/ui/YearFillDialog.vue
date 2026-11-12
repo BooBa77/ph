@@ -106,7 +106,7 @@ async function fill(mode: CalendarMode) {
     error.value =
       cause instanceof ApiError
         ? cause.message
-        : 'Не удалось создать календарь. Попробуйте ещё раз.'
+        : 'Не удалось создать календарь. Попробуй ещё раз.'
   } finally {
     isSaving.value = false
   }

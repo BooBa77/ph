@@ -74,6 +74,20 @@ describe('TripEventsService', () => {
     expect(received).toHaveLength(0);
   });
 
+  it('событие «Питания» несёт свой scope', () => {
+    const service = new TripEventsService();
+    const received: TripEvent[] = [];
+
+    const subscription = service.stream('679').subscribe((event) => received.push(event));
+    service.emitMeals('679', 'user-6');
+
+    expect(received).toEqual([
+      { scope: 'meals', actorId: 'user-6', at: expect.any(String) },
+    ]);
+
+    subscription.unsubscribe();
+  });
+
   it('событие без подписчиков не падает и канал не создаёт', () => {
     const service = new TripEventsService();
 

@@ -99,6 +99,35 @@ const noRequisitesText = computed(() => {
 })
 
 /**
+ * Почему переводить некому — про **выбранного отправителя**, а не про
+ * смотрящего.
+ *
+ * 12.11.2026 заказчик спросил, о ком фраза «вам никто не должен»: о семье
+ * или лично о человеке без аккаунта. Ответ: о выбранном в «Кто переводит» —
+ * подсказки считаются для него, а у виртуального семьи нет, поэтому его
+ * «семья» — он сам. Прежний текст обращался к смотрящему и в этом случае
+ * врал; новый называет отправителя и говорит, чего именно не хватает.
+ */
+const senderIsMe = computed(
+  () => selectedSenderId.value === '' || selectedSenderId.value === props.meId,
+)
+
+const emptyHint = computed(() => {
+  const sender = selectedSender.value
+  if (sender === null) {
+    return 'Переводить некому: с учётом ожидающих переводов переводить нечего.'
+  }
+
+  if (sender.familyDebtRub > 0) {
+    return 'Переводить некому: свободный кредит получателей уже занят ожидающими переводами.'
+  }
+
+  return senderIsMe.value
+    ? 'Переводить некому: у твоей семьи долга с учётом ожидающих переводов нет.'
+    : `Переводить некому: ${sender.displayName} — долга с учётом ожидающих переводов нет.`
+})
+
+/**
  * Смена варианта подставляет его сумму заново: подсказка у каждой семьи
  * своя, и прежняя цифра после переключения была бы суммой «не той».
  */
@@ -150,7 +179,7 @@ async function save(): Promise<void> {
 
   const sum = parseRub(amount.value)
   if (sum === null) {
-    error.value = 'Укажите сумму перевода'
+    error.value = 'Укажи сумму перевода'
     return
   }
   if (sum === undefined) {
@@ -263,12 +292,12 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         class="text-sm text-muted"
         data-test="finance-compensation-empty"
       >
-        Переводить некому: вам никто не должен с учётом ожидающих переводов.
+        {{ emptyHint }}
       </p>
 
       <template v-else>
         <fieldset class="flex flex-col gap-1" data-test="finance-compensation-people">
-          <legend class="text-xs text-muted">Кому переводите</legend>
+          <legend class="text-xs text-muted">Кому переводишь</legend>
 
           <label
             v-for="option in suggestions"

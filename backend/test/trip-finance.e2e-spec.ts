@@ -476,6 +476,75 @@ describe('Бухгалтерия похода (e2e)', () => {
       ).toBe(600);
     });
 
+    it('смена питания пересобирает уже записанные чеки с общего стола', async () => {
+      // Возвращаем Б к общему столу напрямую: предыдущий чек (600 ₽) создан,
+      // когда он ещё ел со всеми. Прямая запись в базу доли не трогает —
+      // пересчёт делает именно смена питания через API.
+      await dataSource.query(
+        `UPDATE trip_participants SET eats_separately = false
+         WHERE trip_id = $1 AND user_id = $2`,
+        [trip1, b.id],
+      );
+
+      const created = await addExpense(trip1, a, {
+        amountRub: 300,
+        split: 'commonEaters',
+        description: 'Пересчёт',
+        spentAt: '2026-11-09',
+      });
+      const expenseId = created.body.expenses.find(
+        (item: { description: string }) => item.description === 'Пересчёт',
+      ).id as string;
+
+      const before = await balances(trip1, a);
+
+      // Б ставит «питаюсь отдельно» сам: за него это делает только человек
+      // с аккаунтом, виртуальному — ведущий.
+      await auth(
+        request(app.getHttpServer()).patch(
+          `/api/trips/${trip1}/participants/me`,
+        ),
+        b.token,
+      )
+        .send({ status: 'going', eatsSeparately: true })
+        .expect(200);
+
+      const after = await view(trip1, a);
+      const expense = after.body.expenses.find(
+        (item: { id: string }) => item.id === expenseId,
+      );
+
+      // Е уже ест отдельно (тест выше), теперь и Б: было 5 едоков, стало 4.
+      expect(expense.shares).toHaveLength(4);
+      expect(
+        expense.shares.some(
+          (share: { userId: string }) => share.userId === b.id,
+        ),
+      ).toBe(false);
+      expect(
+        expense.shares.reduce(
+          (sum: number, share: { amountRub: number }) => sum + share.amountRub,
+          0,
+        ),
+      ).toBe(300);
+
+      // Пересчитаны оба чека с общего: 600 ₽ (5→4 едока) и 300 ₽ (5→4).
+      // Доля Б в них была 120 + 60 = 180 ₽ — ровно столько возвращается
+      // в его баланс.
+      const afterBalances = await balances(trip1, a);
+      expect(afterBalances.b! - before.b!).toBe(180);
+
+      // Возвращаем как было: следующие проверки не должны зависеть от Б.
+      await auth(
+        request(app.getHttpServer()).patch(
+          `/api/trips/${trip1}/participants/me`,
+        ),
+        b.token,
+      )
+        .send({ status: 'going', eatsSeparately: false })
+        .expect(200);
+    });
+
     it('обычный расход без описания не создаётся', async () => {
       await addExpense(
         trip1,

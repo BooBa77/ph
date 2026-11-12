@@ -164,7 +164,7 @@ describe('выбор чек-листа из личных чек-листов', (
     const wrapper = mounted({ note: '' })
     await flushPromises()
 
-    expect(wrapper.text()).toContain('Выберите чек-лист')
+    expect(wrapper.text()).toContain('Выбери чек-лист')
     expect(wrapper.emitted('apply')).toBeUndefined()
   })
 

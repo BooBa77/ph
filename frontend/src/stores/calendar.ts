@@ -66,7 +66,7 @@ export const useCalendarStore = defineStore('calendar', () => {
 
   function messageOf(cause: unknown): string {
     if (cause instanceof ApiError) return cause.message
-    return 'Не удалось загрузить календарь. Попробуйте ещё раз.'
+    return 'Не удалось загрузить календарь. Попробуй ещё раз.'
   }
 
   function isCovered(from: string, to: string): boolean {

@@ -75,7 +75,7 @@ async function confirmCrop() {
 
   const result: CropperResult | undefined = cropper.value?.getResult()
   if (!result?.canvas) {
-    error.value = 'Не удалось подготовить изображение. Попробуйте другой файл.'
+    error.value = 'Не удалось подготовить изображение. Попробуй другой файл.'
     return
   }
 
@@ -88,7 +88,7 @@ async function confirmCrop() {
     })
 
     if (!blob) {
-      error.value = 'Не удалось подготовить изображение. Попробуйте другой файл.'
+      error.value = 'Не удалось подготовить изображение. Попробуй другой файл.'
       return
     }
 

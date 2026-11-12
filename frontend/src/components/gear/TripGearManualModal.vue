@@ -179,7 +179,7 @@ async function save(): Promise<void> {
   const type = selectedType.value
 
   if (type === null) {
-    error.value = 'Выберите тип снаряжения: характеристики вещи задаёт тип.'
+    error.value = 'Выбери тип снаряжения: характеристики вещи задаёт тип.'
     return
   }
 
@@ -188,14 +188,14 @@ async function save(): Promise<void> {
   // В личном каталоге название обязательно: это строка, по которой человек
   // узнаёт вещь. У одноразовой вещи похода его заменяет имя типа.
   if (isPersonal.value && titleText === '') {
-    error.value = 'Название вещи — как вы её узнаете, например «Вкладыш в спальник»'
+    error.value = 'Название вещи — как ты её узнаешь, например «Вкладыш в спальник»'
     return
   }
 
   const weightGrams = parseWeightGrams(weight.value)
 
   if (weightGrams === undefined) {
-    error.value = 'Вес — целое число граммов, больше нуля. Или оставьте поле пустым.'
+    error.value = 'Вес — целое число граммов, больше нуля. Или оставь поле пустым.'
     return
   }
 

@@ -131,7 +131,7 @@ export class TripMealsService {
 
     if (trip.status === 'idea') {
       throw new BadRequestException(
-        'У мечты раскладки нет — переведите поход в «Планирую»',
+        'У мечты раскладки нет — переведи поход в «Планирую»',
       );
     }
 
@@ -139,7 +139,7 @@ export class TripMealsService {
     if (dayCount === 0) {
       throw new BadRequestException(
         trip.status === 'planning'
-          ? 'Раскладка начнётся с конкретного числа: укажите день в прогнозе'
+          ? 'Раскладка начнётся с конкретного числа: укажи день в прогнозе'
           : 'У похода нет продолжительности — раскладку не из чего считать',
       );
     }
@@ -1414,7 +1414,7 @@ export class TripMealsService {
     );
     if (!inPlan) {
       throw new BadRequestException(
-        'Этого продукта нет в раскладке — добавьте строку в приём',
+        'Этого продукта нет в раскладке — добавь строку в приём',
       );
     }
 
@@ -1447,10 +1447,26 @@ export class TripMealsService {
 
     await manager.save(row);
 
+    // Список покупок живёт у всех открытым: отметка коллеги в соседнем
+    // магазине — повод перечитать строки (12.11.2026).
+    this.events.emitMeals(String(id), userId);
+
     return this.getChecklist(userId, id, owner);
   }
 
   // ─────────────────────────── доступ ───────────────────────────
+
+  /**
+   * Право открыть поток изменений «Питания» — тот же состав, что видит план.
+   *
+   * Публичный метод для контроллера SSE: проверка стоит до первых
+   * заголовков, иначе 403 уже не отправить.
+   */
+  async assertCanWatch(userId: string, tripId: number): Promise<void> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertParticipant(manager, userId, trip);
+  }
 
   /** Раскладку видит состав; посторонний не видит даже, что она есть. */
   private async assertParticipant(
@@ -1551,6 +1567,15 @@ export class TripMealsService {
         );
       }
     }
+
+    /**
+     * Раскладка изменилась — чек-лист у всех открытых экранов перечитывается.
+     * Заказчик: «если внезапно повар что-то вспомнил и добавил в чек-лист»,
+     * соседи по закупке должны увидеть строку сразу, а не после перезахода.
+     * Событие — сигнал, а не данные: чек-лист у каждого свой по правам
+     * (личный слой виден только владельцу), поэтому перечитывает клиент.
+     */
+    this.events.emitMeals(String(id), userId);
   }
 
   // ─────────────────────────── слои еды ───────────────────────────

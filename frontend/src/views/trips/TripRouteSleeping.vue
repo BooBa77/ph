@@ -190,21 +190,21 @@ async function createAndAdd(): Promise<void> {
   if (isAdding.value || activeType.value === null) return
 
   if (typeId.value === null) {
-    dialogError.value = 'Типа нет в справочнике — обновите страницу или заведите вещь в профиле'
+    dialogError.value = 'Типа нет в справочнике — обнови страницу или заведи вещь в профиле'
     return
   }
 
   const title = newTitle.value.trim()
 
   if (title === '') {
-    dialogError.value = 'Название вещи — как вы её узнаете, например «Спальник зимний»'
+    dialogError.value = 'Название вещи — как ты её узнаешь, например «Спальник зимний»'
     return
   }
 
   const weightGrams = parseWeightGrams(newWeight.value)
 
   if (weightGrams === undefined) {
-    dialogError.value = 'Вес — целое число граммов, больше нуля. Или оставьте поле пустым.'
+    dialogError.value = 'Вес — целое число граммов, больше нуля. Или оставь поле пустым.'
     return
   }
 
@@ -451,7 +451,7 @@ async function remove(row: RouteSleeping): Promise<void> {
               class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
               data-test="route-sleeping-gear"
             >
-              <option value="">выберите…</option>
+              <option value="">выбери…</option>
               <option v-for="item in myGear" :key="item.id" :value="item.id">
                 {{ gearOptionText(item) }}
               </option>
@@ -463,7 +463,7 @@ async function remove(row: RouteSleeping): Promise<void> {
             class="text-xs text-muted"
             data-test="route-sleeping-no-gear"
           >
-            Подходящей вещи в каталоге нет — заведите новую ниже.
+            Подходящей вещи в каталоге нет — заведи новую ниже.
           </p>
 
           <div class="flex flex-wrap items-center gap-2">
@@ -484,7 +484,7 @@ async function remove(row: RouteSleeping): Promise<void> {
             Новая вещь: название и вес. Тип задан кнопкой, из которой открыли
             диалог; вещь попадает в личный каталог и сразу в ночёвку.
           -->
-          <p class="text-sm text-muted">Или заведите новую вещь</p>
+          <p class="text-sm text-muted">Или заведи новую вещь</p>
 
           <label class="flex flex-col gap-1 text-sm text-muted">
             Название

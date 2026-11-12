@@ -101,7 +101,7 @@ describe('CreateTrip', () => {
     const wrapper = mount(CreateTrip)
 
     expect(wrapper.find('[data-test="submit"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.find('[data-test="hint"]').text()).toContain('Выберите цель')
+    expect(wrapper.find('[data-test="hint"]').text()).toContain('Выбери цель')
 
     await submit(wrapper)
     expect(mocks.createTrip).not.toHaveBeenCalled()

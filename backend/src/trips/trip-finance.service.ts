@@ -276,7 +276,7 @@ export class TripFinanceService {
       if (debt <= 0) {
         throw new BadRequestException(
           senderId === userId
-            ? 'Вам не нужно ничего компенсировать'
+            ? 'Тебе не нужно ничего компенсировать'
             : 'Этому человеку нечего компенсировать',
         );
       }
@@ -285,8 +285,8 @@ export class TripFinanceService {
       if (credit <= 0) {
         throw new BadRequestException(
           targetFamily.length > 1
-            ? 'Этой семье вы ничего не должны'
-            : 'Этому человеку вы ничего не должны',
+            ? 'Этой семье ты ничего не должен'
+            : 'Этому человеку ты ничего не должен',
         );
       }
 
@@ -761,7 +761,7 @@ export class TripFinanceService {
       const chosen = dto.participantIds ?? [];
       if (chosen.length === 0) {
         throw new BadRequestException(
-          'Выберите, на кого разделить расход',
+          'Выбери, на кого разделить расход',
         );
       }
       const unknown = chosen.filter((id) => !goingIds.includes(id));
@@ -787,7 +787,7 @@ export class TripFinanceService {
     if (text.length > 0) return text;
     if (dto.split === 'commonEaters') return 'на продукты';
 
-    throw new BadRequestException('Опишите, за что расход');
+    throw new BadRequestException('Опиши, за что расход');
   }
 
   private async saveShares(

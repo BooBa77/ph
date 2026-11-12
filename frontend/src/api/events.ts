@@ -31,11 +31,11 @@ import { useAuthStore } from '@/stores/auth'
  * хуже, чем лишний запрос раз в несколько секунд.
  */
 
-/** Что изменилось на вкладке: снаряжение с разделами, чек-листы или деньги. */
-export type TripEventScope = 'gear' | 'checklist' | 'finance'
+/** Что изменилось на вкладке: снаряжение, чек-листы, деньги или питание. */
+export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals'
 
-/** Адрес потока: у «Снаряжения» и «Бухгалтерии» свои контроллеры. */
-export type TripEventChannel = 'gear' | 'finance'
+/** Адрес потока: у «Снаряжения», «Бухгалтерии» и «Питания» свои контроллеры. */
+export type TripEventChannel = 'gear' | 'finance' | 'meals'
 
 export interface TripEvent {
   scope: TripEventScope
@@ -89,7 +89,10 @@ function isTripEvent(value: unknown): value is TripEvent {
   const event = value as Partial<TripEvent>
 
   return (
-    (event.scope === 'gear' || event.scope === 'checklist' || event.scope === 'finance') &&
+    (event.scope === 'gear' ||
+      event.scope === 'checklist' ||
+      event.scope === 'finance' ||
+      event.scope === 'meals') &&
     typeof event.actorId === 'string' &&
     typeof event.at === 'string'
   )
@@ -100,7 +103,7 @@ function isTripEvent(value: unknown): value is TripEvent {
  *
  * `channel` выбирает адрес: «Снаряжение» слушает `/gear/events`
  * (по умолчанию — так вызывал единственный поток до 12.11.2026),
- * «Бухгалтерия» — `/finance/events`.
+ * «Бухгалтерия» — `/finance/events`, «Питание» — `/meals/events`.
  *
  * Возвращает функцию отписки: она обрывает соединение и отменяет
  * запланированное переподключение. Вызывать обязательно при уходе

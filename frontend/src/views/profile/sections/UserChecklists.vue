@@ -347,7 +347,7 @@ onMounted(load)
       class="rounded-xl border border-dashed border-border p-4 text-sm text-muted"
       data-test="checklists-empty"
     >
-      Шаблонов пока нет. Заведите первый — и к следующему походу не придётся вспоминать, что
+      Шаблонов пока нет. Заведи первый — и к следующему походу не придётся вспоминать, что
       брали в прошлый.
     </p>
 

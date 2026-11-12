@@ -278,14 +278,14 @@ describe('модалка компенсации', () => {
   it('ошибку сервера показывает словами', async () => {
     const wrapper = mountModal()
     mocks.createTripCompensation.mockRejectedValue(
-      new ApiError(400, 'Этому человеку вы ничего не должны', null),
+      new ApiError(400, 'Этому человеку ты ничего не должен', null),
     )
 
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-compensation-error"]').text()).toBe(
-      'Этому человеку вы ничего не должны',
+      'Этому человеку ты ничего не должен',
     )
   })
 
@@ -297,7 +297,7 @@ describe('модалка компенсации', () => {
   it('отказ 400 просит родителя перечитать вкладку', async () => {
     const wrapper = mountModal()
     mocks.createTripCompensation.mockRejectedValue(
-      new ApiError(400, 'Вам не нужно ничего компенсировать', null),
+      new ApiError(400, 'Тебе не нужно ничего компенсировать', null),
     )
 
     await wrapper.get('form').trigger('submit')

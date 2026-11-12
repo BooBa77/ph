@@ -84,7 +84,7 @@ function addRange() {
   error.value = null
 
   if (!from.value || !to.value) {
-    error.value = 'Укажите начало и конец диапазона'
+    error.value = 'Укажи начало и конец диапазона'
     return
   }
   if (from.value > to.value) {
@@ -141,7 +141,7 @@ function expand(ranges: RangeDraft[]): DayUpdate[] {
 
 async function save() {
   if (list.value.length === 0) {
-    error.value = 'Добавьте хотя бы один диапазон'
+    error.value = 'Добавь хотя бы один диапазон'
     return
   }
 
@@ -152,7 +152,7 @@ async function save() {
     emit('close')
   } catch (cause) {
     error.value =
-      cause instanceof ApiError ? cause.message : 'Не удалось сохранить. Попробуйте ещё раз.'
+      cause instanceof ApiError ? cause.message : 'Не удалось сохранить. Попробуй ещё раз.'
   } finally {
     isSaving.value = false
   }
@@ -202,8 +202,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       <p class="mt-2 text-xs text-muted">
         {{
           tool === 'off'
-            ? 'Отпуск, каникулы, межвахта — всё, когда вы не работаете.'
-            : 'Вахта, работа в выходные — дни, когда вы работаете.'
+            ? 'Отпуск, каникулы, межвахта — всё, когда ты не работаешь.'
+            : 'Вахта, работа в выходные — дни, когда ты работаешь.'
         }}
       </p>
 

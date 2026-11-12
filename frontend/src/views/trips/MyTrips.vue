@@ -26,7 +26,7 @@ void load()
     <header class="flex flex-wrap items-center justify-between gap-2">
       <div class="flex flex-col gap-1">
         <h2 class="text-lg font-medium text-text">Мои походы</h2>
-        <p class="text-sm text-muted">Где вы организатор или участник.</p>
+        <p class="text-sm text-muted">Где ты организатор или участник.</p>
       </div>
     </header>
 
@@ -45,7 +45,7 @@ void load()
     </div>
 
     <p v-else-if="trips.length === 0" class="text-muted" data-test="my-trips-empty">
-      Здесь появятся походы, которые вы создадите или в которые вас позовут. Пока их нет.
+      Здесь появятся походы, которые ты создашь или в которые тебя позовут. Пока их нет.
     </p>
 
     <template v-else>

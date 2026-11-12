@@ -79,7 +79,7 @@ export class AuthService {
       await this.smtpService.sendEmail(
         email,
         'Код подтверждения PeakHunter',
-        `Ваш код подтверждения: ${code}\n\nКод действует 5 минут.`,
+        `Твой код подтверждения: ${code}\n\nКод действует 5 минут.`,
       );
     } catch (err) {
       this.emailCodeService.cancelCode(email, code);
@@ -87,7 +87,7 @@ export class AuthService {
         `Не удалось отправить код на ${email}: ${(err as Error).message}`,
       );
       throw new ServiceUnavailableException(
-        'Не удалось отправить письмо. Попробуйте позже',
+        'Не удалось отправить письмо. Попробуй позже',
       );
     }
 

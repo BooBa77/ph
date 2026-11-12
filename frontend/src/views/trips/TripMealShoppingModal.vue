@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
+import { subscribeTripEvents } from '@/api/events'
+import type { TripEvent } from '@/api/events'
 import { ApiError } from '@/api/errors'
 import { createTripExpense } from '@/api/finance'
 import {
@@ -9,6 +11,7 @@ import {
   updateMealCheck,
   updateMyMealCheck,
 } from '@/api/trips'
+import { useAuthStore } from '@/stores/auth'
 import type { TripMealCheck } from '@/types/trips'
 import { formatProductAmount } from '@/types/meals'
 import { parseRub } from '@/utils/money'
@@ -37,6 +40,13 @@ import { parseRub } from '@/utils/money'
  * в таблице движения денег и в балансе, и второй кассы не появляется.
  * Кого именно делить, решает **сервер** (`eatsSeparately`), а не экран:
  * список питающихся с общего приходит сюда только числом, для подписи.
+ *
+ * **Живой список (12.11.2026).** Заказчик: «Две группы закупщиков могут
+ * работать параллельно в соседних супермаркетах и хорошо бы при прокликивании
+ * закупленных продуктов коллеги были в курсе или если внезапно повар что-то
+ * вспомнил и добавил в чек-лист». Пока модалка открыта, она подписана на
+ * `/meals/events`: чужая отметка или правка раскладки перечитывает строки,
+ * своё действие пропускается — ответ на `PATCH` уже заменил список.
  *
  * Модалка — как у календаря: затемнение, Escape, клик мимо карточки.
  * Данные грузятся один раз; отметки правятся по месту, ответ бэкенда
@@ -91,7 +101,7 @@ async function saveCheck(): Promise<void> {
 
   const amount = parseRub(checkAmount.value)
   if (amount === null) {
-    checkError.value = 'Укажите сумму чека'
+    checkError.value = 'Укажи сумму чека'
     return
   }
   if (amount === undefined) {
@@ -140,6 +150,36 @@ async function load(): Promise<void> {
   }
 }
 
+// ───────────────────────────── живые обновления (SSE) ─────────────────────────────
+
+/**
+ * Две группы закупщиков в соседних магазинах (12.11.2026). Отметка
+ * «куплено», введённое количество и строка, которую завхоз добавил
+ * в раскладку, приезжают коллегам без перезахода в модалку.
+ *
+ * Поток открыт, пока модалка на экране: за её пределами список никто
+ * не смотрит, а лишнее соединение на телефоне стоит батареи. `scope`
+ * отсекает чужие вкладки, `actorId` — своё действие: ответ на `PATCH`
+ * уже заменил список, второй запрос только что сделанного не нужен.
+ */
+const LIVE_REFRESH_DELAY = 300
+
+const auth = useAuthStore()
+let stopLiveEvents: (() => void) | null = null
+let refreshTimer: ReturnType<typeof setTimeout> | null = null
+
+function onLiveEvent(event: TripEvent): void {
+  if (event.scope !== 'meals') return
+  if (event.actorId === (auth.user?.id ?? '')) return
+
+  if (refreshTimer !== null) return
+
+  refreshTimer = setTimeout(() => {
+    refreshTimer = null
+    void load()
+  }, LIVE_REFRESH_DELAY)
+}
+
 async function patchCheck(
   check: TripMealCheck,
   patch: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
@@ -174,11 +214,18 @@ function onKeydown(event: KeyboardEvent): void {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  stopLiveEvents = subscribeTripEvents(props.tripId, onLiveEvent, 'meals')
   void load()
 })
 
 onBeforeUnmount(() => {
   window.removeEventListener('keydown', onKeydown)
+
+  stopLiveEvents?.()
+  stopLiveEvents = null
+
+  if (refreshTimer !== null) clearTimeout(refreshTimer)
+  refreshTimer = null
 })
 </script>
 

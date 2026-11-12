@@ -5,11 +5,12 @@ import { Observable, Subject } from 'rxjs';
  * Что именно изменилось на вкладке.
  *
  * У «Снаряжения» два независимых куска данных: вещи с разделами (`gear`)
- * и чек-листы (`checklist`); у «Бухгалтерии» — один (`finance`). Клиент
- * по `scope` решает, что перезапросить: целиком всю вкладку дёргать
- * незачем, а перепутать куски значит показать старое рядом с новым.
+ * и чек-листы (`checklist`); у «Бухгалтерии» — один (`finance`);
+ * у «Питания» — раскладка и список покупок (`meals`). Клиент по `scope`
+ * решает, что перезапросить: целиком всю вкладку дёргать незачем,
+ * а перепутать куски значит показать старое рядом с новым.
  */
-export type TripEventScope = 'gear' | 'checklist' | 'finance';
+export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals';
 
 /**
  * Событие похода для подписчиков потока (SSE).
@@ -87,6 +88,19 @@ export class TripEventsService {
    */
   emitFinance(tripId: string, actorId: string): void {
     this.emit(tripId, 'finance', actorId);
+  }
+
+  /**
+   * Изменилось «Питание»: раскладка, отметки чек-листа, состав едоков.
+   *
+   * Заказчик про закупку: две группы закупщиков работают в соседних
+   * магазинах, и отметка «куплено» у одного должна доехать до второго.
+   * Событие шлётся и на правку раскладки (завхоз вспомнил продукт — строка
+   * появилась в общем списке), и на смену питания: едоки и «надо»
+   * пересчитываются у всех.
+   */
+  emitMeals(tripId: string, actorId: string): void {
+    this.emit(tripId, 'meals', actorId);
   }
 
   private emit(tripId: string, scope: TripEventScope, actorId: string): void {

@@ -335,7 +335,7 @@ describe('PeopleSearch (Контакты)', () => {
     const block = wrapper.find('[data-test="family-incoming"]')
     expect(block.exists()).toBe(true)
     expect(block.text()).toContain('Иван')
-    expect(block.text()).toContain('Ваша семья: Анна')
+    expect(block.text()).toContain('Твоя семья: Анна')
     expect(block.text()).toContain('Другая семья: Иван')
 
     await wrapper.find('[data-test="family-accept"]').trigger('click')

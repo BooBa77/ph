@@ -456,7 +456,7 @@ export class GearService {
       if (blocked) {
         throw new ConflictException(
           `Вещь стоит в походе «${blocked.title}», который ещё не закончился, — ` +
-            'сначала уберите её из снаряжения похода',
+            'сначала убери её из снаряжения похода',
         );
       }
 
@@ -543,7 +543,7 @@ export class GearService {
   private assertTypeActive(type: GearType): void {
     if (!type.isActive) {
       throw new BadRequestException(
-        'Тип снаряжения в архиве — выберите действующий',
+        'Тип снаряжения в архиве — выбери действующий',
       );
     }
   }
@@ -675,7 +675,7 @@ export class GearService {
 
     if (missing.length > 0) {
       throw new BadRequestException(
-        `Заполните обязательные характеристики: ${missing.join(', ')}`,
+        `Заполни обязательные характеристики: ${missing.join(', ')}`,
       );
     }
   }

@@ -152,7 +152,7 @@ async function save(): Promise<void> {
 
   const sum = parseRub(amount.value)
   if (sum === null) {
-    error.value = 'Укажите сумму расхода'
+    error.value = 'Укажи сумму расхода'
     return
   }
   if (sum === undefined) {
@@ -162,12 +162,12 @@ async function save(): Promise<void> {
 
   const text = description.value.trim()
   if (text === '' && split.value !== 'commonEaters') {
-    error.value = 'Опишите, за что расход'
+    error.value = 'Опиши, за что расход'
     return
   }
 
   if (split.value === 'group' && previewMembers.value.length === 0) {
-    error.value = 'Отметьте, на кого разделить расход'
+    error.value = 'Отметь, на кого разделить расход'
     return
   }
 
@@ -275,7 +275,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
       </label>
 
       <p v-else class="text-xs text-muted">
-        Плательщик — вы: этот расход запишется на ваше имя.
+        Плательщик — ты: этот расход запишется на твоё имя.
       </p>
 
       <!-- На кого разделить: сегменты, как в постановке «общий или на группу» -->

@@ -144,14 +144,14 @@ async function onFileSelected(event: Event) {
 
   if (file.size > MAX_AVATAR_BYTES) {
     const megabytes = Math.round(MAX_AVATAR_BYTES / (1024 * 1024))
-    error.value = `Файл больше ${megabytes} МБ. Выберите фото поменьше.`
+    error.value = `Файл больше ${megabytes} МБ. Выбери фото поменьше.`
     return
   }
 
   if (!(await canBrowserDecode(file))) {
     error.value = looksLikeHeic(file)
-      ? 'Фотографии в формате HEIC этот браузер показать не может. Сохраните фото как JPEG или загрузите его с телефона.'
-      : 'Не удалось прочитать этот файл как изображение. Выберите другое фото.'
+      ? 'Фотографии в формате HEIC этот браузер показать не может. Сохрани фото как JPEG или загрузи его с телефона.'
+      : 'Не удалось прочитать этот файл как изображение. Выбери другое фото.'
     return
   }
 
@@ -180,7 +180,7 @@ async function saveAvatar(blob: Blob) {
     pendingFile.value = null
   } catch (e) {
     error.value =
-      e instanceof ApiError ? e.message : 'Не удалось загрузить аватарку. Попробуйте ещё раз.'
+      e instanceof ApiError ? e.message : 'Не удалось загрузить аватарку. Попробуй ещё раз.'
   }
 }
 
@@ -199,7 +199,7 @@ async function removeAvatar() {
     auth.setUser(updated)
   } catch (e) {
     error.value =
-      e instanceof ApiError ? e.message : 'Не удалось убрать аватарку. Попробуйте ещё раз.'
+      e instanceof ApiError ? e.message : 'Не удалось убрать аватарку. Попробуй ещё раз.'
   }
 }
 </script>
@@ -219,7 +219,7 @@ async function removeAvatar() {
         <div class="text-sm text-muted md:w-48 md:shrink-0">Аватарка</div>
 
         <div class="flex items-center gap-4">
-          <UserAvatar :src="avatarUrl" :size="80" alt="Ваша аватарка" />
+          <UserAvatar :src="avatarUrl" :size="80" alt="Твоя аватарка" />
 
           <div class="flex flex-col gap-2">
             <input
@@ -257,7 +257,7 @@ async function removeAvatar() {
         :model-value="displayName"
         :min-length="2"
         :max-length="50"
-        placeholder="Введите имя"
+        placeholder="Введи имя"
         @save="saveDisplayName"
       />
 
@@ -267,7 +267,7 @@ async function removeAvatar() {
           :model-value="location"
           :max-length="100"
           allow-empty
-          placeholder="Введите город"
+          placeholder="Введи город"
           @save="saveLocation"
         />
 
@@ -377,8 +377,8 @@ async function removeAvatar() {
       и состав общего похода.
     -->
     <p class="mb-2 text-sm text-muted">
-      Пригодятся, когда в походе будете рассчитываться друг с другом: участники
-      ваших совместных походов увидят их подсказкой при переводе. В публичный
+      Пригодятся, когда в походе будешь рассчитываться друг с другом: участники
+      твоих совместных походов увидят их подсказкой при переводе. В публичный
       профиль они не попадают.
     </p>
 

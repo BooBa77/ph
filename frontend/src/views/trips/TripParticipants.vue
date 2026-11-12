@@ -250,7 +250,7 @@ async function act(userId: string | null, action: () => Promise<unknown>) {
     emit('changed')
   } catch (problem) {
     actionError.value =
-      problem instanceof ApiError ? problem.message : 'Не получилось — попробуйте ещё раз'
+      problem instanceof ApiError ? problem.message : 'Не получилось — попробуй ещё раз'
   } finally {
     pendingUserId.value = null
   }
@@ -596,7 +596,7 @@ function invite(person: UserSearchResult) {
         <input
           v-model="query"
           type="search"
-          placeholder="Начните вводить имя — от двух букв"
+          placeholder="Начни вводить имя — от двух букв"
           class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
           data-test="invite-search"
         />
@@ -741,7 +741,7 @@ function invite(person: UserSearchResult) {
         class="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-surface p-3"
         data-test="my-invitation"
       >
-        <span class="text-sm text-text">Вас пригласили в поход.</span>
+        <span class="text-sm text-text">Тебя пригласили в поход.</span>
         <button
           type="button"
           class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"

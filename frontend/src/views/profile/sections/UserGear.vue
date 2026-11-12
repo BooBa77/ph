@@ -441,14 +441,14 @@ async function add() {
   const type = newType.value
 
   if (type === null) {
-    error.value = 'Выберите тип снаряжения: характеристики вещи задаёт тип.'
+    error.value = 'Выбери тип снаряжения: характеристики вещи задаёт тип.'
     return
   }
   if (title.length === 0 || isAdding.value) return
 
   const weightGrams = parseWeightGrams(newWeight.value)
   if (weightGrams === undefined) {
-    error.value = 'Вес — целое число граммов, больше нуля. Или оставьте поле пустым.'
+    error.value = 'Вес — целое число граммов, больше нуля. Или оставь поле пустым.'
     return
   }
 
@@ -508,7 +508,7 @@ function cancelEditAttributes() {
 async function saveAttributes(item: GearItem) {
   const type = editType.value
   if (type === null) {
-    error.value = 'Выберите действующий тип снаряжения: тип вещи в архиве.'
+    error.value = 'Выбери действующий тип снаряжения: тип вещи в архиве.'
     return
   }
 
@@ -994,7 +994,7 @@ async function removeVehicleById(vehicle: Vehicle) {
         class="mt-4 rounded-xl border border-dashed border-border p-4 text-sm text-muted"
         data-test="gear-empty"
       >
-        Список пуст. Начните с того, что точно поедет в следующий поход: палатка, спальник, рюкзак.
+        Список пуст. Начни с того, что точно поедет в следующий поход: палатка, спальник, рюкзак.
       </p>
 
       <template v-else>
@@ -1107,13 +1107,13 @@ async function removeVehicleById(vehicle: Vehicle) {
           class="rounded-xl border border-dashed border-border p-4 text-sm text-muted"
           data-test="gear-filter-empty"
         >
-          Ничего не найдено. Измените фильтр или
+          Ничего не найдено. Измени фильтр или
           <button
             type="button"
             class="cursor-pointer text-primary underline"
             @click="filterTitle = ''; filterLocation = ''"
           >
-            сбросьте его
+            сбрось его
           </button>
           .
         </p>
@@ -1356,7 +1356,7 @@ async function removeVehicleById(vehicle: Vehicle) {
                     class="text-xs text-muted"
                     data-test="item-type-archived"
                   >
-                    Тип вещи в архиве справочника: выберите действующий. При смене типа значения прежнего
+                    Тип вещи в архиве справочника: выбери действующий. При смене типа значения прежнего
                     типа стираются.
                   </p>
 

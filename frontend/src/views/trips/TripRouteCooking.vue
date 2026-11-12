@@ -1039,7 +1039,7 @@ function dishText(row: TripGearItem): string {
             :disabled="isGearLoading"
             data-test="route-cooking-gear"
           >
-            <option value="">выберите…</option>
+            <option value="">выбери…</option>
             <option v-for="item in myGear" :key="item.id" :value="item.id">
               {{ gearOptionText(item) }}
             </option>
@@ -1051,8 +1051,8 @@ function dishText(row: TripGearItem): string {
           class="text-xs text-muted"
           data-test="route-cooking-no-gear"
         >
-          Подходящей вещи в личном снаряжении нет — заведите её в профиле,
-          на вкладке «Снаряжение», или укажите вручную.
+          Подходящей вещи в личном снаряжении нет — заведи её в профиле,
+          на вкладке «Снаряжение», или укажи вручную.
         </p>
 
         <!--
@@ -1144,7 +1144,7 @@ function dishText(row: TripGearItem): string {
               class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:text-sm"
               data-test="route-cooking-dishes-gear"
             >
-              <option value="">выберите…</option>
+              <option value="">выбери…</option>
               <option v-for="item in dishCatalog" :key="item.id" :value="item.id">
                 {{ gearOptionText(item) }}
               </option>
@@ -1156,8 +1156,8 @@ function dishText(row: TripGearItem): string {
             class="text-xs text-muted"
             data-test="route-cooking-dishes-no-gear"
           >
-            Подходящей вещи в личном снаряжении нет — заведите её в профиле
-            или укажите вручную.
+            Подходящей вещи в личном снаряжении нет — заведи её в профиле
+            или укажи вручную.
           </p>
 
           <button

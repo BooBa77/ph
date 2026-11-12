@@ -489,7 +489,7 @@ export class TripRouteService {
       (kind === null || !PLACE_NIGHT_KINDS.includes(kind))
     ) {
       throw new BadRequestException(
-        'Место — только у ночи с ночлегом: выберите вариант или уберите район',
+        'Место — только у ночи с ночлегом: выбери вариант или убери район',
       );
     }
 
@@ -639,13 +639,13 @@ export class TripRouteService {
 
     if (tent === undefined) {
       throw new BadRequestException(
-        'Палатка не из снаряжения этого похода — добавьте её в снаряжение',
+        'Палатка не из снаряжения этого похода — добавь её в снаряжение',
       );
     }
 
     if (tent.status === 'declined') {
       throw new BadRequestException(
-        'Эта палатка не едет в походе — выберите другую',
+        'Эта палатка не едет в походе — выбери другую',
       );
     }
 

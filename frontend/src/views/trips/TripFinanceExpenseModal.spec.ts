@@ -147,7 +147,7 @@ describe('модалка расхода', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-expense-error"]').text()).toBe(
-      'Опишите, за что расход',
+      'Опиши, за что расход',
     )
     expect(mocks.createTripExpense).not.toHaveBeenCalled()
   })
@@ -183,7 +183,7 @@ describe('модалка расхода', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-expense-error"]').text()).toBe(
-      'Отметьте, на кого разделить расход',
+      'Отметь, на кого разделить расход',
     )
     expect(mocks.createTripExpense).not.toHaveBeenCalled()
   })
@@ -234,7 +234,7 @@ describe('модалка расхода', () => {
     const wrapper = mountModal()
 
     expect(wrapper.find('[data-test="finance-expense-payer"]').exists()).toBe(false)
-    expect(wrapper.text()).toContain('Плательщик — вы')
+    expect(wrapper.text()).toContain('Плательщик — ты')
   })
 
   it('правка чека: третий сегмент на месте, пустой комментарий допустим', async () => {

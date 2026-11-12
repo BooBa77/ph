@@ -439,7 +439,7 @@ describe('вкладка «Бухгалтерия»', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-hint"]').text()).toBe(
-      'Перевод делает должник — не вы.',
+      'Перевод делает должник — не ты.',
     )
   })
 

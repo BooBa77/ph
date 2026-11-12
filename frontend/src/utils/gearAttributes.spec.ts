@@ -88,7 +88,7 @@ describe('buildGearAttributes', () => {
   it('пустое обязательное не отправляется, текст — как у сервера', () => {
     const built = buildGearAttributes([SEATS], { seats: '   ' })
 
-    expect(built.error).toBe('Заполните обязательные характеристики: «Вместимость»')
+    expect(built.error).toBe('Заполни обязательные характеристики: «Вместимость»')
   })
 
   it('галочка всегда true или false и никогда не блокирует отправку', () => {

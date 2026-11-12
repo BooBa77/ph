@@ -185,7 +185,7 @@ describe('TripGearManualModal («указать вручную»)', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="manual-error"]').text()).toContain(
-      'Заполните обязательные характеристики: «Вместимость»',
+      'Заполни обязательные характеристики: «Вместимость»',
     )
     expect(mocks.addManualTripGear).not.toHaveBeenCalled()
   })

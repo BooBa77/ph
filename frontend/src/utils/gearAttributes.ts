@@ -113,7 +113,7 @@ export function buildGearAttributes(
   if (missing.length > 0) {
     return {
       attributes: values,
-      error: `Заполните обязательные характеристики: ${missing.join(', ')}`,
+      error: `Заполни обязательные характеристики: ${missing.join(', ')}`,
     }
   }
 
