@@ -2884,6 +2884,95 @@ rows.push([
   personalSectionSpilled === null ? '' : `section_id=${personalSectionSpilled}`,
 ]);
 
+// ─── деньги: «Бухгалтерия» похода ───
+//
+// Арифметику проверяют e2e и юнит-тесты, а здесь — то, что держит база:
+// CHECK-и сумм, описания, словаря деления и состояний компенсации.
+// Составной инвариант «сумма долей = расходу» — забота сервиса: триггер
+// на каждую вставку доли дороже, чем проверка в одном месте.
+const financeExpenseId = (
+  await client.query(
+    `INSERT INTO trip_expenses
+       (trip_id, author_user_id, amount_rub, description, split, spent_at)
+     VALUES ($1, $2, 1000, 'Продукты', 'group', '2026-11-11')
+     RETURNING id`,
+    [otherTripId, user1],
+  )
+).rows[0].id;
+
+rows.push(['ok', 'деньги: расход создаётся', '']);
+
+await check(
+  'деньги: нулевой расход запрещён',
+  'fail',
+  `INSERT INTO trip_expenses
+     (trip_id, author_user_id, amount_rub, description, spent_at)
+   VALUES ($1, $2, 0, 'Ноль', '2026-11-11')`,
+  [otherTripId, user1],
+);
+
+await check(
+  'деньги: расход без описания запрещён',
+  'fail',
+  `INSERT INTO trip_expenses
+     (trip_id, author_user_id, amount_rub, description, spent_at)
+   VALUES ($1, $2, 100, '   ', '2026-11-11')`,
+  [otherTripId, user1],
+);
+
+await check(
+  'деньги: способ деления вне словаря запрещён',
+  'fail',
+  `INSERT INTO trip_expenses
+     (trip_id, author_user_id, amount_rub, description, split, spent_at)
+   VALUES ($1, $2, 100, 'Опыт', 'по-братски', '2026-11-11')`,
+  [otherTripId, user1],
+);
+
+await check(
+  'деньги: отрицательная доля запрещена',
+  'fail',
+  `INSERT INTO trip_expense_shares (expense_id, user_id, amount_rub)
+   VALUES ($1, $2, -1)`,
+  [financeExpenseId, user2],
+);
+
+await check(
+  'деньги: компенсация самому себе запрещена',
+  'fail',
+  `INSERT INTO trip_compensations
+     (trip_id, from_user_id, to_user_id, amount_rub)
+   VALUES ($1, $2, $2, 100)`,
+  [otherTripId, user1],
+);
+
+await check(
+  'деньги: подтверждённая компенсация без даты запрещена',
+  'fail',
+  `INSERT INTO trip_compensations
+     (trip_id, from_user_id, to_user_id, amount_rub, status)
+   VALUES ($1, $2, $3, 100, 'confirmed')`,
+  [otherTripId, user1, user2],
+);
+
+await check(
+  'деньги: ожидающая компенсация с датой запрещена',
+  'fail',
+  `INSERT INTO trip_compensations
+     (trip_id, from_user_id, to_user_id, amount_rub, status, confirmed_at)
+   VALUES ($1, $2, $3, 100, 'pending', now())`,
+  [otherTripId, user1, user2],
+);
+
+await client.query(
+  `INSERT INTO trip_compensations
+     (trip_id, from_user_id, to_user_id, amount_rub, status, confirmed_at)
+   VALUES ($1, $2, $3, 100, 'confirmed', now())`,
+  [otherTripId, user1, user2],
+);
+
+rows.push(['ok', 'деньги: подтверждённая компенсация с датой принимается', '']);
+
 await client.query('ROLLBACK');
 await client.end();
 

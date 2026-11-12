@@ -1,0 +1,312 @@
+import { ApiProperty } from '@nestjs/swagger';
+import {
+  ArrayMaxSize,
+  ArrayUnique,
+  IsArray,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
+
+import type { TripCompensation } from '../entities/trip-compensation.entity';
+import type { TripExpense } from '../entities/trip-expense.entity';
+import {
+  EXPENSE_SPLITS,
+  type CompensationOption,
+  type ExpenseSplit,
+} from '../finance';
+
+/** Потолок суммы — чтобы опечатка в лишний ноль не ломала арифметику. */
+const MAX_AMOUNT_RUB = 10_000_000;
+
+/**
+ * Тело `POST/PATCH /api/trips/:id/finance/expenses`.
+ *
+ * Одна форма на создание и правку: модалка всегда отправляет все поля
+ * целиком, а частичная правка суммы без долей оставила бы расход
+ * с долями от прежней суммы. `participantIds` нужен только для
+ * `split = 'group'`; для «на всех» и «на питающихся с общего» состав
+ * считает сервер, а не клиент, — иначе группу можно было бы подменить.
+ */
+export class SaveTripExpenseDto {
+  @ApiProperty({
+    description: 'Сумма расхода в рублях, целая',
+    example: 12000,
+    minimum: 1,
+    maximum: MAX_AMOUNT_RUB,
+  })
+  @IsInt({ message: 'Сумма — целое число рублей' })
+  @Min(1, { message: 'Сумма должна быть больше нуля' })
+  @Max(MAX_AMOUNT_RUB, {
+    message: `Сумма не должна превышать ${MAX_AMOUNT_RUB} ₽`,
+  })
+  amountRub: number;
+
+  @ApiProperty({
+    description:
+      'За что расход. Для «Чека» можно не передавать — запишется «на продукты».',
+    example: 'Продукты на всё время похода',
+    maxLength: 200,
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(200, { message: 'Описание не должно превышать 200 символов' })
+  description?: string;
+
+  @ApiProperty({
+    description:
+      'all — на всех идущих, group — на выбранных участников, commonEaters — на питающихся с общего',
+    enum: EXPENSE_SPLITS,
+    example: 'all',
+  })
+  @IsIn(EXPENSE_SPLITS, {
+    message: 'Деление: all, group или commonEaters',
+  })
+  split: ExpenseSplit;
+
+  @ApiProperty({
+    description: 'Кого включать в доли — только для split = group',
+    type: [String],
+    required: false,
+  })
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique({ message: 'Участник в расходах повторяется' })
+  @ArrayMaxSize(50, { message: 'Слишком много участников в одном расходе' })
+  @IsUUID('all', { each: true, message: 'Участник должен быть человеком' })
+  participantIds?: string[];
+
+  @ApiProperty({
+    description: 'Дата траты ГГГГ-ММ-ДД. Не передана — сегодня',
+    example: '2026-11-11',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'Дата — в виде ГГГГ-ММ-ДД' })
+  spentAt?: string;
+}
+
+/** Тело `POST /api/trips/:id/finance/compensations`. */
+export class CreateTripCompensationDto {
+  @ApiProperty({
+    description: 'Кому переводит должник',
+    example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
+  })
+  @IsUUID('all', { message: 'Получатель должен быть человеком' })
+  toUserId: string;
+
+  @ApiProperty({
+    description: 'Сумма перевода в рублях, целая',
+    example: 1000,
+    minimum: 1,
+    maximum: MAX_AMOUNT_RUB,
+  })
+  @IsInt({ message: 'Сумма — целое число рублей' })
+  @Min(1, { message: 'Сумма должна быть больше нуля' })
+  @Max(MAX_AMOUNT_RUB, {
+    message: `Сумма не должна превышать ${MAX_AMOUNT_RUB} ₽`,
+  })
+  amountRub: number;
+}
+
+/** Доля в ответе: имя рядом с суммой, чтобы таблица не собирала его сама. */
+export class TripExpenseShareDto {
+  @ApiProperty()
+  userId: string;
+
+  @ApiProperty()
+  displayName: string;
+
+  @ApiProperty()
+  amountRub: number;
+}
+
+/** Строка расхода в таблице движения денег. */
+export class TripExpenseDto {
+  @ApiProperty({ example: '12' })
+  id: string;
+
+  @ApiProperty({ description: 'Дата траты', example: '2026-11-11' })
+  spentAt: string;
+
+  @ApiProperty()
+  authorUserId: string;
+
+  @ApiProperty({ example: 'Григорий' })
+  authorName: string;
+
+  @ApiProperty({ nullable: true })
+  authorAvatarUrl: string | null;
+
+  @ApiProperty({ example: 12000 })
+  amountRub: number;
+
+  @ApiProperty({ example: 'Продукты' })
+  description: string;
+
+  @ApiProperty({ enum: EXPENSE_SPLITS })
+  split: ExpenseSplit;
+
+  @ApiProperty({ type: [TripExpenseShareDto] })
+  shares: TripExpenseShareDto[];
+
+  @ApiProperty({ description: 'Может ли текущий человек править запись' })
+  canEdit: boolean;
+
+  static from(expense: TripExpense, viewerId: string): TripExpenseDto {
+    return {
+      id: expense.id,
+      spentAt: expense.spentAt,
+      authorUserId: expense.authorUserId,
+      authorName: expense.author?.displayName ?? '',
+      authorAvatarUrl: expense.author?.avatarUrl ?? null,
+      amountRub: expense.amountRub,
+      description: expense.description,
+      split: expense.split,
+      shares: (expense.shares ?? []).map((share) => ({
+        userId: share.userId,
+        displayName: share.user?.displayName ?? '',
+        amountRub: share.amountRub,
+      })),
+      canEdit: expense.authorUserId === viewerId,
+    };
+  }
+}
+
+/** Строка компенсации в таблице движения денег. */
+export class TripCompensationDto {
+  @ApiProperty({ example: '3' })
+  id: string;
+
+  @ApiProperty({ description: 'Когда создана' })
+  createdAt: string;
+
+  @ApiProperty()
+  fromUserId: string;
+
+  @ApiProperty({ example: 'Анна' })
+  fromName: string;
+
+  @ApiProperty()
+  toUserId: string;
+
+  @ApiProperty({ example: 'Григорий' })
+  toName: string;
+
+  @ApiProperty({ example: 1000 })
+  amountRub: number;
+
+  @ApiProperty({ enum: ['pending', 'confirmed'] })
+  status: 'pending' | 'confirmed';
+
+  @ApiProperty({ nullable: true })
+  confirmedAt: string | null;
+
+  @ApiProperty({ description: 'Может ли текущий человек подтвердить' })
+  canConfirm: boolean;
+
+  @ApiProperty({ description: 'Может ли текущий человек отменить запись' })
+  canCancel: boolean;
+
+  static from(compensation: TripCompensation, viewerId: string): TripCompensationDto {
+    return {
+      id: compensation.id,
+      createdAt: compensation.createdAt.toISOString(),
+      fromUserId: compensation.fromUserId,
+      fromName: compensation.fromUser?.displayName ?? '',
+      toUserId: compensation.toUserId,
+      toName: compensation.toUser?.displayName ?? '',
+      amountRub: compensation.amountRub,
+      status: compensation.status,
+      confirmedAt: compensation.confirmedAt?.toISOString() ?? null,
+      canConfirm:
+        compensation.toUserId === viewerId && compensation.status === 'pending',
+      canCancel:
+        compensation.fromUserId === viewerId &&
+        compensation.status === 'pending',
+    };
+  }
+}
+
+/**
+ * Участник с балансом и реквизитами.
+ *
+ * Реквизиты отдаются только здесь — в ответе «Бухгалтерии», куда имеет
+ * доступ лишь состав похода. В публичный профиль и список участников
+ * они не попадают.
+ */
+export class FinanceMemberDto {
+  @ApiProperty()
+  userId: string;
+
+  @ApiProperty()
+  displayName: string;
+
+  @ApiProperty({ nullable: true })
+  avatarUrl: string | null;
+
+  @ApiProperty({ description: 'Положительный — должны ему' })
+  balanceRub: number;
+
+  @ApiProperty({ description: 'Баланс с учётом ожидающих компенсаций' })
+  remainingRub: number;
+
+  @ApiProperty({ nullable: true })
+  paymentDetails: string | null;
+
+  @ApiProperty({ nullable: true })
+  paymentBank: string | null;
+}
+
+/** Вариант «кому перевести» в модалке компенсации. */
+export class CompensationOptionDto implements CompensationOption {
+  @ApiProperty()
+  userId: string;
+
+  @ApiProperty()
+  displayName: string;
+
+  @ApiProperty()
+  amountRub: number;
+
+  @ApiProperty({ nullable: true })
+  paymentDetails: string | null;
+
+  @ApiProperty({ nullable: true })
+  paymentBank: string | null;
+}
+
+/** Мой баланс и подсказки — то, что видит человек в шапке вкладки. */
+export class MyFinanceDto {
+  @ApiProperty()
+  balanceRub: number;
+
+  @ApiProperty()
+  remainingRub: number;
+
+  @ApiProperty({ type: [CompensationOptionDto] })
+  suggestions: CompensationOptionDto[];
+}
+
+/** Ответ `GET /api/trips/:id/finance` — вся вкладка одним запросом. */
+export class TripFinanceDto {
+  @ApiProperty({ type: [TripExpenseDto] })
+  expenses: TripExpenseDto[];
+
+  @ApiProperty({ type: [TripCompensationDto] })
+  compensations: TripCompensationDto[];
+
+  @ApiProperty({ type: [FinanceMemberDto] })
+  members: FinanceMemberDto[];
+
+  @ApiProperty({ type: MyFinanceDto })
+  me: MyFinanceDto;
+}

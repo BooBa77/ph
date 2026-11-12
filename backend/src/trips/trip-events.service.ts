@@ -4,12 +4,12 @@ import { Observable, Subject } from 'rxjs';
 /**
  * Что именно изменилось на вкладке.
  *
- * Пока вкладка одна — «Снаряжение», и у неё два независимых куска данных:
- * вещи с разделами (`gear`) и чек-листы (`checklist`). Клиент по `scope`
- * решает, что перезапросить: целиком всю вкладку дёргать незачем, а
- * перепутать их значит показать старое рядом с новым.
+ * У «Снаряжения» два независимых куска данных: вещи с разделами (`gear`)
+ * и чек-листы (`checklist`); у «Бухгалтерии» — один (`finance`). Клиент
+ * по `scope` решает, что перезапросить: целиком всю вкладку дёргать
+ * незачем, а перепутать куски значит показать старое рядом с новым.
  */
-export type TripEventScope = 'gear' | 'checklist';
+export type TripEventScope = 'gear' | 'checklist' | 'finance';
 
 /**
  * Событие похода для подписчиков потока (SSE).
@@ -76,6 +76,17 @@ export class TripEventsService {
   /** Изменились чек-листы похода: пункт, отметка, импорт. */
   emitChecklist(tripId: string, actorId: string): void {
     this.emit(tripId, 'checklist', actorId);
+  }
+
+  /**
+   * Изменились деньги похода: расход, компенсация или её подтверждение.
+   *
+   * Заказчик: «здесь очень важен SSE, обычно за компенсацию берутся
+   * на обратной дороге и все в раз». Поэтому сигнал шлётся на каждую
+   * денежную операцию, а вкладка перечитывает таблицу.
+   */
+  emitFinance(tripId: string, actorId: string): void {
+    this.emit(tripId, 'finance', actorId);
   }
 
   private emit(tripId: string, scope: TripEventScope, actorId: string): void {

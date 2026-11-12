@@ -22,6 +22,9 @@ import { TripMeal } from './entities/trip-meal.entity';
 import { TripMembershipRequest } from './entities/trip-membership-request.entity';
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
+import { TripCompensation } from './entities/trip-compensation.entity';
+import { TripExpense } from './entities/trip-expense.entity';
+import { TripExpenseShare } from './entities/trip-expense-share.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
 import { TripRouteLodger } from './entities/trip-route-lodger.entity';
 import { TripRouteNight } from './entities/trip-route-night.entity';
@@ -36,6 +39,9 @@ import { TripEventsService } from './trip-events.service';
 import { TripsService } from './trips.service';
 import { TripMealsController } from './trip-meals.controller';
 import { TripMealsService } from './trip-meals.service';
+import { TripFinanceController } from './trip-finance.controller';
+import { TripFinanceEventsController } from './trip-finance-events.controller';
+import { TripFinanceService } from './trip-finance.service';
 import { TripMyMealsController } from './trip-my-meals.controller';
 import { TripRouteController } from './trip-route.controller';
 import { TripRouteService } from './trip-route.service';
@@ -92,6 +98,9 @@ import { ObjectsService } from './objects.service';
       TripParticipant,
       TripParticipantRole,
       TripMembershipRequest,
+      TripExpense,
+      TripExpenseShare,
+      TripCompensation,
       Conversation,
       ConversationMember,
       Message,
@@ -103,6 +112,8 @@ import { ObjectsService } from './objects.service';
   controllers: [
     TripsController,
     TripMealsController,
+    TripFinanceController,
+    TripFinanceEventsController,
     TripMyMealsController,
     TripRouteController,
     TripTransferController,
@@ -114,6 +125,7 @@ import { ObjectsService } from './objects.service';
   providers: [
     TripsService,
     TripEventsService,
+    TripFinanceService,
     TripMealsService,
     TripRouteService,
     TripTransferService,
@@ -125,6 +137,7 @@ import { ObjectsService } from './objects.service';
   exports: [
     TripsService,
     TripEventsService,
+    TripFinanceService,
     TripMealsService,
     TripRouteService,
     TripTransferService,

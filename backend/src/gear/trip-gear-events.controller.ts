@@ -1,14 +1,12 @@
-import { Controller, Get, HttpStatus, Param, ParseIntPipe, Req, Res } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Req, Res } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
+import { streamTripEvents } from '../trips/trip-events-stream';
 import { TripEventsService } from '../trips/trip-events.service';
 import { TripGearService } from './trip-gear.service';
-
-/** Как часто писать в поток пустой комментарий, чтобы прокси не закрыли. */
-const HEARTBEAT_MS = 25_000;
 
 /**
  * Живые изменения вкладки «Снаряжение» — Server-Sent Events (06.11.2026).
@@ -65,48 +63,6 @@ export class TripGearEventsController {
     // Проверка до заголовков: отказавшему достаётся обычный 403/404 JSON.
     await this.tripGear.assertCanWatch(authUser.id, id);
 
-    response.status(HttpStatus.OK);
-    response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
-    // `no-transform` — чтобы сжатие посредника не копило кадры в буфере.
-    response.setHeader('Cache-Control', 'no-cache, no-transform');
-    response.setHeader('Connection', 'keep-alive');
-    /**
-     * nginx по умолчанию копит ответ в буфере: «онлайн»-события приезжали бы
-     * пачками по мере заполнения буфера. Заголовок отключает это для
-     * конкретного ответа, не трогая конфиг сервера.
-     */
-    response.setHeader('X-Accel-Buffering', 'no');
-    response.flushHeaders();
-
-    // Просим клиента переподключаться через 3 с, если связь оборвалась.
-    response.write('retry: 3000\n\n');
-
-    const subscription = this.events
-      .stream(String(id))
-      .subscribe((event) => response.write(`event: trip\ndata: ${JSON.stringify(event)}\n\n`));
-
-    /**
-     * Пустой комментарий раз в 25 секунд. Нужен не клиенту, а посредникам:
-     * nginx и мобильные сети закрывают соединение, по которому ничего не
-     * шло. `: ping` — законный кадр SSE, парсер его пропускает.
-     */
-    const heartbeat = setInterval(() => response.write(': ping\n\n'), HEARTBEAT_MS);
-
-    let closed = false;
-    const close = (): void => {
-      if (closed) return;
-      closed = true;
-
-      clearInterval(heartbeat);
-      subscription.unsubscribe();
-      // Клиент уже ушёл — `end` завершит ответ, если сокет ещё открыт.
-      if (!response.writableEnded) response.end();
-    };
-
-    // `close` приходит и при обрыве, и после штатного `end` — повтор
-    // отсекает флаг: `clearInterval` и `unsubscribe` идемпотентны, но
-    // лишний `end` в закрытый ответ пишет предупреждение в лог.
-    request.on('close', close);
-    response.on('close', close);
+    streamTripEvents(this.events, String(id), request, response);
   }
 }
