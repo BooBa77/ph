@@ -16,6 +16,7 @@ import {
 
 import type { TripCompensation } from '../entities/trip-compensation.entity';
 import type { TripExpense } from '../entities/trip-expense.entity';
+import { USER_GENDERS, type UserGender } from '../../users/gender.types';
 import {
   EXPENSE_SPLITS,
   type CompensationOption,
@@ -97,7 +98,8 @@ export class SaveTripExpenseDto {
 /** Тело `POST /api/trips/:id/finance/compensations`. */
 export class CreateTripCompensationDto {
   @ApiProperty({
-    description: 'Кому переводит должник',
+    description:
+      'Любой человек семьи получателя: сумма уходит всей семье, а сервер раскладывает её по личным долгам и кредитам',
     example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
   })
   @IsUUID('all', { message: 'Получатель должен быть человеком' })
@@ -266,22 +268,48 @@ export class FinanceMemberDto {
   paymentBank: string | null;
 }
 
-/** Вариант «кому перевести» в модалке компенсации. */
-export class CompensationOptionDto implements CompensationOption {
+/** Получатель внутри варианта компенсации: реквизиты и пол для подписи. */
+export class CompensationPersonDto {
   @ApiProperty()
   userId: string;
 
   @ApiProperty()
   displayName: string;
 
-  @ApiProperty()
-  amountRub: number;
+  @ApiProperty({
+    description: 'Пол: m — мужской, f — женский. Нужен подписи об отсутствии реквизитов',
+    enum: USER_GENDERS,
+    example: 'f',
+  })
+  gender: UserGender;
 
   @ApiProperty({ nullable: true })
   paymentDetails: string | null;
 
   @ApiProperty({ nullable: true })
   paymentBank: string | null;
+}
+
+/**
+ * Вариант «кому перевести» в модалке компенсации.
+ *
+ * С 12.11.2026 вариант — **семья целиком**: «Вася и Аня» одной строкой,
+ * а сумма — `min(долг моей семьи, кредит этой семьи)`. Поэтому здесь
+ * `userIds` и `members`, а не один человек: реквизиты показываются у всех,
+ * у кого они есть.
+ */
+export class CompensationOptionDto implements CompensationOption {
+  @ApiProperty({ type: [String] })
+  userIds: string[];
+
+  @ApiProperty({ example: 'Вася и Аня' })
+  displayName: string;
+
+  @ApiProperty({ description: 'Сколько можно перевести этой семье' })
+  amountRub: number;
+
+  @ApiProperty({ type: [CompensationPersonDto] })
+  members: CompensationPersonDto[];
 }
 
 /** Мой баланс и подсказки — то, что видит человек в шапке вкладки. */
@@ -291,6 +319,16 @@ export class MyFinanceDto {
 
   @ApiProperty()
   remainingRub: number;
+
+  @ApiProperty({
+    description: 'Долг всей моей семьи — по нему считается сумма компенсации',
+  })
+  familyDebtRub: number;
+
+  @ApiProperty({
+    description: 'Кредит всей моей семьи — по нему объясняется отказ кнопки',
+  })
+  familyCreditRub: number;
 
   @ApiProperty({
     description:

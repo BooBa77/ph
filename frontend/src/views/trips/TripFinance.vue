@@ -17,7 +17,7 @@ import type {
   TripFinance,
 } from '@/types/finance'
 import { movementRows, splitCaption, type MoneyRow } from '@/utils/finance'
-import { balancePhrase, formatDay, formatRub, formatRubSigned } from '@/utils/money'
+import { formatDay, formatRub, formatRubSigned } from '@/utils/money'
 import TripChat from '@/views/trips/TripChat.vue'
 import TripFinanceCompensationModal from '@/views/trips/TripFinanceCompensationModal.vue'
 import TripFinanceExpenseModal from '@/views/trips/TripFinanceExpenseModal.vue'
@@ -180,17 +180,22 @@ const canCompensate = computed(() => canSpend.value && suggestions.value.length 
  * Почему кнопка «Компенсация» выключена. Пустая строка — кнопка работает.
  * Одна фраза на один случай: «вам должны» и «всё в расчёте» — разные дела,
  * и человеку важно, какое именно у него.
+ *
+ * Считается по **семье**: с 12.11.2026 платит она, и личный остаток
+ * смотрящего может быть нулевым, пока долг есть у его родных.
  */
 const compensationHint = computed(() => {
   if (finance.value === null) return ''
   if (!canSpend.value) return 'Расходы и переводы может менять только идущий участник похода.'
   if (suggestions.value.length > 0) return ''
 
-  const remaining = finance.value.me.remainingRub
-  if (remaining > 0) return 'Вам должны — перевод делает должник, а не вы.'
-  if (remaining === 0) return 'Всё в расчёте — переводить нечего.'
+  const debt = finance.value.me.familyDebtRub
+  const credit = finance.value.me.familyCreditRub
 
-  return 'Долг есть, но кредит уже забронирован ожидающими переводами.'
+  if (debt > 0) return 'Долг есть, но кредит уже забронирован ожидающими переводами.'
+  if (credit > 0) return 'Вам должны — перевод делает должник, а не вы.'
+
+  return 'Всё в расчёте — переводить нечего.'
 })
 
 const balanceClass = computed(() => {
@@ -202,7 +207,14 @@ const balanceClass = computed(() => {
   return 'text-text'
 })
 
-const balanceText = computed(() => balancePhrase(finance.value?.me.balanceRub ?? 0))
+/**
+ * Баланс — цифрой со знаком, а не фразой «Вы должны».
+ *
+ * Заказчик 12.11.2026: «не нужно это некрасивое ВЫ ДОЛЖНЫ, пусть будет
+ * в одну строку „Ваш баланс“ + красный 500 р». Знак и цвет говорят то же
+ * самое, и строка не разъезжается на две.
+ */
+const balanceText = computed(() => formatRubSigned(finance.value?.me.balanceRub ?? 0))
 
 /** Вторая цифра нужна только когда ожидающие переводы её сдвинули. */
 const hasRemainingShift = computed(
@@ -305,10 +317,34 @@ function openEdit(row: MoneyRowView): void {
   expenseModalOpen.value = true
 }
 
-function openCompensation(): void {
+/**
+ * Открыть «Компенсацию» — предварительно перечитав вкладку.
+ *
+ * 12.11.2026 заказчик получил «Вам не нужно ничего компенсировать», хотя
+ * на экране был долг и в модалке предложение: вкладка держала подсказки
+ * с прошлой загрузки, а записи к этому моменту уже изменились. Один тихий
+ * GET перед открытием дешевле, чем объяснять человеку противоречие.
+ */
+async function openCompensation(): Promise<void> {
   if (!canCompensate.value) return
 
+  await refreshQuietly()
+
+  if (!canCompensate.value) {
+    actionError.value = 'Баланс обновился — переводить больше нечего.'
+    return
+  }
+
   compensationOpen.value = true
+}
+
+/**
+ * Сервер отказал компенсации (400) — значит, подсказки устарели между
+ * открытием модалки и нажатием. Перечитываем вкладку: следующая попытка
+ * пойдёт от правды, а баланс на экране перестанет врать.
+ */
+function onCompensationStale(): void {
+  void refreshQuietly()
 }
 
 async function confirmCompensation(compensation: TripCompensation): Promise<void> {
@@ -364,17 +400,24 @@ function cancelRow(row: MoneyRowView): void {
 
     <template v-else-if="finance && me">
       <!--
-        «Ваш баланс» — первое, что человек ищет в этой вкладке. Вторая строка
-        появляется только когда ожидающие переводы сдвинули цифру: две
-        одинаковые суммы рядом читались бы как ошибка.
+        «Ваш баланс» — первое, что человек ищет в этой вкладке. Цифра стоит
+        в той же строке: «Вы должны 500 ₽» заказчик забраковал — знак и цвет
+        говорят то же самое короче. Вторая строка появляется только когда
+        ожидающие переводы сдвинули цифру.
       -->
       <div class="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="flex flex-col gap-1">
-            <h2 class="text-xs text-muted">Ваш баланс</h2>
-            <p class="text-2xl font-semibold" :class="balanceClass" data-test="finance-balance">
-              {{ balanceText }}
-            </p>
+            <div class="flex flex-wrap items-baseline gap-x-2">
+              <h2 class="text-xs text-muted">Ваш баланс</h2>
+              <p
+                class="text-2xl font-semibold whitespace-nowrap"
+                :class="balanceClass"
+                data-test="finance-balance"
+              >
+                {{ balanceText }}
+              </p>
+            </div>
             <p
               v-if="hasRemainingShift"
               class="text-xs text-muted"
@@ -544,6 +587,7 @@ function cancelRow(row: MoneyRowView): void {
         :trip-id="tripId"
         :suggestions="suggestions"
         @saved="applyView"
+        @stale="onCompensationStale"
         @close="compensationOpen = false"
       />
     </template>

@@ -1,4 +1,10 @@
-import type { TripCompensation, TripExpense, TripFinance } from '@/types/finance'
+import type {
+  CompensationOption,
+  CompensationPerson,
+  TripCompensation,
+  TripExpense,
+  TripFinance,
+} from '@/types/finance'
 import { formatRub } from '@/utils/money'
 
 /**
@@ -139,4 +145,34 @@ export function movementRows(finance: TripFinance): MoneyRow[] {
   ]
 
   return rows.sort((left, right) => (left.at < right.at ? 1 : left.at > right.at ? -1 : 0))
+}
+
+/**
+ * Реквизиты варианта компенсации — только у тех, кто их заполнил.
+ *
+ * С 12.11.2026 вариант может быть семьёй, и переводить можно любому её
+ * участнику с реквизитами. Порядок — порядок состава, чтобы подсказка
+ * не прыгала между перерисовками.
+ */
+export function compensationRequisites(option: CompensationOption): CompensationPerson[] {
+  return option.members.filter((person) => person.paymentDetails !== null)
+}
+
+/**
+ * Фраза об отсутствии реквизитов — слова заказчика (12.11.2026).
+ *
+ * «Вася и Аня не указали реквизиты в своих профилях, придётся спросить
+ * у них самих»; для одного человека — тот же хвост, но глагол по полу:
+ * пол в профиле есть, и «не указал(а)» читается как недоделанная форма.
+ */
+export function noRequisitesPhrase(option: CompensationOption): string {
+  const [person] = option.members
+
+  if (option.members.length === 1 && person !== undefined) {
+    const verb = person.gender === 'f' ? 'не указала' : 'не указал'
+
+    return `${person.displayName} ${verb} реквизиты в своём профиле, придётся спросить у них самих.`
+  }
+
+  return `${option.displayName} не указали реквизиты в своих профилях, придётся спросить у них самих.`
 }

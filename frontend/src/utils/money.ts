@@ -24,28 +24,18 @@ export function formatRub(amount: number): string {
   return `${sign}${grouped} ₽`
 }
 
-/** Сумма со знаком для списка балансов: «+2 000 ₽», «−1 000 ₽», «0 ₽». */
+/**
+ * Сумма со знаком для списка балансов: «+2 000 ₽», «−1 000 ₽», «0 ₽».
+ *
+ * Заказчик 12.11.2026 забраковал фразу «Вы должны 500 ₽» в шапке: знак
+ * и цвет говорят то же самое, а строка остаётся одной. Поэтому вкладка
+ * показывает баланс этой функцией, а не словами.
+ */
 export function formatRubSigned(amount: number): string {
   const rounded = Math.trunc(amount)
   if (rounded === 0) return formatRub(0)
 
   return rounded > 0 ? `+${formatRub(rounded)}` : formatRub(rounded)
-}
-
-/**
- * Баланс одной фразой — то, что человек читает в шапке вкладки.
- *
- * Слова заказчика: «итоговый баланс пользователя». Знак без объяснения
- * читается как ошибка, поэтому положительный баланс подписан «Вам должны»,
- * отрицательный — «Вы должны».
- */
-export function balancePhrase(balanceRub: number): string {
-  const rounded = Math.trunc(balanceRub)
-
-  if (rounded > 0) return `Вам должны ${formatRub(rounded)}`
-  if (rounded < 0) return `Вы должны ${formatRub(-rounded)}`
-
-  return 'Всё в расчёте'
 }
 
 /** Дата из `ГГГГ-ММ-ДД` или ISO-момента: «11.11.2026». */

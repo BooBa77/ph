@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import type { TripCompensation, TripExpense, TripFinance } from '@/types/finance'
+import type { CompensationOption, TripCompensation, TripExpense, TripFinance } from '@/types/finance'
 import {
+  compensationRequisites,
   movementRows,
+  noRequisitesPhrase,
   previewShares,
   sharesPreview,
   splitCaption,
@@ -58,7 +60,14 @@ function finance(overrides: Partial<TripFinance> = {}): TripFinance {
     expenses: [],
     compensations: [],
     members: [],
-    me: { balanceRub: 0, remainingRub: 0, canSpend: true, suggestions: [] },
+    me: {
+      balanceRub: 0,
+      remainingRub: 0,
+      familyDebtRub: 0,
+      familyCreditRub: 0,
+      canSpend: true,
+      suggestions: [],
+    },
     ...overrides,
   }
 }
@@ -197,5 +206,102 @@ describe('movementRows', () => {
 
   it('пустая вкладка — пустая лента', () => {
     expect(movementRows(finance())).toEqual([])
+  })
+})
+
+describe('вариант компенсации: реквизиты и подпись об их отсутствии', () => {
+  function option(overrides: Partial<CompensationOption> = {}): CompensationOption {
+    return {
+      userIds: ['anna'],
+      displayName: 'Анна',
+      amountRub: 1000,
+      members: [
+        {
+          userId: 'anna',
+          displayName: 'Анна',
+          gender: 'f',
+          paymentDetails: '+7 914 000-00-00',
+          paymentBank: 'Сбер',
+        },
+      ],
+      ...overrides,
+    }
+  }
+
+  it('показывает реквизиты всех, у кого они есть', () => {
+    const family = option({
+      userIds: ['vasya', 'anya'],
+      displayName: 'Вася и Аня',
+      members: [
+        {
+          userId: 'vasya',
+          displayName: 'Вася',
+          gender: 'm',
+          paymentDetails: '+7 902 111-22-33',
+          paymentBank: 'Тинькофф',
+        },
+        {
+          userId: 'anya',
+          displayName: 'Аня',
+          gender: 'f',
+          paymentDetails: null,
+          paymentBank: null,
+        },
+      ],
+    })
+
+    expect(compensationRequisites(family).map((person) => person.displayName)).toEqual([
+      'Вася',
+    ])
+  })
+
+  it('один человек — глагол по полу', () => {
+    expect(noRequisitesPhrase(option())).toBe(
+      'Анна не указала реквизиты в своём профиле, придётся спросить у них самих.',
+    )
+
+    const man = option({
+      displayName: 'Борис',
+      members: [
+        {
+          userId: 'boris',
+          displayName: 'Борис',
+          gender: 'm',
+          paymentDetails: null,
+          paymentBank: null,
+        },
+      ],
+    })
+
+    expect(noRequisitesPhrase(man)).toBe(
+      'Борис не указал реквизиты в своём профиле, придётся спросить у них самих.',
+    )
+  })
+
+  it('семья — общая фраза словами заказчика', () => {
+    const family = option({
+      userIds: ['vasya', 'anya'],
+      displayName: 'Вася и Аня',
+      members: [
+        {
+          userId: 'vasya',
+          displayName: 'Вася',
+          gender: 'm',
+          paymentDetails: null,
+          paymentBank: null,
+        },
+        {
+          userId: 'anya',
+          displayName: 'Аня',
+          gender: 'f',
+          paymentDetails: null,
+          paymentBank: null,
+        },
+      ],
+    })
+
+    expect(noRequisitesPhrase(family)).toBe(
+      'Вася и Аня не указали реквизиты в своих профилях, придётся спросить у них самих.',
+    )
   })
 })

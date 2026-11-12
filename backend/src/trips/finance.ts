@@ -133,19 +133,58 @@ export function computeRemaining(
   return remaining;
 }
 
-/** Один вариант «кому и сколько» в модалке компенсации. */
+/**
+ * Один вариант «кому и сколько» в модалке компенсации.
+ *
+ * С 12.11.2026 вариантом может быть **семья целиком**: Вася и Аня получают
+ * одной строкой. Поэтому здесь список людей, а не один `userId`; сколько
+ * именно переводится каждому — распишет `planCompensation` при создании.
+ */
 export interface CompensationOption {
-  userId: string;
+  /** Идущие получатели этой семьи — в порядке состава похода. */
+  userIds: string[];
+  /** `min(долг моей семьи, кредит этой семьи)`. */
   amountRub: number;
 }
 
 /**
- * Кому может компенсировать этот человек и сколько.
+ * Долг семьи — сумма долей её участников с отрицательным остатком.
  *
- * Только кредиторы с положительным остатком; сумма — `min(долг, кредит)`,
- * чтобы один перевод не улетел выше чужого кредита. Если человеку
- * не должны (остаток не отрицательный) — вариантов нет: компенсация
- * не нужна, и кнопка на экране будет неактивной.
+ * Не «сумма балансов» с плюсами: внутри семьи положительный и отрицательный
+ * остатки взаимно не гасятся. Семья — это общий кошелёк, но долг одному
+ * человеку и кредит от другого — разные контрагенты; если участник в плюсе,
+ * эти деньги ему должен кто-то третий, и семья не может заплатить ими
+ * за другого своего участника.
+ */
+export function familyDebt(
+  remaining: ReadonlyMap<string, number>,
+  userIds: readonly string[],
+): number {
+  return userIds.reduce(
+    (sum, userId) => sum + Math.max(0, -(remaining.get(userId) ?? 0)),
+    0,
+  );
+}
+
+/** Кредит семьи — сумма её участников с положительным остатком. */
+export function familyCredit(
+  remaining: ReadonlyMap<string, number>,
+  userIds: readonly string[],
+): number {
+  return userIds.reduce(
+    (sum, userId) => sum + Math.max(0, remaining.get(userId) ?? 0),
+    0,
+  );
+}
+
+/**
+ * Кому может компенсировать эта семья и сколько.
+ *
+ * `families` — идущие участники, разложенные по семьям в порядке состава.
+ * Своя семья из вариантов исключена: внутри семьи деньги не переводят.
+ * Сумма варианта — `min(долг моей семьи, кредит семьи получателя)`, чтобы
+ * один перевод не улетел выше чужого кредита. Если семья ничего не должна —
+ * вариантов нет: компенсация не нужна, и кнопка на экране будет неактивной.
  *
  * Сортировка — по убыванию суммы: крупный долг закрывается первым.
  * При равенстве — порядок состава похода, чтобы список не прыгал между
@@ -154,26 +193,118 @@ export interface CompensationOption {
 export function compensationOptions(
   meId: string,
   remaining: ReadonlyMap<string, number>,
-  memberIds: readonly string[],
+  families: readonly (readonly string[])[],
 ): CompensationOption[] {
-  const debt = -(remaining.get(meId) ?? 0);
+  const myFamily = families.find((group) => group.includes(meId)) ?? [meId];
+  const debt = familyDebt(remaining, myFamily);
   if (debt <= 0) return [];
 
-  const order = new Map(memberIds.map((userId, index) => [userId, index]));
+  const order = new Map<string, number>();
+  for (const group of families) {
+    for (const userId of group) {
+      if (!order.has(userId)) order.set(userId, order.size);
+    }
+  }
+
   const options: CompensationOption[] = [];
 
-  for (const userId of memberIds) {
-    if (userId === meId) continue;
-    const credit = remaining.get(userId) ?? 0;
+  for (const group of families) {
+    if (group.includes(meId)) continue;
+    const credit = familyCredit(remaining, group);
     if (credit <= 0) continue;
-    options.push({ userId, amountRub: Math.min(debt, credit) });
+    options.push({ userIds: [...group], amountRub: Math.min(debt, credit) });
   }
 
   return options.sort(
     (a, b) =>
       b.amountRub - a.amountRub ||
-      (order.get(a.userId) ?? 0) - (order.get(b.userId) ?? 0),
+      (order.get(a.userIds[0]) ?? 0) - (order.get(b.userIds[0]) ?? 0),
   );
+}
+
+/** Перевод внутри одного действия: «этот должник этому получателю столько». */
+export interface CompensationTransfer {
+  fromUserId: string;
+  toUserId: string;
+  amountRub: number;
+}
+
+/**
+ * Разложить сумму семейной компенсации на личные переводы.
+ *
+ * «Папа платит за всех» — одно действие на экране, но баланс в проекте
+ * остаётся **персональным**. Поэтому деньги раскладываются по долгам
+ * участников моей семьи и по кредитам участников семьи получателя:
+ * сначала закрывается долг первого по составу, внутри него — кредит
+ * первого по составу, и так до исчерпания суммы.
+ *
+ * Порядок детерминированный: от него зависят записи в базе, а повторное
+ * действие с теми же числами должно давать те же строки. Копеек нет,
+ * поэтому каждая пара получает целые рубли, а сумма переводов равна
+ * переданной сумме.
+ */
+export function planCompensation(
+  amountRub: number,
+  fromUserIds: readonly string[],
+  toUserIds: readonly string[],
+  remaining: ReadonlyMap<string, number>,
+): CompensationTransfer[] {
+  if (!Number.isInteger(amountRub) || amountRub <= 0) return [];
+
+  const debtors = fromUserIds
+    .map((userId) => ({
+      userId,
+      debt: Math.max(0, -(remaining.get(userId) ?? 0)),
+    }))
+    .filter((debtor) => debtor.debt > 0);
+
+  const creditors = toUserIds
+    .map((userId) => ({
+      userId,
+      credit: Math.max(0, remaining.get(userId) ?? 0),
+    }))
+    .filter((creditor) => creditor.credit > 0);
+
+  const transfers: CompensationTransfer[] = [];
+  let left = amountRub;
+
+  for (const debtor of debtors) {
+    let pays = Math.min(debtor.debt, left);
+
+    for (const creditor of creditors) {
+      if (pays === 0) break;
+      if (creditor.credit === 0) continue;
+
+      const amount = Math.min(pays, creditor.credit);
+      transfers.push({
+        fromUserId: debtor.userId,
+        toUserId: creditor.userId,
+        amountRub: amount,
+      });
+
+      creditor.credit -= amount;
+      pays -= amount;
+      left -= amount;
+    }
+
+    if (left === 0) break;
+  }
+
+  return transfers;
+}
+
+/**
+ * Имена одной строкой: «Вася», «Вася и Аня», «Вася, Аня и Петя».
+ *
+ * Заказчик: «предлагать семью одной строкой „Вася и Аня“». Союз «и» перед
+ * последним именем — по-русски; запятая перед ним не ставится при двух
+ * именах и ставится при трёх и более.
+ */
+export function joinNames(names: readonly string[]): string {
+  if (names.length === 0) return '';
+  if (names.length === 1) return names[0] ?? '';
+
+  return `${names.slice(0, -1).join(', ')} и ${names[names.length - 1]}`;
 }
 
 /** Собрать балансы из сущностей — один адаптер, чтобы не дублировать поля. */

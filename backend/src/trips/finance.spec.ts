@@ -4,6 +4,10 @@ import {
   compensationOptions,
   computeBalances,
   computeRemaining,
+  familyCredit,
+  familyDebt,
+  joinNames,
+  planCompensation,
   splitAmount,
   type BalanceCompensation,
   type BalanceExpense,
@@ -14,8 +18,15 @@ import {
  *
  * Здесь два примера заказчика целиком: первый (шесть человек, продукты,
  * бензин, ужин и коньяк) проверяет баланс, второй (А, Б, В, Г) — подсказки
- * компенсации и бронирование кредита ожидающими переводами.
+ * компенсации и бронирование кредита ожидающими переводами. Отдельный блок —
+ * семейный случай: «папа платит за всех», вариант одной строкой и раздача
+ * суммы по личным долгам и кредитам.
  */
+
+/** Семьи-одиночки: по умолчанию каждый сам за себя. */
+function singles(ids: readonly string[]): string[][] {
+  return ids.map((id) => [id]);
+}
 
 /** Расход: плательщик, сумма и доли. */
 function expense(
@@ -161,13 +172,13 @@ describe('ожидающие компенсации бронируют кред�
   it('у В оба кредитора, у Г — Б и А', () => {
     const remaining = computeRemaining(balances, []);
 
-    expect(compensationOptions('v', remaining, ids)).toEqual([
-      { userId: 'a', amountRub: 1000 },
-      { userId: 'b', amountRub: 1000 },
+    expect(compensationOptions('v', remaining, singles(ids))).toEqual([
+      { userIds: ['a'], amountRub: 1000 },
+      { userIds: ['b'], amountRub: 1000 },
     ]);
-    expect(compensationOptions('g', remaining, ids)).toEqual([
-      { userId: 'b', amountRub: 4000 },
-      { userId: 'a', amountRub: 2000 },
+    expect(compensationOptions('g', remaining, singles(ids))).toEqual([
+      { userIds: ['b'], amountRub: 4000 },
+      { userIds: ['a'], amountRub: 2000 },
     ]);
   });
 
@@ -184,8 +195,8 @@ describe('ожидающие компенсации бронируют кред�
     expect(remaining.get('v')).toBe(-1000);
     expect(remaining.get('g')).toBe(0);
 
-    expect(compensationOptions('v', remaining, ids)).toEqual([
-      { userId: 'a', amountRub: 1000 },
+    expect(compensationOptions('v', remaining, singles(ids))).toEqual([
+      { userIds: ['a'], amountRub: 1000 },
     ]);
   });
 
@@ -223,8 +234,96 @@ describe('ожидающие компенсации бронируют кред�
   it('человеку без долга компенсировать нечего', () => {
     const remaining = computeRemaining(balances, []);
 
-    expect(compensationOptions('a', remaining, ids)).toEqual([]);
-    expect(compensationOptions('b', remaining, ids)).toEqual([]);
+    expect(compensationOptions('a', remaining, singles(ids))).toEqual([]);
+    expect(compensationOptions('b', remaining, singles(ids))).toEqual([]);
+  });
+});
+
+describe('семья в компенсации', () => {
+  /**
+   * Две семьи: (b, c) — мама и сын, (a, g) — своя. Внутри первой оба
+   * должны по 300, внутри второй оба в плюсе (А 500, Г 100).
+   */
+  const families = [
+    ['a', 'g'],
+    ['b', 'c'],
+  ];
+  const remaining = new Map<string, number>([
+    ['a', 500],
+    ['b', -300],
+    ['c', -300],
+    ['g', 100],
+  ]);
+
+  it('долг и кредит семьи считаются по участникам с нужным знаком', () => {
+    const mixed = new Map<string, number>([
+      ['a', 500],
+      ['b', -300],
+      ['c', -300],
+      ['g', 100],
+    ]);
+
+    expect(familyDebt(mixed, ['b', 'c'])).toBe(600);
+    expect(familyCredit(mixed, ['b', 'c'])).toBe(0);
+
+    // Плюс одного не гасит минус другого: это разные контрагенты.
+    expect(familyDebt(mixed, ['a', 'b'])).toBe(300);
+    expect(familyCredit(mixed, ['a', 'b'])).toBe(500);
+  });
+
+  it('семья Б и В — один вариант на 600, своей семьи в списке нет', () => {
+    const options = compensationOptions('b', remaining, families);
+
+    expect(options).toEqual([{ userIds: ['a', 'g'], amountRub: 600 }]);
+    expect(options.some((option) => option.userIds.includes('c'))).toBe(false);
+  });
+
+  it('сумма варианта не больше кредита семьи получателя', () => {
+    const poor = new Map<string, number>([
+      ['a', 100],
+      ['b', -300],
+      ['c', -300],
+      ['g', 100],
+    ]);
+
+    // Долг 600, кредит семьи (a, g) — 200, значит предлагается 200.
+    expect(compensationOptions('b', poor, families)).toEqual([
+      { userIds: ['a', 'g'], amountRub: 200 },
+    ]);
+  });
+
+  it('сумма раскладывается по личным долгам и кредитам', () => {
+    const transfers = planCompensation(600, ['b', 'c'], ['a', 'g'], remaining);
+
+    expect(transfers).toEqual([
+      { fromUserId: 'b', toUserId: 'a', amountRub: 300 },
+      { fromUserId: 'c', toUserId: 'a', amountRub: 200 },
+      { fromUserId: 'c', toUserId: 'g', amountRub: 100 },
+    ]);
+    expect(transfers.reduce((sum, item) => sum + item.amountRub, 0)).toBe(600);
+  });
+
+  it('меньшую сумму получает первый должник, остаток — следующему', () => {
+    const transfers = planCompensation(400, ['b', 'c'], ['a', 'g'], remaining);
+
+    expect(transfers).toEqual([
+      { fromUserId: 'b', toUserId: 'a', amountRub: 300 },
+      { fromUserId: 'c', toUserId: 'a', amountRub: 100 },
+    ]);
+    expect(transfers.reduce((sum, item) => sum + item.amountRub, 0)).toBe(400);
+  });
+
+  it('не раскладывает нулевую и нецелую сумму', () => {
+    expect(planCompensation(0, ['b'], ['a'], remaining)).toEqual([]);
+    expect(planCompensation(-100, ['b'], ['a'], remaining)).toEqual([]);
+    expect(planCompensation(10.5, ['b'], ['a'], remaining)).toEqual([]);
+  });
+
+  it('имена — одной строкой, как просил заказчик', () => {
+    expect(joinNames([])).toBe('');
+    expect(joinNames(['Вася'])).toBe('Вася');
+    expect(joinNames(['Вася', 'Аня'])).toBe('Вася и Аня');
+    expect(joinNames(['Вася', 'Аня', 'Петя'])).toBe('Вася, Аня и Петя');
   });
 });
 

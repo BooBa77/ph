@@ -505,6 +505,40 @@ export class UsersService {
   }
 
   /**
+   * Компоненты родства сразу для нескольких людей (12.11.2026).
+   *
+   * Нужно «Бухгалтерии»: чтобы предложить семью одной строкой, сервер
+   * раскладывает состав похода по семьям. Отдельный вариант для похода
+   * не заводим — «семья — компонента связей» остаётся одним правилом
+   * в `familyComponent`, а здесь только кэш по семьям: у семьи из четырёх
+   * человек компонента считается один раз, а не четыре.
+   *
+   * Возвращает карту «человек → все люди его компоненты». Люди, которых
+   * передали, в карте есть всегда: одиночка получает компоненту из себя.
+   */
+  async familyComponentsOf(
+    userIds: readonly string[],
+    manager?: EntityManager,
+  ): Promise<Map<string, string[]>> {
+    const unique = [...new Set(userIds)];
+    const result = new Map<string, string[]>();
+
+    for (const userId of unique) {
+      if (result.has(userId)) continue;
+
+      const people = await this.familyComponent(userId, manager);
+      const component = people.map((person) => person.id);
+      if (!component.includes(userId)) component.push(userId);
+
+      for (const member of component) {
+        if (unique.includes(member)) result.set(member, component);
+      }
+    }
+
+    return result;
+  }
+
+  /**
    * Действующие родные — для списка «Контактов».
    *
    * Заявки на объединение семей сюда не входят: они живут

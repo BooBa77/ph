@@ -307,7 +307,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         </label>
 
         <label class="flex flex-col gap-1 text-xs text-muted">
-          Дата траты
+          Дата платежа
           <input
             v-model="spentAt"
             type="date"

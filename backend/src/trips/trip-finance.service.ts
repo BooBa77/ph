@@ -23,12 +23,17 @@ import { TripParticipant } from './entities/trip-participant.entity';
 import {
   balancesFromEntities,
   compensationOptions,
+  familyCredit,
+  familyDebt,
+  joinNames,
+  planCompensation,
   remainingFromEntities,
   splitAmount,
   type ShareAmount,
 } from './finance';
 import { TripEventsService } from './trip-events.service';
 import { TripsService } from './trips.service';
+import { UsersService } from '../users/users.service';
 
 /** Сегодняшняя дата строкой `ГГГГ-ММ-ДД` (сервер живёт в UTC). */
 function todayIso(): string {
@@ -65,6 +70,7 @@ export class TripFinanceService {
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
     private readonly events: TripEventsService,
+    private readonly users: UsersService,
   ) {}
 
   /** Вся вкладка: расходы, компенсации, балансы и мои подсказки. */
@@ -191,10 +197,16 @@ export class TripFinanceService {
   /**
    * Создать ожидающую компенсацию: «я перевёл тебе столько».
    *
-   * Должник — только сам человек: перевести за другого значило бы
-   * подписаться чужими деньгами. Сумма не больше остатка долга и не
-   * больше кредита получателя: подсказка в модалке считается так же,
-   * а «на рубль больше» — это уже подарок, а не расчёт.
+   * **С 12.11.2026 платит семья.** Заказчик: «сумма к компенсации
+   * рассчитывается от семьи… проще — папа платит за всех». Поэтому
+   * `toUserId` — любой человек семьи получателя, а сумма проверяется против
+   * долга **всей своей семьи** и кредита **всей семьи получателя**. Одно
+   * действие на экране раскладывается на личные переводы `planCompensation`:
+   * баланс в проекте персональный, и записать чужой долг на папу значило бы
+   * сломать арифметику остальным участникам.
+   *
+   * Должник — только своя семья: перевести за постороннего нельзя.
+   * Своей семье не переводят — внутри семьи деньги не двигаются.
    */
   async createCompensation(
     userId: string,
@@ -219,41 +231,68 @@ export class TripFinanceService {
         manager,
         String(trip.id),
       );
+      const memberIds = participants.map((item) => item.userId);
       const remaining = remainingFromEntities(
         expenses,
         compensations,
-        participants.map((item) => item.userId),
+        memberIds,
       );
+      const families = await this.goingFamilies(manager, participants);
 
-      const debt = -(remaining.get(userId) ?? 0);
+      const myFamily = families.find((group) => group.includes(userId)) ?? [
+        userId,
+      ];
+      const targetFamily = families.find((group) =>
+        group.includes(toUserId),
+      ) ?? [toUserId];
+
+      if (targetFamily.includes(userId)) {
+        throw new BadRequestException('Своей семье переводить не нужно');
+      }
+
+      const debt = familyDebt(remaining, myFamily);
       if (debt <= 0) {
         throw new BadRequestException('Вам не нужно ничего компенсировать');
       }
 
-      const credit = remaining.get(toUserId) ?? 0;
+      const credit = familyCredit(remaining, targetFamily);
       if (credit <= 0) {
-        throw new BadRequestException('Этому человеку вы ничего не должны');
-      }
-      if (amountRub > debt) {
         throw new BadRequestException(
-          `Больше вашего остатка долга: осталось ${debt} ₽`,
-        );
-      }
-      if (amountRub > credit) {
-        throw new BadRequestException(
-          `Больше, чем вы должны этому человеку: ${credit} ₽`,
+          targetFamily.length > 1
+            ? 'Этой семье вы ничего не должны'
+            : 'Этому человеку вы ничего не должны',
         );
       }
 
-      const compensation = manager.create(TripCompensation, {
-        tripId: String(trip.id),
-        fromUserId: userId,
-        toUserId,
+      const limit = Math.min(debt, credit);
+      if (amountRub > limit) {
+        throw new BadRequestException(
+          `Больше остатка: можно перевести ${limit} ₽`,
+        );
+      }
+
+      const transfers = planCompensation(
         amountRub,
-        status: 'pending',
-        confirmedAt: null,
-      });
-      await manager.save(compensation);
+        myFamily,
+        targetFamily,
+        remaining,
+      );
+      if (transfers.length === 0) {
+        throw new BadRequestException('Компенсировать нечего');
+      }
+
+      await manager.save(
+        transfers.map((transfer) =>
+          manager.create(TripCompensation, {
+            tripId: String(trip.id),
+            fromUserId: transfer.fromUserId,
+            toUserId: transfer.toUserId,
+            amountRub: transfer.amountRub,
+            status: 'pending',
+            confirmedAt: null,
+          }),
+        ),
+      );
 
       return this.buildView(manager, String(trip.id), userId);
     });
@@ -284,7 +323,10 @@ export class TripFinanceService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!compensation) throw new NotFoundException('Компенсация не найдена');
-      if (compensation.toUserId !== userId) {
+      if (
+        compensation.toUserId !== userId &&
+        !(await this.isFamilyOf(manager, compensation.toUserId, userId))
+      ) {
         throw new ForbiddenException(
           'Подтвердить получение может только получатель',
         );
@@ -323,7 +365,10 @@ export class TripFinanceService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!compensation) throw new NotFoundException('Компенсация не найдена');
-      if (compensation.fromUserId !== userId) {
+      if (
+        compensation.fromUserId !== userId &&
+        !(await this.isFamilyOf(manager, compensation.fromUserId, userId))
+      ) {
         throw new ForbiddenException(
           'Отменить компенсацию может только отправитель',
         );
@@ -361,24 +406,42 @@ export class TripFinanceService {
       participants.map((participant) => [participant.userId, participant.user]),
     );
 
+    // Семья — компонента связей; в походе важны только идущие, поэтому
+    // группа фильтруется по составу, а порядок внутри неё — порядок состава.
+    const families = await this.goingFamilies(manager, participants);
+    const myFamily = families.find((group) => group.includes(viewerId)) ?? [
+      viewerId,
+    ];
+    const myFamilySet = new Set(myFamily);
+
     const suggestions: CompensationOptionDto[] = compensationOptions(
       viewerId,
       remaining,
-      memberIds,
+      families,
     ).map((option) => {
-      const user = userById.get(option.userId);
+      const people = option.userIds.map((userId) => userById.get(userId)!);
+
       return {
-        userId: option.userId,
-        displayName: user?.displayName ?? '',
+        userIds: [...option.userIds],
+        displayName: joinNames(people.map((person) => person.displayName)),
         amountRub: option.amountRub,
-        paymentDetails: user?.paymentDetails ?? null,
-        paymentBank: user?.paymentBank ?? null,
+        members: people.map((person) => ({
+          userId: person.id,
+          displayName: person.displayName,
+          gender: person.gender,
+          paymentDetails: person.paymentDetails,
+          paymentBank: person.paymentBank,
+        })),
       };
     });
 
     const me: MyFinanceDto = {
       balanceRub: balances.get(viewerId) ?? 0,
       remainingRub: remaining.get(viewerId) ?? 0,
+      // Долг и кредит считаются по семье: по ним экран объясняет, почему
+      // «Компенсация» выключена, когда личный остаток ничего не говорит.
+      familyDebtRub: familyDebt(remaining, myFamily),
+      familyCreditRub: familyCredit(remaining, myFamily),
       // Приглашённый видит вкладку, но ещё не тратил: экран по этому флагу
       // выключает кнопки. Проверка прав остаётся на сервере (`assertGoing`).
       canSpend: memberIds.includes(viewerId),
@@ -399,9 +462,19 @@ export class TripFinanceService {
       expenses: expenses.map((expense) =>
         TripExpenseDto.from(expense, viewerId),
       ),
-      compensations: compensations.map((compensation) =>
-        TripCompensationDto.from(compensation, viewerId),
-      ),
+      compensations: compensations.map((compensation) => {
+        const dto = TripCompensationDto.from(compensation, viewerId);
+
+        // Семья действует как один кошелёк: «папа перевёл за всех» —
+        // значит отменить это может любой из семьи отправителя, а получить
+        // подтверждение — любой из семьи получателя.
+        if (compensation.status === 'pending') {
+          if (myFamilySet.has(compensation.fromUserId)) dto.canCancel = true;
+          if (myFamilySet.has(compensation.toUserId)) dto.canConfirm = true;
+        }
+
+        return dto;
+      }),
       members,
       me,
     };
@@ -438,9 +511,43 @@ export class TripFinanceService {
     return manager.find(TripParticipant, {
       where: { tripId, status: 'going' },
       relations: { user: true },
-      // Порядок состава: от него зависит, кому достанется рубль остатка.
-      order: { createdAt: 'ASC' },
+      // Порядок состава: от него зависит, кому достанется рубль остатка,
+      // и в каком порядке имена внутри семьи. Второй ключ — `userId`:
+      // у людей, добавленных одним действием, `createdAt` совпадает
+      // до миллисекунды, и без второго ключа порядок прыгал между запросами.
+      order: { createdAt: 'ASC', userId: 'ASC' },
     });
+  }
+
+  /**
+   * Идущие участники, разложенные по семьям, в порядке состава.
+   *
+   * Компоненту родства считает `UsersService` — правило «семья — это
+   * компонента связей» живёт в одном месте. Здесь она обрезается по составу
+   * похода: родной, который не идёт, получать перевод не может, и его
+   * кредит не должен увеличивать сумму варианта.
+   */
+  private async goingFamilies(
+    manager: EntityManager,
+    participants: TripParticipant[],
+  ): Promise<string[][]> {
+    const ids = participants.map((item) => item.userId);
+    const components = await this.users.familyComponentsOf(ids, manager);
+
+    const groups: string[][] = [];
+    const seen = new Set<string>();
+
+    for (const userId of ids) {
+      if (seen.has(userId)) continue;
+
+      const component = new Set(components.get(userId) ?? [userId]);
+      const group = ids.filter((id) => component.has(id));
+      for (const id of group) seen.add(id);
+
+      groups.push(group);
+    }
+
+    return groups;
   }
 
   /** Проверить участника похода: в составе и не отказался. */
@@ -473,6 +580,25 @@ export class TripFinanceService {
         'Деньги похода может менять только идущий участник',
       );
     }
+  }
+
+  /**
+   * «Этот человек из моей семьи?» — для прав подтверждения и отмены.
+   *
+   * Семья платит одним кошельком: папа, отправивший перевод за сына, должен
+   * иметь право его отменить, а родной получателя — подтвердить получение.
+   * Правило то же, что у подсказок, — компонента родства.
+   */
+  private async isFamilyOf(
+    manager: EntityManager,
+    otherUserId: string,
+    userId: string,
+  ): Promise<boolean> {
+    if (otherUserId === userId) return true;
+
+    const component = await this.users.familyComponent(otherUserId, manager);
+
+    return component.some((person) => person.id === userId);
   }
 
   /**

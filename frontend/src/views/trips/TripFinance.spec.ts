@@ -121,17 +121,39 @@ function state(overrides: Partial<TripFinance> = {}): TripFinance {
     me: {
       balanceRub: -1000,
       remainingRub: -1000,
+      familyDebtRub: 1000,
+      familyCreditRub: 0,
       canSpend: true,
       suggestions: [
         {
-          userId: ANNA,
+          userIds: [ANNA],
           displayName: 'Анна',
           amountRub: 1000,
-          paymentDetails: '+7 999 000-00-00',
-          paymentBank: 'Сбер',
+          members: [
+            {
+              userId: ANNA,
+              displayName: 'Анна',
+              gender: 'f',
+              paymentDetails: '+7 999 000-00-00',
+              paymentBank: 'Сбер',
+            },
+          ],
         },
       ],
     },
+    ...overrides,
+  }
+}
+
+/** «Мне нечего платить» — все три цифры по нулям и пустые подсказки. */
+function meQuiet(overrides: Partial<TripFinance['me']> = {}): TripFinance['me'] {
+  return {
+    balanceRub: 0,
+    remainingRub: 0,
+    familyDebtRub: 0,
+    familyCreditRub: 0,
+    canSpend: true,
+    suggestions: [],
     ...overrides,
   }
 }
@@ -149,6 +171,20 @@ const ExpenseModalStub = defineComponent({
   },
 })
 
+/** Заглушка модалки компенсации: помнит свой `emit` и число подсказок. */
+let compensationModalEmit: ((event: string) => void) | null = null
+
+const CompensationModalStub = defineComponent({
+  props: { tripId: String, suggestions: Array },
+  emits: ['saved', 'close', 'stale'],
+  setup(props, { emit }) {
+    compensationModalEmit = emit as (event: string) => void
+
+    return () =>
+      h('div', { 'data-test': 'compensation-modal-stub' }, String(props.suggestions?.length ?? 0))
+  },
+})
+
 function mountView(tripId = '7') {
   return mount(TripFinanceView, {
     props: { tripId },
@@ -159,10 +195,7 @@ function mountView(tripId = '7') {
           template: '<div data-test="chat-stub">чат {{ kind }} похода {{ tripId }}</div>',
         },
         TripFinanceExpenseModal: ExpenseModalStub,
-        TripFinanceCompensationModal: {
-          props: ['tripId', 'suggestions'],
-          template: '<div data-test="compensation-modal-stub">{{ suggestions.length }}</div>',
-        },
+        TripFinanceCompensationModal: CompensationModalStub,
       },
     },
   })
@@ -175,15 +208,16 @@ describe('вкладка «Бухгалтерия»', () => {
     vi.clearAllMocks()
     setActivePinia(createPinia())
     expenseModalEmit = null
+    compensationModalEmit = null
     mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
     mocks.getTripFinance.mockResolvedValue(state())
   })
 
-  it('баланс одной фразой и балансы всех участников', async () => {
+  it('баланс цифрой в одну строку и балансы всех участников', async () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('Вы должны 1 000 ₽')
+    expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('−1 000 ₽')
     expect(wrapper.get('[data-test="finance-members"]').text()).toContain('Анна')
     expect(wrapper.get('[data-test="finance-members"]').text()).toContain('+2 000 ₽')
     expect(wrapper.get('[data-test="finance-members"]').text()).toContain('−1 000 ₽')
@@ -194,12 +228,7 @@ describe('вкладка «Бухгалтерия»', () => {
   it('вторая строка появляется, когда ожидающие переводы сдвинули баланс', async () => {
     mocks.getTripFinance.mockResolvedValue(
       state({
-        me: {
-          balanceRub: -1000,
-          remainingRub: 0,
-          canSpend: true,
-          suggestions: [],
-        },
+        me: meQuiet({ balanceRub: -1000 }),
       }),
     )
 
@@ -265,7 +294,7 @@ describe('вкладка «Бухгалтерия»', () => {
     mocks.confirmTripCompensation.mockResolvedValue(
       state({
         compensations: [confirmed],
-        me: { balanceRub: 0, remainingRub: 0, canSpend: true, suggestions: [] },
+        me: meQuiet(),
       }),
     )
 
@@ -280,7 +309,7 @@ describe('вкладка «Бухгалтерия»', () => {
     const row = wrapper.get('[data-test="finance-row-compensation"]')
     expect(row.text()).toContain('получено 12.11.2026')
     // Баланс пересчитан ответом сервера, а не на экране.
-    expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('Всё в расчёте')
+    expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('0 ₽')
   })
 
   it('«Отменить» удаляет ожидающий перевод у отправителя', async () => {
@@ -325,7 +354,7 @@ describe('вкладка «Бухгалтерия»', () => {
   it('«Компенсация» выключена, когда переводить нечего, и объясняет почему', async () => {
     mocks.getTripFinance.mockResolvedValue(
       state({
-        me: { balanceRub: 0, remainingRub: 0, canSpend: true, suggestions: [] },
+        me: meQuiet(),
       }),
     )
 
@@ -343,7 +372,7 @@ describe('вкладка «Бухгалтерия»', () => {
   it('«Вам должны» тоже не открывает компенсацию — перевод делает должник', async () => {
     mocks.getTripFinance.mockResolvedValue(
       state({
-        me: { balanceRub: 2000, remainingRub: 2000, canSpend: true, suggestions: [] },
+        me: meQuiet({ balanceRub: 2000, remainingRub: 2000, familyCreditRub: 2000 }),
       }),
     )
 
@@ -358,7 +387,7 @@ describe('вкладка «Бухгалтерия»', () => {
   it('приглашённый видит вкладку, но кнопки выключены', async () => {
     mocks.getTripFinance.mockResolvedValue(
       state({
-        me: { balanceRub: 0, remainingRub: 0, canSpend: false, suggestions: [] },
+        me: meQuiet({ canSpend: false }),
       }),
     )
 
@@ -374,7 +403,7 @@ describe('вкладка «Бухгалтерия»', () => {
       state({
         expenses: [],
         compensations: [],
-        me: { balanceRub: 0, remainingRub: 0, canSpend: true, suggestions: [] },
+        me: meQuiet(),
       }),
     )
 
@@ -413,6 +442,81 @@ describe('вкладка «Бухгалтерия»', () => {
 
     expect(wrapper.find('[data-test="expense-modal-stub"]').exists()).toBe(false)
     expect(wrapper.get('[data-test="finance-row-expense"]').text()).toContain('900 ₽')
+  })
+
+  /**
+   * Причина бага 12.11.2026: вкладка держала подсказки с прошлой загрузки,
+   * а записи уже удалили — модалка предлагала перевод, сервер отвечал
+   * «Вам не нужно ничего компенсировать». Открытие модалки теперь сначала
+   * перечитывает вкладку.
+   */
+  it('«Компенсация» открывается по свежим подсказкам, а не по прошлой загрузке', async () => {
+    mocks.getTripFinance
+      .mockResolvedValueOnce(state())
+      .mockResolvedValueOnce(
+        state({
+          me: {
+            ...state().me,
+            suggestions: [
+              ...state().me.suggestions,
+              {
+                userIds: [BORIS],
+                displayName: 'Борис',
+                amountRub: 400,
+                members: [
+                  {
+                    userId: BORIS,
+                    displayName: 'Борис',
+                    gender: 'm',
+                    paymentDetails: null,
+                    paymentBank: null,
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      )
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-test="finance-compensate"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.getTripFinance).toHaveBeenCalledTimes(2)
+    expect(wrapper.get('[data-test="compensation-modal-stub"]').text()).toBe('2')
+  })
+
+  it('если свежие данные говорят «переводить нечего», модалка не открывается', async () => {
+    mocks.getTripFinance
+      .mockResolvedValueOnce(state())
+      .mockResolvedValueOnce(state({ me: meQuiet() }))
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-test="finance-compensate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="compensation-modal-stub"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="finance-action-error"]').text()).toBe(
+      'Баланс обновился — переводить больше нечего.',
+    )
+  })
+
+  it('отказ сервера по остатку перечитывает вкладку', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-test="finance-compensate"]').trigger('click')
+    await flushPromises()
+    expect(mocks.getTripFinance).toHaveBeenCalledTimes(2)
+
+    compensationModalEmit?.('stale')
+    await flushPromises()
+
+    expect(mocks.getTripFinance).toHaveBeenCalledTimes(3)
   })
 
   it('подписывается на денежный поток похода и снимает подписку при уходе', async () => {

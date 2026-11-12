@@ -50,7 +50,14 @@ function view(): TripFinance {
     expenses: [],
     compensations: [],
     members: MEMBERS,
-    me: { balanceRub: 0, remainingRub: 0, canSpend: true, suggestions: [] },
+    me: {
+      balanceRub: 0,
+      remainingRub: 0,
+      familyDebtRub: 0,
+      familyCreditRub: 0,
+      canSpend: true,
+      suggestions: [],
+    },
   }
 }
 
@@ -100,7 +107,7 @@ describe('модалка расхода', () => {
     mocks.deleteTripExpense.mockResolvedValue(view())
   })
 
-  it('новый расход: «на всех», сегодняшняя дата и никаких долей до суммы', async () => {
+  it('новый расход: «за всех», дата платежа и никаких долей до суммы', async () => {
     const wrapper = mountModal()
 
     expect(wrapper.get('[data-test="finance-expense-date"]').element).toHaveProperty(
@@ -110,6 +117,13 @@ describe('модалка расхода', () => {
     expect(wrapper.find('[data-test="finance-expense-members"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="finance-expense-preview"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="finance-expense-delete"]').exists()).toBe(false)
+
+    // Слова заказчика 12.11.2026: «За всех» / «За группу», «Дата платежа».
+    expect(wrapper.get('[data-test="finance-expense-split"]').text()).toContain('За всех')
+    expect(wrapper.get('[data-test="finance-expense-split"]').text()).toContain('За группу')
+    expect(wrapper.text()).toContain('Дата платежа')
+    expect(wrapper.text()).not.toContain('На всех')
+    expect(wrapper.text()).not.toContain('Дата траты')
   })
 
   it('доли видны до сохранения — остаток раскладывается по рублю', async () => {

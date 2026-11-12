@@ -11,11 +11,13 @@ import TripFinanceCompensationModal from '@/views/trips/TripFinanceCompensationM
  * Слова заказчика: «выбор участника, кому должен пользователь и сумма
  * (подставляется автоматически, можно редактировать). По выбранному
  * участнику отображается его реквизиты из Профиля в виде подсказки, если
- * нет, то надпись „получатель <имя>“».
+ * нет, то надпись «получатель <имя>»». Семейный случай: получатель —
+ * одна строка «Вася и Аня», сумма — общий долг семьи, реквизиты всех,
+ * у кого они есть.
  *
  * Тест держит: подсказка подставляется, но её можно уменьшить; больше
- * остатка не уходит; переключение кредитора меняет и сумму, и реквизиты;
- * отсутствие реквизитов объясняется словами заказчика.
+ * остатка не уходит; переключение меняет и сумму, и реквизиты; отсутствие
+ * реквизитов объясняется словами заказчика — по полу и для семьи.
  */
 const mocks = vi.hoisted(() => ({
   createTripCompensation: vi.fn(),
@@ -27,13 +29,46 @@ vi.mock('@/api/finance', () => ({
 
 function option(overrides: Partial<CompensationOption> = {}): CompensationOption {
   return {
-    userId: 'anna',
+    userIds: ['anna'],
     displayName: 'Анна',
     amountRub: 1000,
-    paymentDetails: '+7 999 000-00-00',
-    paymentBank: 'Сбер',
+    members: [
+      {
+        userId: 'anna',
+        displayName: 'Анна',
+        gender: 'f',
+        paymentDetails: '+7 999 000-00-00',
+        paymentBank: 'Сбер',
+      },
+    ],
     ...overrides,
   }
+}
+
+/** Вася и Аня — семья: у Васи реквизиты есть, у Ани нет. */
+function familyOption(overrides: Partial<CompensationOption> = {}): CompensationOption {
+  return option({
+    userIds: ['vasya', 'anya'],
+    displayName: 'Вася и Аня',
+    amountRub: 1500,
+    members: [
+      {
+        userId: 'vasya',
+        displayName: 'Вася',
+        gender: 'm',
+        paymentDetails: '+7 902 111-22-33',
+        paymentBank: 'Тинькофф',
+      },
+      {
+        userId: 'anya',
+        displayName: 'Аня',
+        gender: 'f',
+        paymentDetails: null,
+        paymentBank: null,
+      },
+    ],
+    ...overrides,
+  })
 }
 
 function view(): TripFinance {
@@ -41,18 +76,32 @@ function view(): TripFinance {
     expenses: [],
     compensations: [],
     members: [],
-    me: { balanceRub: 0, remainingRub: 0, canSpend: true, suggestions: [] },
+    me: {
+      balanceRub: 0,
+      remainingRub: 0,
+      familyDebtRub: 0,
+      familyCreditRub: 0,
+      canSpend: true,
+      suggestions: [],
+    },
   }
 }
 
 const SUGGESTIONS = [
   option(),
   option({
-    userId: 'boris',
+    userIds: ['boris'],
     displayName: 'Борис',
     amountRub: 400,
-    paymentDetails: null,
-    paymentBank: null,
+    members: [
+      {
+        userId: 'boris',
+        displayName: 'Борис',
+        gender: 'm',
+        paymentDetails: null,
+        paymentBank: null,
+      },
+    ],
   }),
 ]
 
@@ -68,6 +117,19 @@ describe('модалка компенсации', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.createTripCompensation.mockResolvedValue(view())
+  })
+
+  it('текст заказчика дословно: про подтверждение, расчёт и Васю с Колей', () => {
+    const wrapper = mountModal()
+
+    const note = wrapper.get('[data-test="finance-compensation-note"]').text()
+    expect(note).toContain('Запись значит «я перевёл». Получателю требуется подтвердить получение.')
+    expect(note).toContain(
+      'Расчёт произведён по всем расходам и оптимизирован для наименьшего количества транзакций.',
+    )
+    expect(note).toContain(
+      'Не смущайся если Вася оплатил твой шулэн, а предлагается перевод Коле, значит Вася должен Коле',
+    )
   })
 
   it('первый кредитор и его сумма подставлены, реквизиты на месте', async () => {
@@ -87,11 +149,20 @@ describe('модалка компенсации', () => {
     expect(wrapper.get('[data-test="finance-compensation-bank"]').text()).toBe('Сбер')
   })
 
-  it('без реквизитов — фраза заказчика и имя получателя', async () => {
+  it('в списке сумма без «не больше», а реквизиты без «спроси у него/неё»', () => {
+    const wrapper = mountModal()
+
+    expect(wrapper.get('[data-test="finance-compensation-people"]').text()).toContain('1 000 ₽')
+    expect(wrapper.get('[data-test="finance-compensation-people"]').text()).not.toContain('не больше')
+    expect(wrapper.text()).not.toContain('указал(а)')
+    expect(wrapper.text()).not.toContain('него/неё')
+  })
+
+  it('без реквизитов — фраза заказчика, глагол по полу', async () => {
     const wrapper = mountModal([SUGGESTIONS[1]!])
 
     expect(wrapper.get('[data-test="finance-compensation-no-requisites"]').text()).toBe(
-      'Борис не указал(а) реквизиты в своём профиле, спроси у него/неё самого/самой.',
+      'Борис не указал реквизиты в своём профиле, придётся спросить у них самих.',
     )
     expect(wrapper.find('[data-test="finance-compensation-details"]').exists()).toBe(false)
   })
@@ -109,6 +180,49 @@ describe('модалка компенсации', () => {
     expect(wrapper.get('[data-test="finance-compensation-no-requisites"]').text()).toContain(
       'Борис',
     )
+  })
+
+  it('семья одной строкой: сумма общая, реквизиты всех, у кого они есть', () => {
+    const wrapper = mountModal([familyOption()])
+
+    expect(wrapper.get('[data-test="finance-compensation-people"]').text()).toContain('Вася и Аня')
+    expect(
+      (wrapper.get('[data-test="finance-compensation-amount"]').element as HTMLInputElement)
+        .value,
+    ).toBe('1500')
+    expect(wrapper.get('[data-test="finance-compensation-details"]').text()).toBe(
+      '+7 902 111-22-33',
+    )
+    expect(wrapper.get('[data-test="finance-compensation-bank"]').text()).toBe('Тинькофф')
+    // У Ани реквизитов нет — её имени в блоке перевода быть не должно.
+    expect(wrapper.get('[data-test="finance-compensation-requisites"]').text()).not.toContain('Аня')
+  })
+
+  it('у семьи без реквизитов — фраза во множественном числе', () => {
+    const wrapper = mountModal([
+      familyOption({
+        members: [
+          { userId: 'vasya', displayName: 'Вася', gender: 'm', paymentDetails: null, paymentBank: null },
+          { userId: 'anya', displayName: 'Аня', gender: 'f', paymentDetails: null, paymentBank: null },
+        ],
+      }),
+    ])
+
+    expect(wrapper.get('[data-test="finance-compensation-no-requisites"]').text()).toBe(
+      'Вася и Аня не указали реквизиты в своих профилях, придётся спросить у них самих.',
+    )
+  })
+
+  it('семейный перевод уходит первым человеком семьи — сервер найдёт остальных', async () => {
+    const wrapper = mountModal([familyOption()])
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.createTripCompensation).toHaveBeenCalledWith('7', {
+      toUserId: 'vasya',
+      amountRub: 1500,
+    })
   })
 
   it('больше остатка не отправляет и объясняет, сколько осталось', async () => {
@@ -154,7 +268,40 @@ describe('модалка компенсации', () => {
     )
   })
 
-  it('некому переводить — список пуст и объясняет почему', async () => {
+  /**
+   * Баг 12.11.2026: сервер отказывал «Вам не нужно ничего компенсировать»,
+   * хотя на экране был долг. Экран и модалка должны узнать, что подсказки
+   * устарели, и перечитать вкладку.
+   */
+  it('отказ 400 просит родителя перечитать вкладку', async () => {
+    const wrapper = mountModal()
+    mocks.createTripCompensation.mockRejectedValue(
+      new ApiError(400, 'Вам не нужно ничего компенсировать', null),
+    )
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.emitted('stale')).toHaveLength(1)
+  })
+
+  it('если свежие подсказки изменились, выбор не остаётся на исчезнувшей семье', async () => {
+    const wrapper = mountModal()
+
+    await wrapper.setProps({ suggestions: [familyOption()] })
+    await flushPromises()
+
+    expect(
+      (wrapper.get('[data-test="finance-compensation-to-vasya"]').element as HTMLInputElement)
+        .checked,
+    ).toBe(true)
+    expect(
+      (wrapper.get('[data-test="finance-compensation-amount"]').element as HTMLInputElement)
+        .value,
+    ).toBe('1500')
+  })
+
+  it('некому переводить — список пуст и объясняет почему', () => {
     const wrapper = mountModal([])
 
     expect(wrapper.get('[data-test="finance-compensation-empty"]').text()).toContain(

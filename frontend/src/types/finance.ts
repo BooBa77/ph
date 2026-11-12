@@ -15,8 +15,8 @@ export type ExpenseSplit = (typeof EXPENSE_SPLITS)[number]
 
 /** Подписи сегментов модалки расхода. */
 export const EXPENSE_SPLIT_LABELS: Record<ExpenseSplit, string> = {
-  all: 'На всех',
-  group: 'На группу',
+  all: 'За всех',
+  group: 'За группу',
   commonEaters: 'На питающихся с общего',
 }
 
@@ -75,20 +75,40 @@ export interface FinanceMember {
   paymentBank: string | null
 }
 
-/** Вариант «кому перевести» в модалке компенсации. */
-export interface CompensationOption {
+/** Получатель внутри варианта компенсации: реквизиты и пол. */
+export interface CompensationPerson {
   userId: string
   displayName: string
-  /** Не больше остатка моего долга и кредита получателя. */
-  amountRub: number
+  /** Пол нужен подписи об отсутствии реквизитов: «не указал» / «не указала». */
+  gender: 'm' | 'f'
   paymentDetails: string | null
   paymentBank: string | null
+}
+
+/**
+ * Вариант «кому перевести» в модалке компенсации.
+ *
+ * С 12.11.2026 вариант — **семья целиком**: «Вася и Аня» одной строкой,
+ * а сумма — `min(долг моей семьи, кредит этой семьи)`. Поэтому здесь
+ * список людей: реквизиты показываются у всех, у кого они есть.
+ */
+export interface CompensationOption {
+  /** Идущие получатели семьи — в порядке состава похода. */
+  userIds: string[]
+  displayName: string
+  /** Не больше остатка долга моей семьи и кредита этой. */
+  amountRub: number
+  members: CompensationPerson[]
 }
 
 /** Мой баланс и подсказки — шапка вкладки. */
 export interface MyFinance {
   balanceRub: number
   remainingRub: number
+  /** Долг всей моей семьи — от него считается сумма компенсации. */
+  familyDebtRub: number
+  /** Кредит всей моей семьи — по нему объясняется выключенная кнопка. */
+  familyCreditRub: number
   /**
    * Могу ли я менять деньги: расход и компенсацию добавляет только идущий.
    * Если `false`, кнопки на экране выключены и объясняют почему.

@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  balancePhrase,
   formatDay,
   formatRub,
   formatRubSigned,
@@ -15,7 +14,7 @@ import {
  * Ошибка в форматировании денег не бросается в глаза: «0,9» и «0,8999999»,
  * «2 000» и «2000» читаются как одна и та же цифра, только вторая — как
  * ошибка. Здесь закреплены три правила шапки «Бухгалтерии»: рубли без
- * копеек, знак баланса словами и дата без времени.
+ * копеек, знак баланса и дата без времени.
  */
 describe('formatRub', () => {
   it('группирует разряды и подписывает рубли', () => {
@@ -39,12 +38,6 @@ describe('баланс и его знак', () => {
     expect(formatRubSigned(2000)).toBe('+2 000 ₽')
     expect(formatRubSigned(-1000)).toBe('−1 000 ₽')
     expect(formatRubSigned(0)).toBe('0 ₽')
-  })
-
-  it('баланс одной фразой', () => {
-    expect(balancePhrase(2000)).toBe('Вам должны 2 000 ₽')
-    expect(balancePhrase(-1000)).toBe('Вы должны 1 000 ₽')
-    expect(balancePhrase(0)).toBe('Всё в расчёте')
   })
 })
 
