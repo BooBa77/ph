@@ -13,6 +13,7 @@ import { useAuthStore } from '@/stores/auth'
 import type {
   CompensationOption,
   CompensationSender,
+  FinanceFamily,
   TripCompensation,
   TripExpense,
   TripFinance,
@@ -168,6 +169,26 @@ onBeforeUnmount(() => {
 
 const me = computed(() => finance.value?.me ?? null)
 
+/**
+ * Общая касса семьи (12.11.2026).
+ *
+ * Заказчик: «общая касса семьи — это компенсация семье любому её члену
+ * и „платит семья“ при компенсации другим участникам; при расходах
+ * отображаем как расход от конкретного человека». Поэтому в шапке стоит
+ * **касса**, а не личный остаток: внутри семьи плюс одного уже погашен
+ * минусом другого, и личные цифры на экране только путали бы.
+ *
+ * У человека без семьи касса — он сам: подпись остаётся «Твой баланс»,
+ * цифра та же, что и личная.
+ */
+const myFamily = computed<FinanceFamily | null>(
+  () => finance.value?.families.find((family) => family.isMine) ?? null,
+)
+
+const cardTitle = computed(() =>
+  (myFamily.value?.memberIds.length ?? 1) > 1 ? 'Касса семьи' : 'Твой баланс',
+)
+
 /** Менять деньги может только идущий участник — так решил сервер. */
 const canSpend = computed(() => finance.value?.me.canSpend === true)
 
@@ -225,7 +246,7 @@ const compensationHint = computed(() => {
 })
 
 const balanceClass = computed(() => {
-  const balance = finance.value?.me.balanceRub ?? 0
+  const balance = finance.value?.me.familyBalanceRub ?? 0
 
   if (balance > 0) return 'text-emerald-700'
   if (balance < 0) return 'text-red-600'
@@ -239,15 +260,18 @@ const balanceClass = computed(() => {
  * Заказчик 12.11.2026: «не нужно это некрасивое ВЫ ДОЛЖНЫ, пусть будет
  * в одну строку „Ваш баланс“ + красный 500 р». Знак и цвет говорят то же
  * самое, и строка не разъезжается на две. С 12.11.2026 подпись — «Твой
- * баланс»: интерфейс обращается на «ты».
+ * баланс»: интерфейс обращается на «ты». С 12.11.2026 — «Касса семьи»:
+ * цифра тоже семейная.
  */
-const balanceText = computed(() => formatRubSigned(finance.value?.me.balanceRub ?? 0))
+const balanceText = computed(() =>
+  formatRubSigned(finance.value?.me.familyBalanceRub ?? 0),
+)
 
 /** Вторая цифра нужна только когда ожидающие переводы её сдвинули. */
 const hasRemainingShift = computed(
   () =>
     finance.value !== null &&
-    finance.value.me.remainingRub !== finance.value.me.balanceRub,
+    finance.value.me.familyRemainingRub !== finance.value.me.familyBalanceRub,
 )
 
 // ───────────────────────────── таблица движения денег ─────────────────────────────
@@ -273,6 +297,23 @@ interface MoneyRowView {
   canCancel: boolean
   expense: TripExpense | null
   compensation: TripCompensation | null
+}
+
+/**
+ * Подпись стороны перевода: семья целиком, а не человек.
+ *
+ * Расход в ленте подписан плательщиком — «расход от конкретного человека»,
+ * слова заказчика 12.11.2026. Компенсация — движение между **кассами**:
+ * семья платит и семья получает, а кто именно нажал кнопку и на чью карту
+ * пришли деньги, на баланс не влияет. У человека без семьи подпись
+ * остаётся его именем.
+ */
+function compensationParty(userId: string, fallback: string): string {
+  const family = finance.value?.families.find((item) =>
+    item.memberIds.includes(userId),
+  )
+
+  return family?.displayName ?? fallback
 }
 
 function toView(row: MoneyRow): MoneyRowView {
@@ -301,7 +342,7 @@ function toView(row: MoneyRow): MoneyRowView {
     key: row.key,
     kind: 'compensation',
     day: formatDay(row.at),
-    who: `${compensation.fromName} → ${compensation.toName}`,
+    who: `${compensationParty(compensation.fromUserId, compensation.fromName)} → ${compensationParty(compensation.toUserId, compensation.toName)}`,
     amountRub: compensation.amountRub,
     description: '',
     caption: '',
@@ -427,16 +468,16 @@ function cancelRow(row: MoneyRowView): void {
 
     <template v-else-if="finance && me">
       <!--
-        «Твой баланс» — первое, что человек ищет в этой вкладке. Цифра стоит
-        в той же строке: «Вы должны 500 ₽» заказчик забраковал — знак и цвет
-        говорят то же самое короче. Вторая строка появляется только когда
-        ожидающие переводы сдвинули цифру.
+        «Твой баланс» / «Касса семьи» — первое, что человек ищет в этой
+        вкладке. Цифра стоит в той же строке: «Вы должны 500 ₽» заказчик
+        забраковал — знак и цвет говорят то же самое короче. Вторая строка
+        появляется только когда ожидающие переводы сдвинули цифру.
       -->
       <div class="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="flex flex-col gap-1">
             <div class="flex flex-wrap items-baseline gap-x-2">
-              <h2 class="text-xs text-muted">Твой баланс</h2>
+              <h2 class="text-xs text-muted" data-test="finance-card-title">{{ cardTitle }}</h2>
               <p
                 class="text-2xl font-semibold whitespace-nowrap"
                 :class="balanceClass"
@@ -450,7 +491,7 @@ function cancelRow(row: MoneyRowView): void {
               class="text-xs text-muted"
               data-test="finance-remaining"
             >
-              С учётом ожидающих — {{ formatRub(me.remainingRub) }}
+              С учётом ожидающих — {{ formatRub(me.familyRemainingRub) }}
             </p>
           </div>
 
@@ -481,27 +522,27 @@ function cancelRow(row: MoneyRowView): void {
           {{ compensationHint }}
         </p>
 
-        <!-- Балансы участников: арифметика должна быть видна, а не только мой итог -->
+        <!-- Кассы семей: арифметика должна быть видна, а не только мой итог -->
         <div class="border-t border-border pt-2">
-          <h3 class="text-xs text-muted">Балансы участников</h3>
+          <h3 class="text-xs text-muted">Балансы</h3>
           <ul class="flex flex-wrap gap-x-3 gap-y-1 text-sm" data-test="finance-members">
             <li
-              v-for="member in finance.members"
-              :key="member.userId"
+              v-for="family in finance.families"
+              :key="family.memberIds[0]"
               class="flex items-baseline gap-1"
-              data-test="finance-member"
+              data-test="finance-family"
             >
-              <span class="text-text">{{ member.displayName }}</span>
+              <span class="text-text">{{ family.displayName }}</span>
               <span
                 class="whitespace-nowrap font-medium"
                 :class="
-                  member.balanceRub > 0
+                  family.balanceRub > 0
                     ? 'text-emerald-700'
-                    : member.balanceRub < 0
+                    : family.balanceRub < 0
                       ? 'text-red-600'
                       : 'text-muted'
                 "
-                >{{ formatRubSigned(member.balanceRub) }}</span
+                >{{ formatRubSigned(family.balanceRub) }}</span
               >
             </li>
           </ul>

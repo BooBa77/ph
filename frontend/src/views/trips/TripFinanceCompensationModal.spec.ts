@@ -76,10 +76,13 @@ function view(): TripFinance {
     expenses: [],
     compensations: [],
     members: [],
+    families: [],
     managedSenders: [],
     me: {
       balanceRub: 0,
       remainingRub: 0,
+      familyBalanceRub: 0,
+      familyRemainingRub: 0,
       familyDebtRub: 0,
       familyCreditRub: 0,
       canSpend: true,

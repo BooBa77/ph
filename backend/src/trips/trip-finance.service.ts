@@ -10,6 +10,7 @@ import { DataSource, EntityManager, Not } from 'typeorm';
 import {
   CompensationOptionDto,
   CompensationSenderDto,
+  FinanceFamilyDto,
   FinanceMemberDto,
   MyFinanceDto,
   SaveTripExpenseDto,
@@ -24,10 +25,10 @@ import { TripParticipant } from './entities/trip-participant.entity';
 import {
   balancesFromEntities,
   compensationOptions,
+  familyBalance,
   familyCredit,
   familyDebt,
   joinNames,
-  planCompensation,
   remainingFromEntities,
   splitAmount,
   type ShareAmount,
@@ -213,13 +214,21 @@ export class TripFinanceService {
   /**
    * Создать ожидающую компенсацию: «я перевёл тебе столько».
    *
-   * **С 12.11.2026 платит семья.** Заказчик: «сумма к компенсации
-   * рассчитывается от семьи… проще — папа платит за всех». Поэтому
-   * `toUserId` — любой человек семьи получателя, а сумма проверяется против
-   * долга **всей своей семьи** и кредита **всей семьи получателя**. Одно
-   * действие на экране раскладывается на личные переводы `planCompensation`:
-   * баланс в проекте персональный, и записать чужой долг на папу значило бы
-   * сломать арифметику остальным участникам.
+   * **Платит семья, и касса у неё общая (12.11.2026).** Заказчик:
+   * «сумма к компенсации рассчитывается от семьи… проще — папа платит
+   * за всех», а потом уточнил, что это общая касса: «компенсация семье
+   * любому её члену, и „платит семья“ при компенсации другим участникам».
+   * Поэтому `toUserId` — любой человек семьи получателя, а сумма проверяется
+   * против **чистого остатка** всей своей семьи и всей семьи получателя.
+   *
+   * **Одно действие — один перевод.** Баланс теперь семейный, поэтому
+   * раскладывать сумму по личным долгам не нужно: получателю подтверждать
+   * одну строку, а не три. Личные остатки остаются в базе как внутренняя
+   * арифметика семьи и на экране не показываются.
+   *
+   * Отправитель строки — тот, кто нажал «Я перевёл» (в том числе человек
+   * без аккаунта, за которого действует ведущий): семья платит как один
+   * кошелёк, и отменить перевод сможет любой её участник.
    *
    * Должник — только своя семья: перевести за постороннего нельзя.
    * Своей семье не переводят — внутри семьи деньги не двигаются.
@@ -297,27 +306,18 @@ export class TripFinanceService {
         );
       }
 
-      const transfers = planCompensation(
-        amountRub,
-        myFamily,
-        targetFamily,
-        remaining,
-      );
-      if (transfers.length === 0) {
-        throw new BadRequestException('Компенсировать нечего');
-      }
-
       await manager.save(
-        transfers.map((transfer) =>
-          manager.create(TripCompensation, {
-            tripId: String(trip.id),
-            fromUserId: transfer.fromUserId,
-            toUserId: transfer.toUserId,
-            amountRub: transfer.amountRub,
-            status: 'pending',
-            confirmedAt: null,
-          }),
-        ),
+        manager.create(TripCompensation, {
+          tripId: String(trip.id),
+          fromUserId: senderId,
+          // Получатель — любой человек семьи: касса у неё одна, а строка
+          // хранит, кому именно перевели (и кто сможет подтвердить —
+          // подтвердить может любой родной, см. `buildView`).
+          toUserId,
+          amountRub,
+          status: 'pending',
+          confirmedAt: null,
+        }),
       );
 
       return this.buildView(manager, String(trip.id), userId);
@@ -479,11 +479,30 @@ export class TripFinanceService {
 
     const suggestions = optionsFor(viewerId);
 
+    // Общая касса семьи (12.11.2026): одна строка на семью, а не на человека.
+    // Внутри семьи плюс одного гасит минус другого — это и есть «общий
+    // кошелёк»; на экране балансы показываются по кассам.
+    const familyDtos: FinanceFamilyDto[] = families.map((group) => {
+      const people = group.map((userId) => userById.get(userId)!);
+
+      return {
+        memberIds: [...group],
+        displayName: joinNames(people.map((person) => person.displayName)),
+        balanceRub: familyBalance(balances, group),
+        remainingRub: familyBalance(remaining, group),
+        isMine: group.includes(viewerId),
+      };
+    });
+
     const me: MyFinanceDto = {
       balanceRub: balances.get(viewerId) ?? 0,
       remainingRub: remaining.get(viewerId) ?? 0,
-      // Долг и кредит считаются по семье: по ним экран объясняет, почему
-      // «Компенсация» выключена, когда личный остаток ничего не говорит.
+      // Мой личный остаток — внутренняя арифметика семьи. Экран показывает
+      // кассу: `familyBalanceRub`, а не эту цифру.
+      familyBalanceRub: familyBalance(balances, myFamily),
+      familyRemainingRub: familyBalance(remaining, myFamily),
+      // Долг и кредит кассы: по ним экран объясняет, почему «Компенсация»
+      // выключена, когда личный остаток ничего не говорит.
       familyDebtRub: familyDebt(remaining, myFamily),
       familyCreditRub: familyCredit(remaining, myFamily),
       // Приглашённый видит вкладку, но ещё не тратил: экран по этому флагу
@@ -544,6 +563,7 @@ export class TripFinanceService {
         return dto;
       }),
       members,
+      families: familyDtos,
       me,
       managedSenders,
     };

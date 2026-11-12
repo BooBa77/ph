@@ -137,8 +137,9 @@ export function computeRemaining(
  * Один вариант «кому и сколько» в модалке компенсации.
  *
  * С 12.11.2026 вариантом может быть **семья целиком**: Вася и Аня получают
- * одной строкой. Поэтому здесь список людей, а не один `userId`; сколько
- * именно переводится каждому — распишет `planCompensation` при создании.
+ * одной строкой. Поэтому здесь список людей, а не один `userId`: на экране
+ * показываются реквизиты всех, у кого они есть, а перевод один — в общую
+ * кассу семьи (12.11.2026).
  */
 export interface CompensationOption {
   /** Идущие получатели этой семьи — в порядке состава похода. */
@@ -148,33 +149,43 @@ export interface CompensationOption {
 }
 
 /**
- * Долг семьи — сумма долей её участников с отрицательным остатком.
+ * Касса семьи — общий кошелёк: **сумма остатков её участников** (12.11.2026).
  *
- * Не «сумма балансов» с плюсами: внутри семьи положительный и отрицательный
- * остатки взаимно не гасятся. Семья — это общий кошелёк, но долг одному
- * человеку и кредит от другого — разные контрагенты; если участник в плюсе,
- * эти деньги ему должен кто-то третий, и семья не может заплатить ими
- * за другого своего участника.
+ * Внутри семьи деньги не считаются по людям: если Иван заплатил за общий
+ * стол, а Анна должна ему свою долю, это внутреннее дело семьи, а не долг
+ * перед посторонним. Поэтому плюс одного **гасит** минус другого, и семья
+ * выходит на внешних контрагентов одной цифрой.
+ *
+ * Прежде (12.11.2026) долг и кредит считались по отдельности — суммой
+ * минусов и суммой плюсов, — и семья с балансами +4 000 и −1 000 показывала
+ * и долг 1 000, и кредит 4 000. Внешним семьям она была должна 1 000,
+ * а получила бы 4 000: лишние переводы между семьями, которых могло
+ * не быть. Заказчик назвал это «общей кассой» — одна цифра на семью.
  */
-export function familyDebt(
+export function familyBalance(
   remaining: ReadonlyMap<string, number>,
   userIds: readonly string[],
 ): number {
   return userIds.reduce(
-    (sum, userId) => sum + Math.max(0, -(remaining.get(userId) ?? 0)),
+    (sum, userId) => sum + (remaining.get(userId) ?? 0),
     0,
   );
 }
 
-/** Кредит семьи — сумма её участников с положительным остатком. */
+/** Долг семьи — касса в минусе; в плюсе долга нет. */
+export function familyDebt(
+  remaining: ReadonlyMap<string, number>,
+  userIds: readonly string[],
+): number {
+  return Math.max(0, -familyBalance(remaining, userIds));
+}
+
+/** Кредит семьи — касса в плюсе; в минусе кредита нет. */
 export function familyCredit(
   remaining: ReadonlyMap<string, number>,
   userIds: readonly string[],
 ): number {
-  return userIds.reduce(
-    (sum, userId) => sum + Math.max(0, remaining.get(userId) ?? 0),
-    0,
-  );
+  return Math.max(0, familyBalance(remaining, userIds));
 }
 
 /**
@@ -182,9 +193,10 @@ export function familyCredit(
  *
  * `families` — идущие участники, разложенные по семьям в порядке состава.
  * Своя семья из вариантов исключена: внутри семьи деньги не переводят.
- * Сумма варианта — `min(долг моей семьи, кредит семьи получателя)`, чтобы
- * один перевод не улетел выше чужого кредита. Если семья ничего не должна —
- * вариантов нет: компенсация не нужна, и кнопка на экране будет неактивной.
+ * Сумма варианта — `min(долг моей семьи, кредит семьи получателя)` **по
+ * общей кассе**: у семьи один общий остаток, а не отдельные долги и кредиты
+ * участников (12.11.2026). Если касса в нуле — вариантов нет: компенсация
+ * не нужна, и кнопка на экране будет неактивной.
  *
  * Сортировка — по убыванию суммы: крупный долг закрывается первым.
  * При равенстве — порядок состава похода, чтобы список не прыгал между
@@ -220,77 +232,6 @@ export function compensationOptions(
       b.amountRub - a.amountRub ||
       (order.get(a.userIds[0]) ?? 0) - (order.get(b.userIds[0]) ?? 0),
   );
-}
-
-/** Перевод внутри одного действия: «этот должник этому получателю столько». */
-export interface CompensationTransfer {
-  fromUserId: string;
-  toUserId: string;
-  amountRub: number;
-}
-
-/**
- * Разложить сумму семейной компенсации на личные переводы.
- *
- * «Папа платит за всех» — одно действие на экране, но баланс в проекте
- * остаётся **персональным**. Поэтому деньги раскладываются по долгам
- * участников моей семьи и по кредитам участников семьи получателя:
- * сначала закрывается долг первого по составу, внутри него — кредит
- * первого по составу, и так до исчерпания суммы.
- *
- * Порядок детерминированный: от него зависят записи в базе, а повторное
- * действие с теми же числами должно давать те же строки. Копеек нет,
- * поэтому каждая пара получает целые рубли, а сумма переводов равна
- * переданной сумме.
- */
-export function planCompensation(
-  amountRub: number,
-  fromUserIds: readonly string[],
-  toUserIds: readonly string[],
-  remaining: ReadonlyMap<string, number>,
-): CompensationTransfer[] {
-  if (!Number.isInteger(amountRub) || amountRub <= 0) return [];
-
-  const debtors = fromUserIds
-    .map((userId) => ({
-      userId,
-      debt: Math.max(0, -(remaining.get(userId) ?? 0)),
-    }))
-    .filter((debtor) => debtor.debt > 0);
-
-  const creditors = toUserIds
-    .map((userId) => ({
-      userId,
-      credit: Math.max(0, remaining.get(userId) ?? 0),
-    }))
-    .filter((creditor) => creditor.credit > 0);
-
-  const transfers: CompensationTransfer[] = [];
-  let left = amountRub;
-
-  for (const debtor of debtors) {
-    let pays = Math.min(debtor.debt, left);
-
-    for (const creditor of creditors) {
-      if (pays === 0) break;
-      if (creditor.credit === 0) continue;
-
-      const amount = Math.min(pays, creditor.credit);
-      transfers.push({
-        fromUserId: debtor.userId,
-        toUserId: creditor.userId,
-        amountRub: amount,
-      });
-
-      creditor.credit -= amount;
-      pays -= amount;
-      left -= amount;
-    }
-
-    if (left === 0) break;
-  }
-
-  return transfers;
 }
 
 /**

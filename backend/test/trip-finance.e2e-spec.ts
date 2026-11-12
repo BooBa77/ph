@@ -33,6 +33,8 @@ describe('Бухгалтерия похода (e2e)', () => {
   let trip3: string;
   /** Поход с человеком без аккаунта: за него платит и переводит ведущий. */
   let trip4: string;
+  /** Общая касса семьи: плюс одного участника гасит минус другого. */
+  let trip5: string;
   let virtualPersonId: string;
   let lastCode: string | null = null;
 
@@ -229,7 +231,7 @@ describe('Бухгалтерия похода (e2e)', () => {
     if (dataSource?.isInitialized) {
       // Расходы, доли и компенсации уходят каскадом вместе с походами.
       await dataSource.query('DELETE FROM trips WHERE id = ANY($1::bigint[])', [
-        [trip1, trip2, trip3, trip4].filter(Boolean),
+        [trip1, trip2, trip3, trip4, trip5].filter(Boolean),
       ]);
       // Человек без аккаунта ссылается на владельца — удаляем его первым.
       if (virtualPersonId) {
@@ -752,11 +754,13 @@ describe('Бухгалтерия похода (e2e)', () => {
   });
 
   /**
-   * Семейная компенсация (12.11.2026).
+   * Семейная компенсация и общая касса семьи (12.11.2026).
    *
    * Заказчик: «сумма к компенсации рассчитывается от семьи… проще — папа
    * платит за всех»; «предлагать семью одной строкой „Вася и Аня“, сумму =
-   * Вася + Аня»; «балансы в секции баланса оставляем персональные».
+   * Вася + Аня». 12.11.2026 уточнил: это **общая касса** — «компенсация
+   * семье любому её члену и „платит семья“ при компенсации другим
+   * участникам», а расходы остаются от конкретного человека.
    *
    * Третий поход: А (организатор), Б, В, Г. Семьи: (Б, В) и (А, Г).
    * Г платит 1 200 на всех — каждый должен 300; А платит 800 за Г —
@@ -809,13 +813,28 @@ describe('Бухгалтерия похода (e2e)', () => {
       });
     });
 
-    it('сумма варианта — долг всей семьи, а предлагается только чужая семья', async () => {
+    it('сумма варианта — остаток общей кассы, а предлагается только чужая семья', async () => {
       const response = await view(trip3, b);
 
       // Личный баланс Б — 300, но платит семья: 300 + 300 = 600.
       expect(response.body.me.balanceRub).toBe(-300);
+      expect(response.body.me.familyBalanceRub).toBe(-600);
+      expect(response.body.me.familyRemainingRub).toBe(-600);
       expect(response.body.me.familyDebtRub).toBe(600);
       expect(response.body.me.familyCreditRub).toBe(0);
+
+      // Кассы семей: одна строка на семью, а не на человека.
+      const mine = response.body.families.find(
+        (family: { isMine: boolean }) => family.isMine,
+      );
+      expect(mine.memberIds).toEqual([b.id, c.id]);
+      expect(mine.balanceRub).toBe(-600);
+      expect(mine.displayName).toContain(' и ');
+
+      const other = response.body.families.find(
+        (family: { isMine: boolean }) => !family.isMine,
+      );
+      expect(other.balanceRub).toBe(600);
 
       expect(response.body.me.suggestions).toHaveLength(1);
       const [option] = response.body.me.suggestions;
@@ -847,36 +866,52 @@ describe('Бухгалтерия похода (e2e)', () => {
       expect(withoutDetails.paymentDetails).toBeNull();
     });
 
-    it('одно действие семьи раскладывается на личные переводы', async () => {
-      const sent = await auth(
+    it('своей семье не переводят и больше остатка не проводят', async () => {
+      await auth(
         request(app.getHttpServer()).post(
           `/api/trips/${trip3}/finance/compensations`,
         ),
         b.token,
       )
+        .send({ toUserId: c.id, amountRub: 100 })
+        .expect(400);
+
+      await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip3}/finance/compensations`,
+        ),
+        b.token,
+      )
+        .send({ toUserId: g.id, amountRub: 601 })
+        .expect(400);
+    });
+
+    it('одно действие — один перевод в общую кассу семьи', async () => {
+      // Платит В: лично он должник на 300, а касса семьи — на 600.
+      const sent = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip3}/finance/compensations`,
+        ),
+        c.token,
+      )
         .send({ toUserId: a.id, amountRub: 600 })
         .expect(201);
 
-      expect(sent.body.compensations).toHaveLength(3);
-      expect(pairs(sent.body.compensations)).toEqual(
-        [
-          `${b.id}->${a.id}:300`,
-          `${c.id}->${a.id}:200`,
-          `${c.id}->${g.id}:100`,
-        ].sort(),
-      );
+      // Получателю подтверждать одну строку, а не три: касса у семьи одна.
+      expect(sent.body.compensations).toHaveLength(1);
+      expect(pairs(sent.body.compensations)).toEqual([`${c.id}->${a.id}:600`]);
 
-      // Ожидающие переводы бронируют кредит: семья Б и В больше ничего не должна.
+      // Ожидающий перевод бронирует кассу: семья Б и В больше ничего не должна.
       const after = await view(trip3, b);
       expect(after.body.me.familyDebtRub).toBe(0);
+      expect(after.body.me.familyRemainingRub).toBe(0);
+      expect(after.body.me.familyBalanceRub).toBe(-600);
       expect(after.body.me.suggestions).toEqual([]);
     });
 
     it('родной отправителя может отменить перевод, посторонний — нет', async () => {
-      const compensation = (await view(trip3, b)).body.compensations.find(
-        (item: { fromUserId: string; toUserId: string }) =>
-          item.fromUserId === c.id && item.toUserId === g.id,
-      );
+      const [compensation] = (await view(trip3, b)).body.compensations;
+      expect(compensation.fromUserId).toBe(c.id);
 
       // Б не отправитель строки, но он родной В — семья платит одним кошельком.
       expect(compensation.canCancel).toBe(true);
@@ -897,9 +932,16 @@ describe('Бухгалтерия похода (e2e)', () => {
     });
 
     it('родной получателя может подтвердить получение', async () => {
-      const compensation = (await view(trip3, b)).body.compensations.find(
-        (item: { fromUserId: string }) => item.fromUserId === b.id,
-      );
+      // Отменённый перевод не возвращается — семья платит его заново.
+      const created = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip3}/finance/compensations`,
+        ),
+        c.token,
+      )
+        .send({ toUserId: a.id, amountRub: 600 })
+        .expect(201);
+      const [compensation] = created.body.compensations;
 
       // Б не получатель и не родной А — подтверждать ему нечего.
       expect(compensation.canConfirm).toBe(false);
@@ -924,27 +966,104 @@ describe('Бухгалтерия похода (e2e)', () => {
           (item: { id: string }) => item.id === compensation.id,
         ).status,
       ).toBe('confirmed');
+
+      // Подтверждённый перевод закрыл кассу: было −600, пришло 600.
+      const after = await view(trip3, b);
+      expect(after.body.me.familyBalanceRub).toBe(0);
+      expect(after.body.me.familyRemainingRub).toBe(0);
+      expect(after.body.me.suggestions).toEqual([]);
+    });
+  });
+
+  /**
+   * 12.11.2026: общая касса семьи.
+   *
+   * Пятый поход: А (организатор), Б, В, Г; семьи (А, Г) и (Б, В).
+   * Б платит 1 000 за А, Г платит 300 за В, А платит 100 за В. Балансы:
+   * А −900, Г +300, Б +1 000, В −400. Касса (А, Г) — −600, касса (Б, В) —
+   * +600. По прежнему правилу (долг и кредит по отдельности) семья А и Г
+   * предложила бы 900 — весь долг А, — хотя касса должна 600: плюс Г
+   * внутри семьи гасит часть минуса А.
+   */
+  describe('общая касса семьи', () => {
+    beforeAll(async () => {
+      trip5 = await createTrip('Бухгалтерия: общая касса');
+      for (const person of [b, c, g]) await addGoing(trip5, person);
+
+      await makeFamily(b, c);
+      await makeFamily(a, g);
+
+      await addExpense(trip5, b, {
+        amountRub: 1000,
+        split: 'group',
+        participantIds: [a.id],
+        description: 'За А',
+      });
+      await addExpense(trip5, g, {
+        amountRub: 300,
+        split: 'group',
+        participantIds: [c.id],
+        description: 'За В',
+      });
+      await addExpense(trip5, a, {
+        amountRub: 100,
+        split: 'group',
+        participantIds: [c.id],
+        description: 'За В ещё',
+      });
     });
 
-    it('своей семье не переводят и больше остатка не проводят', async () => {
-      await auth(
-        request(app.getHttpServer()).post(
-          `/api/trips/${trip3}/finance/compensations`,
-        ),
-        b.token,
-      )
-        .send({ toUserId: c.id, amountRub: 100 })
-        .expect(400);
+    it('касса семьи гасит внутренние долги: предлагается чистый остаток', async () => {
+      const response = await view(trip5, a);
 
-      // После отмены перевода В → Г у семьи снова долг 100.
+      expect(response.body.me.balanceRub).toBe(-900);
+      expect(response.body.me.familyBalanceRub).toBe(-600);
+      expect(response.body.me.familyDebtRub).toBe(600);
+
+      // Старое правило дало бы 900 — весь личный долг А.
+      expect(response.body.me.suggestions).toEqual([
+        expect.objectContaining({ userIds: [b.id, c.id], amountRub: 600 }),
+      ]);
+
+      const mine = response.body.families.find(
+        (family: { isMine: boolean }) => family.isMine,
+      );
+      expect(mine.memberIds).toEqual([a.id, g.id]);
+      expect(mine.balanceRub).toBe(-600);
+
+      const other = response.body.families.find(
+        (family: { isMine: boolean }) => !family.isMine,
+      );
+      expect(other.balanceRub).toBe(600);
+    });
+
+    it('перевод закрывает кассу целиком и подтверждается одной строкой', async () => {
+      const sent = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip5}/finance/compensations`,
+        ),
+        a.token,
+      )
+        .send({ toUserId: b.id, amountRub: 600 })
+        .expect(201);
+
+      expect(sent.body.compensations).toHaveLength(1);
+
+      const pending = await view(trip5, a);
+      expect(pending.body.me.familyBalanceRub).toBe(-600);
+      expect(pending.body.me.familyRemainingRub).toBe(0);
+      expect(pending.body.me.suggestions).toEqual([]);
+
       await auth(
         request(app.getHttpServer()).post(
-          `/api/trips/${trip3}/finance/compensations`,
+          `/api/trips/${trip5}/finance/compensations/${sent.body.compensations[0].id}/confirm`,
         ),
         b.token,
-      )
-        .send({ toUserId: g.id, amountRub: 601 })
-        .expect(400);
+      ).expect(200);
+
+      const confirmed = await view(trip5, a);
+      expect(confirmed.body.me.familyBalanceRub).toBe(0);
+      expect(confirmed.body.me.familyRemainingRub).toBe(0);
     });
   });
 

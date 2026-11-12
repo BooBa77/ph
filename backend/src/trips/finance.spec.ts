@@ -4,10 +4,10 @@ import {
   compensationOptions,
   computeBalances,
   computeRemaining,
+  familyBalance,
   familyCredit,
   familyDebt,
   joinNames,
-  planCompensation,
   splitAmount,
   type BalanceCompensation,
   type BalanceExpense,
@@ -239,7 +239,7 @@ describe('ожидающие компенсации бронируют кред�
   });
 });
 
-describe('семья в компенсации', () => {
+describe('общая касса семьи', () => {
   /**
    * Две семьи: (b, c) — мама и сын, (a, g) — своя. Внутри первой оба
    * должны по 300, внутри второй оба в плюсе (А 500, Г 100).
@@ -255,7 +255,7 @@ describe('семья в компенсации', () => {
     ['g', 100],
   ]);
 
-  it('долг и кредит семьи считаются по участникам с нужным знаком', () => {
+  it('касса — сумма остатков: плюс одного гасит минус другого', () => {
     const mixed = new Map<string, number>([
       ['a', 500],
       ['b', -300],
@@ -263,12 +263,30 @@ describe('семья в компенсации', () => {
       ['g', 100],
     ]);
 
+    expect(familyBalance(mixed, ['b', 'c'])).toBe(-600);
     expect(familyDebt(mixed, ['b', 'c'])).toBe(600);
     expect(familyCredit(mixed, ['b', 'c'])).toBe(0);
 
-    // Плюс одного не гасит минус другого: это разные контрагенты.
-    expect(familyDebt(mixed, ['a', 'b'])).toBe(300);
-    expect(familyCredit(mixed, ['a', 'b'])).toBe(500);
+    // 12.11.2026: семья — одна касса. До этого здесь было «долг 300,
+    // кредит 500»: два числа на одну семью и лишние переводы снаружи.
+    expect(familyBalance(mixed, ['a', 'b'])).toBe(200);
+    expect(familyDebt(mixed, ['a', 'b'])).toBe(0);
+    expect(familyCredit(mixed, ['a', 'b'])).toBe(200);
+  });
+
+  it('сумма варианта — чистый остаток кассы, а не сумма плюсов', () => {
+    const net = new Map<string, number>([
+      ['a', 500],
+      ['g', -300],
+      ['b', -300],
+      ['c', 200],
+    ]);
+
+    // Касса (a, g) в плюсе на 200, касса (b, c) в минусе на 100:
+    // предлагается 100, хотя плюсов у получателя на 500.
+    expect(compensationOptions('b', net, families)).toEqual([
+      { userIds: ['a', 'g'], amountRub: 100 },
+    ]);
   });
 
   it('семья Б и В — один вариант на 600, своей семьи в списке нет', () => {
@@ -278,7 +296,7 @@ describe('семья в компенсации', () => {
     expect(options.some((option) => option.userIds.includes('c'))).toBe(false);
   });
 
-  it('сумма варианта не больше кредита семьи получателя', () => {
+  it('сумма варианта не больше кредита кассы получателя', () => {
     const poor = new Map<string, number>([
       ['a', 100],
       ['b', -300],
@@ -286,37 +304,10 @@ describe('семья в компенсации', () => {
       ['g', 100],
     ]);
 
-    // Долг 600, кредит семьи (a, g) — 200, значит предлагается 200.
+    // Долг 600, касса (a, g) — 200, значит предлагается 200.
     expect(compensationOptions('b', poor, families)).toEqual([
       { userIds: ['a', 'g'], amountRub: 200 },
     ]);
-  });
-
-  it('сумма раскладывается по личным долгам и кредитам', () => {
-    const transfers = planCompensation(600, ['b', 'c'], ['a', 'g'], remaining);
-
-    expect(transfers).toEqual([
-      { fromUserId: 'b', toUserId: 'a', amountRub: 300 },
-      { fromUserId: 'c', toUserId: 'a', amountRub: 200 },
-      { fromUserId: 'c', toUserId: 'g', amountRub: 100 },
-    ]);
-    expect(transfers.reduce((sum, item) => sum + item.amountRub, 0)).toBe(600);
-  });
-
-  it('меньшую сумму получает первый должник, остаток — следующему', () => {
-    const transfers = planCompensation(400, ['b', 'c'], ['a', 'g'], remaining);
-
-    expect(transfers).toEqual([
-      { fromUserId: 'b', toUserId: 'a', amountRub: 300 },
-      { fromUserId: 'c', toUserId: 'a', amountRub: 100 },
-    ]);
-    expect(transfers.reduce((sum, item) => sum + item.amountRub, 0)).toBe(400);
-  });
-
-  it('не раскладывает нулевую и нецелую сумму', () => {
-    expect(planCompensation(0, ['b'], ['a'], remaining)).toEqual([]);
-    expect(planCompensation(-100, ['b'], ['a'], remaining)).toEqual([]);
-    expect(planCompensation(10.5, ['b'], ['a'], remaining)).toEqual([]);
   });
 
   it('имена — одной строкой, как просил заказчик', () => {

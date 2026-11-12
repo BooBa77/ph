@@ -120,10 +120,24 @@ function state(overrides: Partial<TripFinance> = {}): TripFinance {
       member(ANNA, 'Анна', 2000, { paymentDetails: '+7 999 000-00-00', paymentBank: 'Сбер' }),
       member(BORIS, 'Борис', -1000),
     ],
+    // Семей нет — каждый своей кассой: строка на человека.
+    families: [
+      { memberIds: [ME], displayName: 'Я', balanceRub: -1000, remainingRub: -1000, isMine: true },
+      { memberIds: [ANNA], displayName: 'Анна', balanceRub: 2000, remainingRub: 2000, isMine: false },
+      {
+        memberIds: [BORIS],
+        displayName: 'Борис',
+        balanceRub: -1000,
+        remainingRub: -1000,
+        isMine: false,
+      },
+    ],
     managedSenders: [],
     me: {
       balanceRub: -1000,
       remainingRub: -1000,
+      familyBalanceRub: -1000,
+      familyRemainingRub: -1000,
       familyDebtRub: 1000,
       familyCreditRub: 0,
       canSpend: true,
@@ -148,11 +162,51 @@ function state(overrides: Partial<TripFinance> = {}): TripFinance {
   }
 }
 
+/** Вкладка глазами меня, где я в семье: касса одна на двоих. */
+function familyState(overrides: Partial<TripFinance> = {}): TripFinance {
+  const base = state()
+
+  return {
+    ...base,
+    families: [
+      {
+        memberIds: [ME, ANNA],
+        displayName: 'Я и Анна',
+        balanceRub: 1000,
+        remainingRub: 0,
+        isMine: true,
+      },
+      {
+        memberIds: [BORIS],
+        displayName: 'Борис',
+        balanceRub: -1000,
+        remainingRub: -1000,
+        isMine: false,
+      },
+    ],
+    me: {
+      ...base.me,
+      balanceRub: 3000,
+      remainingRub: 3000,
+      familyBalanceRub: 1000,
+      familyRemainingRub: 0,
+      familyDebtRub: 0,
+      familyCreditRub: 1000,
+      suggestions: [],
+    },
+    ...overrides,
+  }
+}
+
 /** «Мне нечего платить» — все три цифры по нулям и пустые подсказки. */
 function meQuiet(overrides: Partial<TripFinance['me']> = {}): TripFinance['me'] {
+  const balanceRub = overrides.balanceRub ?? 0
+
   return {
-    balanceRub: 0,
+    balanceRub,
     remainingRub: 0,
+    familyBalanceRub: balanceRub,
+    familyRemainingRub: 0,
     familyDebtRub: 0,
     familyCreditRub: 0,
     canSpend: true,
@@ -230,11 +284,68 @@ describe('вкладка «Бухгалтерия»', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('−1 000 ₽')
+    expect(wrapper.get('[data-test="finance-card-title"]').text()).toBe('Твой баланс')
     expect(wrapper.get('[data-test="finance-members"]').text()).toContain('Анна')
     expect(wrapper.get('[data-test="finance-members"]').text()).toContain('+2 000 ₽')
     expect(wrapper.get('[data-test="finance-members"]').text()).toContain('−1 000 ₽')
     // Ожидающих переводов нет — второй цифры тоже нет.
     expect(wrapper.find('[data-test="finance-remaining"]').exists()).toBe(false)
+  })
+
+  it('в семье карточка показывает кассу, а балансы — по семьям', async () => {
+    mocks.getTripFinance.mockResolvedValue(familyState())
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    // Личный баланс 3 000, касса семьи 1 000: минус одного погашен плюсом.
+    expect(wrapper.get('[data-test="finance-card-title"]').text()).toBe('Касса семьи')
+    expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('+1 000 ₽')
+    expect(wrapper.get('[data-test="finance-remaining"]').text()).toBe(
+      'С учётом ожидающих — 0 ₽',
+    )
+
+    // Одна строка на семью, а не на человека: людей трое, строк две.
+    const rows = wrapper.findAll('[data-test="finance-family"]')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]?.text()).toContain('Я и Анна')
+    expect(rows[0]?.text()).toContain('+1 000 ₽')
+    expect(rows[1]?.text()).toContain('Борис')
+    expect(rows[1]?.text()).toContain('−1 000 ₽')
+  })
+
+  it('расход подписан конкретным человеком, даже если он в семье', async () => {
+    mocks.getTripFinance.mockResolvedValue(familyState())
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const row = wrapper.get('[data-test="finance-row-expense"]')
+    expect(row.text()).toContain('Анна')
+    // «Расход от конкретного человека» — не от кассы семьи.
+    expect(row.text()).not.toContain('Я и Анна')
+  })
+
+  it('компенсация подписана семьями: платит семья и получает семья', async () => {
+    mocks.getTripFinance.mockResolvedValue(
+      familyState({
+        compensations: [
+          compensation({
+            fromUserId: ANNA,
+            fromName: 'Анна',
+            toUserId: BORIS,
+            toName: 'Борис',
+            canConfirm: false,
+          }),
+        ],
+      }),
+    )
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const row = wrapper.get('[data-test="finance-row-compensation"]')
+    expect(row.text()).toContain('Я и Анна → Борис')
   })
 
   it('вторая строка появляется, когда ожидающие переводы сдвинули баланс', async () => {

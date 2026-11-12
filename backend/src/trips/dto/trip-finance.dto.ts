@@ -110,7 +110,7 @@ export class SaveTripExpenseDto {
 export class CreateTripCompensationDto {
   @ApiProperty({
     description:
-      'Любой человек семьи получателя: сумма уходит всей семье, а сервер раскладывает её по личным долгам и кредитам',
+      'Любой человек семьи получателя: деньги идут в общую кассу семьи, сервер создаёт один перевод',
     example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
   })
   @IsUUID('all', { message: 'Получатель должен быть человеком' })
@@ -326,9 +326,9 @@ export class CompensationPersonDto {
  * Вариант «кому перевести» в модалке компенсации.
  *
  * С 12.11.2026 вариант — **семья целиком**: «Вася и Аня» одной строкой,
- * а сумма — `min(долг моей семьи, кредит этой семьи)`. Поэтому здесь
- * `userIds` и `members`, а не один человек: реквизиты показываются у всех,
- * у кого они есть.
+ * а сумма — `min(долг моей семьи, кредит этой семьи)` по общей кассе
+ * (12.11.2026). Поэтому здесь `userIds` и `members`, а не один человек:
+ * реквизиты показываются у всех, у кого они есть.
  */
 export class CompensationOptionDto implements CompensationOption {
   @ApiProperty({ type: [String] })
@@ -344,12 +344,55 @@ export class CompensationOptionDto implements CompensationOption {
   members: CompensationPersonDto[];
 }
 
-/** Мой баланс и подсказки — то, что видит человек в шапке вкладки. */
-export class MyFinanceDto {  @ApiProperty()
+/**
+ * Общая касса семьи на экране (12.11.2026).
+ *
+ * Одна строка вместо балансов участников: внутри семьи деньги не считаются
+ * по людям, и минус одного гасится плюсом другого. Семья из одного человека
+ * — это просто его личный баланс, поэтому отдельного случая нет.
+ */
+export class FinanceFamilyDto {
+  @ApiProperty({ type: [String], description: 'Идущие участники семьи' })
+  memberIds: string[];
+
+  @ApiProperty({ example: 'Вася и Аня' })
+  displayName: string;
+
+  @ApiProperty({
+    description: 'Касса семьи: сумма балансов её участников',
+    example: -1000,
+  })
   balanceRub: number;
 
-  @ApiProperty()
+  @ApiProperty({
+    description: 'Та же касса с учётом ожидающих компенсаций',
+    example: 0,
+  })
   remainingRub: number;
+
+  @ApiProperty({ description: 'Семья смотрящего' })
+  isMine: boolean;
+}
+
+/** Мой баланс и подсказки — то, что видит человек в шапке вкладки. */
+export class MyFinanceDto {
+  @ApiProperty({ description: 'Личный баланс — внутренняя арифметика семьи' })
+  balanceRub: number;
+
+  @ApiProperty({ description: 'Личный остаток с учётом ожидающих переводов' })
+  remainingRub: number;
+
+  @ApiProperty({
+    description: 'Общая касса моей семьи — её и показывает экран',
+    example: -1000,
+  })
+  familyBalanceRub: number;
+
+  @ApiProperty({
+    description: 'Касса семьи с учётом ожидающих компенсаций',
+    example: 0,
+  })
+  familyRemainingRub: number;
 
   @ApiProperty({
     description: 'Долг всей моей семьи — по нему считается сумма компенсации',
@@ -405,6 +448,13 @@ export class TripFinanceDto {
 
   @ApiProperty({ type: [FinanceMemberDto] })
   members: FinanceMemberDto[];
+
+  @ApiProperty({
+    type: [FinanceFamilyDto],
+    description:
+      'Общие кассы семей: одна строка на семью, минус одного участника уже погашен плюсом другого',
+  })
+  families: FinanceFamilyDto[];
 
   @ApiProperty({ type: MyFinanceDto })
   me: MyFinanceDto;
