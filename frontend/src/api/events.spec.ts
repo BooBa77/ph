@@ -33,8 +33,13 @@ describe('parseSseFrame', () => {
     )
   })
 
-  it('пропускает heartbeat, retry и данные неизвестного вида', () => {
-    expect(parseSseFrame(': ping')).toBeNull()
+  it('понимает денежные события «Бухгалтерии»', () => {
+    expect(parseSseFrame(frame(event({ scope: 'finance' })))).toEqual(
+      event({ scope: 'finance' }),
+    )
+  })
+
+  it('пропускает heartbeat, retry и данные неизвестного вида', () => {    expect(parseSseFrame(': ping')).toBeNull()
     expect(parseSseFrame('retry: 3000')).toBeNull()
     // Чужое имя события не должно притворяться изменением снаряжения.
     expect(parseSseFrame(frame(event(), 'chat'))).toBeNull()
@@ -81,9 +86,11 @@ describe('subscribeTripEvents', () => {
     useAuthStore().accessToken = 'token-123'
 
     const calls: RequestInit[] = []
+    const urls: string[] = []
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (_input: RequestInfo | URL, init: RequestInit = {}) => {
+      vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+        urls.push(String(input))
         calls.push(init)
 
         return streamResponse([
@@ -99,10 +106,34 @@ describe('subscribeTripEvents', () => {
     await vi.waitFor(() => expect(received).toHaveLength(1))
     expect(received[0]).toEqual(event())
 
+    // Без канала — «Снаряжение»: так вызывал единственный поток до 12.11.2026.
+    expect(urls[0]).toBe('/api/trips/679/gear/events')
+
     const headers = new Headers(calls[0]!.headers)
     expect(headers.get('Accept')).toBe('text/event-stream')
     expect(headers.get('Authorization')).toBe('Bearer token-123')
     expect(calls[0]!.credentials).toBe('include')
+
+    stop()
+  })
+
+  it('«Бухгалтерия» слушает свой поток', async () => {
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        urls.push(String(input))
+
+        return streamResponse([`${frame(event({ scope: 'finance' }))}\n\n`])
+      }),
+    )
+
+    const received: TripEvent[] = []
+    const stop = subscribeTripEvents('679', (incoming) => received.push(incoming), 'finance')
+
+    await vi.waitFor(() => expect(received).toHaveLength(1))
+    expect(urls[0]).toBe('/api/trips/679/finance/events')
+    expect(received[0]?.scope).toBe('finance')
 
     stop()
   })

@@ -1114,12 +1114,17 @@ let checklistRefreshTimer: ReturnType<typeof setTimeout> | null = null
  * повторный запрос гоняет лишний круг и может перетереть более новое
  * локальное состояние. Чужое — повод перечитать: данные поменялись
  * не на этом экране.
+ *
+ * **Чужую вкладку тоже пропускаем** (12.11.2026): канал событий на бэкенде
+ * один на поход, и денежные события прилетают в тот же поток. Без явной
+ * проверки `scope` «Бухгалтерия» перечитывала бы снаряжение, а «Снаряжение» —
+ * расходы, на каждое действие друг друга.
  */
 function onLiveEvent(event: TripEvent): void {
   if (event.actorId === meId.value) return
 
   if (event.scope === 'gear') scheduleGearRefresh()
-  else scheduleChecklistRefresh()
+  else if (event.scope === 'checklist') scheduleChecklistRefresh()
 }
 
 function scheduleGearRefresh(): void {

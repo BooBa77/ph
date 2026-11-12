@@ -4,9 +4,20 @@ import { useAuthStore } from '@/stores/auth'
  * Живые события похода — Server-Sent Events (06.11.2026).
  *
  * Заказчик: «пришло время SSE. Участники перетасовывают вещи и нужно видеть
- * изменения онлайн». Поток открывает вкладка «Снаряжение», пока она на
- * экране; событие — сигнал «перечитай данные», а не сами данные (почему
- * так — в `TripEventsService` на бэкенде).
+ * изменения онлайн». Поток открывает вкладка, пока она на экране; событие —
+ * сигнал «перечитай данные», а не сами данные (почему так — в
+ * `TripEventsService` на бэкенде).
+ *
+ * **Потоков два** (12.11.2026): у «Снаряжения» (`/gear/events`) и
+ * «Бухгалтерии» (`/finance/events`) свои адреса и свои права. Заказчик про
+ * деньги: «здесь очень важен SSE, обычно за компенсацию берутся на обратной
+ * дороге и все в раз».
+ *
+ * **Канал не фильтрует `scope`: фильтрует вкладка.** На бэкенде канал
+ * событий один на поход (`TripEventsService`), поэтому в «Снаряжение»
+ * прилетают и денежные события, и наоборот. `scope` в кадре и говорит
+ * вкладке, её ли это изменение; без этой проверки «Бухгалтерия»
+ * перечитывалась бы на каждое перетаскивание вещи.
  *
  * **Почему `fetch`, а не `EventSource`.** Нативный `EventSource` не умеет
  * заголовки, а вход в проекте — `Authorization: Bearer`: токен пришлось бы
@@ -20,8 +31,11 @@ import { useAuthStore } from '@/stores/auth'
  * хуже, чем лишний запрос раз в несколько секунд.
  */
 
-/** Что изменилось на вкладке: снаряжение с разделами или чек-листы. */
-export type TripEventScope = 'gear' | 'checklist'
+/** Что изменилось на вкладке: снаряжение с разделами, чек-листы или деньги. */
+export type TripEventScope = 'gear' | 'checklist' | 'finance'
+
+/** Адрес потока: у «Снаряжения» и «Бухгалтерии» свои контроллеры. */
+export type TripEventChannel = 'gear' | 'finance'
 
 export interface TripEvent {
   scope: TripEventScope
@@ -75,14 +89,18 @@ function isTripEvent(value: unknown): value is TripEvent {
   const event = value as Partial<TripEvent>
 
   return (
-    (event.scope === 'gear' || event.scope === 'checklist') &&
+    (event.scope === 'gear' || event.scope === 'checklist' || event.scope === 'finance') &&
     typeof event.actorId === 'string' &&
     typeof event.at === 'string'
   )
 }
 
 /**
- * Подписаться на изменения вкладки «Снаряжение» похода.
+ * Подписаться на изменения вкладки похода.
+ *
+ * `channel` выбирает адрес: «Снаряжение» слушает `/gear/events`
+ * (по умолчанию — так вызывал единственный поток до 12.11.2026),
+ * «Бухгалтерия» — `/finance/events`.
  *
  * Возвращает функцию отписки: она обрывает соединение и отменяет
  * запланированное переподключение. Вызывать обязательно при уходе
@@ -92,6 +110,7 @@ function isTripEvent(value: unknown): value is TripEvent {
 export function subscribeTripEvents(
   tripId: string,
   onEvent: (event: TripEvent) => void,
+  channel: TripEventChannel = 'gear',
 ): () => void {
   const controller = new AbortController()
   let attempt = 0
@@ -102,7 +121,7 @@ export function subscribeTripEvents(
     const headers = new Headers({ Accept: 'text/event-stream' })
     if (token) headers.set('Authorization', `Bearer ${token}`)
 
-    return fetch(`/api/trips/${tripId}/gear/events`, {
+    return fetch(`/api/trips/${tripId}/${channel}/events`, {
       headers,
       credentials: 'include',
       signal: controller.signal,

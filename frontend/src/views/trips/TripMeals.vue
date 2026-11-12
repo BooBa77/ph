@@ -2412,6 +2412,7 @@ onMounted(() => {
       <TripMealShoppingModal
         v-if="shoppingOpen"
         :trip-id="trip.id"
+        :common-eaters="plan.eaters.total"
         @close="shoppingOpen = false"
       />
 

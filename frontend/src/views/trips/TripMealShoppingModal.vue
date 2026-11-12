@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
 import { ApiError } from '@/api/errors'
+import { createTripExpense } from '@/api/finance'
 import {
   fetchMealChecks,
   fetchMyMealChecks,
@@ -10,6 +11,7 @@ import {
 } from '@/api/trips'
 import type { TripMealCheck } from '@/types/trips'
 import { formatProductAmount } from '@/types/meals'
+import { parseRub } from '@/utils/money'
 
 /**
  * «Список покупок» модалкой.
@@ -28,6 +30,14 @@ import { formatProductAmount } from '@/types/meals'
  * участника: строки (и отметки) разные, экран один — две копии модалки
  * разошлись бы разметкой и поведением.
  *
+ * **«Чек» (12.11.2026).** Заказчик: «Сразу добавить кнопку Чек в Походы →
+ * Питание → Список общих продуктов: сумма и комментарий, пустой „на
+ * продукты“, делится на всех питающихся с общего». Чек — не отдельная
+ * сущность, а тот же расход с `split = 'commonEaters'`: так он сразу виден
+ * в таблице движения денег и в балансе, и второй кассы не появляется.
+ * Кого именно делить, решает **сервер** (`eatsSeparately`), а не экран:
+ * список питающихся с общего приходит сюда только числом, для подписи.
+ *
  * Модалка — как у календаря: затемнение, Escape, клик мимо карточки.
  * Данные грузятся один раз; отметки правятся по месту, ответ бэкенда
  * заменяет список целиком.
@@ -36,6 +46,12 @@ const props = defineProps<{
   tripId: string
   /** Личный список участника, который питается отдельно. */
   personal?: boolean
+  /**
+   * Сколько человек едят с общего. Ноль — чек делить не на кого, кнопки нет.
+   * Считает «Питание» из состава (`plan.eaters.total` — без отдельно
+   * питающихся), а доли всё равно раскладывает сервер.
+   */
+  commonEaters?: number
 }>()
 
 const emit = defineEmits<{
@@ -47,6 +63,68 @@ const title = props.personal ? 'Мой список покупок' : 'Спис�
 
 const checks = ref<TripMealCheck[] | null>(null)
 const error = ref<string | null>(null)
+
+// ───────────────────────────── чек ─────────────────────────────
+
+const checkOpen = ref(false)
+const checkAmount = ref('')
+const checkComment = ref('')
+const checkSaving = ref(false)
+const checkError = ref<string | null>(null)
+const checkSaved = ref(false)
+
+/** Чек есть только у общего списка и только если есть кого делить. */
+const canWriteCheck = computed(
+  () => props.personal !== true && (props.commonEaters ?? 0) > 0,
+)
+
+function openCheck(): void {
+  checkOpen.value = true
+  checkError.value = null
+  checkSaved.value = false
+}
+
+async function saveCheck(): Promise<void> {
+  if (checkSaving.value) return
+
+  checkError.value = null
+
+  const amount = parseRub(checkAmount.value)
+  if (amount === null) {
+    checkError.value = 'Укажите сумму чека'
+    return
+  }
+  if (amount === undefined) {
+    checkError.value = 'Сумма — целое число рублей, больше нуля'
+    return
+  }
+
+  checkSaving.value = true
+
+  try {
+    const comment = checkComment.value.trim()
+
+    await createTripExpense(props.tripId, {
+      amountRub: amount,
+      split: 'commonEaters',
+      // Пустой комментарий сервер запишет как «на продукты» — это и есть
+      // решение заказчика, а не догадка экрана.
+      ...(comment === '' ? {} : { description: comment }),
+    })
+
+    checkAmount.value = ''
+    checkComment.value = ''
+    checkOpen.value = false
+    checkSaved.value = true
+  } catch (problem) {
+    checkError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось записать чек'
+  } finally {
+    checkSaving.value = false
+  }
+}
+
+// ───────────────────────────── отметки ─────────────────────────────
 
 function messageOf(cause: unknown, fallback: string): string {
   return cause instanceof ApiError ? cause.message : fallback
@@ -130,6 +208,106 @@ onBeforeUnmount(() => {
       </div>
 
       <p v-if="error" class="text-sm text-red-600" data-test="checklist-error">{{ error }}</p>
+
+      <!--
+        «Чек» — расход на питающихся с общего. Стоит наверху списка: чек
+        записывают, когда вернулись из магазина, а не пролистав позиции.
+      -->
+      <div
+        v-if="!personal"
+        class="flex flex-col gap-2 rounded-xl border border-border bg-field p-2"
+        data-test="check-block"
+      >
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <p class="text-xs text-muted">
+            Купили продукты на общие деньги — запишите чек в «Бухгалтерию».
+          </p>
+
+          <button
+            v-if="!checkOpen"
+            type="button"
+            class="cursor-pointer rounded-lg border border-primary bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="!canWriteCheck"
+            data-test="check-open"
+            @click="openCheck"
+          >
+            Чек
+          </button>
+        </div>
+
+        <p v-if="!canWriteCheck" class="text-xs text-muted" data-test="check-unavailable">
+          Все питаются отдельно — делить чек не на кого.
+        </p>
+
+        <form
+          v-else-if="checkOpen"
+          class="flex flex-col gap-2"
+          data-test="check-form"
+          @submit.prevent="saveCheck"
+        >
+          <div class="grid gap-2 sm:grid-cols-[8rem_1fr]">
+            <label class="flex flex-col gap-1 text-xs text-muted">
+              Сумма, ₽
+              <input
+                v-model="checkAmount"
+                type="number"
+                min="1"
+                step="1"
+                inputmode="numeric"
+                placeholder="3500"
+                class="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-base text-text focus:border-primary focus:outline-none"
+                data-test="check-sum"
+              />
+            </label>
+
+            <label class="flex flex-col gap-1 text-xs text-muted">
+              Комментарий
+              <input
+                v-model="checkComment"
+                type="text"
+                maxlength="200"
+                placeholder="Пусто — запишем «на продукты»"
+                class="w-full rounded-lg border border-border bg-surface px-2 py-1.5 text-base text-text focus:border-primary focus:outline-none"
+                data-test="check-comment"
+              />
+            </label>
+          </div>
+
+          <p class="text-xs text-muted" data-test="check-split-hint">
+            Делится на всех, кто ест с общего ({{ commonEaters }} чел.) — доли
+            раскладывает сервер.
+          </p>
+
+          <p v-if="checkError" class="text-sm text-red-600" data-test="check-error">
+            {{ checkError }}
+          </p>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <button
+              type="submit"
+              class="cursor-pointer rounded-lg border border-primary bg-primary px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+              :disabled="checkSaving"
+              data-test="check-save"
+            >
+              {{ checkSaving ? 'Записываем…' : 'Записать чек' }}
+            </button>
+
+            <button
+              type="button"
+              class="cursor-pointer rounded-lg border border-border bg-surface px-3 py-1.5 text-xs text-text transition-colors hover:border-primary"
+              :disabled="checkSaving"
+              data-test="check-cancel"
+              @click="checkOpen = false"
+            >
+              Отмена
+            </button>
+          </div>
+        </form>
+
+        <p v-if="checkSaved" class="text-xs text-emerald-700" data-test="check-saved">
+          Расход записан в «Бухгалтерию».
+        </p>
+      </div>
 
       <div class="flex min-h-0 flex-col gap-2 overflow-y-auto">
         <p v-if="checks === null && !error" class="text-sm text-muted" data-test="checklist-loading">
