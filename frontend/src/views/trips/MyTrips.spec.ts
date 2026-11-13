@@ -37,6 +37,7 @@ const BASE: Trip = {
   actualFinishedAt: null,
   isCommercial: false,
   isOfficial: false,
+  openParticipation: true,
   priceRub: null,
   priceNote: null,
   cancelledAt: null,

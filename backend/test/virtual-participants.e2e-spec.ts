@@ -312,6 +312,35 @@ describe('Виртуальные участники (e2e)', () => {
     }).expect(403);
   });
 
+  /**
+   * Открытое участие (13.11.2026): с выключенным флагом людей без аккаунта
+   * заводит только организатор — участнику секция и не показывается,
+   * и ручка отвечает 403.
+   */
+  it('при выключенном открытом участии участник человека без аккаунта не заводит — 403', async () => {
+    await dataSource.query(
+      'UPDATE trips SET open_participation = false WHERE id = $1',
+      [tripId],
+    );
+
+    try {
+      const denied = await call(
+        'post',
+        `/api/trips/${tripId}/participants/virtual`,
+        memberToken,
+        { displayName: 'Без приглашения' },
+      ).expect(403);
+      expect(denied.body.message).toContain('Открытое участие выключено');
+    } finally {
+      // Флаг — свойство похода, а не теста: возвращаем на место, иначе
+      // следующие проверки состава упадут не по своей причине.
+      await dataSource.query(
+        'UPDATE trips SET open_participation = true WHERE id = $1',
+        [tripId],
+      );
+    }
+  });
+
   it('у мечты состава нет — 400', async () => {
     await call(
       'post',

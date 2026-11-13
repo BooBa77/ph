@@ -255,6 +255,7 @@ export class TripsService {
           endsAt,
           isCommercial,
           isOfficial: dto.isOfficial ?? false,
+          openParticipation: dto.openParticipation ?? true,
           priceRub: dto.priceRub ?? null,
           priceNote: dto.priceNote ?? null,
         }),
@@ -1385,6 +1386,9 @@ export class TripsService {
         if (dto.isRecruitmentClosed !== undefined) {
           trip.isRecruitmentClosed = dto.isRecruitmentClosed;
         }
+        if (dto.openParticipation !== undefined) {
+          trip.openParticipation = dto.openParticipation;
+        }
         if (dto.routeText !== undefined) trip.routeText = dto.routeText;
 
         trip.status = status;
@@ -1831,7 +1835,7 @@ export class TripsService {
   ): Promise<TripParticipantDto> {
     const result = await this.dataSource.transaction(async (manager) => {
       const trip = await this.findVisibleTrip(manager, userId, id);
-      await this.assertCanManageParticipants(manager, trip, userId);
+      await this.assertCanTendVirtuals(manager, trip, userId);
 
       const participant = await manager.findOne(TripParticipant, {
         where: { tripId: trip.id, userId: targetUserId },
@@ -2042,14 +2046,58 @@ export class TripsService {
   }
 
   /**
-   * Кто ведёт людей без аккаунта в походе.
+   * Кто приводит своих людей в поход: приглашает и заводит без аккаунта.
    *
    * Организатор — всегда (даже если сам не идёт: он ведёт подготовку).
-   * Остальным — только идущим: приглашённый ещё не участник, и заводить
-   * людей в чужой состав ему рано. Это расширение 12.11.2026: раньше ручки
-   * требовали `organizerUserId`, заказчик попросил «любого участника».
+   * Идущий участник — только пока у похода включено открытое участие
+   * (`open_participation`, по умолчанию да). Это правило 13.11.2026:
+   * заказчик попросил чек-бокс «Открытое участие. Участники могут
+   * приглашать своих», а прежнее расширение 12.11.2026 («любой участник»
+   * для людей без аккаунта) стало его частным случаем.
+   *
+   * Приглашённый не считается: он ещё не участник, и распоряжаться
+   * составом ему рано.
    */
+  private async canBringPeople(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<boolean> {
+    if (trip.organizerUserId === userId) return true;
+    // Поле есть у любого похода из базы; `undefined` — объект, собранный
+    // в тесте или вызовом без полного набора колонок, и умолчание у него
+    // то же, что в базе.
+    if (trip.openParticipation === false) return false;
+
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId: trip.id, userId },
+    });
+    return participant?.status === 'going';
+  }
+
   private async assertCanManageParticipants(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<void> {
+    if (await this.canBringPeople(manager, trip, userId)) return;
+
+    throw new ForbiddenException(
+      trip.openParticipation === false
+        ? 'Открытое участие выключено: людей без аккаунта заводит организатор'
+        : 'Людей без аккаунта ведёт участник похода',
+    );
+  }
+
+  /**
+   * Кто ведёт **уже заведённого** человека без аккаунта: галочки питания.
+   *
+   * Здесь открытое участие ни при чём: флаг отвечает за то, кого приводят
+   * в поход, а не за то, кто отмечает «питается отдельно» человеку, который
+   * в составе уже есть. Правило прежнее (12.11.2026): организатор или любой
+   * идущий участник.
+   */
+  private async assertCanTendVirtuals(
     manager: EntityManager,
     trip: Trip,
     userId: string,
@@ -2060,10 +2108,27 @@ export class TripsService {
       where: { tripId: trip.id, userId },
     });
     if (!participant || participant.status !== 'going') {
-      throw new ForbiddenException(
-        'Людей без аккаунта ведёт участник похода',
-      );
+      throw new ForbiddenException('Людей без аккаунта ведёт участник похода');
     }
+  }
+
+  /**
+   * Право пригласить человека. То же правило, другая подсказка: человек
+   * нажал «Пригласить», и «людей без аккаунта ведёт участник» ему ничего
+   * не объяснит.
+   */
+  private async assertCanInvite(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<void> {
+    if (await this.canBringPeople(manager, trip, userId)) return;
+
+    throw new ForbiddenException(
+      trip.openParticipation === false
+        ? 'Открытое участие выключено: приглашает организатор'
+        : 'Приглашать может участник похода',
+    );
   }
 
   /**
@@ -2107,9 +2172,12 @@ export class TripsService {
   /**
    * Тикеты похода.
    *
-   * Организатор видит все — ему их и обрабатывать. Остальные видят **только
-   * свои**: заявка человека к организатору других не касается, и показывать
-   * её участникам значило бы раскрывать чужие планы.
+   * Организатор видит все — ему их и обрабатывать. Остальные видят **свои**:
+   * тот, кого пригласили (или кто подал заявку), и тот, **кто завёл тикет**.
+   * Второе появилось 13.11.2026 вместе с открытым участием: пригласивший
+   * участник должен видеть, что человек ещё не ответил, и уметь отозвать
+   * приглашение. Чужие заявки по-прежнему не показываются: заявка человека
+   * к организатору других не касается.
    */
   async listRequests(userId: string, id: number): Promise<TripRequestListDto> {
     const manager = this.dataSource.manager;
@@ -2117,7 +2185,12 @@ export class TripsService {
     const isOrganizer = trip.organizerUserId === userId;
 
     const requests = await manager.find(TripMembershipRequest, {
-      where: isOrganizer ? { tripId: trip.id } : { tripId: trip.id, userId },
+      where: isOrganizer
+        ? { tripId: trip.id }
+        : [
+            { tripId: trip.id, userId },
+            { tripId: trip.id, createdByUserId: userId },
+          ],
       relations: { user: true },
       order: { createdAt: 'ASC' },
     });
@@ -2130,10 +2203,15 @@ export class TripsService {
   /**
    * Завести тикет: приглашение или заявку.
    *
-   * Приглашение создаёт организатор и оно **сразу** добавляет человека
+   * Приглашение создаёт организатор, а с 13.11.2026 — и любой **идущий**
+   * участник, пока у похода включено открытое участие («участники могут
+   * приглашать своих», решение заказчика). Оно **сразу** добавляет человека
    * в состав со статусом `invited`: приглашённый должен видеть поход, иначе
    * он не сможет решить, идти ли. Заявка участия не создаёт — сначала
    * решение организатора.
+   *
+   * Автор тикета пишется в `created_by_user_id`: по нему пригласивший
+   * видит своё приглашение и может его отозвать, а не только организатор.
    *
    * В гостевом чате заявка отмечается системным сообщением: подавший должен
    * видеть, что она ушла организатору, а не пропала.
@@ -2148,9 +2226,7 @@ export class TripsService {
       const isOrganizer = trip.organizerUserId === userId;
 
       if (dto.direction === 'invite') {
-        if (!isOrganizer) {
-          throw new ForbiddenException('Приглашать может только организатор');
-        }
+        await this.assertCanInvite(manager, trip, userId);
         if (!dto.userId) {
           throw new BadRequestException(
             'Для приглашения нужно указать, кого приглашаем',
@@ -2187,6 +2263,7 @@ export class TripsService {
             tripId: trip.id,
             userId: dto.userId,
             direction: 'invite',
+            createdByUserId: userId,
             message: dto.message ?? null,
           }),
         );
@@ -2221,6 +2298,7 @@ export class TripsService {
           tripId: trip.id,
           userId,
           direction: 'apply',
+          createdByUserId: userId,
           message: dto.message ?? null,
         }),
       );
@@ -2358,9 +2436,15 @@ export class TripsService {
 
       const isOrganizer = trip.organizerUserId === userId;
       const isTarget = targetUserId === userId;
-      if (!isOrganizer && !isTarget) {
+      /**
+       * Приглашение может отозвать и тот, кто его завёл: с открытым участием
+       * это не обязательно организатор (13.11.2026). Заявку «завёл» сам
+       * заявитель, и для него это то же `isTarget`.
+       */
+      const isCreator = request.createdByUserId === userId;
+      if (!isOrganizer && !isTarget && !isCreator) {
         throw new ForbiddenException(
-          'Закрыть тикет может организатор или сам человек',
+          'Закрыть тикет может организатор, пригласивший или сам человек',
         );
       }
 
@@ -2380,7 +2464,7 @@ export class TripsService {
           manager,
           trip.id,
           'trip_members',
-          isOrganizer
+          isOrganizer || isCreator
             ? `Приглашение для ${name} отозвано`
             : `${name} не идёт в поход`,
         );

@@ -177,6 +177,18 @@ export class UpdateTripDto {
   isRecruitmentClosed?: boolean;
 
   @ApiProperty({
+    description:
+      'Открытое участие: участники приглашают своих и заводят людей без аккаунта',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({
+    message: 'Признак открытого участия должен быть true или false',
+  })
+  openParticipation?: boolean;
+
+  @ApiProperty({
     description: 'Коммерческий поход: организатор зарабатывает',
     required: false,
   })

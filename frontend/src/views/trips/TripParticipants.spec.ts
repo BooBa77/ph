@@ -84,6 +84,7 @@ const TRIP: Trip = {
   actualFinishedAt: null,
   isCommercial: false,
   isOfficial: false,
+  openParticipation: true,
   priceRub: null,
   priceNote: null,
   cancelledAt: null,
@@ -113,6 +114,8 @@ function ticket(overrides: Partial<TripRequest> = {}): TripRequest {
     avatarUrl: null,
     direction: 'apply',
     message: null,
+    // У заявки автор — сам заявитель; тесты приглашений переопределяют.
+    createdByUserId: 'u-other',
     createdAt: '2026-10-14T10:00:00.000Z',
     ...overrides,
   }
@@ -531,9 +534,69 @@ describe('TripParticipants', () => {
 
   it('не организатор блока «Люди без аккаунта» не видит', async () => {
     signIn(ME)
+    // Меня в походе нет: посторонний не приводит людей, даже если бы флаг
+    // открытого участия был включён.
     const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true })])
 
     expect(wrapper.find('[data-test="virtual-panel"]').exists()).toBe(false)
     expect(mocks.listMyVirtual).not.toHaveBeenCalled()
+  })
+
+  // ─── открытое участие (13.11.2026) ───
+
+  /**
+   * Заказчик: «нужен чек-бокс „Открытое участие. Участники могут приглашать
+   * своих“, по умолчанию true. Без этого флага неорганизаторам скрыты секции
+   * „Пригласить“ и „Люди без аккаунта“».
+   */
+  it('при открытом участии идущий участник видит «Пригласить» и людей без аккаунта', async () => {
+    signIn(ME)
+    const wrapper = await open([
+      person({ userId: ORGANIZER, isOrganizer: true }),
+      person({ userId: ME }),
+    ])
+
+    expect(wrapper.find('[data-test="invite-panel"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="virtual-panel"]').exists()).toBe(true)
+    expect(mocks.listMyVirtual).toHaveBeenCalled()
+  })
+
+  it('при выключенном открытом участии участник этих секций не видит, а организатор видит', async () => {
+    signIn(ME)
+    const closed = { ...TRIP, openParticipation: false }
+    const asMember = await open(
+      [person({ userId: ORGANIZER, isOrganizer: true }), person({ userId: ME })],
+      [],
+      closed,
+    )
+
+    expect(asMember.find('[data-test="invite-panel"]').exists()).toBe(false)
+    expect(asMember.find('[data-test="virtual-panel"]').exists()).toBe(false)
+
+    // Организатор собирает состав сам: правила похода на него не действуют.
+    signIn(ORGANIZER)
+    const asOrganizer = await open(
+      [person({ userId: ORGANIZER, isOrganizer: true, displayName: 'Я' })],
+      [],
+      closed,
+    )
+
+    expect(asOrganizer.find('[data-test="invite-panel"]').exists()).toBe(true)
+    expect(asOrganizer.find('[data-test="virtual-panel"]').exists()).toBe(true)
+  })
+
+  it('участник видит своё приглашение и отзывает его', async () => {
+    signIn(ME)
+    const wrapper = await open(
+      [person({ userId: ORGANIZER, isOrganizer: true }), person({ userId: ME })],
+      [ticket({ userId: 'u-9', displayName: 'Напарник', direction: 'invite', createdByUserId: ME })],
+    )
+
+    expect(wrapper.find('[data-test="invitations"]').text()).toContain('Напарник')
+
+    await wrapper.find('[data-test="revoke-u-9"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.deleteRequest).toHaveBeenCalledWith('7', 'u-9')
   })
 })

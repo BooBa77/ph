@@ -187,6 +187,11 @@ export function emptyVariantDraft(id: number): DateVariantDraft {
   isCommercial?: boolean
   /** Официальный поход: зачётный выход по правилам. */
   isOfficial?: boolean
+  /**
+   * Открытое участие: участники приглашают своих и заводят людей без
+   * аккаунта. По умолчанию включено.
+   */
+  openParticipation?: boolean
   priceRub?: number | null
   priceNote?: string | null
   dateVariants?: TripDateVariantInput[]
@@ -223,6 +228,11 @@ export interface UpdateTripRequest {
   isCommercial?: boolean
   /** Официальный поход: зачётный выход по правилам. */
   isOfficial?: boolean
+  /**
+   * Открытое участие: участники приглашают своих и заводят людей без
+   * аккаунта. Выключено — обе секции видит только организатор.
+   */
+  openParticipation?: boolean
   priceRub?: number | null
   priceNote?: string | null
   activityTypeIds?: number[]
@@ -269,6 +279,12 @@ export interface Trip {
   isCommercial: boolean
   /** Официальный поход: зачётный выход по правилам. */
   isOfficial: boolean
+  /**
+   * Открытое участие: участники приглашают своих и заводят людей без
+   * аккаунта. `false` — секции «Пригласить» и «Люди без аккаунта» видит
+   * только организатор.
+   */
+  openParticipation: boolean
   priceRub: number | null
   priceNote: string | null
   /** Когда поход отменён. В ленту отменённые не попадают, но по id видны. */
@@ -543,6 +559,12 @@ export interface TripRequest {
   avatarUrl: string | null
   direction: RequestDirection
   message: string | null
+  /**
+   * Кто завёл тикет (13.11.2026). У заявки — сам заявитель, у приглашения —
+   * организатор или участник похода: по этому полю пригласивший видит своё
+   * приглашение и может его отозвать.
+   */
+  createdByUserId: string
   createdAt: string
 }
 

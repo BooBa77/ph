@@ -246,6 +246,18 @@ export class CreateTripDto {
 
   @ApiProperty({
     description:
+      'Открытое участие: участники приглашают своих и заводят людей без аккаунта',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({
+    message: 'Признак открытого участия должен быть true или false',
+  })
+  openParticipation?: boolean;
+
+  @ApiProperty({
+    description:
       'Цена участия в рублях. Только у коммерческого и там обязательна',
     example: 25000,
     required: false,

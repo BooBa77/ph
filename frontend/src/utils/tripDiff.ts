@@ -46,6 +46,9 @@ export function buildTripPatch(initial: Trip, payload: CreateTripRequest): Updat
   set('endsAt', initial.endsAt, payload.endsAt ?? null)
   set('isCommercial', initial.isCommercial, payload.isCommercial)
   set('isOfficial', initial.isOfficial, payload.isOfficial)
+  // Открытое участие: умолчание — включено, как в базе. Форма всегда знает
+  // ответ (чек-бокс), поэтому правило то же, что у прочих флагов.
+  set('openParticipation', initial.openParticipation, payload.openParticipation ?? true)
   set('priceRub', initial.priceRub, payload.priceRub ?? null)
   set('priceNote', initial.priceNote, payload.priceNote ?? null)
 

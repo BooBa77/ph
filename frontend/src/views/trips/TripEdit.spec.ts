@@ -56,6 +56,7 @@ const TRIP: Trip = {
   actualFinishedAt: null,
   isCommercial: false,
   isOfficial: false,
+  openParticipation: true,
   priceRub: null,
   priceNote: null,
   cancelledAt: null,
@@ -80,10 +81,10 @@ function signIn(id: string) {
   } satisfies User
 }
 
-async function open(userId = ORGANIZER) {
+async function open(userId = ORGANIZER, trip: Trip = TRIP) {
   signIn(userId)
-  mocks.getTrip.mockResolvedValue(TRIP)
-  mocks.updateTrip.mockResolvedValue(TRIP)
+  mocks.getTrip.mockResolvedValue(trip)
+  mocks.updateTrip.mockResolvedValue(trip)
   mocks.listTripTypes.mockResolvedValue({ types: TOURISM, defaultTypeId: 19 })
 
   const router = createRouter({
@@ -169,6 +170,37 @@ describe('TripEdit', () => {
     await flushPromises()
 
     expect(mocks.updateTrip).toHaveBeenCalledWith('7', { hasGuitar: true })
+  })
+
+  /**
+   * Заказчик 13.11.2026: «по умолчанию поход пеший, поэтому сделай кнопку
+   * сразу активной». Речь про старые походы без типов: у них форма правки
+   * показывала четыре невыбранных чипса.
+   */
+  it('у похода без типов сразу выбран пеший', async () => {
+    const { wrapper } = await open(ORGANIZER, { ...TRIP, activityTypeIds: [] })
+
+    expect(wrapper.find('[data-test="trip-type-19"]').attributes('aria-pressed')).toBe('true')
+  })
+
+  it('выключенное открытое участие уезжает в патч', async () => {
+    const { wrapper } = await open()
+
+    await wrapper.find('[data-test="open-participation"]').setValue(false)
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.updateTrip).toHaveBeenCalledWith('7', { openParticipation: false })
+  })
+
+  it('включённое открытое участие в патч не попадает', async () => {
+    const { wrapper } = await open()
+
+    await wrapper.find('[data-test="announcement"]').setValue('Перенесли на июнь')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.updateTrip).toHaveBeenCalledWith('7', { announcement: 'Перенесли на июнь' })
   })
 
   it('текст ошибки бэкенда показывается как есть', async () => {

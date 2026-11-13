@@ -142,7 +142,57 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="starts-at"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="ends-at"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="variant-row"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="status-hint"]').text()).toContain('Решено')
+    // 13.11.2026: у «Решено» подсказки больше нет — заголовок «Даты похода»
+    // сам говорит, что здесь, а фраза про «начало и конец» повторяла его.
+    expect(wrapper.find('[data-test="status-hint"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Даты похода')
+  })
+
+  it('у «Планирую» подсказка — слова заказчика, у мечты — прежняя', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    await wrapper.find('[data-test="status"]').setValue('planning')
+    expect(wrapper.find('[data-test="status-hint"]').text()).toContain(
+      'Когда решение принято, срок ещё плавает',
+    )
+
+    await wrapper.find('[data-test="status"]').setValue('idea')
+    expect(wrapper.find('[data-test="status-hint"]').text()).toContain('Мечта')
+  })
+
+  it('подписей про сбор и набор редактора больше нет', async () => {
+    // Заказчик 13.11.2026: «текст про сбор убираем совсем», подписи про
+    // объекты в маршруте и базовый набор — лишние.
+    const wrapper = mount(CreateTrip)
+
+    expect(wrapper.text()).not.toContain('Где встречаемся в день выхода')
+    expect(wrapper.text()).not.toContain('В маршрут вставляются только объекты')
+    expect(wrapper.text()).not.toContain('Базовый набор: оформление текста')
+    expect(wrapper.text()).toContain('Публичность')
+    expect(wrapper.text()).not.toContain('Кто видит')
+  })
+
+  it('открытое участие включено по умолчанию и уходит в тело', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    const checkbox = wrapper.find('[data-test="open-participation"]')
+      .element as HTMLInputElement
+    expect(checkbox.checked).toBe(true)
+
+    await submit(wrapper)
+    expect(lastPayload().openParticipation).toBe(true)
+  })
+
+  it('открытое участие можно выключить', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    await wrapper.find('[data-test="open-participation"]').setValue(false)
+    await submit(wrapper)
+
+    expect(lastPayload().openParticipation).toBe(false)
   })
 
   it('прокликанные месяцы уезжают отдельными вариантами вместе с годами', async () => {

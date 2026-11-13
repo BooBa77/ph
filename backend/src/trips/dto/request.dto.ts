@@ -76,6 +76,13 @@ export class TripRequestDto {
   })
   message: string | null;
 
+  @ApiProperty({
+    description:
+      'Кто завёл тикет: организатор пригласил или участник (открытое участие) / сам заявитель',
+    example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
+  })
+  createdByUserId: string;
+
   @ApiProperty({ description: 'Когда тикет заведён' })
   createdAt: string;
 
@@ -86,6 +93,7 @@ export class TripRequestDto {
       avatarUrl: request.user?.avatarUrl ?? null,
       direction: request.direction,
       message: request.message,
+      createdByUserId: request.createdByUserId,
       createdAt: request.createdAt.toISOString(),
     };
   }

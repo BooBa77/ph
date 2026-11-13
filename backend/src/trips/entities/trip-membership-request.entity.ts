@@ -40,6 +40,7 @@ import { Trip } from './trip.entity';
 @Index('UQ_trip_membership_requests_trip_user', ['tripId', 'userId'], {
   unique: true,
 })
+@Index('IDX_trip_membership_requests_creator', ['createdByUserId'])
 export class TripMembershipRequest {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: string;
@@ -64,6 +65,25 @@ export class TripMembershipRequest {
   /** `invite` — приглашение, `apply` — заявка. */
   @Column({ type: 'varchar', length: 20 })
   direction: RequestDirection;
+
+  /**
+   * Кто завёл тикет (13.11.2026).
+   *
+   * У заявки автор — сам заявитель, и поле дублирует `user_id` не «на всякий
+   * случай», а чтобы правило видимости было одно: организатор видит все
+   * тикеты, остальные — те, где они приглашённый или автор. Без этой
+   * колонки приглашение, созданное участником (с открытым участием),
+   * не увидел бы никто, кроме организатора: ни «ждём ответа», ни «отозвать».
+   */
+  @Column({ name: 'created_by_user_id', type: 'uuid' })
+  createdByUserId: string;
+
+  @ManyToOne(() => User, { onDelete: 'RESTRICT' })
+  @JoinColumn({
+    name: 'created_by_user_id',
+    foreignKeyConstraintName: 'FK_trip_membership_requests_creator',
+  })
+  createdBy: User;
 
   /** Текст приглашения или обращения. Необязателен. */
   @Column({ type: 'text', nullable: true })

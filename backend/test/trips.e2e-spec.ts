@@ -210,6 +210,9 @@ describe('Походы (e2e)', () => {
       expect(response.body.routeText).toBe('');
       expect(response.body.isCommercial).toBe(false);
       expect(response.body.priceRub).toBeNull();
+      // Открытое участие — умолчание похода (13.11.2026): участники
+      // приглашают своих, пока организатор не выключил флаг.
+      expect(response.body.openParticipation).toBe(true);
       expect(response.body.activityTypeIds).toEqual([]);
       expect(response.body.startsAt).toBeNull();
       expect(response.body.cancelledAt).toBeNull();
@@ -907,6 +910,25 @@ describe('Походы (e2e)', () => {
         .expect(200);
     });
 
+    it('открытое участие выключается и включается обратно', async () => {
+      const created = await createTrip({ announcement: 'Флаг участия' });
+      const tripId = created.body.id as string;
+
+      const closed = await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ openParticipation: false })
+        .expect(200);
+      expect(closed.body.openParticipation).toBe(false);
+
+      const opened = await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ openParticipation: true })
+        .expect(200);
+      expect(opened.body.openParticipation).toBe(true);
+    });
+
     it('решённый поход нельзя оставить без дат', async () => {
       const created = await createTrip({
         status: 'decided',
@@ -1054,7 +1076,7 @@ describe('Походы (e2e)', () => {
         .expect(200);
     });
 
-    it('повторное приглашение — 409, приглашение не организатором — 403', async () => {
+    it('повторное приглашение — 409, посторонним — 403', async () => {
       const created = await createTrip({ announcement: 'Двойное приглашение' });
       const tripId = created.body.id as string;
       const invite = { direction: 'invite', userId: applicantId };
@@ -1071,11 +1093,97 @@ describe('Походы (e2e)', () => {
         .send(invite)
         .expect(409);
 
+      // Посторонний — не участник: открытое участие даёт право идущим,
+      // а не всем, кому виден поход.
       await request(app.getHttpServer())
         .post(`/api/trips/${tripId}/requests`)
         .set('Authorization', `Bearer ${strangerToken}`)
         .send({ direction: 'invite', userId: strangerId })
         .expect(403);
+    });
+
+    /**
+     * Открытое участие (13.11.2026). Заказчик: «нужен чек-бокс „Открытое
+     * участие. Участники могут приглашать своих“, по умолчанию true».
+     * Право приглашать стало свойством похода, а не только организатора.
+     */
+    it('при открытом участии идущий участник приглашает своего и отзывает приглашение', async () => {
+      const created = await createTrip({ announcement: 'Открытое участие' });
+      const tripId = created.body.id as string;
+      expect(created.body.openParticipation).toBe(true);
+
+      // Сначала посторонний входит в состав: он и станет «участником».
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: strangerId })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${strangerId}/accept`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ status: 'going' })
+        .expect(200);
+
+      const invited = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ direction: 'invite', userId: applicantId })
+        .expect(201);
+      expect(invited.body.createdByUserId).toBe(strangerId);
+
+      // Пригласивший видит своё приглашение — иначе ему нечего отзывать.
+      const mine = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(200);
+      expect(
+        (mine.body.requests as Array<{ userId: string }>).map(
+          (ticket) => ticket.userId,
+        ),
+      ).toEqual([applicantId]);
+
+      // И может отозвать: право есть у организатора, приглашённого и автора.
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${tripId}/requests/${applicantId}`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(204);
+
+      const list = await participants(tripId);
+      expect(list.some((item) => item.userId === applicantId)).toBe(false);
+    });
+
+    it('при выключенном открытом участии участнику приглашать нельзя — 403', async () => {
+      const created = await createTrip({
+        announcement: 'Закрытое участие',
+        openParticipation: false,
+      });
+      const tripId = created.body.id as string;
+      expect(created.body.openParticipation).toBe(false);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: strangerId })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${strangerId}/accept`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ status: 'going' })
+        .expect(200);
+
+      const denied = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ direction: 'invite', userId: applicantId })
+        .expect(403);
+      expect(denied.body.message).toContain('Открытое участие выключено');
+
+      // Организатор собирает состав сам — флаг на него не действует.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: applicantId })
+        .expect(201);
     });
 
     it('приглашённый принимает: статус меняется, тикет закрыт, есть сообщение', async () => {

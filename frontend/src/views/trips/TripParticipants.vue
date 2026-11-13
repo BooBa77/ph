@@ -113,13 +113,20 @@ const me = computed(
 )
 
 /**
- * Кто ведёт людей без аккаунта: организатор или идущий участник.
+ * Кто приводит своих людей: приглашает и заводит без аккаунта.
  *
- * С 12.11.2026 завести человека можно в любом походе, где ты идёшь, — не
- * только организатору. Приглашённому рано: он ещё не участник.
+ * Организатор — всегда. Идущий участник — только пока у похода включено
+ * открытое участие (13.11.2026, по умолчанию включено). Приглашённому рано:
+ * он ещё не участник.
+ *
+ * Флаг — правило похода, а не роли: в одном походе «свои» приветствуются,
+ * в другом организатор собирает состав сам. Права решает сервер и отвечает
+ * 403; здесь мы просто не показываем секции, которые заведомо не сработают.
  */
-const canManageVirtuals = computed(
-  () => isOrganizer.value || me.value?.status === 'going',
+const canBringPeople = computed(
+  () =>
+    isOrganizer.value ||
+    (props.trip.openParticipation !== false && me.value?.status === 'going'),
 )
 
 /** Моя заявка, если я её подавал и она ещё висит. */
@@ -130,7 +137,13 @@ const myRequest = computed(
 /** Заявки — организатору: их он и решает. */
 const applications = computed(() => requests.value.filter((item) => item.direction === 'apply'))
 
-/** Отправленные приглашения — видно только организатору. */
+/**
+ * Отправленные приглашения: организатору — все, участнику — свои.
+ *
+ * Сервер отдаёт участнику тикеты, где он приглашённый **или автор**
+ * (`createdByUserId`), поэтому «ждём ответа» и «отозвать» работают у того,
+ * кто пригласил, а не только у организатора.
+ */
 const invitations = computed(() => requests.value.filter((item) => item.direction === 'invite'))
 
 const canApply = computed(
@@ -224,7 +237,7 @@ async function load() {
  * чем нужно. Сказать словами важнее там, где действие не получилось.
  */
 async function loadVirtuals() {
-  if (!canManageVirtuals.value) {
+  if (!canBringPeople.value) {
     myVirtuals.value = []
 
     return
@@ -561,8 +574,8 @@ function invite(person: UserSearchResult) {
         </ul>
       </div>
 
-      <!-- Приглашения, которые ещё висят -->
-      <div v-if="isOrganizer && invitations.length > 0" class="flex flex-col gap-2">
+      <!-- Приглашения, которые ещё висят: организатору — все, участнику — свои -->
+      <div v-if="canBringPeople && invitations.length > 0" class="flex flex-col gap-2">
         <h3 class="text-sm text-muted">Ждём ответа на приглашения</h3>
 
         <ul class="flex flex-col gap-2" data-test="invitations">
@@ -590,7 +603,11 @@ function invite(person: UserSearchResult) {
       </div>
 
       <!-- Приглашение: поиск человека -->
-      <div v-if="isOrganizer" class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-4">
+      <div
+        v-if="canBringPeople"
+        class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-4"
+        data-test="invite-panel"
+      >
         <h3 class="text-sm text-muted">Пригласить</h3>
 
         <input
@@ -632,7 +649,7 @@ function invite(person: UserSearchResult) {
         личный список — «в следующий поход одним нажатием» — и правка имени.
       -->
       <div
-        v-if="canManageVirtuals"
+        v-if="canBringPeople"
         class="flex flex-col gap-3 rounded-xl border border-border bg-surface p-4"
         data-test="virtual-panel"
       >

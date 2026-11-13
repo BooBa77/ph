@@ -122,13 +122,17 @@ onMounted(async () => {
     isTypesLoaded.value = true
 
     /**
-     * Неофициальному походу подставляется пеший — но только при создании
-     * и только если человек ещё ничего не выбрал. У официального типа
-     * по умолчанию нет намеренно: там он несёт смысл (вид спорта и зачёт),
-     * и подставлять его за человека значит делать проверку «тип обязателен»
-     * бессмысленной.
+     * Неофициальному походу подставляется пеший — при создании и при правке,
+     * если у похода типов ещё нет. У официального типа по умолчанию нет
+     * намеренно: там он несёт смысл (вид спорта и зачёт), и подставлять его
+     * за человека значит делать проверку «тип обязателен» бессмысленной.
+     *
+     * Второй случай — старые походы, заведённые до появления типов: у них
+     * список пуст, и форма правки показывала четыре невыбранных чипса,
+     * хотя по умолчанию поход пеший. Заказчик 13.11.2026: «по умолчанию
+     * поход пеший, поэтому сделай кнопку сразу активной».
      */
-    if (initial === null && !isOfficial.value && selectedTypeIds.value.length === 0) {
+    if (!isOfficial.value && selectedTypeIds.value.length === 0) {
       if (defaultTypeId !== null) selectedTypeIds.value = [defaultTypeId]
     }
   } catch {
@@ -144,18 +148,31 @@ const status = ref<TripStatus>(initial?.status ?? 'idea')
 const visibility = ref<TripVisibility>(initial?.visibility ?? 'public')
 
 /**
+ * Открытое участие: участники приглашают своих и заводят людей без аккаунта.
+ * По умолчанию включено — до 13.11.2026 участник и так мог завести своего
+ * человека без аккаунта, и молча отнять это значило бы сломать привычное.
+ */
+const openParticipation = ref(initial?.openParticipation ?? true)
+
+/**
  * Мечта — вишлист, а не поход (`tabs.md` §7): место сбора, требования
  * к участникам и гитара — поля подготовки, у мечты их нет.
  */
 const isIdea = computed(() => status.value === 'idea')
 
-/** Пояснение к выбранной готовности: оно же объясняет, почему даты такие. */
-const STATUS_HINTS: Record<TripStatus, string> = {
+/**
+ * Пояснение к выбранной готовности: оно же объясняет, почему даты такие.
+ *
+ * У «Решено» подсказки нет: заголовок секции сам говорит, что здесь даты,
+ * а фраза «у похода есть начало и конец» повторяла очевидное — заказчик
+ * 13.11.2026 попросил её убрать. У «Мечты» текст прежний (её не трогали),
+ * у «Планирую» — слова заказчика без служебного «Планирую:».
+ */
+const STATUS_HINTS: Record<TripStatus, string | null> = {
   idea: 'Мечта: элемент вишлиста. Даты может не быть вовсе — «когда-нибудь». Если знаешь месяцы или число, укажи их, а продолжительность важнее даты.',
   planning:
-    'Планирую: решение принято, срок ещё плавает — «следующим летом». Отметь месяцы или точное число; конкретные даты появятся, когда поход станет решённым.',
-  decided:
-    'Решено: у похода есть начало и конец. По ним считается, идёт он сейчас или уже прошёл, — поэтому обе даты обязательны.',
+    'Когда решение принято, срок ещё плавает ± «следующим летом». Отметь месяцы или точное число; конкретные даты появятся, когда поход станет решённым.',
+  decided: null,
 }
 
 // ─── Цель ───
@@ -421,6 +438,7 @@ function buildPayload(): CreateTripRequest {
     status: status.value,
     isCommercial: isCommercial.value,
     isOfficial: isOfficial.value,
+    openParticipation: openParticipation.value,
     priceRub: isCommercial.value ? Number(priceRub.value) : null,
     priceNote: isCommercial.value ? priceNote.value.trim() || null : null,
   }
@@ -515,7 +533,7 @@ defineExpose({ validationProblem })
       </label>
 
       <label class="flex flex-col gap-2">
-        <span class="text-sm text-muted">Кто видит</span>
+        <span class="text-sm text-muted">Публичность</span>
         <select
           v-model="visibility"
           class="w-full cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors hover:border-primary focus:border-primary focus:outline-none"
@@ -527,6 +545,25 @@ defineExpose({ validationProblem })
         </select>
       </label>
     </div>
+
+    <!--
+      Открытое участие (13.11.2026). Не «набор закрыт», а «кто приводит
+      людей»: с выключенным флагом приглашать и заводить людей без аккаунта
+      может только организатор, и секции «Пригласить» и «Люди без аккаунта»
+      остальным не показываются.
+    -->
+    <label class="flex cursor-pointer items-start gap-3">
+      <input
+        v-model="openParticipation"
+        type="checkbox"
+        class="mt-0.5 h-5 w-5 shrink-0 cursor-pointer accent-[var(--theme-primary)]"
+        data-test="open-participation"
+      />
+      <span class="flex flex-col gap-1">
+        <span class="text-sm text-text">Открытое участие</span>
+        <span class="text-xs text-muted">Участники могут приглашать своих</span>
+      </span>
+    </label>
 
     <!-- Цель -->
     <div class="flex flex-col gap-2">
@@ -566,11 +603,19 @@ defineExpose({ validationProblem })
       </span>
     </label>
 
-    <!-- Когда -->
+    <!--
+      Даты похода. 13.11.2026 заказчик переименовал заголовок «Когда»
+      и убрал пояснение у «Решено»: у решённого похода здесь просто даты,
+      а не повод объяснять, зачем они нужны.
+    -->
     <div class="flex flex-col gap-3">
-      <span class="text-sm text-muted">Когда</span>
+      <span class="text-sm text-muted">Даты похода</span>
 
-      <p class="text-xs text-muted" data-test="status-hint">
+      <p
+        v-if="STATUS_HINTS[status]"
+        class="text-xs text-muted"
+        data-test="status-hint"
+      >
         {{ STATUS_HINTS[status] }}
       </p>
 
@@ -599,16 +644,6 @@ defineExpose({ validationProblem })
       </div>
     </div>
 
-    <!-- Сбор: только у настоящего похода, у мечты его нет -->
-    <div v-if="!isIdea" class="flex flex-col gap-3">
-      <span class="text-sm text-muted">Сбор</span>
-
-      <p class="text-xs text-muted">
-        Где встречаемся в день выхода, — поле «Трансфера».
-        Здесь его нет: «где встречаемся» не часть анонса, а часть логистики.
-      </p>
-    </div>
-
     <!-- Маршрут -->
     <div class="flex flex-col gap-2">
       <span class="text-sm text-muted">Маршрут</span>
@@ -619,11 +654,6 @@ defineExpose({ validationProblem })
         :objects="true"
         :emoji="false"
       />
-
-      <span class="text-xs text-muted">
-        В маршрут вставляются только объекты: смайлики и участники здесь ни к чему. В отчёте и
-        дневнике набор будет другим — редактор один.
-      </span>
     </div>
 
     <!-- Требования: подготовка, у мечты их нет -->
@@ -637,11 +667,6 @@ defineExpose({ validationProblem })
         :objects="false"
         :emoji="false"
       />
-
-      <span class="text-xs text-muted">
-        Базовый набор: оформление текста, ссылка и дата. Объекты сюда не вставляются — они в
-        маршруте.
-      </span>
     </div>
 
     <!-- Коммерция -->

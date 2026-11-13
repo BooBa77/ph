@@ -218,6 +218,13 @@ export class TripResponseDto {
   isOfficial: boolean;
 
   @ApiProperty({
+    description:
+      'Открытое участие: участники приглашают своих. Выключено — секции «Пригласить» и «Люди без аккаунта» видит только организатор',
+    example: true,
+  })
+  openParticipation: boolean;
+
+  @ApiProperty({
     description: 'Цена участия в рублях. Только у коммерческого похода',
     example: 25000,
     nullable: true,
@@ -278,6 +285,7 @@ export class TripResponseDto {
       ),
       isCommercial: trip.isCommercial,
       isOfficial: trip.isOfficial,
+      openParticipation: trip.openParticipation,
       priceRub: trip.priceRub,
       priceNote: trip.priceNote,
       cancelledAt: trip.cancelledAt?.toISOString() ?? null,
