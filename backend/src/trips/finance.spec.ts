@@ -8,6 +8,7 @@ import {
   familyCredit,
   familyDebt,
   joinNames,
+  planCommonEaterShares,
   splitAmount,
   type BalanceCompensation,
   type BalanceExpense,
@@ -310,11 +311,141 @@ describe('общая касса семьи', () => {
     ]);
   });
 
+  it('плюс у меня и минус у родного: кнопка компенсации работает', () => {
+    // 13.11.2026, проверка заказчика: «у пользователя положительный баланс,
+    // а у родственника отрицательный — доступна ли кнопка?». У родных общая
+    // касса: +1 000 и −1 500 дают долг 500, поэтому вариант есть, хотя лично
+    // смотрящему не должны ни рубля.
+    const family = [
+      ['a', 'b'],
+      ['c'],
+    ];
+    const balances = new Map<string, number>([
+      ['a', 1000],
+      ['b', -1500],
+      ['c', 500],
+    ]);
+
+    expect(compensationOptions('a', balances, family)).toEqual([
+      { userIds: ['c'], amountRub: 500 },
+    ]);
+    // А без родного (каждый сам за себя) вариантов нет: платить не с чего.
+    expect(compensationOptions('a', balances, singles(['a', 'b', 'c']))).toEqual(
+      [],
+    );
+  });
+
   it('имена — одной строкой, как просил заказчик', () => {
     expect(joinNames([])).toBe('');
     expect(joinNames(['Вася'])).toBe('Вася');
     expect(joinNames(['Вася', 'Аня'])).toBe('Вася и Аня');
     expect(joinNames(['Вася', 'Аня', 'Петя'])).toBe('Вася, Аня и Петя');
+  });
+});
+
+/**
+ * Доли чека с общего стола — проекция текущих едоков (13.11.2026).
+ *
+ * Заказчик: «6 человек питаются вместе, A покупает на 3 000 — у A +2 500,
+ * у остальных −500. Затем A решил питаться отдельно, осталось 5 человек —
+ * A +3 000, у остальных −600. И этот пересчёт должен обновляться в том числе
+ * по SSE». Первый вариант пересчёта убирал доли вышедших, но не возвращал
+ * вернувшихся — чек, поделённый на четырёх, оставался четырёхдольным при
+ * шести едоках, и галочка ничего не меняла.
+ */
+describe('planCommonEaterShares', () => {
+  const early = new Date('2026-11-01T00:00:00Z');
+  const check = new Date('2026-11-12T00:00:00Z');
+  const late = new Date('2026-11-13T00:00:00Z');
+
+  /** Шесть человек в составе с самого начала. */
+  function since(ids: readonly string[], at = early): Map<string, Date> {
+    return new Map(ids.map((id) => [id, at]));
+  }
+
+  const six = ['a', 'b', 'c', 'd', 'e', 'f'];
+
+  it('вышедший из-за стола выпадает из долей, остальные делят его часть', () => {
+    const desired = planCommonEaterShares({
+      amountRub: 3000,
+      shares: splitAmount(3000, six),
+      goingIds: six,
+      eaterIds: ['b', 'c', 'd', 'e', 'f'],
+      participantSince: since(six),
+      expenseCreatedAt: check,
+    });
+
+    expect(desired).not.toBeNull();
+    expect(desired!.map((share) => share.amountRub)).toEqual([
+      600, 600, 600, 600, 600,
+    ]);
+    expect(desired!.some((share) => share.userId === 'a')).toBe(false);
+    expect(desired!.reduce((sum, share) => sum + share.amountRub, 0)).toBe(3000);
+  });
+
+  it('вернувшийся за общий стол снова попадает в делёж', () => {
+    // Чек уже поделён на пятерых: у A доли нет — её когда-то убрали.
+    const desired = planCommonEaterShares({
+      amountRub: 3000,
+      shares: splitAmount(3000, ['b', 'c', 'd', 'e', 'f']),
+      goingIds: six,
+      eaterIds: six,
+      participantSince: since(six),
+      expenseCreatedAt: check,
+    });
+
+    expect(desired).not.toBeNull();
+    expect(desired!.map((share) => share.userId)).toEqual(six);
+    expect(desired!.every((share) => share.amountRub === 500)).toBe(true);
+    expect(desired!.reduce((sum, share) => sum + share.amountRub, 0)).toBe(3000);
+  });
+
+  it('вышедший из похода сохраняет долю, а его часть не перекладывают', () => {
+    const desired = planCommonEaterShares({
+      amountRub: 3000,
+      shares: splitAmount(3000, six),
+      // F отказался от похода: он не going, но доля остаётся в истории.
+      goingIds: ['a', 'b', 'c', 'd', 'e'],
+      eaterIds: ['a', 'b', 'c', 'd', 'e'],
+      participantSince: since(six),
+      expenseCreatedAt: check,
+    });
+
+    expect(desired).not.toBeNull();
+    expect(desired!.filter((share) => share.userId === 'f')).toEqual([
+      { userId: 'f', amountRub: 500 },
+    ]);
+    expect(desired!.filter((share) => share.userId !== 'f')).toHaveLength(5);
+    expect(desired!.reduce((sum, share) => sum + share.amountRub, 0)).toBe(3000);
+  });
+
+  it('новый участник не получает долг за закупку, которая была до него', () => {
+    const desired = planCommonEaterShares({
+      amountRub: 3000,
+      shares: splitAmount(3000, six),
+      goingIds: [...six, 'new'],
+      eaterIds: [...six, 'new'],
+      participantSince: new Map([...since(six), ['new', late]]),
+      expenseCreatedAt: check,
+    });
+
+    expect(desired).not.toBeNull();
+    expect(desired!.some((share) => share.userId === 'new')).toBe(false);
+    expect(desired!).toHaveLength(6);
+  });
+
+  it('все перешли на отдельное питание — доли остаются как были', () => {
+    const desired = planCommonEaterShares({
+      amountRub: 3000,
+      shares: splitAmount(3000, six),
+      goingIds: six,
+      eaterIds: [],
+      participantSince: since(six),
+      expenseCreatedAt: check,
+    });
+
+    // Делить не на кого: терять сумму нельзя, история остаётся.
+    expect(desired).toBeNull();
   });
 });
 

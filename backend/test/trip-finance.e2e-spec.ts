@@ -547,6 +547,59 @@ describe('Бухгалтерия похода (e2e)', () => {
         .expect(200);
     });
 
+    /**
+     * Баг 12.11.2026 повторился 13.11.2026: доли, разошедшиеся с составом
+     * едоков, не чинились. Первый вариант пересчёта убирал доли вышедших
+     * из-за стола, но не возвращал вернувшихся — чек, поделённый на четырёх,
+     * оставался четырёхдольным при пяти едоках, и галочка «питаюсь отдельно»
+     * ничего не меняла. Теперь доли пересобираются целиком.
+     */
+    it('разошедшиеся доли чинятся при смене питания: вернувшийся снова платит', async () => {
+      const current = await view(trip1, a);
+      const expense = current.body.expenses.find(
+        (item: { description: string }) => item.description === 'Пересчёт',
+      );
+      expect(expense).toBeDefined();
+
+      // Так выглядел баг: у едока Б доли в чеке нет, хотя он ест со всеми.
+      await dataSource.query(
+        'DELETE FROM trip_expense_shares WHERE expense_id = $1 AND user_id = $2',
+        [expense.id, b.id],
+      );
+
+      const toggle = (eatsSeparately: boolean) =>
+        auth(
+          request(app.getHttpServer()).patch(
+            `/api/trips/${trip1}/participants/me`,
+          ),
+          b.token,
+        )
+          .send({ status: 'going', eatsSeparately })
+          .expect(200);
+
+      // Два действия: выйти из-за стола и вернуться. Каждое — пересборка.
+      await toggle(true);
+      await toggle(false);
+
+      const fixed = await view(trip1, a);
+      const row = fixed.body.expenses.find(
+        (item: { id: string }) => item.id === expense.id,
+      );
+
+      // Е ест отдельно, остальные пятеро — с общего: доля Б на месте,
+      // сумма прежняя, и никто не потерял деньги.
+      expect(row.shares).toHaveLength(5);
+      expect(
+        row.shares.find((share: { userId: string }) => share.userId === b.id),
+      ).toBeDefined();
+      expect(
+        row.shares.reduce(
+          (sum: number, share: { amountRub: number }) => sum + share.amountRub,
+          0,
+        ),
+      ).toBe(300);
+    });
+
     it('обычный расход без описания не создаётся', async () => {
       await addExpense(
         trip1,

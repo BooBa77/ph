@@ -162,7 +162,7 @@ function state(overrides: Partial<TripFinance> = {}): TripFinance {
   }
 }
 
-/** Вкладка глазами меня, где я в семье: касса одна на двоих. */
+/** Вкладка глазами меня, где я в семье: балансы всё равно личные. */
 function familyState(overrides: Partial<TripFinance> = {}): TripFinance {
   const base = state()
 
@@ -195,6 +195,65 @@ function familyState(overrides: Partial<TripFinance> = {}): TripFinance {
       suggestions: [],
     },
     ...overrides,
+  }
+}
+
+/**
+ * Семья, где у смотрящего плюс, а у родного минус: A +1 000, Анна −1 500,
+ * Борис +500. Касса семьи (Я, Анна) — −500, поэтому «Компенсация» доступна:
+ * папа платит за сына (13.11.2026).
+ */
+function familyDebtState(): TripFinance {
+  const base = state()
+
+  return {
+    ...base,
+    members: [
+      member(ME, 'Я', 1000),
+      member(ANNA, 'Анна', -1500),
+      member(BORIS, 'Борис', 500),
+    ],
+    families: [
+      {
+        memberIds: [ME, ANNA],
+        displayName: 'Я и Анна',
+        balanceRub: -500,
+        remainingRub: -500,
+        isMine: true,
+      },
+      {
+        memberIds: [BORIS],
+        displayName: 'Борис',
+        balanceRub: 500,
+        remainingRub: 500,
+        isMine: false,
+      },
+    ],
+    me: {
+      ...base.me,
+      balanceRub: 1000,
+      remainingRub: 1000,
+      familyBalanceRub: -500,
+      familyRemainingRub: -500,
+      familyDebtRub: 500,
+      familyCreditRub: 0,
+      suggestions: [
+        {
+          userIds: [BORIS],
+          displayName: 'Борис',
+          amountRub: 500,
+          members: [
+            {
+              userId: BORIS,
+              displayName: 'Борис',
+              gender: 'm',
+              paymentDetails: null,
+              paymentBank: null,
+            },
+          ],
+        },
+      ],
+    },
   }
 }
 
@@ -279,7 +338,7 @@ describe('вкладка «Бухгалтерия»', () => {
     mocks.getTripFinance.mockResolvedValue(state())
   })
 
-  it('баланс цифрой в одну строку и балансы всех участников', async () => {
+  it('баланс цифрой в одну строку и без подписей-объяснений', async () => {
     const wrapper = mountView()
     await flushPromises()
 
@@ -290,28 +349,45 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(wrapper.get('[data-test="finance-members"]').text()).toContain('−1 000 ₽')
     // Ожидающих переводов нет — второй цифры тоже нет.
     expect(wrapper.find('[data-test="finance-remaining"]').exists()).toBe(false)
+    // 13.11.2026: подписей под балансом («Перевод делает должник — не ты»)
+    // больше нет — заказчик попросил убрать их совсем.
+    expect(wrapper.find('[data-test="finance-hint"]').exists()).toBe(false)
   })
 
-  it('в семье карточка показывает кассу, а балансы — по семьям', async () => {
+  it('в семье баланс тоже личный, и у каждого человека своя цифра', async () => {
     mocks.getTripFinance.mockResolvedValue(familyState())
 
     const wrapper = mountView()
     await flushPromises()
 
-    // Личный баланс 3 000, касса семьи 1 000: минус одного погашен плюсом.
-    expect(wrapper.get('[data-test="finance-card-title"]').text()).toBe('Касса семьи')
-    expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('+1 000 ₽')
-    expect(wrapper.get('[data-test="finance-remaining"]').text()).toBe(
-      'С учётом ожидающих — 0 ₽',
-    )
+    // Заказчик 13.11.2026: «касса семьи» на экране только путала — цифра
+    // личная. У меня +3 000, а не +1 000 общей кассы.
+    expect(wrapper.get('[data-test="finance-card-title"]').text()).toBe('Твой баланс')
+    expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('+3 000 ₽')
 
-    // Одна строка на семью, а не на человека: людей трое, строк две.
-    const rows = wrapper.findAll('[data-test="finance-family"]')
-    expect(rows).toHaveLength(2)
-    expect(rows[0]?.text()).toContain('Я и Анна')
-    expect(rows[0]?.text()).toContain('+1 000 ₽')
-    expect(rows[1]?.text()).toContain('Борис')
-    expect(rows[1]?.text()).toContain('−1 000 ₽')
+    // Строки — по людям, а не по семьям: трое человек, три строки.
+    const rows = wrapper.findAll('[data-test="finance-member"]')
+    expect(rows).toHaveLength(3)
+    expect(rows[0]?.text()).toContain('Я')
+    expect(rows[0]?.text()).toContain('−1 000 ₽')
+    expect(rows[1]?.text()).toContain('Анна')
+    expect(rows[1]?.text()).toContain('+2 000 ₽')
+    expect(rows[2]?.text()).toContain('Борис')
+    expect(rows[2]?.text()).toContain('−1 000 ₽')
+  })
+
+  it('балансы показываются персонально: минус родного не гасится плюсом', async () => {
+    mocks.getTripFinance.mockResolvedValue(familyDebtState())
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    // Личный плюс — на карточке, минус Анны — отдельной строкой.
+    expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('+1 000 ₽')
+
+    const rows = wrapper.findAll('[data-test="finance-member"]')
+    expect(rows[1]?.text()).toContain('Анна')
+    expect(rows[1]?.text()).toContain('−1 500 ₽')
   })
 
   it('расход подписан конкретным человеком, даже если он в семье', async () => {
@@ -326,7 +402,7 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(row.text()).not.toContain('Я и Анна')
   })
 
-  it('компенсация подписана семьями: платит семья и получает семья', async () => {
+  it('компенсация подписана людьми, даже если они из одной семьи', async () => {
     mocks.getTripFinance.mockResolvedValue(
       familyState({
         compensations: [
@@ -344,8 +420,10 @@ describe('вкладка «Бухгалтерия»', () => {
     const wrapper = mountView()
     await flushPromises()
 
+    // Заказчик 13.11.2026: «в движении средств отображать персонально».
     const row = wrapper.get('[data-test="finance-row-compensation"]')
-    expect(row.text()).toContain('Я и Анна → Борис')
+    expect(row.text()).toContain('Анна → Борис')
+    expect(row.text()).not.toContain('Я и Анна')
   })
 
   it('вторая строка появляется, когда ожидающие переводы сдвинули баланс', async () => {
@@ -474,7 +552,7 @@ describe('вкладка «Бухгалтерия»', () => {
     )
   })
 
-  it('«Компенсация» выключена, когда переводить нечего, и объясняет почему', async () => {
+  it('«Компенсация» выключена, когда переводить нечего', async () => {
     mocks.getTripFinance.mockResolvedValue(
       state({
         me: meQuiet(),
@@ -484,15 +562,15 @@ describe('вкладка «Бухгалтерия»', () => {
     const wrapper = mountView()
     await flushPromises()
 
+    // 13.11.2026: подписи «Всё в расчёте — переводить нечего» больше нет,
+    // выключенной кнопки достаточно.
     expect(
       wrapper.get('[data-test="finance-compensate"]').attributes('disabled'),
     ).toBeDefined()
-    expect(wrapper.get('[data-test="finance-hint"]').text()).toBe(
-      'Всё в расчёте — переводить нечего.',
-    )
+    expect(wrapper.find('[data-test="finance-hint"]').exists()).toBe(false)
   })
 
-  it('долг, занятый ожидающими переводами, объясняется без бухгалтерии', async () => {
+  it('долг, занятый ожидающими переводами, не открывает компенсацию', async () => {
     mocks.getTripFinance.mockResolvedValue(
       state({
         me: meQuiet({ familyDebtRub: 1000 }),
@@ -505,15 +583,30 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(
       wrapper.get('[data-test="finance-compensate"]').attributes('disabled'),
     ).toBeDefined()
-    expect(wrapper.get('[data-test="finance-hint"]').text()).toBe(
-      'Ждём подтверждения переводов.',
-    )
   })
 
-  it('долг человека без аккаунта открывает компенсацию его ведущему', async () => {
+  it('плюс у меня и минус у родного: кнопка работает — папа платит за сына', async () => {
+    mocks.getTripFinance.mockResolvedValue(familyDebtState())
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    // Касса семьи в минусе из-за Анны: личный плюс не должен мешать.
+    expect(
+      wrapper.get('[data-test="finance-compensate"]').attributes('disabled'),
+    ).toBeUndefined()
+
+    await wrapper.get('[data-test="finance-compensate"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="compensation-modal-stub"]').text()).toBe('1')
+  })
+
+  it('плюс у меня и минус у человека без аккаунта: кнопка работает', async () => {
     mocks.getTripFinance.mockResolvedValue(
       state({
-        me: meQuiet(),
+        // Мне должны 2 000 — лично переводить нечего.
+        me: meQuiet({ balanceRub: 2000, remainingRub: 2000, familyCreditRub: 2000 }),
         managedSenders: [
           {
             userId: 'vitya',
@@ -529,6 +622,7 @@ describe('вкладка «Бухгалтерия»', () => {
     const wrapper = mountView()
     await flushPromises()
 
+    // За Дядю Витю платит тот, кто его ведёт: кнопка открыта ради него.
     expect(
       wrapper.get('[data-test="finance-compensate"]').attributes('disabled'),
     ).toBeUndefined()
@@ -539,7 +633,7 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(wrapper.get('[data-test="compensation-modal-stub"]').text()).toBe('1')
   })
 
-  it('«Вам должны» тоже не открывает компенсацию — перевод делает должник', async () => {
+  it('«Вам должны» без долга у подопечных не открывает компенсацию', async () => {
     mocks.getTripFinance.mockResolvedValue(
       state({
         me: meQuiet({ balanceRub: 2000, remainingRub: 2000, familyCreditRub: 2000 }),
@@ -549,9 +643,10 @@ describe('вкладка «Бухгалтерия»', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    expect(wrapper.get('[data-test="finance-hint"]').text()).toBe(
-      'Перевод делает должник — не ты.',
-    )
+    // Перевод делает должник — кнопка выключена, без текста-объяснения.
+    expect(
+      wrapper.get('[data-test="finance-compensate"]').attributes('disabled'),
+    ).toBeDefined()
   })
 
   it('приглашённый видит вкладку, но кнопки выключены', async () => {
@@ -565,7 +660,8 @@ describe('вкладка «Бухгалтерия»', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-add-expense"]').attributes('disabled')).toBeDefined()
-    expect(wrapper.get('[data-test="finance-hint"]').text()).toContain('только идущий участник')
+    expect(wrapper.get('[data-test="finance-compensate"]').attributes('disabled')).toBeDefined()
+    expect(wrapper.find('[data-test="finance-hint"]').exists()).toBe(false)
   })
 
   it('пустая вкладка приглашает записать первую трату', async () => {
@@ -704,8 +800,10 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(mocks.stopLiveEvents).toHaveBeenCalled()
   })
 
-  it('чужое изменение перечитывает вкладку, своё и чужую вкладку — нет', async () => {
-    // Своё действие узнаём по actorId: без пользователя в store не проверить.
+  it('чужое и своё изменение перечитывают вкладку, чужая вкладка — нет', async () => {
+    // 13.11.2026: под одним аккаунтом бывает несколько вкладок браузера,
+    // поэтому своё действие (actorId = я) тоже перечитывается: иначе вторая
+    // вкладка показывала бы старый баланс.
     useAuthStore().user = { id: ME, displayName: 'Я' } as User
 
     const wrapper = mountView()
@@ -715,20 +813,26 @@ describe('вкладка «Бухгалтерия»', () => {
 
     const liveEvent = mocks.subscribeTripEvents.mock.calls[0]?.[1] as (event: unknown) => void
 
-    // Своё — ответ на запрос уже пришёл, перечитывать нечего.
-    liveEvent({ scope: 'finance', actorId: ME, at: '2026-11-11T10:00:00.000Z' })
-    // Чужая вкладка — поток общий на поход.
+    // Чужая вкладка — поток общий на поход: деньги не перечитываем.
     liveEvent({ scope: 'gear', actorId: ANNA, at: '2026-11-11T10:00:00.000Z' })
 
     await new Promise((resolve) => setTimeout(resolve, 400))
     await flushPromises()
     expect(mocks.getTripFinance).toHaveBeenCalledTimes(1)
 
-    liveEvent({ scope: 'finance', actorId: ANNA, at: '2026-11-11T10:00:01.000Z' })
+    // Своё действие из соседней вкладки того же аккаунта.
+    liveEvent({ scope: 'finance', actorId: ME, at: '2026-11-11T10:00:00.000Z' })
 
     await new Promise((resolve) => setTimeout(resolve, 400))
     await flushPromises()
     expect(mocks.getTripFinance).toHaveBeenCalledTimes(2)
+
+    // И чужое действие — тоже.
+    liveEvent({ scope: 'finance', actorId: ANNA, at: '2026-11-11T10:00:01.000Z' })
+
+    await new Promise((resolve) => setTimeout(resolve, 400))
+    await flushPromises()
+    expect(mocks.getTripFinance).toHaveBeenCalledTimes(3)
 
     wrapper.unmount()
   })

@@ -345,11 +345,11 @@ export class CompensationOptionDto implements CompensationOption {
 }
 
 /**
- * Общая касса семьи на экране (12.11.2026).
+ * Общая касса семьи — расчёт для компенсации (12.11.2026).
  *
- * Одна строка вместо балансов участников: внутри семьи деньги не считаются
- * по людям, и минус одного гасится плюсом другого. Семья из одного человека
- * — это просто его личный баланс, поэтому отдельного случая нет.
+ * Одна цифра вместо балансов участников: внутри семьи деньги не считаются
+ * по людям, и минус одного гасится плюсом другого. С 13.11.2026 экран её
+ * **не показывает** — балансы там личные; касса нужна подсказкам перевода.
  */
 export class FinanceFamilyDto {
   @ApiProperty({ type: [String], description: 'Идущие участники семьи' })
@@ -376,14 +376,14 @@ export class FinanceFamilyDto {
 
 /** Мой баланс и подсказки — то, что видит человек в шапке вкладки. */
 export class MyFinanceDto {
-  @ApiProperty({ description: 'Личный баланс — внутренняя арифметика семьи' })
+  @ApiProperty({ description: 'Личный баланс — его и показывает шапка вкладки' })
   balanceRub: number;
 
   @ApiProperty({ description: 'Личный остаток с учётом ожидающих переводов' })
   remainingRub: number;
 
   @ApiProperty({
-    description: 'Общая касса моей семьи — её и показывает экран',
+    description: 'Общая касса моей семьи — расчёт компенсации, не для экрана',
     example: -1000,
   })
   familyBalanceRub: number;
@@ -400,7 +400,7 @@ export class MyFinanceDto {
   familyDebtRub: number;
 
   @ApiProperty({
-    description: 'Кредит всей моей семьи — по нему объясняется отказ кнопки',
+    description: 'Кредит всей моей семьи — по нему видно, есть ли кому переводить',
   })
   familyCreditRub: number;
 

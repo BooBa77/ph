@@ -13,7 +13,6 @@ import { useAuthStore } from '@/stores/auth'
 import type {
   CompensationOption,
   CompensationSender,
-  FinanceFamily,
   TripCompensation,
   TripExpense,
   TripFinance,
@@ -43,13 +42,17 @@ import TripFinanceExpenseModal from '@/views/trips/TripFinanceExpenseModal.vue'
  * должника остаётся один вариант, потому что первый уже занял кредит.
  * Поэтому вторая строка появляется только когда цифры разошлись.
  *
- * **Кнопка «Компенсация» выключена, если переводить нечего, и говорит почему.**
- * Это дешевле, чем открыть модалку с пустым списком: человек сразу видит,
- * что «вам должны» — перевод делает должник, а не он.
+ * **Кнопка «Компенсация» выключена, если переводить нечего.** Это дешевле,
+ * чем открыть модалку с пустым списком. Подписи-объяснения под балансом
+ * (13.11.2026) убраны по слову заказчика: выключенной кнопки достаточно,
+ * а правила семейного зачёта видно в самой модалке.
  *
  * **«Живой» поток — `scope = 'finance'`.** Канал событий на бэкенде один на
  * поход, поэтому сюда прилетают и события снаряжения; чужую вкладку экран
- * пропускает по `scope`, своё действие — по `actorId`.
+ * пропускает по `scope`. Своё действие тоже перечитывается: под одним
+ * аккаунтом человек держит несколько вкладок браузера (13.11.2026), и вторая
+ * из них иначе осталась бы со старым балансом — `actorId` не говорит, какая
+ * именно вкладка сделала изменение.
  */
 const props = defineProps<{ tripId: string }>()
 
@@ -113,9 +116,11 @@ let refreshTimer: ReturnType<typeof setTimeout> | null = null
 function onLiveEvent(event: TripEvent): void {
   // Поток общий с «Снаряжением»: чужую вкладку не перечитываем.
   if (event.scope !== 'finance') return
-  // Своё действие уже пришло ответом на запрос.
-  if (event.actorId === meId.value) return
 
+  // `actorId` не различает вкладки: своё действие в другой вкладке того же
+  // аккаунта тоже должно обновить экран, иначе человек видит старый баланс
+  // после смены питания или подтверждения перевода. Лишний один GET после
+  // собственной мутации дешевле, чем расходящиеся цифры (13.11.2026).
   if (refreshTimer !== null) return
 
   refreshTimer = setTimeout(() => {
@@ -169,26 +174,6 @@ onBeforeUnmount(() => {
 
 const me = computed(() => finance.value?.me ?? null)
 
-/**
- * Общая касса семьи (12.11.2026).
- *
- * Заказчик: «общая касса семьи — это компенсация семье любому её члену
- * и „платит семья“ при компенсации другим участникам; при расходах
- * отображаем как расход от конкретного человека». Поэтому в шапке стоит
- * **касса**, а не личный остаток: внутри семьи плюс одного уже погашен
- * минусом другого, и личные цифры на экране только путали бы.
- *
- * У человека без семьи касса — он сам: подпись остаётся «Твой баланс»,
- * цифра та же, что и личная.
- */
-const myFamily = computed<FinanceFamily | null>(
-  () => finance.value?.families.find((family) => family.isMine) ?? null,
-)
-
-const cardTitle = computed(() =>
-  (myFamily.value?.memberIds.length ?? 1) > 1 ? 'Касса семьи' : 'Твой баланс',
-)
-
 /** Менять деньги может только идущий участник — так решил сервер. */
 const canSpend = computed(() => finance.value?.me.canSpend === true)
 
@@ -218,35 +203,24 @@ const senders = computed<CompensationSender[]>(() => {
   ]
 })
 
+/**
+ * «Компенсация» открывается, когда переводить есть кому **хоть у одного
+ * из доступных отправителей**.
+ *
+ * Отправителей два вида, и оба важны (13.11.2026):
+ *
+ * - **я как семья** — у родных общая касса, поэтому личный плюс не мешает
+ *   кнопке: у папы +1 000, у сына −1 500, касса семьи −500 — папа платит
+ *   за сына;
+ * - **мой человек без аккаунта** — его кошелёк отдельный: у меня +1 000,
+ *   у Дяди Вити −500 — я перевожу за Дядю Витю.
+ */
 const canCompensate = computed(
   () => canSpend.value && senders.value.some((sender) => sender.suggestions.length > 0),
 )
 
-/**
- * Почему кнопка «Компенсация» выключена. Пустая строка — кнопка работает.
- * Одна фраза на один случай: «вам должны» и «всё в расчёте» — разные дела,
- * и человеку важно, какое именно у него.
- *
- * Считается по **семье и по моим людям без аккаунта**: с 12.11.2026 платит
- * семья, а за виртуального действует его ведущий; личный остаток смотрящего
- * может быть нулевым, пока долг есть у родных или у подопечного.
- */
-const compensationHint = computed(() => {
-  if (finance.value === null) return ''
-  if (!canSpend.value) return 'Расходы и переводы может менять только идущий участник похода.'
-  if (senders.value.some((sender) => sender.suggestions.length > 0)) return ''
-
-  const debt = senders.value.some((sender) => sender.familyDebtRub > 0)
-  const credit = senders.value.some((sender) => sender.familyCreditRub > 0)
-
-  if (debt) return 'Ждём подтверждения переводов.'
-  if (credit) return 'Перевод делает должник — не ты.'
-
-  return 'Всё в расчёте — переводить нечего.'
-})
-
 const balanceClass = computed(() => {
-  const balance = finance.value?.me.familyBalanceRub ?? 0
+  const balance = finance.value?.me.balanceRub ?? 0
 
   if (balance > 0) return 'text-emerald-700'
   if (balance < 0) return 'text-red-600'
@@ -259,19 +233,23 @@ const balanceClass = computed(() => {
  *
  * Заказчик 12.11.2026: «не нужно это некрасивое ВЫ ДОЛЖНЫ, пусть будет
  * в одну строку „Ваш баланс“ + красный 500 р». Знак и цвет говорят то же
- * самое, и строка не разъезжается на две. С 12.11.2026 подпись — «Твой
- * баланс»: интерфейс обращается на «ты». С 12.11.2026 — «Касса семьи»:
- * цифра тоже семейная.
+ * самое, и строка не разъезжается на две.
+ *
+ * **Цифра личная, а не семейная (13.11.2026).** Заказчик: «отображать кассу
+ * семьи не очень идея… в балансе и движении средств отображать персонально.
+ * Если A и B — семья, у B всё равно баланс должен отображаться −500 ₽.
+ * Людям глазами трудно считать с учётом этих семейных нюансов». Семейный
+ * зачёт остаётся только в компенсациях: там он и нужен — кто кому платит.
  */
 const balanceText = computed(() =>
-  formatRubSigned(finance.value?.me.familyBalanceRub ?? 0),
+  formatRubSigned(finance.value?.me.balanceRub ?? 0),
 )
 
 /** Вторая цифра нужна только когда ожидающие переводы её сдвинули. */
 const hasRemainingShift = computed(
   () =>
     finance.value !== null &&
-    finance.value.me.familyRemainingRub !== finance.value.me.familyBalanceRub,
+    finance.value.me.remainingRub !== finance.value.me.balanceRub,
 )
 
 // ───────────────────────────── таблица движения денег ─────────────────────────────
@@ -300,22 +278,14 @@ interface MoneyRowView {
 }
 
 /**
- * Подпись стороны перевода: семья целиком, а не человек.
+ * Подпись стороны перевода — **конкретный человек** (13.11.2026).
  *
- * Расход в ленте подписан плательщиком — «расход от конкретного человека»,
- * слова заказчика 12.11.2026. Компенсация — движение между **кассами**:
- * семья платит и семья получает, а кто именно нажал кнопку и на чью карту
- * пришли деньги, на баланс не влияет. У человека без семьи подпись
- * остаётся его именем.
+ * Заказчик: «в балансе и движении средств отображать персонально». Семейный
+ * зачёт остаётся в компенсациях (кто и с кем рассчитывается), но в ленте
+ * человек видит имена: «Пётр → Григорий», даже если Пётр платил из общей
+ * кассы семьи. Иначе приходилось бы в уме раскладывать семейные плюсы
+ * и минусы, а этого заказчик как раз и просил не делать.
  */
-function compensationParty(userId: string, fallback: string): string {
-  const family = finance.value?.families.find((item) =>
-    item.memberIds.includes(userId),
-  )
-
-  return family?.displayName ?? fallback
-}
-
 function toView(row: MoneyRow): MoneyRowView {
   if (row.kind === 'expense') {
     return {
@@ -342,7 +312,7 @@ function toView(row: MoneyRow): MoneyRowView {
     key: row.key,
     kind: 'compensation',
     day: formatDay(row.at),
-    who: `${compensationParty(compensation.fromUserId, compensation.fromName)} → ${compensationParty(compensation.toUserId, compensation.toName)}`,
+    who: `${compensation.fromName} → ${compensation.toName}`,
     amountRub: compensation.amountRub,
     description: '',
     caption: '',
@@ -364,6 +334,10 @@ const rows = computed<MoneyRowView[]>(() =>
 
 /** Модалки и операции меняют вкладку целиком — так отвечает сервер. */
 function applyView(view: TripFinance): void {
+  // Ответ мутации новее любого GET, начатого до неё: иначе поздний ответ
+  // тихого обновления перетёр бы свежие цифры старыми.
+  viewVersion += 1
+
   finance.value = view
   actionError.value = null
   expenseModalOpen.value = false
@@ -468,16 +442,17 @@ function cancelRow(row: MoneyRowView): void {
 
     <template v-else-if="finance && me">
       <!--
-        «Твой баланс» / «Касса семьи» — первое, что человек ищет в этой
-        вкладке. Цифра стоит в той же строке: «Вы должны 500 ₽» заказчик
-        забраковал — знак и цвет говорят то же самое короче. Вторая строка
-        появляется только когда ожидающие переводы сдвинули цифру.
+        «Твой баланс» — первое, что человек ищет в этой вкладке. Цифра стоит
+        в той же строке: «Вы должны 500 ₽» заказчик забраковал — знак и цвет
+        говорят то же самое короче. Цифра **личная**: семейный зачёт виден
+        только в компенсациях. Вторая строка появляется, только когда
+        ожидающие переводы сдвинули цифру.
       -->
       <div class="flex flex-col gap-3 rounded-2xl border border-border bg-surface p-4">
         <div class="flex flex-wrap items-start justify-between gap-3">
           <div class="flex flex-col gap-1">
             <div class="flex flex-wrap items-baseline gap-x-2">
-              <h2 class="text-xs text-muted" data-test="finance-card-title">{{ cardTitle }}</h2>
+              <h2 class="text-xs text-muted" data-test="finance-card-title">Твой баланс</h2>
               <p
                 class="text-2xl font-semibold whitespace-nowrap"
                 :class="balanceClass"
@@ -491,7 +466,7 @@ function cancelRow(row: MoneyRowView): void {
               class="text-xs text-muted"
               data-test="finance-remaining"
             >
-              С учётом ожидающих — {{ formatRub(me.familyRemainingRub) }}
+              С учётом ожидающих — {{ formatRub(me.remainingRub) }}
             </p>
           </div>
 
@@ -518,40 +493,39 @@ function cancelRow(row: MoneyRowView): void {
           </div>
         </div>
 
-        <p v-if="compensationHint" class="text-xs text-muted" data-test="finance-hint">
-          {{ compensationHint }}
+        <p v-if="actionError" class="text-sm text-red-600" data-test="finance-action-error">
+          {{ actionError }}
         </p>
 
-        <!-- Кассы семей: арифметика должна быть видна, а не только мой итог -->
+        <!--
+          Балансы — по людям, как в жизни: у каждого своя цифра. Семейный
+          зачёт существует только в компенсациях, где он и нужен.
+        -->
         <div class="border-t border-border pt-2">
           <h3 class="text-xs text-muted">Балансы</h3>
           <ul class="flex flex-wrap gap-x-3 gap-y-1 text-sm" data-test="finance-members">
             <li
-              v-for="family in finance.families"
-              :key="family.memberIds[0]"
+              v-for="person in finance.members"
+              :key="person.userId"
               class="flex items-baseline gap-1"
-              data-test="finance-family"
+              data-test="finance-member"
             >
-              <span class="text-text">{{ family.displayName }}</span>
+              <span class="text-text">{{ person.displayName }}</span>
               <span
                 class="whitespace-nowrap font-medium"
                 :class="
-                  family.balanceRub > 0
+                  person.balanceRub > 0
                     ? 'text-emerald-700'
-                    : family.balanceRub < 0
+                    : person.balanceRub < 0
                       ? 'text-red-600'
                       : 'text-muted'
                 "
-                >{{ formatRubSigned(family.balanceRub) }}</span
+                >{{ formatRubSigned(person.balanceRub) }}</span
               >
             </li>
           </ul>
         </div>
       </div>
-
-      <p v-if="actionError" class="text-sm text-red-600" data-test="finance-action-error">
-        {{ actionError }}
-      </p>
 
       <!--
         Таблица движения денег. На телефоне строки становятся карточками:
