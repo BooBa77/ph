@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 
+import { subscribeTripEvents } from '@/api/events'
+import type { TripEvent } from '@/api/events'
 import { listTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
 import { fetchTripRoute, saveRouteNights } from '@/api/trips'
@@ -311,6 +313,86 @@ watch(planned, () => {
   if (plan.value !== null && plan.value.nights.length === 0) {
     rows.value = draftsOf(plan.value).rows
   }
+})
+
+// ───────────────────────── живые обновления (13.11.2026) ─────────────────────────
+
+/**
+ * «Ночёвки» и «Снаряжение» — одни и те же вещи в двух вкладках: палатку,
+ * котёл и спальник добавляют здесь, а видны они и в «Таборе», и в «Берём».
+ * Поэтому вкладка слушает поток `gear` и тихо перечитывает свои данные.
+ *
+ * Своё действие тоже перечитываем: `actorId` не различает вкладки одного
+ * аккаунта, а лишний `GET` дешевле расходящихся пилюль. **Черновики таблицы
+ * `rows` тихое обновление не трогает** — иначе чужое событие стирало бы
+ * недописанное место ночёвки; ночи меняются только своим `PUT`, и ответ
+ * на него разбирается отдельно (`onRouteUpdated`).
+ */
+const LIVE_REFRESH_DELAY = 300
+
+let stopLiveEvents: (() => void) | null = null
+let gearRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Ключ перезагрузки для секции «Готовка»: она грузит снаряжение сама. */
+const gearReloadKey = ref(0)
+
+function onLiveEvent(event: TripEvent): void {
+  if (event.scope !== 'gear') return
+  if (gearRefreshTimer !== null) return
+
+  gearRefreshTimer = setTimeout(() => {
+    gearRefreshTimer = null
+    void refreshAfterGear()
+  }, LIVE_REFRESH_DELAY)
+}
+
+/** Перечитать вещи и вкладку, не показывая «Загружаем…». */
+async function refreshAfterGear(): Promise<void> {
+  if (isLoading.value) return
+
+  const tripId = props.trip.id
+
+  try {
+    const [route, list] = await Promise.all([
+      fetchTripRoute(tripId),
+      listTripGear(tripId).catch(() => null),
+    ])
+
+    if (tripId !== props.trip.id) return
+
+    plan.value = route
+
+    if (list !== null) {
+      gear.value = list.items
+      gearError.value = null
+    }
+
+    gearReloadKey.value += 1
+  } catch {
+    // Живое обновление — удобство, а не данные: следующее событие
+    // или перезаход покажет свежее. Красная плашка посреди работы мешала бы.
+  }
+}
+
+/**
+ * Поток живёт, пока вкладка на экране. Переключили поход — старый закрываем:
+ * события чужого похода к этому экрану не относятся (как в `TripGear.vue`).
+ */
+watch(
+  () => props.trip.id,
+  (tripId) => {
+    stopLiveEvents?.()
+    stopLiveEvents = subscribeTripEvents(tripId, onLiveEvent, 'gear')
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  stopLiveEvents?.()
+  stopLiveEvents = null
+
+  if (gearRefreshTimer !== null) clearTimeout(gearRefreshTimer)
+  gearRefreshTimer = null
 })
 
 // ───────────────────────────── сохранение на лету ─────────────────────────────
@@ -731,6 +813,7 @@ const stoveHint = computed(() => {
           :stove="hasStove"
           :stove-hint="stoveHint"
           :can-edit-gear="canEditGear"
+          :reload-key="gearReloadKey"
         />
       </details>
     </template>

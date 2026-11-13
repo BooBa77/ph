@@ -296,6 +296,33 @@ describe('Живые изменения снаряжения (e2e)', () => {
     }
   });
 
+  it('спальник из «Ночёвок» шлёт то же событие снаряжения (13.11.2026)', async () => {
+    const events = app.get(TripEventsService);
+    const received: string[] = [];
+    const subscription = events
+      .stream(tripId)
+      .subscribe((event) => received.push(event.scope));
+
+    try {
+      // Спальник — личная вещь из собственного каталога организатора.
+      const bag = await call('post', '/api/gear', organizerToken, {
+        typeId,
+        title: 'Спальник для потока',
+        weightGrams: 900,
+      }).expect(201);
+
+      await call('post', `/api/trips/${tripId}/route/sleeping`, organizerToken, {
+        gearItemId: String(bag.body.id),
+      }).expect(200);
+
+      // «Снаряжение» показывает спальник в «в палатку» и «Мой рюкзак»,
+      // поэтому событие то же, что у вещи похода, а не отдельный scope.
+      await vi.waitFor(() => expect(received).toContain('gear'));
+    } finally {
+      subscription.unsubscribe();
+    }
+  });
+
   it(
     'участник получает событие «Питания» о чужой смене диеты',
     async () => {

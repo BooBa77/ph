@@ -1171,6 +1171,11 @@ export interface TripMealCheck {
   isHome: boolean
   boughtAmount: number | null
   boughtByName: string | null
+  /**
+   * Id купившего: снять «куплено» может только он (13.11.2026). `null` —
+   * отметку поставили до этого правила, снимает любой.
+   */
+  boughtByUserId: string | null
   boughtAt: string | null
   /** Продукт ушёл из раскладки, но куплен — строка осталась. */
   isOrphaned: boolean

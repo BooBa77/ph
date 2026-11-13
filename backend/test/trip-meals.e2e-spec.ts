@@ -874,6 +874,9 @@ describe('Питание похода (e2e)', () => {
     )!;
     expect(gram).toMatchObject({ isBought: true, boughtAmount: 600 });
     expect(gram.boughtByName).toBeTruthy();
+    // Id купившего в контракте (13.11.2026): по нему экран решает,
+    // можно ли снять галочку.
+    expect(gram.boughtByUserId).toBe(memberId);
   });
 
   it('«домашнее» — отдельная отметка, строка остаётся', async () => {
@@ -923,6 +926,81 @@ describe('Питание похода (e2e)', () => {
       needAmount: 0,
       isOrphaned: true,
     });
+    expect(can.boughtByUserId).toBe(organizerId);
+  });
+
+  it('снять «куплено» может только купивший, и осиротевшая строка уходит', async () => {
+    const canTripId = await tripProductId(canName);
+
+    // Тушёнку купил организатор — участнику снимать нельзя (13.11.2026).
+    const denied = await call(
+      'put',
+      `/api/trips/${tripId}/meal-checks/${canTripId}`,
+      memberToken,
+    )
+      .send({ isBought: false })
+      .expect(403);
+
+    expect(String(denied.body.message)).toContain('только тот, кто купил');
+
+    // Купивший снимает — продукта в плане нет, поэтому строка удаляется
+    // целиком, а не остаётся пустой отметкой.
+    const response = await call(
+      'put',
+      `/api/trips/${tripId}/meal-checks/${canTripId}`,
+      organizerToken,
+    )
+      .send({ isBought: false })
+      .expect(200);
+
+    const checks = response.body.checks as Array<Record<string, unknown>>;
+    expect(checks.some((row) => row.productId === canTripId)).toBe(false);
+
+    const rows = await dataSource.query(
+      'SELECT 1 FROM trip_meal_checks WHERE trip_id = $1 AND product_id = $2',
+      [tripId, canTripId],
+    );
+    expect(rows).toHaveLength(0);
+  });
+
+  it('ставит «куплено» любой, снимает — только купивший', async () => {
+    const gramTripId = await tripProductId(gramName);
+
+    const bought = await call(
+      'put',
+      `/api/trips/${tripId}/meal-checks/${gramTripId}`,
+      memberToken,
+    )
+      .send({ isBought: true })
+      .expect(200);
+
+    const gram = (bought.body.checks as Array<Record<string, unknown>>).find(
+      (row) => row.productId === gramTripId,
+    )!;
+    expect(gram.boughtByUserId).toBe(memberId);
+
+    // Чужую отметку не снять.
+    await call(
+      'put',
+      `/api/trips/${tripId}/meal-checks/${gramTripId}`,
+      organizerToken,
+    )
+      .send({ isBought: false })
+      .expect(403);
+
+    // Свою — можно, и строка остаётся: продукт в раскладке есть.
+    const cleared = await call(
+      'put',
+      `/api/trips/${tripId}/meal-checks/${gramTripId}`,
+      memberToken,
+    )
+      .send({ isBought: false })
+      .expect(200);
+
+    const row = (cleared.body.checks as Array<Record<string, unknown>>).find(
+      (check) => check.productId === gramTripId,
+    )!;
+    expect(row).toMatchObject({ isBought: false, boughtByUserId: null });
   });
 
   it('посторонний не видит чек-лист', async () => {

@@ -1669,13 +1669,15 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.text()).toContain('Пила')
   })
 
-  it('своё действие не перечитывает вкладку — ответ PATCH уже применён', async () => {
+  it('своё действие тоже перечитывает вкладку: вторая вкладка не отстаёт (13.11.2026)', async () => {
     await mounted()
 
+    // `actorId` не различает вкладки одного аккаунта, поэтому своё событие
+    // больше не пропускается: лишний GET дешевле расходящегося списка.
     liveHandler()({ scope: 'gear', actorId: ME, at: new Date().toISOString() })
     await settleLive()
 
-    expect(mocks.listTripGear).toHaveBeenCalledTimes(1)
+    expect(mocks.listTripGear).toHaveBeenCalledTimes(2)
   })
 
   // ───────────────── «Взял», рюкзаки и память секций (06.11.2026) ─────────────────

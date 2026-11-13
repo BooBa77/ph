@@ -528,12 +528,26 @@ function cancelRow(row: MoneyRowView): void {
       </div>
 
       <!--
-        Таблица движения денег. На телефоне строки становятся карточками:
-        сумма и кнопки стоят справа и не переносятся, а подпись долей
-        уходит под описание.
+        Таблица движения денег — «лист ведомости» (13.11.2026).
+        Заказчик: «только Движение денег, хочу, чтобы она выглядела как лист
+        ведомости». Поэтому без скруглений, бумажная заливка и плотная
+        почти чёрная окантовка — токенами `--theme-paper` / `--theme-ink`
+        (`themes.css`), а не хардкодом: у каждой сезонной темы своя бумага.
+        Карточки баланса выше остались прежними — расхождение «из разных
+        эпох» осознанное.
+
+        На телефоне строки становятся карточками: сумма и кнопки стоят
+        справа и не переносятся, а подпись долей уходит под описание.
       -->
-      <div class="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-4">
-        <h2 class="text-sm text-muted">Движение денег</h2>
+      <div
+        class="flex flex-col gap-2 rounded-none border-2 border-[var(--theme-ink)] bg-[var(--theme-paper)] p-4"
+        data-test="finance-ledger"
+      >
+        <h2
+          class="border-b border-[var(--theme-ink)] pb-2 text-xs font-semibold tracking-[0.14em] text-text uppercase"
+        >
+          Движение денег
+        </h2>
 
         <p
           v-if="rows.length === 0"
@@ -544,7 +558,7 @@ function cancelRow(row: MoneyRowView): void {
           и посчитает, кто кому сколько должен.
         </p>
 
-        <ul v-else class="flex flex-col divide-y divide-border" data-test="finance-rows">
+        <ul v-else class="flex flex-col divide-y divide-[var(--theme-ink)]" data-test="finance-rows">
           <li
             v-for="row in rows"
             :key="row.key"
@@ -571,7 +585,7 @@ function cancelRow(row: MoneyRowView): void {
             </div>
 
             <div class="flex flex-col items-end gap-1">
-              <p class="whitespace-nowrap text-sm font-semibold text-text">
+              <p class="whitespace-nowrap text-sm font-semibold text-text tabular-nums">
                 {{ formatRub(row.amountRub) }}
               </p>
 
@@ -579,7 +593,7 @@ function cancelRow(row: MoneyRowView): void {
                 <button
                   v-if="row.canEdit"
                   type="button"
-                  class="cursor-pointer rounded-lg border border-border bg-field px-2 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+                  class="cursor-pointer rounded-none border border-[var(--theme-ink)] bg-transparent px-2 py-0.5 text-xs text-muted transition-colors hover:bg-[var(--theme-ink)] hover:text-[var(--theme-paper)]"
                   aria-label="Изменить расход"
                   title="Изменить расход"
                   data-test="finance-expense-edit"
@@ -591,7 +605,7 @@ function cancelRow(row: MoneyRowView): void {
                 <button
                   v-if="row.canConfirm"
                   type="button"
-                  class="cursor-pointer rounded-lg border border-primary bg-primary px-2 py-0.5 text-xs text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                  class="cursor-pointer rounded-none border border-primary bg-primary px-2 py-0.5 text-xs text-white transition-opacity hover:opacity-90 disabled:opacity-60"
                   :disabled="busyCompensation !== null"
                   data-test="finance-compensation-confirm"
                   @click="confirmRow(row)"
@@ -602,7 +616,7 @@ function cancelRow(row: MoneyRowView): void {
                 <button
                   v-if="row.canCancel"
                   type="button"
-                  class="cursor-pointer rounded-lg border border-border bg-field px-2 py-0.5 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600 disabled:opacity-60"
+                  class="cursor-pointer rounded-none border border-[var(--theme-ink)] bg-transparent px-2 py-0.5 text-xs text-muted transition-colors hover:text-red-600 disabled:opacity-60"
                   :disabled="busyCompensation !== null"
                   data-test="finance-compensation-cancel"
                   @click="cancelRow(row)"

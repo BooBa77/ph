@@ -495,6 +495,13 @@ export class TripMealCheckDto {
   @ApiProperty({ description: 'Кто отметил покупку', nullable: true })
   boughtByName: string | null;
 
+  @ApiProperty({
+    description:
+      'Id того, кто отметил покупку: снять галочку может только он (13.11.2026)',
+    nullable: true,
+  })
+  boughtByUserId: string | null;
+
   @ApiProperty({ description: 'Когда отметили', nullable: true })
   boughtAt: string | null;
 

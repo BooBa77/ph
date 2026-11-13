@@ -32,6 +32,7 @@ import {
   type RouteLodgerStatus,
 } from './trip-route.types';
 import type { TripTab } from './trip-tabs';
+import { TripEventsService } from './trip-events.service';
 import { TripsService } from './trips.service';
 
 /**
@@ -92,6 +93,13 @@ export class TripRouteService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
+    /**
+     * События «Снаряжения» (13.11.2026): спальник из «Ночёвок» виден в «в
+     * палатку» и «Мой рюкзак», а смена вида ночи включает и выключает
+     * разделы «Табор»/«в палатку». Без события вторая вкладка узнаёт
+     * об этом только после перезахода.
+     */
+    private readonly events: TripEventsService,
   ) {}
 
   /** Вкладка целиком. Видят участники похода. */
@@ -138,6 +146,10 @@ export class TripRouteService {
         });
       }
     });
+
+    // Смена вида ночи включает и выключает разделы «Табор» и «в палатку»
+    // в «Снаряжении» — сообщаем потоку (13.11.2026).
+    this.events.emitGear(String(trip.id), userId);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -213,6 +225,10 @@ export class TripRouteService {
           gearItemId: dto.gearItemId,
         }),
       );
+
+      // Спальник виден и в «Снаряжении» («в палатку», «Мой рюкзак») —
+      // событие то же, что у вещей похода (13.11.2026).
+      this.events.emitGear(String(trip.id), userId);
     }
 
     return this.buildPlan(manager, trip, userId);
@@ -239,6 +255,10 @@ export class TripRouteService {
       tripId: trip.id,
       userId,
     });
+
+    // Убрали вещь — «Снаряжение» перечитывает «в палатку» и рюкзак.
+    // Повторное удаление ничего не меняет и событие не шлёт.
+    this.events.emitGear(String(trip.id), userId);
 
     return this.buildPlan(manager, trip, userId);
   }

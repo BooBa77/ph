@@ -18,7 +18,9 @@ import TripMealShoppingModal from '@/views/trips/TripMealShoppingModal.vue'
  * сам запишет «на продукты»), а если есть с кого делить — кнопки нет.
  *
  * Второй блок — SSE: две группы закупщиков в соседних магазинах. Отметка
- * коллеги перечитывает список, своё действие — нет.
+ * коллеги перечитывает список; своё действие тоже (13.11.2026) — `actorId`
+ * не различает вкладки одного аккаунта. Третий блок — правила 13.11.2026:
+ * осиротевшая строка красная, снять «куплено» может только купивший.
  */
 const mocks = vi.hoisted(() => ({
   fetchMealChecks: vi.fn(),
@@ -45,7 +47,7 @@ vi.mock('@/api/events', () => ({
 
 enableAutoUnmount(afterEach)
 
-function check(): TripMealCheck {
+function check(overrides: Partial<TripMealCheck> = {}): TripMealCheck {
   return {
     productId: 1,
     name: 'Гречка',
@@ -57,8 +59,10 @@ function check(): TripMealCheck {
     isHome: false,
     boughtAmount: null,
     boughtByName: null,
+    boughtByUserId: null,
     boughtAt: null,
     isOrphaned: false,
+    ...overrides,
   }
 }
 
@@ -184,7 +188,7 @@ describe('живой список покупок (SSE)', () => {
     expect(mocks.stopLiveEvents).toHaveBeenCalledTimes(1)
   })
 
-  it('чужая отметка перечитывает список, своё действие и чужая вкладка — нет', async () => {
+  it('любое событие «Питания» перечитывает список — своё тоже, чужая вкладка нет', async () => {
     vi.useFakeTimers()
 
     try {
@@ -199,20 +203,74 @@ describe('живой список покупок (SSE)', () => {
 
       mocks.fetchMealChecks.mockClear()
 
-      onEvent({ scope: 'meals', actorId: 'me-1', at: '2026-11-12T10:00:00Z' })
+      onEvent({ scope: 'finance', actorId: 'other', at: '2026-11-13T10:00:00Z' })
       await vi.advanceTimersByTimeAsync(400)
       expect(mocks.fetchMealChecks).not.toHaveBeenCalled()
 
-      onEvent({ scope: 'finance', actorId: 'other', at: '2026-11-12T10:00:01Z' })
-      await vi.advanceTimersByTimeAsync(400)
-      expect(mocks.fetchMealChecks).not.toHaveBeenCalled()
-
-      onEvent({ scope: 'meals', actorId: 'other', at: '2026-11-12T10:00:02Z' })
+      // Своё действие: вторая вкладка того же аккаунта тоже должна обновиться.
+      onEvent({ scope: 'meals', actorId: 'me-1', at: '2026-11-13T10:00:01Z' })
       await vi.advanceTimersByTimeAsync(400)
       await flushPromises()
       expect(mocks.fetchMealChecks).toHaveBeenCalledTimes(1)
+
+      onEvent({ scope: 'meals', actorId: 'other', at: '2026-11-13T10:00:02Z' })
+      await vi.advanceTimersByTimeAsync(400)
+      await flushPromises()
+      expect(mocks.fetchMealChecks).toHaveBeenCalledTimes(2)
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('правила 13.11.2026: осиротевшая строка и чужое «куплено»', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    useAuthStore().user = { id: 'me-1', displayName: 'Я' } as User
+    mocks.fetchMealChecks.mockResolvedValue([check()])
+    mocks.fetchMyMealChecks.mockResolvedValue([check()])
+    mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
+  })
+
+  it('строка «куплено, а в плане нет» стоит красной с подписью', async () => {
+    mocks.fetchMealChecks.mockResolvedValue([
+      check({ isBought: true, isOrphaned: true, boughtByUserId: 'me-1' }),
+    ])
+
+    const wrapper = mountModal()
+    await flushPromises()
+
+    const row = wrapper.get('[data-test="check-row"]')
+    expect(row.classes()).toContain('text-red-600')
+    expect(row.text()).toContain('нет в плане')
+  })
+
+  it('у чужой покупки галочка выключена и объясняет почему', async () => {
+    mocks.fetchMealChecks.mockResolvedValue([
+      check({ isBought: true, boughtByUserId: 'other' }),
+    ])
+
+    const wrapper = mountModal()
+    await flushPromises()
+
+    const box = wrapper.get('[data-test="check-bought"]')
+    expect(box.attributes('disabled')).toBeDefined()
+    expect(wrapper.get('label[title]').attributes('title')).toBe(
+      'Снять отметку может тот, кто купил',
+    )
+  })
+
+  it('свою покупку снять можно', async () => {
+    mocks.fetchMealChecks.mockResolvedValue([
+      check({ isBought: true, boughtByUserId: 'me-1' }),
+    ])
+
+    const wrapper = mountModal()
+    await flushPromises()
+
+    expect(
+      wrapper.get('[data-test="check-bought"]').attributes('disabled'),
+    ).toBeUndefined()
   })
 })

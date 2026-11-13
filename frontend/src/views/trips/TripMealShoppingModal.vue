@@ -45,8 +45,9 @@ import { parseRub } from '@/utils/money'
  * работать параллельно в соседних супермаркетах и хорошо бы при прокликивании
  * закупленных продуктов коллеги были в курсе или если внезапно повар что-то
  * вспомнил и добавил в чек-лист». Пока модалка открыта, она подписана на
- * `/meals/events`: чужая отметка или правка раскладки перечитывает строки,
- * своё действие пропускается — ответ на `PATCH` уже заменил список.
+ * `/meals/events`: чужая отметка или правка раскладки перечитывает строки.
+ * Своё действие тоже перечитываем (13.11.2026): событие одного аккаунта
+ * в разных вкладках иначе не доезжало — `actorId` вкладки не различает.
  *
  * Модалка — как у календаря: затемнение, Escape, клик мимо карточки.
  * Данные грузятся один раз; отметки правятся по месту, ответ бэкенда
@@ -159,18 +160,21 @@ async function load(): Promise<void> {
  *
  * Поток открыт, пока модалка на экране: за её пределами список никто
  * не смотрит, а лишнее соединение на телефоне стоит батареи. `scope`
- * отсекает чужие вкладки, `actorId` — своё действие: ответ на `PATCH`
- * уже заменил список, второй запрос только что сделанного не нужен.
+ * отсекает чужие вкладки. **Своё действие больше не пропускаем**
+ * (13.11.2026): `actorId` не различает вкладки одного аккаунта, и вторая
+ * вкладка не обновлялась. Чужой `scope` по-прежнему не трогает список,
+ * а пауза склеивает серию отметок в один запрос — лишний `GET` после
+ * своей отметки дешевле расходящегося списка.
  */
 const LIVE_REFRESH_DELAY = 300
 
 const auth = useAuthStore()
+const meId = computed(() => auth.user?.id ?? '')
 let stopLiveEvents: (() => void) | null = null
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 
 function onLiveEvent(event: TripEvent): void {
   if (event.scope !== 'meals') return
-  if (event.actorId === (auth.user?.id ?? '')) return
 
   if (refreshTimer !== null) return
 
@@ -198,6 +202,25 @@ async function patchCheck(
 /** Отметки — любому участнику, права правки раскладки тут не нужны. */
 function toggleCheck(check: TripMealCheck, field: 'isBought' | 'isHome'): void {
   void patchCheck(check, { [field]: !check[field] })
+}
+
+/**
+ * Снять «куплено» может только купивший (заказчик 13.11.2026). Блокировка
+ * на экране — подсказка, а не замена проверке: сервер отвечает 403.
+ * Строка без покупателя — наследство ранних данных, снимает любой.
+ */
+function canUnsetBought(check: TripMealCheck): boolean {
+  return (
+    !check.isBought ||
+    check.boughtByUserId === null ||
+    check.boughtByUserId === meId.value
+  )
+}
+
+function unsetHint(check: TripMealCheck): string | undefined {
+  return canUnsetBought(check)
+    ? undefined
+    : 'Снять отметку может тот, кто купил'
 }
 
 function setCheckAmount(check: TripMealCheck, event: Event): void {
@@ -374,14 +397,14 @@ onBeforeUnmount(() => {
             v-for="check in checks"
             :key="check.productId"
             class="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-xl border border-border bg-surface p-2 text-sm"
-            :class="check.isOrphaned ? 'text-muted' : 'text-text'"
+            :class="check.isOrphaned ? 'text-red-600' : 'text-text'"
             data-test="check-row"
           >
             <span class="font-medium">{{ check.name }}</span>
             <span class="text-xs text-muted">
               {{ formatProductAmount(check.needAmount, check.unit) }}
             </span>
-            <span v-if="check.isOrphaned" class="text-xs text-muted">нет в плане</span>
+            <span v-if="check.isOrphaned" class="text-xs text-red-600">нет в плане</span>
 
             <label class="flex items-center gap-1 text-xs text-muted">
               <input
@@ -397,11 +420,15 @@ onBeforeUnmount(() => {
               взяли
             </label>
 
-            <label class="flex items-center gap-1 text-xs text-muted">
+            <label
+              class="flex items-center gap-1 text-xs text-muted"
+              :title="unsetHint(check)"
+            >
               <input
                 type="checkbox"
                 :checked="check.isBought"
-                class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+                :disabled="!canUnsetBought(check)"
+                class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)] disabled:cursor-not-allowed"
                 data-test="check-bought"
                 @change="toggleCheck(check, 'isBought')"
               />

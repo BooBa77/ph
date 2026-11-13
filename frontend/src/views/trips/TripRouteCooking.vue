@@ -87,6 +87,12 @@ const props = defineProps<{
    * и «Берём / не берём» в ней доступно только с этим правом.
    */
   canEditGear?: boolean
+  /**
+   * Счётчик живых обновлений (13.11.2026): секция грузит снаряжение сама,
+   * и на событие `gear` родитель увеличивает ключ — пилюли перечитываются,
+   * не дожидаясь перезахода.
+   */
+  reloadKey?: number
 }>()
 
 const auth = useAuthStore()
@@ -516,6 +522,14 @@ async function load(): Promise<void> {
 }
 
 watch(() => props.trip.id, load, { immediate: true })
+
+/** Живое обновление из «Снаряжения»: ключ сменился — перечитываем пилюли. */
+watch(
+  () => props.reloadKey,
+  (value, previous) => {
+    if (value !== undefined && value !== previous) void load()
+  },
+)
 
 // ───────────────────────────── «добавить топор» ─────────────────────────────
 

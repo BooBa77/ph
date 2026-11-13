@@ -1346,6 +1346,7 @@ export class TripMealsService {
         isHome: check?.isHome ?? false,
         boughtAmount: check?.boughtAmount ?? null,
         boughtByName: check?.buyer?.displayName ?? null,
+        boughtByUserId: check?.boughtBy ?? null,
         boughtAt: check?.boughtAt?.toISOString() ?? null,
         isOrphaned: false,
       };
@@ -1379,6 +1380,7 @@ export class TripMealsService {
           isHome: check.isHome,
           boughtAmount: check.boughtAmount,
           boughtByName: check.buyer?.displayName ?? null,
+          boughtByUserId: check.boughtBy ?? null,
           boughtAt: check.boughtAt?.toISOString() ?? null,
           isOrphaned: true,
         });
@@ -1394,9 +1396,16 @@ export class TripMealsService {
    * Отметки чек-листа: куплено, домашнее, сколько куплено.
    *
    * Ставит **любой участник** (решение заказчика): покупка — общее дело,
-   * и роль завхоза для галочки не нужна. Продукт обязан быть в раскладке:
-   * чек-лист растёт только вместе с планом, «куплено сверх» заводят
-   * ручной строкой в приёме.
+   * и роль завхоза для галочки не нужна. Снимает — **только тот, кто купил**
+   * (заказчик 13.11.2026: «снимать галочку „куплено“ может только купивший»):
+   * поставить её может каждый, а снять чужую значит стереть чужую работу.
+   * Продукт обязан быть в раскладке: чек-лист растёт только вместе с планом,
+   * «куплено сверх» заводят ручной строкой в приёме.
+   *
+   * **Осиротевшая строка** — продукт ушёл из плана, а отметка «куплено»
+   * осталась (её показывают красным с подписью «нет в плане»). Снятие
+   * «куплено» у такой строки удаляет её из `trip_meal_checks` совсем: держать
+   * отметку продукта, которого в плане этого слоя нет, незачем (13.11.2026).
    *
    * В личном списке — только сам едок: отметить чужую личную строку
    * нельзя, её даже не видно.
@@ -1412,18 +1421,33 @@ export class TripMealsService {
     const inPlan = plan.meals.some((meal) =>
       meal.products.some((product) => product.productId === productId),
     );
+
+    const manager = this.dataSource.manager;
+    const tripId = String(id);
+
+    const existing = await manager.findOne(TripMealCheck, {
+      where: { tripId, productId, eaterUserId: this.layerOf(owner) },
+    });
+
     if (!inPlan) {
+      // Снять «куплено» у осиротевшей строки — значит убрать её.
+      if (dto.isBought === false && existing !== null && existing.isBought) {
+        this.assertCanUnsetBought(existing, userId);
+        await manager.delete(TripMealCheck, { id: existing.id });
+        this.events.emitMeals(tripId, userId);
+        return this.getChecklist(userId, id, owner);
+      }
+
       throw new BadRequestException(
         'Этого продукта нет в раскладке — добавь строку в приём',
       );
     }
 
-    const manager = this.dataSource.manager;
-    const tripId = String(id);
+    if (dto.isBought === false && existing !== null && existing.isBought) {
+      this.assertCanUnsetBought(existing, userId);
+    }
 
-    let row = await manager.findOne(TripMealCheck, {
-      where: { tripId, productId, eaterUserId: this.layerOf(owner) },
-    });
+    let row = existing;
     if (!row) {
       row = manager.create(TripMealCheck, {
         tripId,
@@ -1452,6 +1476,20 @@ export class TripMealsService {
     this.events.emitMeals(String(id), userId);
 
     return this.getChecklist(userId, id, owner);
+  }
+
+  /**
+   * Снять «куплено» может только купивший (13.11.2026).
+   *
+   * Строка без покупателя — наследство ранних данных: её снимает любой,
+   * иначе отметку нельзя было бы убрать вовсе.
+   */
+  private assertCanUnsetBought(row: TripMealCheck, userId: string): void {
+    if (row.boughtBy !== null && row.boughtBy !== userId) {
+      throw new ForbiddenException(
+        'Снять отметку «куплено» может только тот, кто купил',
+      );
+    }
   }
 
   // ─────────────────────────── доступ ───────────────────────────

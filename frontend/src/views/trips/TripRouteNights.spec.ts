@@ -42,6 +42,12 @@ const mocks = vi.hoisted(() => ({
   createGearItem: vi.fn(),
   proposeTripGear: vi.fn(),
   removeTripGear: vi.fn(),
+  subscribeTripEvents: vi.fn(),
+  stopLiveEvents: vi.fn(),
+}))
+
+vi.mock('@/api/events', () => ({
+  subscribeTripEvents: mocks.subscribeTripEvents,
 }))
 
 vi.mock('@/api/trips', () => ({
@@ -235,6 +241,7 @@ describe('плашки ночёвок', () => {
     mocks.saveRouteNights.mockImplementation((_: string, nights: RouteNightInput[]) =>
       Promise.resolve(echoNights(nights)),
     )
+    mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
   })
 
   it('у похода 29–31 октября две ночи, заголовок как в «Питании»', async () => {
@@ -264,6 +271,37 @@ describe('плашки ночёвок', () => {
     expect(section.element.tagName).toBe('DETAILS')
     expect(section.attributes('open')).toBeDefined()
     expect(section.get('summary').text()).toBe('Ночёвки')
+  })
+
+  it('событие снаряжения перечитывает вкладку без перезахода (13.11.2026)', async () => {
+    await mounted(trip(TWO_NIGHTS))
+
+    expect(mocks.subscribeTripEvents).toHaveBeenCalledWith(
+      '1',
+      expect.any(Function),
+      'gear',
+    )
+
+    const handler = mocks.subscribeTripEvents.mock.calls[0]![1] as (event: {
+      scope: string
+      actorId: string
+      at: string
+    }) => void
+
+    mocks.fetchTripRoute.mockClear()
+    mocks.listTripGear.mockClear()
+
+    // Деньги в тот же поток не входят: «Ночёвки» на них не перечитываются.
+    handler({ scope: 'finance', actorId: ANNA, at: '2026-11-13T10:00:00Z' })
+    await settle(350)
+    expect(mocks.fetchTripRoute).not.toHaveBeenCalled()
+
+    // Своё действие тоже: вторая вкладка того же аккаунта не должна отставать.
+    handler({ scope: 'gear', actorId: ME, at: '2026-11-13T10:00:01Z' })
+    await settle(350)
+
+    expect(mocks.fetchTripRoute).toHaveBeenCalledTimes(1)
+    expect(mocks.listTripGear).toHaveBeenCalledTimes(1)
   })
 
   it('варианты идут в порядке заказчика, «в пути» — в конце', async () => {
@@ -636,6 +674,7 @@ describe('один вариант на ночь', () => {
     mocks.saveRouteNights.mockImplementation((_: string, nights: RouteNightInput[]) =>
       Promise.resolve(echoNights(nights)),
     )
+    mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
   })
 
   it('у ночи ровно один селект варианта и нет «Ещё вариант»', async () => {
@@ -669,6 +708,7 @@ describe('сохранение на лету', () => {
     mocks.saveRouteNights.mockImplementation((_: string, nights: RouteNightInput[]) =>
       Promise.resolve(echoNights(nights)),
     )
+    mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
   })
 
   it('кнопок «Сохранить», «Отменить» и подписи о несохранённом нет', async () => {
