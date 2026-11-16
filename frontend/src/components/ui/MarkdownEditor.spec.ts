@@ -306,6 +306,22 @@ describe('MarkdownEditor', () => {
     expect(emitted(wrapper)).toBe('')
   })
 
+  it('две вставки подряд разделяются пробелом (дневник, 16.11.2026)', async () => {
+    // Дневник вставляет «День 3» и «14:35» двумя нажатиями; без пробела
+    // получалось «День 314:35» — это поймала живая проверка.
+    const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
+
+    wrapper.vm.insertText('День 3')
+    await wrapper.vm.$nextTick()
+    wrapper.vm.insertText('14:35')
+    await wrapper.vm.$nextTick()
+
+    // Пробел после вставки остаётся в поле (htmlToMarkdown его срезает,
+    // потому что в конце строки он не нужен), и вторая вставка не
+    // приклеивается к первой.
+    expect(emitted(wrapper)).toBe('День 3 14:35')
+  })
+
   it('ссылка вставляется адресом', async () => {
     const wrapper = mount(MarkdownEditor, { props: { modelValue: '' } })
 

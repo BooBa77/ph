@@ -331,22 +331,31 @@ await check(
 );
 
 // ─── Заявки и приглашения ───
+/**
+ * С 13.11.2026 у тикета обязателен автор (`created_by_user_id`): у заявки —
+ * сам заявитель, у приглашения — организатор. Без него вставка падала
+ * на NOT NULL, и проверка «заявка принимается» 16.11.2026 покраснела —
+ * схема была права, отстал скрипт.
+ */
 await check(
   'заявки: заявка принимается',
   'ok',
-  `INSERT INTO trip_membership_requests (trip_id, user_id, direction) VALUES ($1, $2, 'apply')`,
+  `INSERT INTO trip_membership_requests (trip_id, user_id, direction, created_by_user_id)
+   VALUES ($1, $2, 'apply', $2)`,
   [tripId, user2],
 );
 await check(
   'заявки: приглашение поверх заявки запрещено',
   'fail',
-  `INSERT INTO trip_membership_requests (trip_id, user_id, direction) VALUES ($1, $2, 'invite')`,
-  [tripId, user2],
+  `INSERT INTO trip_membership_requests (trip_id, user_id, direction, created_by_user_id)
+   VALUES ($1, $2, 'invite', $3)`,
+  [tripId, user2, user1],
 );
 await check(
   'заявки: направление вне словаря запрещено',
   'fail',
-  `INSERT INTO trip_membership_requests (trip_id, user_id, direction) VALUES ($1, $2, 'demand')`,
+  `INSERT INTO trip_membership_requests (trip_id, user_id, direction, created_by_user_id)
+   VALUES ($1, $2, 'demand', $2)`,
   [tripId, user1],
 );
 
@@ -2972,6 +2981,50 @@ await client.query(
 );
 
 rows.push(['ok', 'деньги: подтверждённая компенсация с датой принимается', '']);
+
+/**
+ * Дневник похода (16.11.2026): личные записи, которые приходят с устройства
+ * пачкой. Проверяем то, чего не видят e2e: пустую после `btrim` запись,
+ * противоречивые времена и повторный UUID — на них держатся идемпотентность
+ * синхронизации и могильник вместо удаления.
+ */
+const diaryId = crypto.randomUUID();
+
+await check(
+  'дневник: пустая запись запрещена',
+  'fail',
+  `INSERT INTO trip_diary_entries
+     (id, trip_id, user_id, body, created_at, updated_at)
+   VALUES ($1, $2, $3, '   ', now(), now())`,
+  [crypto.randomUUID(), otherTripId, user1],
+);
+
+await check(
+  'дневник: правка раньше создания запрещена',
+  'fail',
+  `INSERT INTO trip_diary_entries
+     (id, trip_id, user_id, body, created_at, updated_at)
+   VALUES ($1, $2, $3, 'текст', now(), now() - interval '1 hour')`,
+  [crypto.randomUUID(), otherTripId, user1],
+);
+
+await check(
+  'дневник: запись с текстом принимается',
+  'ok',
+  `INSERT INTO trip_diary_entries
+     (id, trip_id, user_id, body, created_at, updated_at)
+   VALUES ($1, $2, $3, 'первая запись', now(), now())`,
+  [diaryId, otherTripId, user1],
+);
+
+await check(
+  'дневник: повторный UUID запрещён',
+  'fail',
+  `INSERT INTO trip_diary_entries
+     (id, trip_id, user_id, body, created_at, updated_at)
+   VALUES ($1, $2, $3, 'дубль', now(), now())`,
+  [diaryId, otherTripId, user1],
+);
 
 await client.query('ROLLBACK');
 await client.end();

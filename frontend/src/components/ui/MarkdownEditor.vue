@@ -237,10 +237,25 @@ function restoreCaret(): Range | null {
  */
 function needsSpaceBefore(range: Range): boolean {
   const node = range.startContainer
-  if (node.nodeType !== Node.TEXT_NODE) return false
 
-  const before = (node.textContent ?? '').slice(0, range.startOffset)
-  return before.length > 0 && !/\s$/.test(before)
+  if (node.nodeType === Node.TEXT_NODE) {
+    const before = (node.textContent ?? '').slice(0, range.startOffset)
+    return before.length > 0 && !/\s$/.test(before)
+  }
+
+  /**
+   * Курсор может стоять **между узлами** — так бывает после вставки:
+   * `setStartAfter(последний узел)` ставит начало диапазона в родителя.
+   * Без этой ветки две вставки подряд склеивались («День 211:50»):
+   * предыдущий узел — текст «День 2», а пробела после него нет.
+   */
+  if (range.startOffset > 0 && node.childNodes.length > 0) {
+    const previous = node.childNodes[range.startOffset - 1]
+    const before = previous?.textContent ?? ''
+    return before.length > 0 && !/\s$/.test(before)
+  }
+
+  return false
 }
 
 /**
@@ -355,6 +370,24 @@ function insertParticipant(participant: MentionOption) {
 function insertEmoji(symbol: string) {
   insertHtml(escapeHtml(symbol))
 }
+
+/**
+ * Вставить готовый текст в позицию курсора — для кнопок самой страницы.
+ *
+ * Дневник (16.11.2026) ставит рядом с редактором свои кнопки: текущее
+ * время, сегодняшняя дата, номер дня похода. Держать их внутри редактора
+ * значило бы научить общий компонент знать про поход; а вставка — ровно
+ * то, что он умеет, поэтому наружу отдаётся одна функция, которая ставит
+ * текст туда же, куда и остальные вставки: в сохранённый курсор, с одним
+ * пробелом перед текстом, если слева его нет.
+ */
+function insertText(value: string) {
+  // Пробел после вставки — как у даты в календаре: курсор остаётся после
+  // него, и человек продолжает фразу, а не получает «День 3идём».
+  insertHtml(`${escapeHtml(value)} `, true)
+}
+
+defineExpose({ insertText })
 
 /** Дата словами: «12 мая 2027» — так её и пишут в дневнике. */
 function formatDate(iso: string): string {

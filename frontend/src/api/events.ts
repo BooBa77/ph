@@ -31,11 +31,11 @@ import { useAuthStore } from '@/stores/auth'
  * хуже, чем лишний запрос раз в несколько секунд.
  */
 
-/** Что изменилось на вкладке: снаряжение, чек-листы, деньги или питание. */
-export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals'
+/** Что изменилось на вкладке: снаряжение, чек-листы, деньги, питание или дневник. */
+export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals' | 'diary'
 
-/** Адрес потока: у «Снаряжения», «Бухгалтерии» и «Питания» свои контроллеры. */
-export type TripEventChannel = 'gear' | 'finance' | 'meals'
+/** Адрес потока: у «Снаряжения», «Бухгалтерии», «Питания» и «Дневника» свои контроллеры. */
+export type TripEventChannel = 'gear' | 'finance' | 'meals' | 'diary'
 
 export interface TripEvent {
   scope: TripEventScope

@@ -11,6 +11,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
 import { useOfflineStore } from '@/stores/offline'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
+import TripDiary from '@/views/trips/TripDiary.vue'
 import TripFinance from '@/views/trips/TripFinance.vue'
 import TripFirstAid from '@/views/trips/TripFirstAid.vue'
 import TripGear from '@/views/trips/TripGear.vue'
@@ -94,6 +95,10 @@ const organizer = ref<PublicUser | null>(null)
  * «Ночёвки» (код `route`) показывают чат табора: 29.10.2026 заказчик
  * переименовал вкладку и попросил её активировать, таблица ночёвок —
  * следующий шаг.
+ *
+ * «Дневник» открыт 16.11.2026: личные записи участника, работают офлайн
+ * с очередью отправки. Права вкладки здесь ни при чём — каждый участник
+ * пишет свой дневник, а роль фотографа останется для будущего альманаха.
  */
 const IMPLEMENTED: TripTabCode[] = [
   'guest',
@@ -104,6 +109,7 @@ const IMPLEMENTED: TripTabCode[] = [
   'gear',
   'firstAid',
   'finance',
+  'diary',
 ]
 
 const permissions = ref<TripTabPermission[]>([])
@@ -520,10 +526,12 @@ async function toggleRecruitment() {
 
       <TripFinance v-else-if="activeTab === 'finance'" :trip-id="trip.id" />
 
+      <TripDiary v-else-if="activeTab === 'diary'" :trip="trip" />
+
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» ещё не готова:
         сейчас работают «Гостевая», «Участники», «Ночёвки», «Питание», «Трансфер»,
-        «Снаряжение», «Аптечка» и «Бухгалтерия».
+        «Снаряжение», «Аптечка», «Бухгалтерия» и «Дневник».
       </p>
 
       <!--

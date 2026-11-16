@@ -18,6 +18,7 @@
  * ограничение.
  */
 
+import { getTripDiary } from '@/api/diary'
 import { getTripFirstAid } from '@/api/firstAid'
 import { getTripFinance } from '@/api/finance'
 import { getTripGearLoad, listTripGear } from '@/api/gear'
@@ -102,6 +103,7 @@ export async function prefetchTripCache(trip: Trip, force = false): Promise<numb
     () => listTripChecklists(id),
     () => getTripFirstAid(id),
     () => getTripFinance(id),
+    () => getTripDiary(id),
     () => prefetchChats(id),
   ]
 

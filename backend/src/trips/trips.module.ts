@@ -11,6 +11,7 @@ import { MessageAction } from './entities/message-action.entity';
 import { Role } from './entities/role.entity';
 import { RoleTabPermission } from './entities/role-tab-permission.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
+import { TripDiaryEntry } from './entities/trip-diary-entry.entity';
 import { TripMealAllocation } from './entities/trip-meal-allocation.entity';
 import { TripProduct } from './entities/trip-product.entity';
 import { TripMealCheck } from './entities/trip-meal-check.entity';
@@ -43,6 +44,9 @@ import { TripMealsService } from './trip-meals.service';
 import { TripFinanceController } from './trip-finance.controller';
 import { TripFinanceEventsController } from './trip-finance-events.controller';
 import { TripFinanceService } from './trip-finance.service';
+import { TripDiaryController } from './trip-diary.controller';
+import { TripDiaryEventsController } from './trip-diary-events.controller';
+import { TripDiaryService } from './trip-diary.service';
 import { TripMyMealsController } from './trip-my-meals.controller';
 import { TripRouteController } from './trip-route.controller';
 import { TripRouteService } from './trip-route.service';
@@ -80,6 +84,7 @@ import { ObjectsService } from './objects.service';
       RoleTabPermission,
       Trip,
       TripDateVariant,
+      TripDiaryEntry,
       TripMeal,
       TripMealDish,
       TripMealLine,
@@ -116,6 +121,8 @@ import { ObjectsService } from './objects.service';
     TripMealsEventsController,
     TripFinanceController,
     TripFinanceEventsController,
+    TripDiaryController,
+    TripDiaryEventsController,
     TripMyMealsController,
     TripRouteController,
     TripTransferController,
@@ -128,6 +135,7 @@ import { ObjectsService } from './objects.service';
     TripsService,
     TripEventsService,
     TripFinanceService,
+    TripDiaryService,
     TripMealsService,
     TripRouteService,
     TripTransferService,
@@ -140,6 +148,7 @@ import { ObjectsService } from './objects.service';
     TripsService,
     TripEventsService,
     TripFinanceService,
+    TripDiaryService,
     TripMealsService,
     TripRouteService,
     TripTransferService,

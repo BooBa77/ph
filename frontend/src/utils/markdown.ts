@@ -107,27 +107,45 @@ export function inlineMarkdownToHtml(
   html = html.replace(/\[\[(object|user):([^\]]+)\]\]/g, (_match, kind: string, id: string) => {
     const token = kind === 'object' ? objectToken(id) : userToken(id)
     const label = mentionLabel(kind, id, names)
-    // `data-object-id` отдельно от токена: у объектов будут свои
-    // страницы с историей посещений, и рендеру понадобится id,
-    // а не разбирать ради него токен заново.
-    const objectId = kind === 'object' ? ` data-object-id="${escapeHtml(id)}"` : ''
+    // id отдельно от токена: у объектов будут свои страницы с историей
+    // посещений, у людей — профили (`/people/:id`), и рендеру понадобится
+    // id, а не разбирать ради него токен заново.
+    const idAttr = ` data-${kind}-id="${escapeHtml(id)}"`
 
     /**
-     * Адрес приходит из справочника, но проверяем схему всё равно: однажды
-     * справочник пополнят руками, и `javascript:` в `href` стал бы
-     * исполняемым кодом на нашей странице.
+     * Адрес приходит из справочника или собирается страницей, но проверяем
+     * схему всё равно: однажды справочник пополнят руками, и `javascript:`
+     * в `href` стал бы исполняемым кодом на нашей странице.
+     *
+     * Внешний адрес открывается в новой вкладке; внутренний (`/people/…`)
+     * — обычной ссылкой внутри приложения: её перехватывает страница,
+     * чтобы не перезагружать SPA. Два слэша в начале (`//чужой-сайт`) —
+     * это внешний адрес, а не внутренний: их пропускаем.
      */
-    const url = kind === 'object' ? links[token] : undefined
-    if (url && /^https?:/i.test(url)) {
+    const url = links[token]
+    if (kind === 'object' && url && /^https?:/i.test(url)) {
       return (
         `<a href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer"` +
-        ` data-token="${escapeHtml(token)}"${objectId}` +
+        ` data-token="${escapeHtml(token)}"${idAttr}` +
+        ` class="rounded bg-field px-1 text-primary underline">${escapeHtml(label)}</a>`
+      )
+    }
+
+    /**
+     * Человек — только внутренняя ссылка на профиль. Внешний адрес для
+     * участника не имеет смысла, а пропускать его значило бы разрешить
+     * увести имя человека на чужую страницу.
+     */
+    if (url && /^\/(?!\/)/.test(url)) {
+      return (
+        `<a href="${escapeHtml(url)}"` +
+        ` data-token="${escapeHtml(token)}"${idAttr}` +
         ` class="rounded bg-field px-1 text-primary underline">${escapeHtml(label)}</a>`
       )
     }
 
     return (
-      `<span data-token="${escapeHtml(token)}"${objectId}` +
+      `<span data-token="${escapeHtml(token)}"${idAttr}` +
       ` contenteditable="false"` +
       ` class="rounded bg-field px-1 text-primary">${escapeHtml(label)}</span>`
     )

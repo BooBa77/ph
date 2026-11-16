@@ -6,11 +6,12 @@ import { Observable, Subject } from 'rxjs';
  *
  * У «Снаряжения» два независимых куска данных: вещи с разделами (`gear`)
  * и чек-листы (`checklist`); у «Бухгалтерии» — один (`finance`);
- * у «Питания» — раскладка и список покупок (`meals`). Клиент по `scope`
- * решает, что перезапросить: целиком всю вкладку дёргать незачем,
- * а перепутать куски значит показать старое рядом с новым.
+ * у «Питания» — раскладка и список покупок (`meals`), у «Дневника» —
+ * личные записи (`diary`). Клиент по `scope` решает, что перезапросить:
+ * целиком всю вкладку дёргать незачем, а перепутать куски значит показать
+ * старое рядом с новым.
  */
-export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals';
+export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals' | 'diary';
 
 /**
  * Событие похода для подписчиков потока (SSE).
@@ -101,6 +102,18 @@ export class TripEventsService {
    */
   emitMeals(tripId: string, actorId: string): void {
     this.emit(tripId, 'meals', actorId);
+  }
+
+  /**
+   * Изменился личный дневник: запись создана, поправлена или удалена.
+   *
+   * Дневник не общий, поэтому событие не говорит, чья это запись. Клиент
+   * реагирует только на свой `actorId`: чужая запись в мой дневник всё
+   * равно не попадёт, а перезапрашивать её незачем. Свой `actorId` —
+   * это второе устройство или вторая вкладка того же человека.
+   */
+  emitDiary(tripId: string, actorId: string): void {
+    this.emit(tripId, 'diary', actorId);
   }
 
   private emit(tripId: string, scope: TripEventScope, actorId: string): void {

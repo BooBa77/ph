@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onMounted, onUnmounted, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 
 import AppHeader from '@/components/layout/AppHeader.vue'
@@ -9,7 +9,9 @@ import SiteSidebar from '@/components/layout/SiteSidebar.vue'
 import OfflineBanner from '@/components/offline/OfflineBanner.vue'
 import InstallHintDialog from '@/components/ui/InstallHintDialog.vue'
 import { useAppStore } from '@/stores/app'
+import { useAuthStore } from '@/stores/auth'
 import { useOfflineStore } from '@/stores/offline'
+import { flushDiaryOutboxes } from '@/offline/diaryOutbox'
 import { useSwUpdate } from '@/composables/useSwUpdate'
 import { useTheme } from '@/composables/useTheme'
 import { useAuthRedirect } from '@/composables/useAuthRedirect'
@@ -17,6 +19,7 @@ import { registerPwaInstall } from '@/composables/usePwaInstall'
 
 const route = useRoute()
 const appStore = useAppStore()
+const auth = useAuthStore()
 const offline = useOfflineStore()
 const { updatePending, applyUpdate } = useSwUpdate()
 
@@ -27,8 +30,51 @@ const { updatePending, applyUpdate } = useSwUpdate()
  * работает и без этого запроса. Запрос нужен, чтобы список не отставал:
  * поход, начавшийся вчера, должен стать доступен и на устройстве.
  */
-onMounted(() => {
+onMounted(async () => {
   void offline.refreshCurrentTrips()
+
+  // Очередь дневника отправляем только с живой сессией: на старте токена
+  // ещё нет (его берёт bootstrap в guard), и первый заход получил бы 401.
+  // `resumeSession` не делает лишнего, если токен уже есть.
+  try {
+    await auth.resumeSession()
+  } catch {
+    // Нет связи — очередь подождёт следующего `online`.
+  }
+
+  void flushDiaryOutboxes()
+})
+
+/**
+ * Дневник, написанный без связи, уходит при её возврате.
+ *
+ * Очередь живёт на уровне приложения, а не вкладки: человек мог написать
+ * в поле и закрыть приложение — запись должна уехать, когда телефон
+ * поймает сеть, независимо от того, открыт ли дневник. Ошибки глотает
+ * сама очередь: отказ сервера означает «попробуем в следующий раз»,
+ * а не потерянную запись.
+ */
+let retryTimer: number | null = null
+
+function onOnline(): void {
+  void flushDiaryOutboxes()
+
+  // Вторая попытка через несколько секунд: вместе со связью приложение
+  // поднимает сессию (`resumeSession`), и первый заход мог прийтись
+  // на ещё пустой токен. Успешная отправка второй раз ничего не меняет —
+  // очередь уже пуста.
+  if (retryTimer !== null) window.clearTimeout(retryTimer)
+  retryTimer = window.setTimeout(() => {
+    retryTimer = null
+    void flushDiaryOutboxes()
+  }, 5000)
+}
+
+window.addEventListener('online', onOnline)
+
+onUnmounted(() => {
+  window.removeEventListener('online', onOnline)
+  if (retryTimer !== null) window.clearTimeout(retryTimer)
 })
 
 // Инициализация темы. Вызывается ОДИН РАЗ за жизнь приложения.

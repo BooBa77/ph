@@ -120,6 +120,31 @@ describe('markdownToHtml', () => {
     expect(html).not.toContain('href=')
     expect(html).toContain('Сергей')
   })
+
+  it('внутренняя ссылка на профиль участника работает (16.11.2026)', () => {
+    const html = markdownToHtml('Идём с [[user:u-1]]', NAMES, {
+      [userToken('u-1')]: '/people/u-1',
+    })
+
+    expect(html).toContain('href="/people/u-1"')
+    expect(html).toContain('data-user-id="u-1"')
+    expect(html).toContain('Сергей')
+  })
+
+  it('у упоминания без ссылки всё равно есть id — по нему идёт переход', () => {
+    const html = markdownToHtml('Идём с [[user:u-1]]', NAMES)
+
+    expect(html).toContain('data-user-id="u-1"')
+    expect(html).not.toContain('href=')
+  })
+
+  it('два слэша в начале — внешний адрес, а не внутренний', () => {
+    const html = markdownToHtml('[[user:u-1]]', NAMES, {
+      [userToken('u-1')]: '//example.com/u-1',
+    })
+
+    expect(html).not.toContain('href=')
+  })
 })
 
 describe('htmlToMarkdown', () => {
