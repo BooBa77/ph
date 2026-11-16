@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, watch } from 'vue'
+import { computed, onMounted, watch } from 'vue'
 import { RouterView, useRoute } from 'vue-router'
 
 import AppHeader from '@/components/layout/AppHeader.vue'
 import MobileMenu from '@/components/layout/MobileMenu.vue'
 import SeasonDecor from '@/components/layout/SeasonDecor.vue'
 import SiteSidebar from '@/components/layout/SiteSidebar.vue'
+import OfflineBanner from '@/components/offline/OfflineBanner.vue'
 import InstallHintDialog from '@/components/ui/InstallHintDialog.vue'
 import { useAppStore } from '@/stores/app'
+import { useOfflineStore } from '@/stores/offline'
 import { useSwUpdate } from '@/composables/useSwUpdate'
 import { useTheme } from '@/composables/useTheme'
 import { useAuthRedirect } from '@/composables/useAuthRedirect'
@@ -15,7 +17,19 @@ import { registerPwaInstall } from '@/composables/usePwaInstall'
 
 const route = useRoute()
 const appStore = useAppStore()
+const offline = useOfflineStore()
 const { updatePending, applyUpdate } = useSwUpdate()
+
+/**
+ * Первый заход после входа: узнать у сервера, какие походы идут сейчас.
+ *
+ * Стор уже прочитал сохранённый список из IndexedDB, так что офлайн-переход
+ * работает и без этого запроса. Запрос нужен, чтобы список не отставал:
+ * поход, начавшийся вчера, должен стать доступен и на устройстве.
+ */
+onMounted(() => {
+  void offline.refreshCurrentTrips()
+})
 
 // Инициализация темы. Вызывается ОДИН РАЗ за жизнь приложения.
 // Ставит data-theme на <html> и следит за изменениями.
@@ -71,6 +85,12 @@ watch(
   <SeasonDecor />
 
   <AppHeader v-if="showHeader" />
+
+  <!--
+    Полоса офлайна — сразу под шапкой и на всех страницах: без связи человек
+    должен видеть, почему исчезли разделы и почему изменения не сохраняются.
+  -->
+  <OfflineBanner v-if="showHeader" />
 
   <!--
     Мобильное меню — на уровне приложения, а не внутри шапки: это оверлей

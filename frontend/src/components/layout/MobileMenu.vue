@@ -8,6 +8,7 @@ import { siteSections, type SiteIconName } from '@/components/layout/site-sectio
 import { useLogout } from '@/composables/useLogout'
 import { useMobileMenuStore, type MobileMenuEntry } from '@/stores/mobileMenu'
 import { useAuthStore } from '@/stores/auth'
+import { useOfflineStore } from '@/stores/offline'
 import type { TripTabCode } from '@/types/trips'
 
 /**
@@ -24,6 +25,7 @@ import type { TripTabCode } from '@/types/trips'
  */
 const menu = useMobileMenuStore()
 const auth = useAuthStore()
+const offline = useOfflineStore()
 const route = useRoute()
 const { isConfirming, isLoggingOut, ask, cancel, confirm } = useLogout()
 
@@ -41,8 +43,13 @@ const title = computed(() =>
  * Разделы сайта: их отдаёт `siteSections`, тот же список кормит колонку
  * на десктопе. «Админка» попадает сюда только у админа — флаг приходит
  * в профиле с бэкенда.
+ *
+ * В офлайне остаются только «Походы» — по той же причине, что и в колонке.
  */
-const siteEntries = computed(() => siteSections(auth.user?.isAdmin === true))
+const siteEntries = computed(() => {
+  const all = siteSections(auth.user?.isAdmin === true)
+  return offline.isOnline ? all : all.filter((section) => section.to === '/trips')
+})
 
 /** Разделы сайта или вкладки похода — что открыли, то и показываем. */
 const entries = computed<MobileMenuEntry[]>(() => {

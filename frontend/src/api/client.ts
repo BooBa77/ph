@@ -1,8 +1,22 @@
-import { ApiError, extractMessage, parseErrorBody } from '@/api/errors'
+import {
+  ApiError,
+  OfflineError,
+  extractMessage,
+  isNetworkProblem,
+  parseErrorBody,
+} from '@/api/errors'
+import {
+  isCacheablePath,
+  readCachedResponse,
+  writeCachedResponse,
+} from '@/offline/cache'
 import { useAuthStore } from '@/stores/auth'
 
 /** Базовый префикс. В dev через Vite proxy, в prod через nginx — оба ведут на NestJS. */
 const BASE_URL = '/api'
+
+/** Сообщение, когда связи нет и нужного ответа в кеше не нашлось. */
+const OFFLINE_EMPTY = 'Нет связи, а этот экран не сохранён для офлайна.'
 
 /**
  * Внутренняя реализация с флагом isRetry.
@@ -96,6 +110,11 @@ async function parseResponse<T>(res: Response): Promise<T> {
   return (await res.text()) as unknown as T
 }
 
+/** Есть ли связь по мнению браузера. */
+function isBrowserOffline(): boolean {
+  return typeof navigator !== 'undefined' && navigator.onLine === false
+}
+
 /**
  * Публичная обёртка над fetch для защищённых API-запросов.
  *
@@ -107,6 +126,14 @@ async function parseResponse<T>(res: Response): Promise<T> {
  *   - при 401: refresh + один повтор исходного запроса
  *   - бросает ApiError при 4xx/5xx
  *
+ * **Офлайн-режим (16.11.2026):**
+ *   - GET-ответы походов и словарей складываются в IndexedDB;
+ *   - без связи GET отдаётся из кеша, а если его нет — `OfflineError`;
+ *   - без связи изменения не отправляются вовсе (`OfflineError`), а не висят
+ *     в ожидании сети;
+ *   - обрыв уже начатого запроса (TypeError) тоже откатывается на кеш —
+ *     `navigator.onLine` успевает соврать.
+ *
  * НЕ использовать для:
  *   - request-code, verify-code (публичные, без токена)
  *   - refresh (живёт в store, прямой fetch, иначе рекурсия)
@@ -116,5 +143,42 @@ async function parseResponse<T>(res: Response): Promise<T> {
  * чтобы случайно не работать с необработанными данными.
  */
 export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}): Promise<T> {
-  return apiFetchInternal<T>(path, init, false)
+  const method = (init.method ?? 'GET').toUpperCase()
+  const canUseCache = method === 'GET' && isCacheablePath(path)
+
+  // --- явный офлайн: сеть не трогаем вовсе ---
+  if (isBrowserOffline()) {
+    if (canUseCache) {
+      const cached = await readCachedResponse(path)
+      if (cached) return cached.body as T
+    }
+
+    throw new OfflineError(
+      method === 'GET' ? OFFLINE_EMPTY : 'Нет связи: изменения не отправлены.',
+    )
+  }
+
+  try {
+    const result = await apiFetchInternal<T>(path, init, false)
+
+    // Кеш — побочное дело: неудачная запись не должна ронять удачный ответ.
+    if (canUseCache && result !== undefined) {
+      try {
+        await writeCachedResponse(path, result)
+      } catch {
+        // Хранилище запрещено или переполнено — живём без кеша.
+      }
+    }
+
+    return result
+  } catch (problem) {
+    // Оборвался уже начатый запрос: браузер мог ещё считать себя онлайн.
+    if (canUseCache && isNetworkProblem(problem)) {
+      const cached = await readCachedResponse(path)
+      if (cached) return cached.body as T
+      throw new OfflineError(OFFLINE_EMPTY)
+    }
+
+    throw problem
+  }
 }

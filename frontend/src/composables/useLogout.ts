@@ -5,6 +5,7 @@ import { useRouter } from 'vue-router'
 
 import { logout } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth'
+import { useOfflineStore } from '@/stores/offline'
 
 /**
  * Выход из аккаунта с подтверждением.
@@ -19,6 +20,7 @@ import { useAuthStore } from '@/stores/auth'
  */
 export function useLogout() {
   const auth = useAuthStore()
+  const offline = useOfflineStore()
   const router = useRouter()
 
   /** Показан ли вопрос «Выйти из аккаунта?». */
@@ -46,6 +48,9 @@ export function useLogout() {
       // Даже если бэк упал — локально всё равно разлогинимся.
     } finally {
       auth.clear()
+      // Офлайн-копии походов — тоже данные аккаунта: на устройстве их
+      // остаться не должно. `forgetAll` чистит и память стора, и IndexedDB.
+      void offline.forgetAll()
       isLoggingOut.value = false
       isConfirming.value = false
       await router.push({ name: 'auth' })

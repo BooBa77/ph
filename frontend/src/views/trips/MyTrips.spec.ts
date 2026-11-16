@@ -1,9 +1,11 @@
 import { mount } from '@vue/test-utils'
 import type { VueWrapper } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import type { Trip, TripListResponse } from '@/types/trips'
+import { useOfflineStore, type OfflineTrip } from '@/stores/offline'
 import MyTrips from '@/views/trips/MyTrips.vue'
 
 /**
@@ -82,6 +84,7 @@ async function open(): Promise<VueWrapper> {
 
 describe('MyTrips', () => {
   beforeEach(() => {
+    setActivePinia(createPinia())
     vi.useFakeTimers()
     mocks.listTrips.mockReset()
     mocks.listTrips.mockResolvedValue(page([trip()]))
@@ -142,5 +145,27 @@ describe('MyTrips', () => {
 
     expect(wrapper.find('[data-test="my-trips-error"]').exists()).toBe(false)
     expect(wrapper.findAll('[data-test="trip-card"]')).toHaveLength(1)
+  })
+
+  it('в офлайне показывает только сохранённый текущий поход и не зовёт API', async () => {
+    const savedTrip = trip({ id: '679', startsAt: '2020-01-01T00:00:00.000Z', endsAt: null })
+    const saved: OfflineTrip = {
+      id: '679',
+      name: 'Витязь',
+      startsAt: savedTrip.startsAt,
+      endsAt: savedTrip.endsAt,
+      cachedAt: 1_700_000_000_000,
+      trip: savedTrip,
+    }
+
+    const store = useOfflineStore()
+    store.isOnline = false
+    await store.setCurrentTrips([saved.trip])
+
+    const wrapper = await open()
+
+    expect(mocks.listTrips).not.toHaveBeenCalled()
+    expect(wrapper.findAll('[data-test="trip-card"]')).toHaveLength(1)
+    expect(wrapper.find('[data-test="my-trips-offline-note"]').exists()).toBe(true)
   })
 })

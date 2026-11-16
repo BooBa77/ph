@@ -2,9 +2,30 @@ import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { apiFetch } from '@/api/client'
-import { ApiError } from '@/api/errors'
+import { ApiError, OfflineError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
 import type { User } from '@/api/types'
+
+/**
+ * Кеш офлайна подменяем: проверяется поведение клиента (что и когда
+ * читает/пишет), а не IndexedDB. Пути и политику кеша проверяет свой тест.
+ */
+const cacheMocks = vi.hoisted(() => ({ read: vi.fn(), write: vi.fn() }))
+
+vi.mock('@/offline/cache', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/offline/cache')>()
+
+  return {
+    ...actual,
+    readCachedResponse: cacheMocks.read,
+    writeCachedResponse: cacheMocks.write,
+  }
+})
+
+/** Переключить `navigator.onLine` на время теста. */
+function setNavigatorOnline(value: boolean) {
+  Object.defineProperty(window.navigator, 'onLine', { configurable: true, value })
+}
 
 const user = { id: 'u1', displayName: 'Тест' } as User
 
@@ -58,9 +79,15 @@ function mockFetch(responses: Response[]) {
 describe('apiFetch', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
+    setNavigatorOnline(true)
+    cacheMocks.read.mockReset()
+    cacheMocks.write.mockReset()
+    cacheMocks.read.mockResolvedValue(null)
+    cacheMocks.write.mockResolvedValue(undefined)
   })
 
   afterEach(() => {
+    setNavigatorOnline(true)
     vi.unstubAllGlobals()
   })
 
@@ -174,5 +201,102 @@ describe('apiFetch', () => {
     expect(store.user).toBeNull()
     // повторять нечем — третьего запроса нет
     expect(calls).toHaveLength(2)
+  })
+})
+
+describe('apiFetch в офлайне', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia())
+    setNavigatorOnline(true)
+    cacheMocks.read.mockReset()
+    cacheMocks.write.mockReset()
+    cacheMocks.read.mockResolvedValue(null)
+    cacheMocks.write.mockResolvedValue(undefined)
+  })
+
+  afterEach(() => {
+    setNavigatorOnline(true)
+    vi.unstubAllGlobals()
+  })
+
+  it('успешный GET похода складывает ответ в кеш', async () => {
+    mockFetch([jsonResponse({ meals: [] })])
+
+    await apiFetch('/trips/679/meal-plan')
+
+    expect(cacheMocks.write).toHaveBeenCalledWith('/trips/679/meal-plan', { meals: [] })
+  })
+
+  it('ответ не походного экрана не кешируется', async () => {
+    mockFetch([jsonResponse({ id: 'u1' })])
+
+    await apiFetch('/users/me')
+
+    expect(cacheMocks.write).not.toHaveBeenCalled()
+  })
+
+  it('без связи GET отдаётся из кеша, сеть не трогается', async () => {
+    setNavigatorOnline(false)
+    cacheMocks.read.mockResolvedValue({
+      path: '/trips/679/gear',
+      tripId: '679',
+      body: { items: [{ name: 'Тент' }] },
+      savedAt: 1,
+    })
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(apiFetch('/trips/679/gear')).resolves.toEqual({ items: [{ name: 'Тент' }] })
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(cacheMocks.write).not.toHaveBeenCalled()
+  })
+
+  it('без связи и без кеша — OfflineError с понятным текстом', async () => {
+    setNavigatorOnline(false)
+
+    await expect(apiFetch('/trips/679/meals')).rejects.toBeInstanceOf(OfflineError)
+  })
+
+  it('без связи изменение не отправляется вовсе', async () => {
+    setNavigatorOnline(false)
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(
+      apiFetch('/trips/679/gear', { method: 'PATCH', body: JSON.stringify({ taken: true }) }),
+    ).rejects.toBeInstanceOf(OfflineError)
+
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('обрыв уже начатого GET откатывается на кеш', async () => {
+    // navigator.onLine ещё true — так бывает, когда Wi-Fi «есть», а сервера нет.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => {
+        throw new TypeError('Failed to fetch')
+      }),
+    )
+    cacheMocks.read.mockResolvedValue({
+      path: '/trips/679/route',
+      tripId: '679',
+      body: { nights: [] },
+      savedAt: 1,
+    })
+
+    await expect(apiFetch('/trips/679/route')).resolves.toEqual({ nights: [] })
+  })
+
+  it('ответ сервера 500 из кеша не подменяется', async () => {
+    mockFetch([jsonResponse({ message: 'Упало' }, 500)])
+    cacheMocks.read.mockResolvedValue({
+      path: '/trips/679/route',
+      tripId: '679',
+      body: { nights: [] },
+      savedAt: 1,
+    })
+
+    await expect(apiFetch('/trips/679/route')).rejects.toMatchObject({ status: 500 })
   })
 })

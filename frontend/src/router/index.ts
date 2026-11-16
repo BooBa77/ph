@@ -1,6 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 
+import { offlineRedirect } from '@/offline/navigation'
 import { useAuthStore } from '@/stores/auth'
+import { useOfflineStore } from '@/stores/offline'
 import HomeView from '@/views/HomeView.vue'
 
 const router = createRouter({
@@ -84,6 +86,15 @@ const router = createRouter({
           component: () => import('@/views/profile/sections/UserSettings.vue'),
         },
       ],
+    },
+    {
+      // Экран «нет связи»: сюда разворачивает, когда в офлайне нет ни одного
+      // сохранённого текущего похода. Адрес настоящий, чтобы баннер и меню
+      // могли на него ссылаться, а «назад» не зацикливался.
+      path: '/offline',
+      name: 'offline',
+      component: () => import('@/views/OfflineView.vue'),
+      meta: { requiresAuth: true },
     },
     {
       // Контакты: поиск людей по имени. Профиль человека — отдельный
@@ -208,6 +219,7 @@ const router = createRouter({
  */
 router.beforeEach(async (to) => {
   const auth = useAuthStore()
+  const offline = useOfflineStore()
 
   // Bootstrap один раз.
   if (!auth.isBootstrapped) {
@@ -224,6 +236,22 @@ router.beforeEach(async (to) => {
   // Залогинен, а идёт на /auth → на /.
   if (to.name === 'auth' && auth.isAuthenticated) {
     return { name: 'home' }
+  }
+
+  /*
+   * Офлайн: доступен только текущий по датам поход.
+   *
+   * Список текущих живёт в IndexedDB, поэтому ждём `init` — без него guard
+   * решал бы по пустому массиву и разворачивал даже на сохранённый поход.
+   * Всё остальное — «не видно либо не активно»: меню показывает только
+   * «Походы», а прямые адреса разворачиваются сюда же.
+   */
+  await offline.init()
+
+  if (offline.isOffline) {
+    const tripId = typeof to.params.id === 'string' ? to.params.id : ''
+    // `null` из чистой функции — «пускать»; guard ждёт `undefined`, а не `null`.
+    return offlineRedirect(to.name, tripId, offline.currentTripIds) ?? undefined
   }
 
   return true

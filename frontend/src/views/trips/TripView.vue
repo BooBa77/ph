@@ -5,8 +5,11 @@ import { RouterLink, useRoute } from 'vue-router'
 import { ApiError } from '@/api/errors'
 import { fetchTripTabs, getTrip, updateTrip } from '@/api/trips'
 import { getPublicUser, type PublicUser } from '@/api/users'
+import { isTripOngoing } from '@/offline/isTripOngoing'
+import { prefetchTripCache } from '@/offline/prefetch'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
+import { useOfflineStore } from '@/stores/offline'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
 import TripFinance from '@/views/trips/TripFinance.vue'
 import TripFirstAid from '@/views/trips/TripFirstAid.vue'
@@ -48,6 +51,7 @@ import { tripWhenText } from '@/utils/tripDisplay'
 const route = useRoute()
 const auth = useAuthStore()
 const mobileMenu = useMobileMenuStore()
+const offline = useOfflineStore()
 
 const trip = ref<Trip | null>(null)
 const isLoading = ref(true)
@@ -119,12 +123,16 @@ const displayTabs = computed<{ code: TripTabCode; label: string; available: bool
 
 /** Править «Участников» — значит назначать роли: разбирает бэкенд по ролям. */
 const canManageRoles = computed(
-  () => permissions.value.find((permission) => permission.code === 'members')?.canEdit ?? false,
+  () =>
+    offline.isOnline &&
+    (permissions.value.find((permission) => permission.code === 'members')?.canEdit ?? false),
 )
 
 /** Править раскладку может завхоз или организатор: это же решает бэкенд. */
 const canEditMeals = computed(
-  () => permissions.value.find((permission) => permission.code === 'meals')?.canEdit ?? false,
+  () =>
+    offline.isOnline &&
+    (permissions.value.find((permission) => permission.code === 'meals')?.canEdit ?? false),
 )
 
 /**
@@ -133,7 +141,9 @@ const canEditMeals = computed(
  * не эта страница, а сервер (`PATCH .../gear/:gearId`, §5).
  */
 const canEditGear = computed(
-  () => permissions.value.find((permission) => permission.code === 'gear')?.canEdit ?? false,
+  () =>
+    offline.isOnline &&
+    (permissions.value.find((permission) => permission.code === 'gear')?.canEdit ?? false),
 )
 
 /**
@@ -148,6 +158,80 @@ const canEditGear = computed(
 const isOrganizer = computed(
   () => trip.value !== null && trip.value.organizerUserId === auth.user?.id,
 )
+
+/**
+ * Действия организатора в шапке.
+ *
+ * В офлайне их нет: правка и закрытие набора — изменения, а изменения
+ * без связи не уходят. Показать кнопку, которая заведомо не сработает,
+ * хуже, чем не показать её.
+ */
+const canOrganize = computed(() => isOrganizer.value && offline.isOnline)
+
+/** Идёт ли поход по датам прямо сейчас — по тому же правилу, что у сервера. */
+const isCurrentTrip = computed(() => trip.value !== null && isTripOngoing(trip.value))
+
+/** Сохранённая на устройстве копия этого похода. */
+const offlineCopy = computed(() =>
+  trip.value ? offline.currentTripById(trip.value.id) : null,
+)
+
+/** Когда поход сохраняли для офлайна: свежий прогрев важнее старой отметки. */
+const prefetchedAt = ref<number | null>(null)
+
+/** Идёт сохранение копии — кнопка «Обновить» заблокирована. */
+const isPrefetching = ref(false)
+
+const savedAt = computed(() => prefetchedAt.value ?? offlineCopy.value?.cachedAt ?? null)
+
+const savedText = computed(() => {
+  if (savedAt.value === null) return 'ещё не сохраняли'
+
+  return new Date(savedAt.value).toLocaleString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+})
+
+/**
+ * Сохранить поход для офлайна.
+ *
+ * Запускается тихо после загрузки страницы: человек открыл поход — данные
+ * уже должны лежать на устройстве к моменту, когда связь пропадёт.
+ * Ошибки прогрева не показываем — это фоновая работа, а не действие.
+ */
+async function prepareOfflineCopy(next: Trip) {
+  if (!offline.isOnline) return
+
+  try {
+    await offline.rememberTrip(next)
+    const at = await prefetchTripCache(next)
+    if (at === null) return
+
+    prefetchedAt.value = at
+    await offline.markSaved(next.id, at)
+  } catch {
+    // Прогрев — улучшение: не сохранилось, значит просто не будет офлайн-копии.
+  }
+}
+
+/** Ручное «Обновить»: тот же прогрев, но без десятиминутного ограничения. */
+async function refreshOfflineCopy() {
+  if (!trip.value || !offline.isOnline) return
+
+  isPrefetching.value = true
+  try {
+    const at = await prefetchTripCache(trip.value, true)
+    if (at !== null) {
+      prefetchedAt.value = at
+      await offline.markSaved(trip.value.id, at)
+    }
+  } finally {
+    isPrefetching.value = false
+  }
+}
 
 /**
  * Вкладки — в мобильную панель похода.
@@ -224,6 +308,9 @@ async function load(id: string) {
       // Тихо: профиль организатора — украшение шапки, а не данные похода.
     }
   }
+
+  // Поход открыт — сохраняем его копию для офлайна (если он идёт сейчас).
+  if (trip.value) void prepareOfflineCopy(trip.value)
 }
 
 watch(
@@ -234,6 +321,7 @@ watch(
     // чужого похода показывать нечего.
     activeTab.value = 'guest'
     actionError.value = null
+    prefetchedAt.value = null
     if (typeof id === 'string') void load(id)
   },
   { immediate: true },
@@ -314,7 +402,7 @@ async function toggleRecruitment() {
             </p>
           </div>
 
-          <div v-if="isOrganizer" class="flex flex-wrap items-center gap-2">
+          <div v-if="canOrganize" class="flex flex-wrap items-center gap-2">
             <RouterLink
               :to="{ name: 'trip-edit', params: { id: trip.id } }"
               class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text no-underline transition-colors hover:border-primary"
@@ -340,6 +428,34 @@ async function toggleRecruitment() {
           <template v-if="trip.isCommercial"> · коммерческий</template>
           <template v-if="trip.isOfficial"> · официальный поход</template>
           <template v-if="trip.isRecruitmentClosed"> · набор закрыт</template>
+        </p>
+
+        <!--
+          Офлайн-копия текущего похода. Строка честно говорит, сохранены ли
+          данные на устройстве: человек в поле должен знать, откроется ли
+          поход, когда пропадёт связь.
+        -->
+        <p v-if="offline.isOffline" class="text-sm text-muted" data-test="trip-offline-note">
+          Нет связи: поход открыт из сохранённой копии. Изменения недоступны.
+        </p>
+
+        <p
+          v-else-if="isCurrentTrip"
+          class="flex flex-wrap items-center gap-2 text-sm text-muted"
+          data-test="trip-offline-status"
+        >
+          <span v-if="savedAt">Сохранён для офлайна: {{ savedText }}</span>
+          <span v-else>Сохраняем для офлайна…</span>
+
+          <button
+            type="button"
+            class="cursor-pointer text-text underline transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="isPrefetching"
+            data-test="trip-offline-refresh"
+            @click="refreshOfflineCopy"
+          >
+            {{ isPrefetching ? 'Сохраняем…' : 'Обновить' }}
+          </button>
         </p>
 
         <p v-if="actionError" class="text-sm text-red-600" data-test="trip-action-error">

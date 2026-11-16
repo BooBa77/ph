@@ -6,6 +6,7 @@ import SidebarIcon from '@/components/ui/SidebarIcon.vue'
 import { siteSections } from '@/components/layout/site-sections'
 import { useLogout } from '@/composables/useLogout'
 import { useAuthStore } from '@/stores/auth'
+import { useOfflineStore } from '@/stores/offline'
 
 /**
  * Меню сайта — колонка на десктопе.
@@ -25,9 +26,19 @@ import { useAuthStore } from '@/stores/auth'
  * месте, чтобы два меню не разошлись.
  */
 const auth = useAuthStore()
+const offline = useOfflineStore()
 const { isConfirming, isLoggingOut, ask, cancel, confirm } = useLogout()
 
-const sections = computed(() => siteSections(auth.user?.isAdmin === true))
+/**
+ * В офлайне в меню остаётся только «Походы».
+ *
+ * Остальные разделы без связи не откроются — guard развернёт на текущий
+ * поход. Пусть лучше их не будет видно, чем они будут вести в никуда.
+ */
+const sections = computed(() => {
+  const all = siteSections(auth.user?.isAdmin === true)
+  return offline.isOnline ? all : all.filter((section) => section.to === '/trips')
+})
 </script>
 
 <template>

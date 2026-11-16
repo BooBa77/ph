@@ -3,6 +3,7 @@ import { RouterLink, RouterView } from 'vue-router'
 
 import SidebarIcon from '@/components/ui/SidebarIcon.vue'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
+import { useOfflineStore } from '@/stores/offline'
 
 /**
  * Раздел «Походы»: рамка и навигация.
@@ -23,6 +24,7 @@ import { useMobileMenuStore } from '@/stores/mobileMenu'
  * в `TripView`, поэтому на «Моих походах», в анонсах и в создании её нет.
  */
 const menu = useMobileMenuStore()
+const offline = useOfflineStore()
 
 const LINK_CLASS =
   'rounded-xl border border-border bg-surface px-4 py-2 text-sm text-text no-underline transition-colors hover:border-primary'
@@ -66,14 +68,25 @@ const ACTIVE_CLASS = 'border-primary font-medium text-primary'
         Мои походы
       </RouterLink>
 
-      <RouterLink to="/trips/announces" :class="LINK_CLASS" :active-class="ACTIVE_CLASS">
-        Анонсы
-      </RouterLink>
+      <!--
+        В офлайне анонсы и создание недоступны: чужие походы не сохранены,
+        а новый поход некуда отправить. Ссылка, ведущая на разворот guard'ом,
+        хуже её отсутствия.
+      -->
+      <template v-if="offline.isOnline">
+        <RouterLink to="/trips/announces" :class="LINK_CLASS" :active-class="ACTIVE_CLASS">
+          Анонсы
+        </RouterLink>
 
-      <RouterLink to="/trips/new" :class="LINK_CLASS" :active-class="ACTIVE_CLASS">
-        Создать поход
-      </RouterLink>
+        <RouterLink to="/trips/new" :class="LINK_CLASS" :active-class="ACTIVE_CLASS">
+          Создать поход
+        </RouterLink>
+      </template>
     </nav>
+
+    <p v-if="offline.isOffline" class="text-sm text-muted" data-test="trips-offline-note">
+      Нет связи: открыт только текущий поход, остальные разделы появятся, когда связь вернётся.
+    </p>
 
     <RouterView />
   </div>

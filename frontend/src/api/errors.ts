@@ -32,8 +32,42 @@ export class ApiError extends Error {
     // Восстанавливаем прототип: при транспиляции в ES5 у классов-наследников
     // Error он теряется, и `instanceof ApiError` начинает врать.
     // С ES2022 это не нужно, но оставить — дешёвая страховка.
-    Object.setPrototypeOf(this, ApiError.prototype)
+    // `new.target` вместо `ApiError`: у подкласса (OfflineError) прототип
+    // должен остаться своим, иначе `instanceof OfflineError` врёт.
+    Object.setPrototypeOf(this, new.target.prototype)
   }
+}
+
+/**
+ * Нет связи: запрос не ушёл или ушёл и не вернулся.
+ *
+ * Наследуется от `ApiError` с нулевым статусом, чтобы существующие экраны,
+ * которые показывают `problem.message` только для `ApiError`, показали
+ * человеческий текст, а не «не удалось». Статуса 0 у HTTP не бывает —
+ * это не ответ сервера, а его отсутствие.
+ */
+export class OfflineError extends ApiError {
+  /** Отличает обрыв от ответа сервера, не заглядывая в `status`. */
+  readonly isOffline = true
+
+  constructor(
+    message = 'Нет связи: изменения не отправлены. Попробуй, когда появится сеть.',
+  ) {
+    super(0, message, null)
+    this.name = 'OfflineError'
+  }
+}
+
+/**
+ * Похоже ли исключение на «сеть пропала», а не на ответ сервера.
+ *
+ * `fetch` при обрыве кидает `TypeError`; наш явный офлайн — `OfflineError`.
+ * Ответы 4xx/5xx — всегда `ApiError` с ненулевым статусом, их из кеша
+ * подменять нельзя: сервер сказал «нельзя», а не «не слышу».
+ */
+export function isNetworkProblem(problem: unknown): boolean {
+  if (problem instanceof OfflineError) return true
+  return problem instanceof TypeError && !(problem instanceof ApiError)
 }
 
 /**

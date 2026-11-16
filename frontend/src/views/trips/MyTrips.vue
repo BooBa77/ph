@@ -1,6 +1,9 @@
 <script setup lang="ts">
+import { computed, watch } from 'vue'
+
 import TripCard from '@/components/trips/TripCard.vue'
 import { useTripList } from '@/composables/useTripList'
+import { useOfflineStore } from '@/stores/offline'
 
 /**
  * «Мои походы» — корень раздела `/trips`.
@@ -10,15 +13,42 @@ import { useTripList } from '@/composables/useTripList'
  * лента заставляла бы искать свои походы среди чужих, а «создать поход» —
  * среди тех, куда человек не собирался.
  *
- * Отдельного «я организатор» и «я участник» здесь нет: бэкенд считает
- * своим и то и другое, а поход, который я организовал и не иду, — всё
- * равно мой.
+ * **Офлайн (16.11.2026).** Без связи список не запрашивается: показываем
+ * только походы, которые идут сейчас и сохранены на устройстве. Остальные
+ * в поле не нужны, а их карточки вели бы на закрытые адреса.
  */
-const { trips, total, isLoading, isLoadingMore, error, remaining, load, loadMore } = useTripList(
-  () => ({ mine: true }),
+const offline = useOfflineStore()
+
+const {
+  trips: loadedTrips,
+  total: loadedTotal,
+  isLoading: listLoading,
+  isLoadingMore,
+  error: listError,
+  remaining,
+  load,
+  loadMore,
+} = useTripList(() => ({ mine: true }))
+
+/** Что видно на экране: сеть — обычный список, офлайн — сохранённые походы. */
+const trips = computed(() =>
+  offline.isOnline ? loadedTrips.value : offline.currentTrips.map((item) => item.trip),
 )
 
-void load()
+const total = computed(() => (offline.isOnline ? loadedTotal.value : trips.value.length))
+const isLoading = computed(() => offline.isOnline && listLoading.value)
+const error = computed(() => (offline.isOnline ? listError.value : null))
+const remainingCount = computed(() => (offline.isOnline ? remaining.value : 0))
+
+if (offline.isOnline) void load()
+
+// Связь вернулась — догружаем то, что показывали бы онлайн.
+watch(
+  () => offline.isOnline,
+  (isOnline) => {
+    if (isOnline) void load()
+  },
+)
 </script>
 
 <template>
@@ -29,6 +59,10 @@ void load()
         <p class="text-sm text-muted">Где ты организатор или участник.</p>
       </div>
     </header>
+
+    <p v-if="offline.isOffline" class="text-sm text-muted" data-test="my-trips-offline-note">
+      Нет связи. Показан только поход, который идёт сейчас.
+    </p>
 
     <p v-if="isLoading" class="text-muted" data-test="my-trips-loading">Загружаем походы…</p>
 
@@ -45,7 +79,13 @@ void load()
     </div>
 
     <p v-else-if="trips.length === 0" class="text-muted" data-test="my-trips-empty">
-      Здесь появятся походы, которые ты создашь или в которые тебя позовут. Пока их нет.
+      <template v-if="offline.isOffline">
+        Связи нет, а похода, который идёт сейчас, на устройстве не сохранено. Подключись к сети и
+        открой поход — он сохранится для офлайна.
+      </template>
+      <template v-else>
+        Здесь появятся походы, которые ты создашь или в которые тебя позовут. Пока их нет.
+      </template>
     </p>
 
     <template v-else>
@@ -58,14 +98,14 @@ void load()
       </ul>
 
       <button
-        v-if="remaining > 0"
+        v-if="remainingCount > 0"
         type="button"
         class="cursor-pointer self-center rounded-xl border border-border bg-field px-4 py-2 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
         :disabled="isLoadingMore"
         data-test="my-trips-more"
         @click="loadMore"
       >
-        {{ isLoadingMore ? 'Загружаем…' : `Показать ещё (${remaining})` }}
+        {{ isLoadingMore ? 'Загружаем…' : `Показать ещё (${remainingCount})` }}
       </button>
     </template>
   </section>

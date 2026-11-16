@@ -1,8 +1,14 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 
-import { ApiError } from '@/api/errors'
+import { ApiError, isNetworkProblem } from '@/api/errors'
 import type { RefreshResponse, User } from '@/api/types'
+import { clearAllOfflineData } from '@/offline/cache'
+import {
+  clearOfflineUser,
+  readOfflineUser,
+  saveOfflineUser,
+} from '@/offline/session'
 
 /**
  * Single-flight для refresh.
@@ -60,6 +66,15 @@ export const useAuthStore = defineStore('auth', () => {
   const accessToken = ref<string | null>(null)
   const isBootstrapped = ref(false)
 
+  /**
+   * Сессия поднята из офлайн-копии, токена нет.
+   *
+   * Так PWA в поле открывается на текущем походе, а не на форме входа,
+   * которую без сети всё равно не пройти. Отличить нужно ради честности:
+   * часть действий (профиль, выход) без связи недоступна.
+   */
+  const isOfflineSession = ref(false)
+
   // --- getters ---
   const isAuthenticated = computed(() => user.value !== null)
 
@@ -68,6 +83,8 @@ export const useAuthStore = defineStore('auth', () => {
   function setAuth(nextUser: User, nextToken: string) {
     user.value = nextUser
     accessToken.value = nextToken
+    isOfflineSession.value = false
+    saveOfflineUser(nextUser)
   }
 
   /**
@@ -76,11 +93,19 @@ export const useAuthStore = defineStore('auth', () => {
    */
   function setUser(nextUser: User) {
     user.value = nextUser
+    saveOfflineUser(nextUser)
   }
 
   function clear() {
     user.value = null
     accessToken.value = null
+    isOfflineSession.value = false
+
+    // Выход — это и уход с устройства: чужой профиль и чужие походы
+    // в хранилище остаться не должны. Ждать очистку IndexedDB не нужно,
+    // поэтому не `await`: локальное состояние важнее уборки.
+    clearOfflineUser()
+    void clearAllOfflineData()
   }
 
   /**
@@ -110,18 +135,53 @@ export const useAuthStore = defineStore('auth', () => {
 
   /**
    * Вызывается один раз при старте приложения (из router guard).
-   * Пробует refresh: если юзер залогинен — setAuth, если нет — тишина.
-   * НИКОГДА не падает: сеть/500/«не залогинен» — всё приводит
-   * к одному исходу «не залогинен». isBootstrapped ставится в finally.
+   *
+   * **Офлайн-ветка важнее прежнего поведения.** Раньше любая сетевая ошибка
+   * означала «не залогинен», и PWA в поле выбрасывала на `/auth`. Теперь:
+   *  - сети нет вовсе — поднимаем профиль последнего входа;
+   *  - сеть есть, но refresh не дошёл — тоже поднимаем, если профиль сохранён;
+   *  - сервер ответил 401/4xx/5xx — честно считаем, что вход не пройден.
    */
   async function bootstrap() {
+    const cachedUser = readOfflineUser()
+
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      if (cachedUser) {
+        user.value = cachedUser
+        isOfflineSession.value = true
+      }
+      isBootstrapped.value = true
+      return
+    }
+
+    try {
+      await refreshAccessToken()
+    } catch (problem) {
+      if (isNetworkProblem(problem) && cachedUser) {
+        user.value = cachedUser
+        isOfflineSession.value = true
+      } else {
+        clear()
+      }
+    } finally {
+      isBootstrapped.value = true
+    }
+  }
+
+  /**
+   * Попытка поднять сессию, когда связь вернулась.
+   *
+   * Уже вошедшего не трогаем: у него есть токен. Офлайн-сессия при этом
+   * получает настоящий токен, и правки снова доступны. Неудача ничего
+   * не ломает — остаёмся в офлайн-режиме до следующего события `online`.
+   */
+  async function resumeSession() {
+    if (accessToken.value && user.value) return
+
     try {
       await refreshAccessToken()
     } catch {
-      // Сеть/5xx — просто считаем, что не залогинены. Не шумим.
-      clear()
-    } finally {
-      isBootstrapped.value = true
+      // Связь всё ещё не работает. Профиль из офлайн-копии остаётся.
     }
   }
 
@@ -130,6 +190,7 @@ export const useAuthStore = defineStore('auth', () => {
     user,
     accessToken,
     isBootstrapped,
+    isOfflineSession,
     // getters
     isAuthenticated,
     // actions
@@ -138,5 +199,6 @@ export const useAuthStore = defineStore('auth', () => {
     clear,
     refreshAccessToken,
     bootstrap,
+    resumeSession,
   }
 })
