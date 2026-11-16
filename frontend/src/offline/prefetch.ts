@@ -25,6 +25,7 @@ import { getTripGearLoad, listTripGear } from '@/api/gear'
 import { listDishes } from '@/api/meals'
 import { listTripChecklists } from '@/api/tripChecklists'
 import {
+  fetchTripCacheState,
   fetchGuestTrip,
   fetchMealChecks,
   fetchMealPlan,
@@ -41,7 +42,8 @@ import {
   listTripTypes,
 } from '@/api/trips'
 import { prefetchStateKey, readOfflineState, writeOfflineState } from '@/offline/cache'
-import { isTripOngoing } from '@/offline/isTripOngoing'
+import { isTripCacheable } from '@/offline/cacheable'
+import { writeCachedFreshness } from '@/offline/freshness'
 import type { Trip } from '@/types/trips'
 
 /** Сколько живёт удачный прогрев. */
@@ -64,12 +66,12 @@ export async function readPrefetchedAt(tripId: string): Promise<number | null> {
 /**
  * Сохранить ответы всех вкладок похода.
  *
- * Возвращает время сохранения (мс) или `null`, если поход не идёт или связи
- * нет. Ошибки отдельных запросов не прерывают прогрев: одна недоступная
- * вкладка не должна отменять остальные.
+ * Возвращает время сохранения (мс) или `null`, если поход не подлежит
+ * офлайн-хранению или связи нет. Ошибки отдельных запросов не прерывают
+ * прогрев: одна недоступная вкладка не должна отменять остальные.
  */
 export async function prefetchTripCache(trip: Trip, force = false): Promise<number | null> {
-  if (!isTripOngoing(trip)) return null
+  if (!isTripCacheable(trip)) return null
   if (typeof navigator !== 'undefined' && navigator.onLine === false) return null
 
   const savedAt = await readPrefetchedAt(trip.id)
@@ -112,9 +114,40 @@ export async function prefetchTripCache(trip: Trip, force = false): Promise<numb
     await Promise.allSettled(batch.map((task) => task()))
   }
 
-  const finishedAt = Date.now()
+  const finishedAt = Date.now();
   await writeOfflineState(prefetchKey(id), finishedAt)
+  await rememberServerFreshness(id)
   return finishedAt
+}
+
+/**
+ * Запомнить отметку сервера на момент сохранения копии.
+ *
+ * Без неё следующая сверка не отличит «сохранено ровно то, что на сервере»
+ * от «сохранили что попало»: клиент сравнивал бы серверную отметку с пустым
+ * местом и каждый раз перечитывал поход заново.
+ *
+ * Ошибку запроса глотаем: копия сохранена и без отметки, просто сверка
+ * в следующий раз будет считаться первой.
+ */
+async function rememberServerFreshness(tripId: string): Promise<void> {
+  try {
+    const state = await fetchTripCacheState(tripId)
+    await writeCachedFreshness(tripId, state)
+  } catch {
+    // Связь пропала между вкладками и отметкой — не страшно.
+  }
+}
+
+/**
+ * Перечитать только чаты похода.
+ *
+ * Нужно, когда счётчик содержимого не менялся, а курсоры чатов сдвинулись:
+ * одно сообщение не повод перечитывать все вкладки (`lifecycle.md` §2.2).
+ */
+export async function prefetchTripChats(tripId: string): Promise<void> {
+  await prefetchChats(tripId)
+  await rememberServerFreshness(tripId)
 }
 
 /**

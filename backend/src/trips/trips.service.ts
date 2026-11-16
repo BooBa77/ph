@@ -45,6 +45,7 @@ import {
 import { TripResponseDto } from './dto/trip-response.dto';
 import { TripTypeListDto, TripTypeOptionDto } from './dto/trip-type.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
+import { TripCacheStateDto } from './dto/trip-cache-state.dto';
 import { Conversation } from './entities/conversation.entity';
 import { GeoObject } from './entities/geo-object.entity';
 import { Message } from './entities/message.entity';
@@ -85,6 +86,7 @@ import {
 } from './trip.types';
 import { nextWeekendRange } from './weekend';
 import { TripEventsService } from './trip-events.service';
+import { readTripCacheState } from './trip-cache-state';
 import { recalculateCommonEaterShares } from './trip-finance-shares';
 
 /** Размер страницы ленты по умолчанию и потолок — в DTO. */
@@ -1174,6 +1176,33 @@ export class TripsService {
     if (query.when !== undefined) {
       const condition = this.whenCondition(query.when);
       qb.andWhere(condition.sql, condition.params ?? {});
+    }
+
+    /**
+     * `offline` — набор походов, которые хранятся на устройстве.
+     *
+     * Три условия из `lifecycle.md` §2.1: поход решён (`decided`), я в нём
+     * **иду** (`going`) и он ещё не закончился по плановой дате. Отменённые
+     * отсечены выше, «мечты» и «планирую» не подходят по статусу, а
+     * `maybe`/`helping`/`invited`/`declined` — по участию: кэш нужен тому,
+     * кто в поле, а не тому, кто ещё думает.
+     *
+     * Конец берётся **плановый** (`ends_at`), а не фактический: слоя
+     * «план/факт» больше нет (решение 16.11.2026). Поход, задержавшийся
+     * в горах, из набора выпадет — но уже сохранённую копию клиент
+     * не стирает без подтверждённого возвращения (`offline.md` §12).
+     */
+    if (query.offline === true) {
+      qb.andWhere(`trip.status = 'decided'`)
+        .andWhere(`(trip.ends_at IS NULL OR trip.ends_at >= now())`)
+        .andWhere(
+          `EXISTS (
+             SELECT 1 FROM trip_participants p_going
+              WHERE p_going.trip_id = trip.id
+                AND p_going.user_id = :userId
+                AND p_going.status = 'going'
+           )`,
+        );
     }
 
     /**
@@ -2574,6 +2603,21 @@ export class TripsService {
     }
 
     return chat;
+  }
+
+  /**
+   * Свежесть данных похода для офлайн-копии.
+   *
+   * Отдаёт только отметку, без самих данных: клиент сравнивает её с тем,
+   * что запомнил при сохранении, и решает, перечитывать ли вкладки.
+   * Права — как на чтение похода: гость публичного похода тоже может
+   * посмотреть, не устарела ли его копия.
+   */
+  async cacheState(userId: string, id: number): Promise<TripCacheStateDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.findVisibleTrip(manager, userId, id);
+
+    return readTripCacheState(manager, trip.id);
   }
 
   /**

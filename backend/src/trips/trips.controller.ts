@@ -24,6 +24,7 @@ import {
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import { CreateTripDto } from './dto/create-trip.dto';
+import { TripCacheStateDto } from './dto/trip-cache-state.dto';
 import {
   SendTripMessageDto,
   TripChatListDto,
@@ -182,6 +183,23 @@ export class TripsController {
       targetUserId,
       dto,
     );
+  }
+
+  /**
+   * Отметка свежести похода для офлайн-копии.
+   *
+   * Дешёвый запрос: два числа и курсоры чатов. Клиент сравнивает их
+   * с тем, что помнит на момент сохранения копии, и решает, перечитывать
+   * ли поход. Объявлен до `GET :id`, как и остальные «подпути».
+   */
+  @Get(':id/cache-state')
+  @ApiOperation({ summary: 'Свежесть данных похода для офлайн-копии' })
+  @ApiOkResponse({ type: TripCacheStateDto })
+  async cacheState(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripCacheStateDto> {
+    return this.tripsService.cacheState(authUser.id, id);
   }
 
   /**

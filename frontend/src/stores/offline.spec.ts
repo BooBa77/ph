@@ -27,6 +27,11 @@ vi.mock('@/offline/cache', () => ({
   clearAllOfflineData: mocks.clearAllOfflineData,
   setCacheableTrips: vi.fn(),
 }))
+// Очередь дневника — единственная офлайн-запись: пустая, чтобы правило
+// удаления проверялось без IndexedDB.
+vi.mock('@/offline/diaryOutbox', () => ({
+  readDiaryOutbox: vi.fn(async () => []),
+}))
 vi.mock('@/stores/auth', () => ({
   useAuthStore: () => ({ resumeSession: mocks.resumeSession }),
 }))
@@ -108,46 +113,48 @@ describe('стор офлайна', () => {
     expect(store.currentTrips[0]?.cachedAt).toBe(1_700_000_000_000)
   })
 
-  it('спрашивает у сервера именно идущие походы и сохраняет их', async () => {
+  it('спрашивает у сервера походы для офлайна и сохраняет их', async () => {
     const store = useOfflineStore()
     mocks.listTrips.mockResolvedValue({ trips: [ongoing(), finished()], total: 2 })
 
     await store.refreshCurrentTrips(true)
 
-    expect(mocks.listTrips).toHaveBeenCalledWith({ mine: true, when: 'ongoing', limit: 20 })
+    expect(mocks.listTrips).toHaveBeenCalledWith({ mine: true, offline: true, limit: 20 })
     expect(store.currentTripIds).toEqual(['1'])
     expect(mocks.writeOfflineState).toHaveBeenCalledWith(CURRENT_TRIPS_KEY, [
       expect.objectContaining({ id: '1', name: 'Витязь' }),
     ])
   })
 
-  it('поход перестал быть текущим — данные с устройства убираются', async () => {
+  it('поход перестал приходить с сервера, но ещё идёт — копия остаётся', async () => {
     const store = useOfflineStore()
-    await store.setCurrentTrips([ongoing({ id: 'old' })])
+    await store.setCurrentTrips([ongoing(), ongoing({ id: 'old' })])
 
     await store.setCurrentTrips([ongoing()])
 
-    expect(store.currentTripIds).toEqual(['1'])
-    expect(mocks.clearTripCache).toHaveBeenCalledWith('old')
+    // «old» ещё идёт: копию не выбрасываем только потому, что сервер
+    // перестал присылать его в наборе для офлайна.
+    expect(store.currentTripIds).toEqual(['1', 'old'])
+    expect(mocks.clearTripCache).not.toHaveBeenCalledWith('old')
   })
 
-  it('открытый поход запоминается, а закончившийся — убирается', async () => {
+  it('открытый поход запоминается, а давно закончившийся при запуске убирается', async () => {
     const store = useOfflineStore()
 
     await store.rememberTrip(ongoing())
     expect(store.currentTripIds).toEqual(['1'])
 
+    // Незакончившийся поход запомнить можно, давно закончившийся — нет.
     await store.rememberTrip(finished())
     expect(store.currentTripIds).toEqual(['1'])
 
-    // Сохранённая запись, которая уже закончилась, при чтении не считается
-    // текущей — и убирается при открытии этого похода.
+    // Сохранённая копия, срок которой истёк, убирается при запуске
+    // со связью — иначе она висела бы на телефоне вечно.
     mocks.readOfflineState.mockResolvedValue([offlineTrip(finished())])
     const restored = useOfflineStore()
     await restored.init()
-    expect(restored.currentTripIds).toEqual([])
 
-    await restored.rememberTrip(finished())
+    expect(restored.currentTripIds).toEqual([])
     expect(mocks.clearTripCache).toHaveBeenCalledWith('2')
   })
 

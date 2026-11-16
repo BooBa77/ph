@@ -56,6 +56,15 @@ const CACHEABLE_PATHS: readonly RegExp[] = [
   /^\/objects\?/,
 ]
 
+/**
+ * Пути, которые подходят под общее правило, но кешировать их нельзя.
+ *
+ * `cache-state` — сама отметка свежести: устаревшая копия сказала бы
+ * «данные актуальны» ровно тогда, когда это неправда. В офлайне отметку
+ * не спрашивают вовсе — там не с чем сверять.
+ */
+const NEVER_CACHEABLE: readonly RegExp[] = [/^\/trips\/\d+\/cache-state$/]
+
 /** Идентификатор похода из пути запроса. */
 export function tripIdFromPath(path: string): string | null {
   const match = TRIP_PATH.exec(path)
@@ -64,6 +73,7 @@ export function tripIdFromPath(path: string): string | null {
 
 /** Нужно ли сохранять ответ на этот путь. */
 export function isCacheablePath(path: string): boolean {
+  if (NEVER_CACHEABLE.some((pattern) => pattern.test(path))) return false
   return CACHEABLE_PATHS.some((pattern) => pattern.test(path))
 }
 
@@ -94,6 +104,16 @@ function isTripAllowed(tripId: string | null): boolean {
 /** Ключ отметки о прогреве похода. Живёт в том же хранилище состояния. */
 export function prefetchStateKey(tripId: string): string {
   return `prefetch:${tripId}`
+}
+
+/**
+ * Ключ отметки свежести: что клиент запомнил о сохранённой копии.
+ *
+ * Лежит рядом с отметкой прогрева и удаляется вместе с ней — иначе после
+ * очистки кеша осталась бы «свежая» отметка без данных.
+ */
+export function freshnessStateKey(tripId: string): string {
+  return `freshness:${tripId}`
 }
 
 /**
@@ -136,6 +156,9 @@ export async function clearTripCache(tripId: string): Promise<void> {
     // Без сброса отметки следующий прогрев решил бы, что кеш ещё тёплый,
     // и не сохранил бы вкладки заново. Так уже случалось 16.11.2026.
     deleteOfflineState(prefetchStateKey(tripId)),
+    // Отметка свежести без данных бессмысленна: следующее сохранение
+    // начнёт сверку с чистого листа.
+    deleteOfflineState(freshnessStateKey(tripId)),
   ])
 }
 

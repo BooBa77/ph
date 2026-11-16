@@ -125,6 +125,18 @@ export class TripListQueryDto {
   organizerUserId?: string;
 
   @ApiProperty({
+    description:
+      'true — только походы для офлайн-копии: решённые, не закончившиеся ' +
+      'и где я иду; false — обычная лента (параметр не нужен)',
+    example: true,
+    required: false,
+  })
+  @IsOptional()
+  @queryBoolean()
+  @IsBoolean({ message: 'Признак «для офлайна» должен быть true или false' })
+  offline?: boolean;
+
+  @ApiProperty({
     description: 'Сколько походов вернуть',
     example: 20,
     default: 20,

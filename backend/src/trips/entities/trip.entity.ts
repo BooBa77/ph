@@ -322,6 +322,28 @@ export class Trip {
   @Column({ name: 'gear_sections_seeded_at', type: 'timestamptz', nullable: true })
   gearSectionsSeededAt: Date | null;
 
+  /**
+   * Свежесть **содержимого** похода для офлайн-копии (16.11.2026).
+   *
+   * `updated_at` ниже двигается только правкой шапки: питание, снаряжение,
+   * деньги и состав живут в других таблицах. Эти две колонки поднимает
+   * приложение (`touchTrip`) на любую правку похода, поэтому они и отвечают
+   * на вопрос «копия на телефоне ещё актуальна?».
+   *
+   * `bigint` в Node приезжает строкой — счётчик сравнивается как строка,
+   * и точность больше 2^53 значения не имеет.
+   */
+  @Column({ name: 'content_revision', type: 'bigint', default: 0 })
+  contentRevision: string;
+
+  /** То же событие, но по-человечески: «данные на 14:32». */
+  @Column({
+    name: 'content_updated_at',
+    type: 'timestamptz',
+    default: () => 'now()',
+  })
+  contentUpdatedAt: Date;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 

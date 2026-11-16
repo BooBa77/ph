@@ -29,6 +29,7 @@ import {
   writeOfflineState,
 } from '@/offline/cache'
 import { isIndexedDbAvailable } from '@/offline/indexedDb'
+import { isTripCacheable, keepOfflineCopy } from '@/offline/cacheable'
 import { isTripOngoing } from '@/offline/isTripOngoing'
 import type { Trip } from '@/types/trips'
 
@@ -95,15 +96,40 @@ export const useOfflineStore = defineStore('offline', () => {
   const savedTrips = ref<OfflineTrip[]>([])
 
   /**
-   * «Текущие» считаются из сохранённых **в момент чтения**.
+   * Походы, доступные без связи.
    *
-   * Хранить флаг «текущий» нельзя: поход заканчивается сам, без запроса
-   * к серверу, и вчерашняя запись осталась бы доступной в офлайне. Поэтому
-   * список в хранилище — это кандидаты, а решение принимает `isTripOngoing`
-   * здесь и сейчас. Заодно это чинит случай, когда даты похода поправили
-   * с другого устройства.
+   * Это **все сохранённые копии**, а не только идущие сейчас: группа,
+   * задержавшаяся в горах, не должна потерять свой поход в тот момент,
+   * когда он по плану закончился. Копия живёт, пока её не удалит правило
+   * `cacheable.ts` (связь + срок + пустая очередь), — и это же правило
+   * решает, когда поход перестаёт быть доступным.
+   *
+   * Порядок — идущие сначала: на вопрос «куда меня ведёт офлайн-режим»
+   * первым должен отвечать поход, который идёт, а не вчерашний.
    */
-  const currentTrips = computed(() => savedTrips.value.filter((item) => isTripOngoing(item.trip)))
+  const currentTrips = computed(() => {
+    const now = Date.now()
+    return [...savedTrips.value].sort((left, right) => {
+      const leftRank = isTripOngoing(left.trip, now) ? 0 : 1
+      const rightRank = isTripOngoing(right.trip, now) ? 0 : 1
+      if (leftRank !== rightRank) return leftRank - rightRank
+
+      const leftStart = left.startsAt ? Date.parse(left.startsAt) : Infinity
+      const rightStart = right.startsAt ? Date.parse(right.startsAt) : Infinity
+      return leftStart - rightStart
+    })
+  })
+
+  /**
+   * Походы, которые **сейчас** подлежат офлайн-хранению.
+   *
+   * Отличаются от `currentTrips`: закончившийся, но ещё не удалённый поход
+   * открыть можно, а вот снова прогревать его и записывать в него новые
+   * ответы незачем — он больше не изменится по нашей воле.
+   */
+  const cacheableTripIds = computed(() =>
+    savedTrips.value.filter((item) => isTripCacheable(item.trip)).map((item) => item.id),
+  )
 
   /** Состояние прочитано из хранилища: guard может на него опираться. */
   const isReady = ref(false)
@@ -135,8 +161,14 @@ export const useOfflineStore = defineStore('offline', () => {
       const stored = await readOfflineState<OfflineTrip[]>(CURRENT_TRIPS_KEY)
       if (Array.isArray(stored)) savedTrips.value = stored.filter(isOfflineTrip)
 
-      // С этого момента кешируем ответы только текущих походов.
-      setCacheableTrips(currentTripIds.value)
+      // Есть связь — можно прибрать копии, которым уже пора уходить.
+      // Без связи не трогаем ничего: именно эта копия, возможно, сейчас
+      // единственная, что у группы есть.
+      if (isOnline.value) await pruneExpiredCopies()
+
+      // С этого момента кешируем ответы только тех походов, что подлежат
+      // офлайн-хранению: закончившиеся копии дочитывать незачем.
+      setCacheableTrips(cacheableTripIds.value)
 
       // Вернулись на вкладку — тихо перепроверяем, какие походы идут.
       // Это же убирает из хранилища поход, даты которого поправили.
@@ -150,6 +182,24 @@ export const useOfflineStore = defineStore('offline', () => {
     })()
 
     return initPromise
+  }
+
+  /** Убрать копии, которым пора уходить по правилу `cacheable.ts`. */
+  async function pruneExpiredCopies(): Promise<void> {
+    const kept: OfflineTrip[] = []
+    const dropped: string[] = []
+
+    for (const item of savedTrips.value) {
+      if (await keepOfflineCopy(item.trip)) kept.push(item)
+      else dropped.push(item.id)
+    }
+
+    if (dropped.length === 0) return
+
+    savedTrips.value = kept
+    setCacheableTrips(cacheableTripIds.value)
+    await writeOfflineState(CURRENT_TRIPS_KEY, kept)
+    await Promise.all(dropped.map((id) => clearTripCache(id)))
   }
 
   function bindNetworkListeners(): void {
@@ -181,11 +231,12 @@ export const useOfflineStore = defineStore('offline', () => {
   }
 
   /**
-   * Спросить у сервера, какие походы идут сейчас, и сохранить их.
+   * Спросить у сервера, какие походы хранить на устройстве, и сохранить их.
    *
-   * `when: 'ongoing'` — серверный фильтр из `trips.service.ts`; локальное
-   * `isTripOngoing` дополнительно проверяет запись (и не даёт сохранить
-   * отменённый поход).
+   * `offline: true` — серверный фильтр: `decided`, я `going`, поход ещё
+   * не закончился (`trips.service.ts`). Локальное `isTripCacheable`
+   * дополнительно проверяет саму запись и не даёт сохранить отменённый
+   * поход или чужой.
    */
   async function refreshCurrentTrips(force = false): Promise<void> {
     if (!isOnline.value) return
@@ -196,7 +247,7 @@ export const useOfflineStore = defineStore('offline', () => {
 
     refreshPromise = (async () => {
       try {
-        const response = await listTrips({ mine: true, when: 'ongoing', limit: 20 })
+        const response = await listTrips({ mine: true, offline: true, limit: 20 })
         await setCurrentTrips(response.trips)
       } catch {
         // Сети нет или сервер недоступен — остаёмся на сохранённом списке.
@@ -209,37 +260,53 @@ export const useOfflineStore = defineStore('offline', () => {
   }
 
   /**
-   * Заменить список текущих походов.
+   * Заменить список походов на устройстве.
    *
-   * Походы, переставшие быть текущими, удаляются вместе с кешем ответов:
-   * хранить в телефоне чужие походы незачем.
+   * Походы, переставшие подходить, удаляются вместе с кешем ответов — но
+   * **не сразу**. Удаление разрешено, когда есть связь (сюда без связи
+   * не попадают), срок похода истёк и очередь отправлена
+   * (`cacheable.ts`, `shouldDropOfflineCopy`). Задержавшаяся группа иначе
+   * потеряла бы копию ровно тогда, когда она нужнее всего.
    */
   async function setCurrentTrips(trips: Trip[]): Promise<void> {
     const previous = new Map(savedTrips.value.map((item) => [item.id, item]))
-    const ongoing = trips.filter((trip) => isTripOngoing(trip))
+    const ongoing = trips.filter((trip) => isTripCacheable(trip))
 
-    const next = ongoing.map((trip) => toOfflineTrip(trip, previous.get(trip.id)?.cachedAt ?? null))
-    const nextIds = new Set(next.map((item) => item.id))
-    const removed = savedTrips.value.filter((item) => !nextIds.has(item.id)).map((item) => item.id)
+    const fresh = ongoing.map((trip) =>
+      toOfflineTrip(trip, previous.get(trip.id)?.cachedAt ?? null),
+    )
+    const freshIds = new Set(fresh.map((item) => item.id))
 
-    savedTrips.value = next
-    setCacheableTrips(currentTripIds.value)
-    await writeOfflineState(CURRENT_TRIPS_KEY, next)
+    const kept: OfflineTrip[] = []
+    const removed: string[] = []
+
+    for (const item of savedTrips.value) {
+      if (freshIds.has(item.id)) continue
+
+      if (await keepOfflineCopy(item.trip)) kept.push(item)
+      else removed.push(item.id)
+    }
+
+    savedTrips.value = [...fresh, ...kept]
+    setCacheableTrips(cacheableTripIds.value)
+    await writeOfflineState(CURRENT_TRIPS_KEY, savedTrips.value)
     await Promise.all(removed.map((id) => clearTripCache(id)))
   }
 
   /**
    * Запомнить поход, который сейчас открыли.
    *
-   * Нужен на случай, когда серверный список текущих ещё не обновлялся:
-   * человек открыл поход, он идёт — значит доступен и в офлайне.
+   * Нужен на случай, когда серверный список ещё не обновлялся: человек
+   * открыл поход, который подлежит офлайн-хранению, — значит он доступен
+   * и без связи.
    */
   async function rememberTrip(trip: Trip): Promise<void> {
     const existing = savedTrips.value.find((item) => item.id === trip.id)
 
-    if (!isTripOngoing(trip)) {
-      // Поход закончился: убираем из сохранённых, кеш чистим.
-      if (existing) {
+    if (!isTripCacheable(trip)) {
+      // Поход перестал подходить: отменён или закончился. Удаляем, только
+      // если правило хранения разрешает, — иначе оставляем копию.
+      if (existing && !(await keepOfflineCopy(trip))) {
         savedTrips.value = savedTrips.value.filter((item) => item.id !== trip.id)
         await writeOfflineState(CURRENT_TRIPS_KEY, savedTrips.value)
         await clearTripCache(trip.id)
@@ -252,8 +319,8 @@ export const useOfflineStore = defineStore('offline', () => {
       ? savedTrips.value.map((item) => (item.id === trip.id ? saved : item))
       : [...savedTrips.value, saved]
 
-    // Поход идёт — теперь его ответы можно хранить; прогрев пойдёт следом.
-    setCacheableTrips(currentTripIds.value)
+    // Поход подходит — теперь его ответы можно хранить; прогрев пойдёт следом.
+    setCacheableTrips(cacheableTripIds.value)
     await writeOfflineState(CURRENT_TRIPS_KEY, savedTrips.value)
   }
 
@@ -269,7 +336,7 @@ export const useOfflineStore = defineStore('offline', () => {
     if (changed) await writeOfflineState(CURRENT_TRIPS_KEY, savedTrips.value)
   }
 
-  /** Идёт ли поход сейчас и сохранён ли он. */
+  /** Сохранён ли поход на устройстве (значит, доступен и без связи). */
   function isCurrentTrip(tripId: string): boolean {
     return currentTrips.value.some((item) => item.id === tripId)
   }
@@ -294,6 +361,7 @@ export const useOfflineStore = defineStore('offline', () => {
     isSupported,
     currentTrips,
     currentTripIds,
+    cacheableTripIds,
     hasCurrentTrips,
     primaryTrip,
     init,

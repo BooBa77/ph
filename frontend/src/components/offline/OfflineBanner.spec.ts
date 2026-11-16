@@ -16,6 +16,7 @@ import type { Trip } from '@/types/trips'
  */
 const TRIP = {
   id: '679',
+  status: 'decided',
   goalObject: { id: '1', name: 'Витязь', type: 'скальник', url: null },
   startsAt: '2020-01-01T00:00:00.000Z',
   endsAt: null,
@@ -55,14 +56,16 @@ describe('OfflineBanner', () => {
     expect(wrapper.find('[data-test="offline-banner"]').exists()).toBe(false)
   })
 
-  it('в офлайне объясняет режим и ведёт в текущий поход', async () => {
+  it('в офлайне объясняет режим и ведёт в сохранённый поход', async () => {
     const { wrapper, store } = await open()
     store.isOnline = false
     await store.rememberTrip(TRIP)
     await wrapper.vm.$nextTick()
 
     expect(wrapper.find('[data-test="offline-banner"]').text()).toContain('Нет связи')
-    expect(wrapper.find('[data-test="offline-banner"]').text()).toContain('только текущий поход')
+    expect(wrapper.find('[data-test="offline-banner"]').text()).toContain(
+      'Доступны сохранённые походы',
+    )
 
     const link = wrapper.find('[data-test="offline-banner-link"]')
     expect(link.text()).toContain('Витязь')

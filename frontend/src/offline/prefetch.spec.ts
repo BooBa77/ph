@@ -12,6 +12,7 @@ import type { Trip } from '@/types/trips'
  */
 const TRIP = {
   id: '679',
+  status: 'decided',
   goalObject: { id: '1', name: 'Витязь', type: 'скальник', url: null },
   startsAt: '2020-01-01T00:00:00.000Z',
   endsAt: null,

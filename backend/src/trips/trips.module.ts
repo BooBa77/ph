@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR } from '@nestjs/core';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { CalendarActivityType } from '../calendar/entities/activity-type.entity';
@@ -36,6 +37,7 @@ import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { Vehicle } from './entities/vehicle.entity';
 import { TripsController } from './trips.controller';
+import { TripContentInterceptor } from './trip-content.interceptor';
 import { TripEventsService } from './trip-events.service';
 import { TripsService } from './trips.service';
 import { TripMealsController } from './trip-meals.controller';
@@ -132,6 +134,13 @@ import { ObjectsService } from './objects.service';
     ConversationsController,
   ],
   providers: [
+    // Глобальный перехватчик: поднимает отметку свежести похода на любой
+    // правке `/trips/:id/...`. Покрытие задаётся маршрутом, а не списком
+    // сервисов — см. `trip-content.interceptor.ts`.
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: TripContentInterceptor,
+    },
     TripsService,
     TripEventsService,
     TripFinanceService,

@@ -3,10 +3,11 @@ import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
-import { fetchTripTabs, getTrip, updateTrip } from '@/api/trips'
+import { fetchTripCacheState, fetchTripTabs, getTrip, updateTrip } from '@/api/trips'
 import { getPublicUser, type PublicUser } from '@/api/users'
-import { isTripOngoing } from '@/offline/isTripOngoing'
-import { prefetchTripCache } from '@/offline/prefetch'
+import { isTripCacheable } from '@/offline/cacheable'
+import { isFreshnessEqual, readCachedFreshness } from '@/offline/freshness'
+import { prefetchTripCache, prefetchTripChats } from '@/offline/prefetch'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
 import { useOfflineStore } from '@/stores/offline'
@@ -174,16 +175,31 @@ const isOrganizer = computed(
  */
 const canOrganize = computed(() => isOrganizer.value && offline.isOnline)
 
-/** Идёт ли поход по датам прямо сейчас — по тому же правилу, что у сервера. */
-const isCurrentTrip = computed(() => trip.value !== null && isTripOngoing(trip.value))
-
 /** Сохранённая на устройстве копия этого похода. */
 const offlineCopy = computed(() =>
   trip.value ? offline.currentTripById(trip.value.id) : null,
 )
 
+/**
+ * Есть ли копия похода (или она вот-вот появится).
+ *
+ * Считается не по «идёт сейчас»: группа, задержавшаяся в горах, должна
+ * видеть, что копия у неё есть, даже когда по плану поход уже кончился.
+ */
+const hasOfflineCopy = computed(
+  () => offlineCopy.value !== null || (trip.value !== null && isTripCacheable(trip.value)),
+)
+
 /** Когда поход сохраняли для офлайна: свежий прогрев важнее старой отметки. */
 const prefetchedAt = ref<number | null>(null)
+
+/**
+ * Копию сверяли с сервером в этой сессии.
+ *
+ * Подпись «проверено сейчас» — это не украшение: без неё человек не знает,
+ * устарела ли копия, которую он откроет в поле через день.
+ */
+const isFresh = ref(false)
 
 /** Идёт сохранение копии — кнопка «Обновить» заблокирована. */
 const isPrefetching = ref(false)
@@ -202,7 +218,14 @@ const savedText = computed(() => {
 })
 
 /**
- * Сохранить поход для офлайна.
+ * Сверить копию с сервером и, если данные разошлись, перечитать.
+ *
+ * Порядок именно такой: сначала отметка свежести, потом данные. Если
+ * отметить копию раньше, чем прочитать содержимое, между двумя запросами
+ * успеет пройти чужая правка, и копия навсегда сочтёт себя свежей.
+ *
+ * Счётчик содержимого не сдвинулся, а курсоры чатов — да: перечитываем
+ * только чаты. Одно сообщение не повод дёргать все вкладки.
  *
  * Запускается тихо после загрузки страницы: человек открыл поход — данные
  * уже должны лежать на устройстве к моменту, когда связь пропадёт.
@@ -213,11 +236,28 @@ async function prepareOfflineCopy(next: Trip) {
 
   try {
     await offline.rememberTrip(next)
-    const at = await prefetchTripCache(next)
-    if (at === null) return
+    if (!isTripCacheable(next)) return
 
-    prefetchedAt.value = at
-    await offline.markSaved(next.id, at)
+    // Отметка сервера нужна только для решения; сама по себе она не кешируется.
+    const server = await fetchTripCacheState(next.id).catch(() => null)
+    const cached = server ? await readCachedFreshness(next.id) : null
+
+    const changed = server !== null && (cached === null || !isFreshnessEqual(cached, server))
+    const chatsOnly = changed && cached?.contentRevision === server?.contentRevision
+
+    if (chatsOnly) {
+      await prefetchTripChats(next.id)
+      prefetchedAt.value = Date.now()
+      await offline.markSaved(next.id, prefetchedAt.value)
+    } else {
+      const at = await prefetchTripCache(next, changed)
+      if (at === null) return
+
+      prefetchedAt.value = at
+      await offline.markSaved(next.id, at)
+    }
+
+    if (server !== null) isFresh.value = true
   } catch {
     // Прогрев — улучшение: не сохранилось, значит просто не будет офлайн-копии.
   }
@@ -232,6 +272,7 @@ async function refreshOfflineCopy() {
     const at = await prefetchTripCache(trip.value, true)
     if (at !== null) {
       prefetchedAt.value = at
+      isFresh.value = true
       await offline.markSaved(trip.value.id, at)
     }
   } finally {
@@ -437,21 +478,27 @@ async function toggleRecruitment() {
         </p>
 
         <!--
-          Офлайн-копия текущего похода. Строка честно говорит, сохранены ли
-          данные на устройстве: человек в поле должен знать, откроется ли
-          поход, когда пропадёт связь.
+          Офлайн-копия похода. Строка честно говорит, сохранены ли данные
+          на устройстве и когда их в последний раз сверяли с сервером:
+          человек в поле должен знать, откроется ли поход, когда пропадёт
+          связь, и насколько свежа будет эта копия.
         -->
         <p v-if="offline.isOffline" class="text-sm text-muted" data-test="trip-offline-note">
-          Нет связи: поход открыт из сохранённой копии. Изменения недоступны.
+          Нет связи: поход открыт из сохранённой копии.
+          <template v-if="savedAt"> Сохранено {{ savedText }}, могли быть изменения.</template>
+          Изменения недоступны.
         </p>
 
         <p
-          v-else-if="isCurrentTrip"
+          v-else-if="hasOfflineCopy"
           class="flex flex-wrap items-center gap-2 text-sm text-muted"
           data-test="trip-offline-status"
         >
           <span v-if="savedAt">Сохранён для офлайна: {{ savedText }}</span>
           <span v-else>Сохраняем для офлайна…</span>
+          <span v-if="isFresh" class="text-muted" data-test="trip-offline-fresh">
+            · проверено сейчас
+          </span>
 
           <button
             type="button"

@@ -10,6 +10,7 @@ import type {
   RoleOption,
   RouteNightInput,
   Trip,
+  TripCacheState,
   TripChat,
   TripListQuery,
   TripListResponse,
@@ -101,6 +102,17 @@ export function buildTripListQuery(query: TripListQuery = {}): string {
  */
 export async function listTrips(query: TripListQuery = {}): Promise<TripListResponse> {
   return apiFetch<TripListResponse>(`/trips${buildTripListQuery(query)}`)
+}
+
+/**
+ * GET /api/trips/:id/cache-state
+ *
+ * Отметка свежести похода для офлайн-копии: счётчик правок и курсоры чатов.
+ * Ответ **не кешируется** (`offline/cache.ts`): устаревшая отметка сказала
+ * бы «копия свежая» ровно тогда, когда это неправда.
+ */
+export async function fetchTripCacheState(tripId: string): Promise<TripCacheState> {
+  return apiFetch<TripCacheState>(`/trips/${tripId}/cache-state`)
 }
 
 /**

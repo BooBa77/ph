@@ -15,6 +15,7 @@ import type { Trip } from '@/types/trips'
  */
 const TRIP = {
   id: '679',
+  status: 'decided',
   goalObject: { id: '1', name: 'Витязь', type: 'скальник', url: null },
   startsAt: '2020-01-01T00:00:00.000Z',
   endsAt: null,
@@ -52,7 +53,7 @@ describe('OfflineView', () => {
 
     const empty = wrapper.find('[data-test="offline-empty"]')
     expect(empty.exists()).toBe(true)
-    expect(empty.text()).toContain('не сохранён')
+    expect(empty.text()).toContain('сохранённых походов на устройстве нет')
     expect(wrapper.find('[data-test="offline-trip-list"]').exists()).toBe(false)
   })
 

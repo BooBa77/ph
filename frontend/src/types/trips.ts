@@ -318,6 +318,12 @@ export interface TripListQuery {
   when?: TripWhen
   mine?: boolean
   organizerUserId?: string
+  /**
+   * Только походы, которые хранятся на устройстве: решённые, ещё
+   * не закончившиеся и где я иду. Считает сервер (`TripListQueryDto.offline`),
+   * потому что «иду» — это статус участия, а его в DTO похода нет.
+   */
+  offline?: boolean
   limit?: number
   offset?: number
 }
@@ -326,6 +332,25 @@ export interface TripListQuery {
 export interface TripListResponse {
   trips: Trip[]
   total: number
+}
+
+/** Курсор свежести одного чата: id последнего сообщения. */
+export interface TripChatCursor {
+  kind: ChatKind
+  lastMessageId: string | null
+}
+
+/**
+ * Ответ `GET /api/trips/:id/cache-state` — «насколько свежа копия».
+ *
+ * Не данные похода: только отметка для сверки кэша. `contentRevision` —
+ * строка, потому что в базе `bigint`; сравнивается как строка, чтобы
+ * не терять точность на больших значениях.
+ */
+export interface TripCacheState {
+  contentRevision: string
+  contentUpdatedAt: string
+  chats: TripChatCursor[]
 }
 
 /**

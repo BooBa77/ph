@@ -77,6 +77,12 @@ describe('isCacheablePath', () => {
     expect(isCacheablePath('/gear')).toBe(false)
     expect(isCacheablePath('/trips-extra')).toBe(false)
   })
+
+  it('не кеширует саму отметку свежести', () => {
+    // Устаревшая отметка сказала бы «копия свежая» ровно тогда,
+    // когда это неправда.
+    expect(isCacheablePath('/trips/679/cache-state')).toBe(false)
+  })
 })
 
 describe('tripIdFromPath', () => {

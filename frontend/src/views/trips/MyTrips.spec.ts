@@ -148,7 +148,12 @@ describe('MyTrips', () => {
   })
 
   it('в офлайне показывает только сохранённый текущий поход и не зовёт API', async () => {
-    const savedTrip = trip({ id: '679', startsAt: '2020-01-01T00:00:00.000Z', endsAt: null })
+    const savedTrip = trip({
+      id: '679',
+      status: 'decided',
+      startsAt: '2020-01-01T00:00:00.000Z',
+      endsAt: null,
+    })
     const saved: OfflineTrip = {
       id: '679',
       name: 'Витязь',
