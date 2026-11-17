@@ -27,7 +27,8 @@ import { SmtpService } from './../src/email/services/smtp.service';
  *    не участник — 404.
  * 4. **Присутствие видно составу и гостям** в `GET /participants`
  *    и `GET /guest`.
- * 5. **Организатор не может быть `declined`**, участник — может.
+ * 5. **Организатор тоже может быть `declined`** (решение 17.11.2026:
+ *    организовывать и не ходить — законно).
  *
  * Поход и состав заводятся напрямую в базе: правила походов проверены
  * в `trips.e2e-spec.ts`, здесь важно поведение присутствия.
@@ -43,6 +44,7 @@ describe('Присутствие на маршруте (e2e)', () => {
   let maybeToken: string;
   let invitedToken: string;
   let strangerToken: string;
+  let virtualId: string;
 
   let objectId: string;
   let tripId: string;
@@ -175,6 +177,26 @@ describe('Присутствие на маршруте (e2e)', () => {
       [tripId, organizerId, memberId, maybe.id, invited.id, declined.id],
     );
 
+    /**
+     * Человек без аккаунта в составе: за него возвращение ставит группа.
+     * Он не может войти и отметиться сам — единственное исключение из
+     * правила «возвращение только своё» (17.11.2026).
+     */
+    virtualId = (
+      await dataSource.query(
+        `INSERT INTO users (display_name, is_virtual, virtual_owner_user_id)
+         VALUES ('Дядя Витя (присутствие)', true, $1) RETURNING id`,
+        [memberId],
+      )
+    )[0].id;
+    createdUserIds.push(virtualId);
+
+    await dataSource.query(
+      `INSERT INTO trip_participants (trip_id, user_id, status)
+       VALUES ($1, $2, 'going')`,
+      [tripId, virtualId],
+    );
+
     // Смена статуса пишет системное сообщение в членский чат: поход,
     // заведённый напрямую в базе, должен иметь чаты, как настоящий.
     await dataSource.query(
@@ -223,13 +245,21 @@ describe('Присутствие на маршруте (e2e)', () => {
     expect(row(guest.body, memberId)?.presenceStatus).toBe('route');
   });
 
-  it('любой идущий отмечает другого: «вернулся» и подпись автора', async () => {
-    // Выход у организатора не отмечен — «вернулся» обязан поставить и его.
-    const response = await mark(memberToken, organizerId, 'returned').expect(200);
+  it('приход другого отмечает любой, возвращение за живого — нет', async () => {
+    // Приход за другого — можно: телефон мог остаться дома.
+    const route = await mark(memberToken, organizerId, 'route').expect(200);
+    expect(route.body.presenceSource).toBe('other');
+
+    // Возвращение за живого участника — 400: он отмечает его сам.
+    const returned = await mark(memberToken, organizerId, 'returned').expect(400);
+    expect(returned.body.message).toContain('сам');
+  });
+
+  it('человеку без аккаунта возвращение ставит группа', async () => {
+    // У Дяди Вити нет входа: вернуться за него может любой идущий.
+    const response = await mark(memberToken, virtualId, 'returned').expect(200);
 
     expect(response.body.presenceStatus).toBe('returned');
-    expect(response.body.startedAt).not.toBeNull();
-    expect(response.body.returnedAt).not.toBeNull();
     expect(response.body.presenceSource).toBe('other');
     expect(response.body.presenceUpdatedByUserId).toBe(memberId);
   });
@@ -276,14 +306,16 @@ describe('Присутствие на маршруте (e2e)', () => {
     await mark(memberToken, memberId, 'сдал').expect(400);
   });
 
-  it('организатор не может быть «не иду», участник — может', async () => {
+  it('организатор тоже может быть «не иду»', async () => {
+    // Решение 16.11.2026 отменено заказчиком 17.11.2026: организовывать
+    // и не ходить — законно (например, по здоровью).
     const organizer = await request(app.getHttpServer())
       .patch(`/api/trips/${tripId}/participants/me`)
       .set('Authorization', `Bearer ${organizerToken}`)
       .send({ status: 'declined' })
-      .expect(400);
+      .expect(200);
 
-    expect(organizer.body.message).toContain('Организатор');
+    expect(organizer.body.status).toBe('declined');
 
     await request(app.getHttpServer())
       .patch(`/api/trips/${tripId}/participants/me`)

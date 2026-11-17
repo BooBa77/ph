@@ -213,7 +213,8 @@ export async function listParticipants(tripId: string): Promise<TripParticipant[
  *
  * `declined` здесь законен и означает «не иду», но человек остаётся
  * в списке состава: состав — это история похода, а не только те, кто
- * в итоге пошёл. Организатору сервер `declined` не разрешает (17.11.2026).
+ * в итоге пошёл. Организатору доступно то же: он может организовывать
+ * и не идти (решение заказчика 17.11.2026).
  */
 export async function setMyStatus(
   tripId: string,

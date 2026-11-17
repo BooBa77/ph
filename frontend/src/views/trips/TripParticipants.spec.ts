@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { User } from '@/api/types'
 import { ApiError } from '@/api/errors'
 import { useAuthStore } from '@/stores/auth'
+import { useOfflineStore } from '@/stores/offline'
 import type { Trip, TripParticipant, TripRequest } from '@/types/trips'
 import TripParticipants from '@/views/trips/TripParticipants.vue'
 
@@ -674,5 +675,47 @@ describe('TripParticipants', () => {
     ])
 
     expect(wrapper.find('[data-test="presence-mark-u-3"]').exists()).toBe(false)
+  })
+
+  it('чужое возвращение не предлагается, а приход — предлагается', async () => {
+    signIn(ME)
+    const wrapper = await open([
+      person({ userId: ME, presenceStatus: 'route' }),
+      person({ userId: 'u-2', displayName: 'Марина', presenceStatus: 'route' }),
+      person({ userId: 'u-3', displayName: 'Петя', presenceStatus: 'none' }),
+    ])
+
+    // Своё возвращение — можно.
+    expect(wrapper.find(`[data-test="presence-mark-${ME}"]`).exists()).toBe(true)
+    // Чужое возвращение живой участник не ставит: «Вернулся» тут нет.
+    expect(wrapper.find('[data-test="presence-mark-u-2"]').exists()).toBe(false)
+    // Приход за другого — по-прежнему можно.
+    expect(wrapper.find('[data-test="presence-mark-u-3"]').text()).toBe('На маршруте')
+  })
+
+  it('человеку без аккаунта возвращение ставит группа', async () => {
+    signIn(ME)
+    const wrapper = await open([
+      person({ userId: ME, presenceStatus: 'route' }),
+      person({
+        userId: 'u-v',
+        displayName: 'Дядя Витя',
+        isVirtual: true,
+        presenceStatus: 'route',
+      }),
+    ])
+
+    expect(wrapper.find('[data-test="presence-mark-u-v"]').text()).toBe('Вернулся')
+  })
+
+  it('без связи возвращение не предлагается даже себе', async () => {
+    signIn(ME)
+    useOfflineStore().isOnline = false
+
+    const wrapper = await open([person({ userId: ME, presenceStatus: 'route' })])
+
+    expect(wrapper.find(`[data-test="presence-mark-${ME}"]`).exists()).toBe(false)
+    // Снять ошибочную отметку по-прежнему можно: это не возвращение.
+    expect(wrapper.find(`[data-test="presence-reset-${ME}"]`).exists()).toBe(true)
   })
 })

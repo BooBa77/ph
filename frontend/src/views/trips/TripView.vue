@@ -471,20 +471,32 @@ const hasFinished = computed(
 /**
  * Какой вопрос задать: `start` — «уже стартанул?», `return` — «вернулся?».
  * `null` — вопрос не нужен: не иду, не начался, уже ответил или отложил.
+ *
+ * **Вопрос о возвращении — только со связью** (17.11.2026). Заказчик:
+ * «для защиты от миссклика не отображать это в оффлайне. Нельзя отметить
+ * возвращение без связи». Офлайн-отметка о старте остаётся: она не врёт
+ * о возвращении, а «я на маршруте» группа ждёт ещё в поле.
  */
 const presenceQuestion = computed<'start' | 'return' | null>(() => {
   if (presenceDismissed.value) return null
   if (myParticipant.value?.status !== 'going') return null
   if (!hasStarted.value) return null
 
-  if (hasFinished.value) return myPresence.value === 'returned' ? null : 'return'
+  if (hasFinished.value) {
+    if (!offline.isOnline) return null
+    return myPresence.value === 'returned' ? null : 'return'
+  }
 
   return myPresence.value === 'none' ? 'start' : null
 })
 
-/** Иду, отметился «на маршруте» — в шапке висит кнопка «Я вернулся». */
+/**
+ * Иду, отметился «на маршруте» — в шапке висит кнопка «Я вернулся».
+ * Без связи её нет: возвращение не отмечают офлайн.
+ */
 const showReturnButton = computed(
   () =>
+    offline.isOnline &&
     myParticipant.value?.status === 'going' &&
     hasStarted.value &&
     !hasFinished.value &&
@@ -494,13 +506,20 @@ const showReturnButton = computed(
 async function markMyPresence(action: PresenceAction): Promise<void> {
   if (trip.value === null || myParticipant.value === null) return
 
+  // Без связи возвращение не отмечаем вовсе: экран его не предлагает,
+  // но защищаем и сам обработчик — кнопку могут вызвать и из другого места.
+  if (action === 'returned' && !offline.isOnline) {
+    actionError.value = 'Вернуться можно только со связью — отметь, когда появится сеть'
+    return
+  }
+
   isMarkingPresence.value = true
   actionError.value = null
   presenceQueued.value = false
 
   try {
-    // Без связи отметка ложится в очередь: это не правка похода, и ждать
-    // её не нужно — экран показывает результат сразу.
+    // Без связи в очередь ложится выход на маршрут: это не правка похода,
+    // и ждать её не нужно — экран показывает результат сразу.
     if (!offline.isOnline) {
       const at = new Date().toISOString()
       await queuePresenceChange(trip.value.id, {

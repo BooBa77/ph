@@ -1310,8 +1310,8 @@ export class TripsService {
     id: number,
     dto: UpdateTripDto,
   ): Promise<TripResponseDto> {
-    const { response, gearChanged } = await this.dataSource.transaction(
-      async (manager) => {
+    const { response, gearChanged, depositChanged } =
+      await this.dataSource.transaction(async (manager) => {
         const trip = await this.findOwnedTrip(manager, userId, id);
 
         /**
@@ -1322,6 +1322,14 @@ export class TripsService {
         const previousStatus = trip.status;
         const previousStartsAt = trip.startsAt;
         const previousEndsAt = trip.endsAt;
+        /**
+         * Сумма залога до правки. «Бухгалтерия» рисует блок залога по
+         * `GET /finance`, и правка «Правки похода» сама по себе её не
+         * обновляла: на экране оставалась прежняя сумма до перезагрузки.
+         * Сравниваем здесь, чтобы событие ушло только при настоящем
+         * изменении, а не на каждый `PATCH`.
+         */
+        const previousDepositRub = trip.depositRub;
         const previousHasConcreteDate = await this.hasConcreteDate(
           manager,
           trip,
@@ -1538,6 +1546,7 @@ export class TripsService {
         return {
           response: TripResponseDto.from(saved, savedVariants),
           gearChanged: conflictText !== null,
+          depositChanged: previousDepositRub !== saved.depositRub,
         };
       },
     );
@@ -1545,6 +1554,11 @@ export class TripsService {
     // Вкладка «Снаряжение» перечитывает данные сама, без перезагрузки:
     // строки снял сервер, и человек должен увидеть это сразу.
     if (gearChanged) this.events.emitGear(String(id), userId);
+
+    // Сумма залога живёт в шапке похода, а её блок — в «Бухгалтерии».
+    // Правили в «Правке похода» — вкладка должна узнать об этом по SSE,
+    // а не ждать перезагрузки.
+    if (depositChanged) this.events.emitFinance(String(id), userId);
 
     return response;
   }
@@ -1791,19 +1805,14 @@ export class TripsService {
       }
 
       /**
-       * Организатор не может быть `declined` (решение 16.11.2026).
+       * Организатор может быть `declined` (17.11.2026).
        *
-       * Он автор похода: «организую, но не иду» раньше разрешалось, и это
-       * давало поход без ведущего в составе — а присутствие отмечают те,
-       * кто в поле. Отдельного статуса `helping` в словаре пока нет,
-       * поэтому честный вариант для организатора — «пока не решил».
+       * Решение 16.11.2026 «организатор — автор похода, значит идёт»
+       * отменено заказчиком: «организатор может быть инвалидом лежачим,
+       * организовывать людей и не ходить в действительности». Авторство
+       * похода и факт участия — разные вещи, и статус `declined` его
+       * не отменяет.
        */
-      if (status === 'declined' && trip.organizerUserId === participant.userId) {
-        throw new BadRequestException(
-          'Организатор не может быть «не иду»: он автор похода. Выбери «пока не решил»',
-        );
-      }
-
       const statusChanged = participant.status !== status;
       const dietChanged =
         eatsSeparately !== undefined &&
@@ -1871,6 +1880,12 @@ export class TripsService {
    * Организатор и соорганизатор отдельных прав здесь не имеют: в поле все
    * равны, а присутствие нужно от тех, кто идёт.
    *
+   * **Отметка прихода — за любого, возвращение — только своё.** С 17.11.2026
+   * «вернулся» за другого живого участника сервер не принимает: возвращение
+   * человек отмечает сам, а за человека без аккаунта — тот, кто его ведёт
+   * (у того нет входа). Приход по-прежнему отмечают за любого: телефон
+   * мог остаться дома, а группа на старте видит всех.
+   *
    * **Цель — любой участник, кроме `declined`.** Вышел из похода — залога
    * с него нет и отметки тоже; `maybe` и `invited` отметить можно: человек
    * мог выйти на маршрут, не ответив в приложении.
@@ -1912,6 +1927,25 @@ export class TripsService {
       if (target.status === 'declined') {
         throw new BadRequestException(
           'Этот человек вышел из похода — отметить присутствие нельзя',
+        );
+      }
+
+      /**
+       * «Вернулся» за другого живого участника не ставим (17.11.2026).
+       *
+       * Заказчик: «уберём возможность отмечать возвращение за других живых
+       * участников. Отметку прихода других участников оставим». Приход
+       * группа видит и может отметить за того, кто забыл телефон; возвращение
+       * человек отмечает сам, уже дома. За человека без аккаунта отметку
+       * ставит тот, кто его ведёт: своего входа у него нет.
+       */
+      if (
+        action === 'returned' &&
+        targetUserId !== userId &&
+        target.user?.isVirtual !== true
+      ) {
+        throw new BadRequestException(
+          'Вернулся участник отмечает сам; за человека без аккаунта это делает участник похода',
         );
       }
 
@@ -2114,7 +2148,7 @@ export class TripsService {
         manager,
         trip.id,
         'trip_members',
-        `${user.displayName} в составе — человек без аккаунта`,
+        `${user.displayName} без аккаунта`,
       );
 
       return TripParticipantDto.from(participant, [], trip.organizerUserId);
@@ -2171,7 +2205,7 @@ export class TripsService {
         manager,
         trip.id,
         'trip_members',
-        `${user.displayName} в составе — человек без аккаунта`,
+        `${user.displayName} без аккаунта`,
       );
 
       return TripParticipantDto.from(participant, [], trip.organizerUserId);

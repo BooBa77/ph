@@ -1356,17 +1356,18 @@ describe('Походы (e2e)', () => {
         .expect(404);
 
       /**
-       * Организатор не может быть «не иду» (решение 16.11.2026): он автор
-       * похода, а присутствие отмечают те, кто в поле. До 17.11.2026 это
-       * было разрешено — правило изменилось вместе с присутствием.
+       * Организатор может быть «не иду» (17.11.2026): заказчик отменил
+       * решение 16.11.2026 — «организатор может быть инвалидом лежачим,
+       * организовывать людей и не ходить». Авторство похода и участие
+       * в нём — разные вещи.
        */
       const organizer = await request(app.getHttpServer())
         .patch(`/api/trips/${tripId}/participants/me`)
         .set('Authorization', `Bearer ${accessToken}`)
         .send({ status: 'declined' })
-        .expect(400);
+        .expect(200);
 
-      expect(organizer.body.message).toContain('Организатор');
+      expect(organizer.body.status).toBe('declined');
 
       // Обычный участник отказаться может: сначала он в составе.
       await request(app.getHttpServer())

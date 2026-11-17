@@ -18,6 +18,12 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
  *
  * Компонент универсальный: он не знает ни про редактор, ни про походы —
  * отдаёт выбранную дату строкой `YYYY-MM-DD` и закрывается.
+ *
+ * **«ОК» вместо выбора одним кликом** (17.11.2026). Заказчик: «в
+ * редактировании похода календарик без ОК… абсолютно неудобно кликать мимо
+ * формы для подтверждения выбора». Решение 28.10.2026 про кнопку «ОК» на
+ * всех календарях касалось и этого: день только подсвечивается, решение
+ * принимает «ОК», а клик мимо окна и «Отмена» ничего не меняют.
  */
 const props = defineProps<{
   /** Показанная дата в формате `YYYY-MM-DD`. По умолчанию — сегодня. */
@@ -25,7 +31,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  /** Дата выбрана: строка `YYYY-MM-DD`. */
+  /** Дата подтверждена кнопкой «ОК»: строка `YYYY-MM-DD`. */
   select: [iso: string]
   /** Модалку закрыли, ничего не выбрав. */
   close: []
@@ -61,12 +67,18 @@ function parseIso(iso: string | undefined): Date {
 
 const shown = ref(parseIso(props.value))
 
+/**
+ * Выбранный день. До «ОК» он живёт только здесь: закрыть окно или нажать
+ * «Отмена» — значит ничего не выбрать, как в `DateTimePickerModal`.
+ */
+const picked = ref<string>(props.value ?? '')
+
 const year = computed(() => shown.value.getFullYear())
 const month = computed(() => shown.value.getMonth())
 
-/** Выбранный день, если он в показанном месяце. */
+/** Подсвеченный день: выбранный в этом месяце, иначе — значение снаружи. */
 const selectedDay = computed(() => {
-  const value = parseIso(props.value)
+  const value = parseIso(picked.value === '' ? props.value : picked.value)
   return value.getFullYear() === year.value && value.getMonth() === month.value
     ? value.getDate()
     : -1
@@ -104,6 +116,28 @@ function toIso(day: number): string {
   return `${year.value}-${pad(month.value + 1)}-${pad(day)}`
 }
 
+/** День выбран, но окно не закрывается: решение принимает «ОК». */
+function pickDay(day: number) {
+  picked.value = toIso(day)
+}
+
+/** Сегодняшняя дата в `YYYY-MM-DD` — по местному дню. */
+function todayIso(): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${today.getFullYear()}-${pad(today.getMonth() + 1)}-${pad(today.getDate())}`
+}
+
+/** «Сегодня» подсвечивает сегодняшний день и перелистывает на его месяц. */
+function pickToday() {
+  picked.value = todayIso()
+  shown.value = new Date(today.getFullYear(), today.getMonth(), 1)
+}
+
+/** Подтвердить выбор. Без выбранного дня — сегодняшняя дата. */
+function confirm() {
+  emit('select', picked.value === '' ? todayIso() : picked.value)
+}
+
 function dayClass(day: number): string {
   const base =
     'flex h-9 cursor-pointer items-center justify-center rounded-lg text-sm transition-colors'
@@ -132,6 +166,7 @@ const card = ref<HTMLElement | null>(null)
 
 function onKeydown(event: KeyboardEvent) {
   if (event.key === 'Escape') emit('close')
+  if (event.key === 'Enter') confirm()
 }
 
 onMounted(() => {
@@ -225,21 +260,39 @@ onBeforeUnmount(() => {
             :class="dayClass(day)"
             :aria-label="dayLabel(day)"
             :data-test="`date-day-${day}`"
-            @click="emit('select', toIso(day))"
+            @click="pickDay(day)"
           >
             {{ day }}
           </button>
         </template>
       </div>
 
-      <div class="mt-4 flex justify-end">
+      <div class="mt-4 flex items-center justify-end gap-2">
         <button
           type="button"
-          class="cursor-pointer rounded-lg border border-border bg-bg px-4 py-2 text-sm text-text transition-colors hover:border-primary"
+          class="cursor-pointer rounded-lg px-3 py-2 text-sm text-muted transition-colors hover:text-text"
           data-test="date-cancel"
           @click="emit('close')"
         >
           Отмена
+        </button>
+
+        <button
+          type="button"
+          class="cursor-pointer rounded-lg px-3 py-2 text-sm text-primary transition-colors hover:text-text"
+          data-test="date-today"
+          @click="pickToday"
+        >
+          Сегодня
+        </button>
+
+        <button
+          type="button"
+          class="cursor-pointer rounded-lg border border-border bg-bg px-4 py-2 text-sm text-text transition-colors hover:border-primary"
+          data-test="date-ok"
+          @click="confirm"
+        >
+          ОК
         </button>
       </div>
     </div>

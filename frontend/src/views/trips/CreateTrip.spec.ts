@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
+import DateTimePickerModal from '@/components/ui/DateTimePickerModal.vue'
 import CreateTrip from '@/views/trips/CreateTrip.vue'
 
 /**
@@ -49,6 +50,24 @@ async function chooseGoal(wrapper: VueWrapper, name = 'Витязь') {
   await wrapper.find('[data-test="object-search"]').setValue(name)
   await vi.advanceTimersByTimeAsync(400)
   await wrapper.find('[data-test="object-option"]').trigger('click')
+  await vi.advanceTimersByTimeAsync(0)
+}
+
+/**
+ * Поставить дату и время похода.
+ *
+ * С 17.11.2026 это не `<input type="datetime-local">`, а кнопка и модалка
+ * с «ОК»: поле больше не принимает `setValue`. Сам календарь проверяется
+ * в `DateTimePickerModal.spec.ts`, здесь важно, что выбранное доходит
+ * до тела запроса.
+ */
+async function setMoment(
+  wrapper: VueWrapper,
+  field: 'starts-at' | 'ends-at',
+  value: string,
+) {
+  await wrapper.find(`[data-test="${field}"]`).trigger('click')
+  await wrapper.findComponent(DateTimePickerModal).vm.$emit('select', value)
   await vi.advanceTimersByTimeAsync(0)
 }
 
@@ -298,8 +317,8 @@ describe('CreateTrip', () => {
 
     expect(wrapper.find('[data-test="hint"]').text()).toContain('обе даты')
 
-    await wrapper.find('[data-test="starts-at"]').setValue('2027-05-05T09:00')
-    await wrapper.find('[data-test="ends-at"]').setValue('2027-05-09T18:00')
+    await setMoment(wrapper, 'starts-at', '2027-05-05T09:00')
+    await setMoment(wrapper, 'ends-at', '2027-05-09T18:00')
     await submit(wrapper)
 
     expect(lastPayload().startsAt).toBe(new Date('2027-05-05T09:00').toISOString())
@@ -333,8 +352,8 @@ describe('CreateTrip', () => {
     expect(wrapper.find('[data-test="deposit"]').exists()).toBe(false)
 
     await wrapper.find('[data-test="status"]').setValue('decided')
-    await wrapper.find('[data-test="starts-at"]').setValue('2027-05-05T09:00')
-    await wrapper.find('[data-test="ends-at"]').setValue('2027-05-09T18:00')
+    await setMoment(wrapper, 'starts-at', '2027-05-05T09:00')
+    await setMoment(wrapper, 'ends-at', '2027-05-09T18:00')
 
     // Пустое поле — «залога нет»: в теле `null`, а не 0.
     await submit(wrapper)
@@ -392,8 +411,8 @@ describe('CreateTrip', () => {
     await chooseGoal(wrapper)
 
     await wrapper.find('[data-test="status"]').setValue('decided')
-    await wrapper.find('[data-test="starts-at"]').setValue('2027-05-05T09:00')
-    await wrapper.find('[data-test="ends-at"]').setValue('2027-05-09T18:00')
+    await setMoment(wrapper, 'starts-at', '2027-05-05T09:00')
+    await setMoment(wrapper, 'ends-at', '2027-05-09T18:00')
     await wrapper.find('[data-test="guitar"]').setValue(true)
     await submit(wrapper)
 
@@ -406,8 +425,8 @@ describe('CreateTrip', () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)
     await wrapper.find('[data-test="status"]').setValue('decided')
-    await wrapper.find('[data-test="starts-at"]').setValue('2027-05-05T09:00')
-    await wrapper.find('[data-test="ends-at"]').setValue('2027-05-09T18:00')
+    await setMoment(wrapper, 'starts-at', '2027-05-05T09:00')
+    await setMoment(wrapper, 'ends-at', '2027-05-09T18:00')
     await submit(wrapper)
 
     expect(lastPayload()).toMatchObject({

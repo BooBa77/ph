@@ -8,6 +8,7 @@ import TripView from '@/views/trips/TripView.vue'
 import type { User } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
+import { useOfflineStore } from '@/stores/offline'
 
 /**
  * Тесты страницы похода: связка «вкладки → мобильный гамбургер».
@@ -330,6 +331,36 @@ describe('TripView и мобильное меню', () => {
 
     expect(wrapper.find('[data-test="presence-question"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="presence-return-row"]').exists()).toBe(true)
+  })
+
+  it('без связи возвращение не предлагается (17.11.2026)', async () => {
+    mocks.getTrip.mockResolvedValue({
+      ...TRIP,
+      startsAt: daysFromNow(-1),
+      endsAt: daysFromNow(2),
+    })
+    mocks.listParticipants.mockResolvedValue([me({ presenceStatus: 'route' })])
+    useOfflineStore().isOnline = false
+
+    const { wrapper } = await mountTrip()
+
+    // Защита от миссклика: «Я вернулся» без связи не показываем.
+    expect(wrapper.find('[data-test="presence-return-row"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="presence-returned"]').exists()).toBe(false)
+  })
+
+  it('без связи вопрос о возвращении после похода не задаётся', async () => {
+    mocks.getTrip.mockResolvedValue({
+      ...TRIP,
+      startsAt: daysFromNow(-5),
+      endsAt: daysFromNow(-1),
+    })
+    mocks.listParticipants.mockResolvedValue([me({ presenceStatus: 'route' })])
+    useOfflineStore().isOnline = false
+
+    const { wrapper } = await mountTrip()
+
+    expect(wrapper.find('[data-test="presence-question"]').exists()).toBe(false)
   })
 
   it('отложенный вопрос не показывается до следующего входа', async () => {

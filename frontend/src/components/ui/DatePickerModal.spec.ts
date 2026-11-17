@@ -10,6 +10,9 @@ import DatePickerModal from '@/components/ui/DatePickerModal.vue'
  * окна, а на странице оставался висеть текст с датой. Поэтому проверяем
  * ровно то, что важно для своей сетки: правильный первый день недели,
  * переход по месяцам, выбор дня и закрытие.
+ *
+ * С 17.11.2026 день только подсвечивается, а решение принимает «ОК»:
+ * заказчик просил не подтверждать выбор кликом мимо формы.
  */
 describe('DatePickerModal', () => {
   afterEach(() => {
@@ -35,14 +38,42 @@ describe('DatePickerModal', () => {
     expect(grid[grid.length - 1]?.text()).toBe('31')
   })
 
-  it('отдаёт выбранный день строкой без часового пояса', async () => {
+  it('день подтверждается «ОК», а не кликом по числу', async () => {
     const wrapper = mount(DatePickerModal, { props: { value: '2027-05-12' } })
 
     await wrapper.find('[data-test="date-day-3"]').trigger('click')
 
+    // До «ОК» ничего не выбрано: закрыть окно — значит передумать.
+    expect(wrapper.emitted('select')).toBeUndefined()
+
+    await wrapper.find('[data-test="date-ok"]').trigger('click')
+
     // Именно строка: если собирать дату через `toISOString`, восточные
     // часовые пояса сдвинули бы её на день назад.
     expect(wrapper.emitted('select')?.[0]).toEqual(['2027-05-03'])
+  })
+
+  it('«Отмена» после выбора дня ничего не отдаёт', async () => {
+    const wrapper = mount(DatePickerModal, { props: { value: '2027-05-12' } })
+
+    await wrapper.find('[data-test="date-day-3"]').trigger('click')
+    await wrapper.find('[data-test="date-cancel"]').trigger('click')
+
+    expect(wrapper.emitted('select')).toBeUndefined()
+    expect(wrapper.emitted('close')).toHaveLength(1)
+  })
+
+  it('«Сегодня» перелистывает на текущий месяц и подтверждает его', async () => {
+    const wrapper = mount(DatePickerModal, { props: { value: '2027-05-12' } })
+
+    await wrapper.find('[data-test="date-today"]').trigger('click')
+    await wrapper.find('[data-test="date-ok"]').trigger('click')
+
+    const now = new Date()
+    const pad = (value: number) => String(value).padStart(2, '0')
+    const today = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
+
+    expect(wrapper.emitted('select')?.[0]).toEqual([today])
   })
 
   it('листает месяцы вперёд и назад через границу года', async () => {

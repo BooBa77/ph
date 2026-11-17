@@ -261,7 +261,7 @@ describe('MarkdownEditor', () => {
     expect(html(wrapper)).not.toContain('Олхинское')
   })
 
-  it('дата выбирается в календаре-модалке и вставляется сразу', async () => {
+  it('дата выбирается в календаре-модалке и вставляется по «ОК»', async () => {
     const wrapper = mount(MarkdownEditor, {
       props: { modelValue: 'Ночёвка,' },
     })
@@ -274,6 +274,10 @@ describe('MarkdownEditor', () => {
     expect(wrapper.find('[data-test="date-modal"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="date-day-15"]').trigger('click')
+    // День только подсвечен: вставка — по «ОК», как во всех календарях.
+    expect(wrapper.emitted('update:modelValue')).toBeUndefined()
+
+    await wrapper.find('[data-test="date-ok"]').trigger('click')
 
     const now = new Date()
     const months = [

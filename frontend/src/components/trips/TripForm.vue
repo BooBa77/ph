@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 
 import { listTripTypes } from '@/api/trips'
 import GeoObjectPicker from '@/components/ui/GeoObjectPicker.vue'
+import DateTimePickerModal from '@/components/ui/DateTimePickerModal.vue'
 import MarkdownEditor from '@/components/ui/MarkdownEditor.vue'
 import TripTypesPicker from '@/components/trips/TripTypesPicker.vue'
 import TripDateVariants from '@/views/trips/TripDateVariants.vue'
@@ -281,6 +282,39 @@ const variants = ref<DateVariantDraft[]>(
 )
 const startsAt = ref(toLocalInput(initial?.startsAt ?? null))
 const endsAt = ref(toLocalInput(initial?.endsAt ?? null))
+
+/**
+ * Какой календарь открыт: дата и время начала или конца.
+ *
+ * Раньше здесь стояли нативные `<input type="datetime-local">`: у них нет
+ * кнопки «ОК», и выбор подтверждался кликом мимо поля (заказчик, 17.11.2026:
+ * «абсолютно неудобно кликать мимо формы»). `DateTimePickerModal` — тот же
+ * календарь, что у «Трансфера», с «Очистить / Сегодня / ОК».
+ */
+const openMoment = ref<'start' | 'end' | null>(null)
+
+/** Подпись выбранного момента: «5 мая 2027 г., 09:00». */
+function momentLabel(value: string): string {
+  if (value === '') return 'Выбрать дату и время'
+
+  const at = new Date(value)
+  if (Number.isNaN(at.getTime())) return 'Выбрать дату и время'
+
+  return at.toLocaleString('ru-RU', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function chooseMoment(moment: 'start' | 'end', value: string): void {
+  if (moment === 'start') startsAt.value = value
+  else endsAt.value = value
+
+  openMoment.value = null
+}
 
 const isDateForecast = computed(() => status.value === 'idea' || status.value === 'planning')
 
@@ -632,25 +666,29 @@ defineExpose({ validationProblem })
       <TripDateVariants v-if="isDateForecast" v-model="variants" />
 
       <div v-else class="grid gap-4 md:grid-cols-2">
-        <label class="flex flex-col gap-2">
+        <div class="flex flex-col gap-2">
           <span class="text-xs text-muted">Начало</span>
-          <input
-            v-model="startsAt"
-            type="datetime-local"
-            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+          <button
+            type="button"
+            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-left text-base text-text transition-colors hover:border-primary focus:border-primary focus:outline-none"
             data-test="starts-at"
-          />
-        </label>
+            @click="openMoment = 'start'"
+          >
+            {{ momentLabel(startsAt) }}
+          </button>
+        </div>
 
-        <label class="flex flex-col gap-2">
+        <div class="flex flex-col gap-2">
           <span class="text-xs text-muted">Конец</span>
-          <input
-            v-model="endsAt"
-            type="datetime-local"
-            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
+          <button
+            type="button"
+            class="w-full rounded-xl border border-border bg-field px-3 py-2 text-left text-base text-text transition-colors hover:border-primary focus:border-primary focus:outline-none"
             data-test="ends-at"
-          />
-        </label>
+            @click="openMoment = 'end'"
+          >
+            {{ momentLabel(endsAt) }}
+          </button>
+        </div>
       </div>
     </div>
 
@@ -724,7 +762,6 @@ defineExpose({ validationProblem })
           data-test="deposit"
         />
         <span class="text-xs text-muted">
-          Обеспечительный платёж: сдал — иду, ушёл — залог не возвращается.
           В «Движение денег» он не пишется и в балансы не входит.
         </span>
       </label>
@@ -764,5 +801,25 @@ defineExpose({ validationProblem })
         {{ isSubmitting ? 'Сохраняем…' : submitLabel }}
       </button>
     </div>
+
+    <!--
+      Календарь дат похода — модалка с «ОК», как у «Трансфера».
+      Границы: начало не позже конца, конец не раньше начала.
+    -->
+    <DateTimePickerModal
+      v-if="openMoment === 'start'"
+      :value="startsAt || undefined"
+      :max="endsAt || undefined"
+      @select="chooseMoment('start', $event)"
+      @close="openMoment = null"
+    />
+
+    <DateTimePickerModal
+      v-if="openMoment === 'end'"
+      :value="endsAt || undefined"
+      :min="startsAt || undefined"
+      @select="chooseMoment('end', $event)"
+      @close="openMoment = null"
+    />
   </form>
 </template>

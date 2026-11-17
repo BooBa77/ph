@@ -28,7 +28,7 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { queuePresenceChange } from '@/offline/presenceOutbox'
 import { useAuthStore } from '@/stores/auth'
 import { useOfflineStore } from '@/stores/offline'
-import { applyPresence } from '@/utils/presence'
+import { applyPresence, canMarkReturn } from '@/utils/presence'
 import TripChat from '@/views/trips/TripChat.vue'
 import {
   PARTICIPANT_STATUS_LABELS,
@@ -129,9 +129,14 @@ const me = computed(
  * аккаунта (решение 16.11.2026: «они теперь в одной лодке»). Поэтому
  * кнопки есть у всех идущих, а не только у организатора.
  *
- * Отметки разрешены и без связи — это не правка похода, а личная отметка.
- * Очередь отправки появится вместе с остальными офлайн-правками; пока
- * сервер отвечает ошибкой связи, и экран говорит об этом текстом.
+ * **Возвращение — только своё** (17.11.2026). Заказчик: «уберём возможность
+ * отмечать возвращение за других живых участников». Приход по-прежнему
+ * отмечают за любого — телефон мог остаться дома; «вернулся» человек
+ * ставит сам, а за человека без аккаунта — любой идущий, у того нет входа.
+ *
+ * Отметки разрешены и без связи, кроме возвращения: «нельзя отметить
+ * возвращение без связи». Без сети отметка прихода ложится в очередь и
+ * уходит сама, когда связь появляется.
  */
 const presenceBusyUserId = ref<string | null>(null)
 
@@ -143,6 +148,11 @@ const canMarkPresence = computed(() => me.value?.status === 'going')
 /** Статус присутствия: поле необязательное — старая копия его не знает. */
 function presenceOf(person: TripParticipant): PresenceStatus {
   return person.presenceStatus ?? 'none'
+}
+
+/** Можно ли этому человеку поставить возвращение (себе или виртуальному). */
+function canMarkPersonReturn(person: TripParticipant): boolean {
+  return canMarkReturn(person, auth.user?.id ?? '', offline.isOnline)
 }
 
 /** Кто поставил отметку — имя из состава: автор всегда идущий участник. */
@@ -157,9 +167,17 @@ function presenceUpdaterName(person: TripParticipant): string | null {
   return author.displayName
 }
 
-/** Одна кнопка на строку: следующее осмысленное действие. */
-function nextPresenceAction(person: TripParticipant): PresenceAction {
-  return presenceOf(person) === 'route' ? 'returned' : 'route'
+/**
+ * Одна кнопка на строку: следующее осмысленное действие.
+ *
+ * `null` — действия нет: живому участнику на маршруте возвращение ставит
+ * только он сам (и только со связью), а «Снять» рядом остаётся.
+ */
+function nextPresenceAction(person: TripParticipant): PresenceAction | null {
+  if (presenceOf(person) === 'none') return 'route'
+  if (presenceOf(person) !== 'route') return null
+
+  return canMarkPersonReturn(person) ? 'returned' : null
 }
 
 function nextPresenceLabel(person: TripParticipant): string {
@@ -190,6 +208,15 @@ async function markPresence(
   action: PresenceAction,
 ): Promise<void> {
   if (presenceBusyUserId.value !== null) return
+
+  // Возвращение — только своё и только со связью. Кнопки это уже
+  // показывают, но очередь и сервер должны получить то же правило.
+  if (action === 'returned' && !canMarkPersonReturn(person)) {
+    actionError.value = offline.isOnline
+      ? 'Вернулся участник отмечает сам; за человека без аккаунта — любой идущий'
+      : 'Вернуться можно только со связью — отметь, когда появится сеть'
+    return
+  }
 
   presenceBusyUserId.value = person.userId
   actionError.value = null
@@ -605,7 +632,7 @@ function invite(person: UserSearchResult) {
 
       <!-- Мой статус. Приглашённому сначала нужно ответить на приглашение -->
       <div
-        v-if="me && !isOrganizer && me.status !== 'invited'"
+        v-if="me && me.status !== 'invited'"
         class="flex flex-col gap-2"
         data-test="my-status"
       >
@@ -850,9 +877,6 @@ function invite(person: UserSearchResult) {
               data-test="virtual-person"
             >
               <span class="text-text">{{ person.displayName }}</span>
-              <span class="text-xs text-muted">
-                {{ person.gender === 'f' ? 'женщина' : 'мужчина' }}
-              </span>
 
               <button
                 v-if="!isInTrip(person.id)"
@@ -984,16 +1008,18 @@ function invite(person: UserSearchResult) {
             <div class="flex flex-wrap items-center gap-2">
               <!--
                 Отметки ставит любой идущий — себе и любому, кроме вышедшего.
-                «Вернулся» и «На маршруте» — одно действие на строку, а
-                «Снять» исправляет ошибочное нажатие.
+                «На маршруте» ставится всем, «Вернулся» — только себе или
+                человеку без аккаунта и только со связью. «Снять» исправляет
+                ошибочное нажатие.
               -->
               <template v-if="canMarkPresence && person.status !== 'declined'">
                 <button
+                  v-if="nextPresenceAction(person) !== null"
                   type="button"
                   class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
                   :disabled="presenceBusyUserId !== null"
                   :data-test="`presence-mark-${person.userId}`"
-                  @click="markPresence(person, nextPresenceAction(person))"
+                  @click="markPresence(person, nextPresenceAction(person)!)"
                 >
                   {{ nextPresenceLabel(person) }}
                 </button>
