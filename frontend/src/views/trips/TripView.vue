@@ -3,14 +3,23 @@ import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
-import { fetchTripCacheState, fetchTripTabs, getTrip, updateTrip } from '@/api/trips'
+import {
+  fetchTripCacheState,
+  fetchTripTabs,
+  getTrip,
+  listParticipants,
+  setTripPresence,
+  updateTrip,
+} from '@/api/trips'
 import { getPublicUser, type PublicUser } from '@/api/users'
 import { isTripCacheable } from '@/offline/cacheable'
 import { isFreshnessEqual, readCachedFreshness } from '@/offline/freshness'
 import { prefetchTripCache, prefetchTripChats } from '@/offline/prefetch'
+import { queuePresenceChange } from '@/offline/presenceOutbox'
 import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
 import { useOfflineStore } from '@/stores/offline'
+import { applyPresence } from '@/utils/presence'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
 import TripDiary from '@/views/trips/TripDiary.vue'
 import TripFinance from '@/views/trips/TripFinance.vue'
@@ -24,7 +33,9 @@ import TripTabIcon from '@/components/trips/TripTabIcon.vue'
 import {
   TRIP_TAB_LABELS,
   TRIP_VISIBILITY_LABELS,
+  type PresenceAction,
   type Trip,
+  type TripParticipant,
   type TripTabCode,
   type TripTabPermission,
 } from '@/types/trips'
@@ -356,6 +367,20 @@ async function load(id: string) {
     }
   }
 
+  // Своя строка состава — для вопроса о присутствии. Тихо: не загрузилась,
+  // значит вопроса не будет, а вкладки похода от него не зависят.
+  myParticipant.value = null
+  presenceDismissed.value = false
+  if (trip.value && auth.user) {
+    try {
+      const people = await listParticipants(trip.value.id)
+      myParticipant.value =
+        people.find((person) => person.userId === auth.user?.id) ?? null
+    } catch {
+      // Тихо — по той же причине.
+    }
+  }
+
   // Поход открыт — сохраняем его копию для офлайна (если он идёт сейчас).
   if (trip.value) void prepareOfflineCopy(trip.value)
 }
@@ -407,6 +432,106 @@ async function toggleRecruitment() {
       problem instanceof ApiError ? problem.message : 'Не удалось изменить набор'
   } finally {
     isTogglingRecruitment.value = false
+  }
+}
+
+// ───────────────────────────── присутствие (17.11.2026) ─────────────────────────────
+
+/**
+ * «Поход начался. Ты уже стартанул?» и «Ты вернулся?» — те самые вопросы
+ * при входе, которые просил заказчик: связь в Прибайкалье появляется только
+ * в населёнке, и человек возвращается в онлайн, уже вернувшись из леса.
+ *
+ * Вопросы не блокируют экран: это карточка над вкладками, её можно отложить
+ * («Позже» / «Ещё на маршруте») — и она вернётся при следующем входе.
+ * Ответ уходит на сервер; без связи кнопка честно скажет, что связи нет.
+ *
+ * Свою строку состава берём отдельным запросом: в ответе похода статуса
+ * участия нет (решение 16.11.2026 — правило в DTO похода не выразить).
+ * Не загрузилось — просто не показываем вопрос, вкладки от него не зависят.
+ */
+const myParticipant = ref<TripParticipant | null>(null)
+const presenceDismissed = ref(false)
+const isMarkingPresence = ref(false)
+
+/** Отметка легла в очередь: связи нет, отправится, когда появится. */
+const presenceQueued = ref(false)
+
+/** Мой статус присутствия из строки состава. */
+const myPresence = computed(() => myParticipant.value?.presenceStatus ?? 'none')
+
+const hasStarted = computed(
+  () => trip.value?.startsAt != null && new Date(trip.value.startsAt).getTime() <= Date.now(),
+)
+
+const hasFinished = computed(
+  () => trip.value?.endsAt != null && new Date(trip.value.endsAt).getTime() < Date.now(),
+)
+
+/**
+ * Какой вопрос задать: `start` — «уже стартанул?», `return` — «вернулся?».
+ * `null` — вопрос не нужен: не иду, не начался, уже ответил или отложил.
+ */
+const presenceQuestion = computed<'start' | 'return' | null>(() => {
+  if (presenceDismissed.value) return null
+  if (myParticipant.value?.status !== 'going') return null
+  if (!hasStarted.value) return null
+
+  if (hasFinished.value) return myPresence.value === 'returned' ? null : 'return'
+
+  return myPresence.value === 'none' ? 'start' : null
+})
+
+/** Иду, отметился «на маршруте» — в шапке висит кнопка «Я вернулся». */
+const showReturnButton = computed(
+  () =>
+    myParticipant.value?.status === 'going' &&
+    hasStarted.value &&
+    !hasFinished.value &&
+    myPresence.value === 'route',
+)
+
+async function markMyPresence(action: PresenceAction): Promise<void> {
+  if (trip.value === null || myParticipant.value === null) return
+
+  isMarkingPresence.value = true
+  actionError.value = null
+  presenceQueued.value = false
+
+  try {
+    // Без связи отметка ложится в очередь: это не правка похода, и ждать
+    // её не нужно — экран показывает результат сразу.
+    if (!offline.isOnline) {
+      const at = new Date().toISOString()
+      await queuePresenceChange(trip.value.id, {
+        userId: myParticipant.value.userId,
+        status: action,
+        at,
+      })
+
+      myParticipant.value = applyPresence(
+        myParticipant.value,
+        action,
+        auth.user?.id ?? myParticipant.value.userId,
+        at,
+      )
+      presenceQueued.value = true
+      return
+    }
+
+    myParticipant.value = await setTripPresence(
+      trip.value.id,
+      myParticipant.value.userId,
+      action,
+    )
+    presenceDismissed.value = false
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось отметить присутствие'
+  } finally {
+    isMarkingPresence.value = false
   }
 }
 </script>
@@ -515,6 +640,76 @@ async function toggleRecruitment() {
           {{ actionError }}
         </p>
       </header>
+
+      <!--
+        Присутствие (17.11.2026): «поход начался — ты стартанул?» и
+        «ты вернулся?». Вопрос возвращается при каждом входе, пока человек
+        не ответит: связь в Прибайкалье появляется только в населёнке,
+        и «мы за него волнуемся» — слова заказчика. Отложить можно, но
+        не забыть: на следующем входе карточка снова здесь.
+      -->
+      <div
+        v-if="presenceQuestion"
+        class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary bg-surface p-4"
+        data-test="presence-question"
+      >
+        <div class="flex min-w-0 flex-col gap-1">
+          <p class="text-sm font-medium text-text" data-test="presence-question-text">
+            <template v-if="presenceQuestion === 'start'">
+              Поход «{{ goalName }}» начался. Ты уже стартанул?
+            </template>
+            <template v-else>Ты вернулся из похода?</template>
+          </p>
+          <p class="text-xs text-muted">
+            Это перекличка, а не факт похода: даты похода отметка не меняет.
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            :disabled="isMarkingPresence"
+            :data-test="presenceQuestion === 'start' ? 'presence-start' : 'presence-returned'"
+            @click="markMyPresence(presenceQuestion === 'start' ? 'route' : 'returned')"
+          >
+            {{ presenceQuestion === 'start' ? 'Я на маршруте' : 'Я вернулся' }}
+          </button>
+
+          <button
+            type="button"
+            class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-50"
+            :disabled="isMarkingPresence"
+            data-test="presence-later"
+            @click="presenceDismissed = true"
+          >
+            {{ presenceQuestion === 'start' ? 'Позже' : 'Ещё на маршруте' }}
+          </button>
+        </div>
+      </div>
+
+      <p
+        v-else-if="showReturnButton"
+        class="flex flex-wrap items-center gap-2 text-sm"
+        data-test="presence-return-row"
+      >
+        <span class="text-muted">
+          Ты на маршруте. Вернулся — отметь, чтобы группа знала.
+        </span>
+        <button
+          type="button"
+          class="cursor-pointer rounded-xl border border-border px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-50"
+          :disabled="isMarkingPresence"
+          data-test="presence-returned"
+          @click="markMyPresence('returned')"
+        >
+          Я вернулся
+        </button>
+      </p>
+
+      <p v-if="presenceQueued" class="text-xs text-muted" data-test="presence-queued">
+        Нет связи: отметка уйдёт, когда появится сеть.
+      </p>
 
       <!--
         Вкладки: на десктопе сверху. Раньше это были подчёркнутые слова,

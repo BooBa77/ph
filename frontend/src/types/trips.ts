@@ -566,6 +566,29 @@ export interface TripRole {
   name: string
 }
 
+/**
+ * Присутствие на маршруте (17.11.2026).
+ *
+ * Это перекличка, а не «факт похода»: даты похода не меняются, и «вернулся»
+ * при идущем походе — норма. `none` — не отметился; подпись зависит от дат
+ * похода, и это решает экран.
+ */
+export const PRESENCE_STATUSES = ['route', 'returned', 'none'] as const
+export type PresenceStatus = (typeof PRESENCE_STATUSES)[number]
+
+/** Подписи присутствия в «Участниках» и «Гостевой». */
+export const PRESENCE_STATUS_LABELS: Record<PresenceStatus, string> = {
+  route: 'На маршруте',
+  returned: 'Вернулся',
+  none: 'Не отметился',
+}
+
+/** Что ставим отметкой: `none` снимает обе. */
+export type PresenceAction = PresenceStatus
+
+/** Кто поставил отметку: сам (self) или другой идущий (other). */
+export type PresenceSource = 'self' | 'other'
+
 /** Участник похода: кто, как участвует и какие у него роли. */
 export interface TripParticipant {
   userId: string
@@ -585,6 +608,17 @@ export interface TripParticipant {
   isVirtual: boolean
   createdAt: string
   updatedAt: string
+  /**
+   * Присутствие: когда отметил выход и возвращение. В офлайн-копии,
+   * записанной до 17.11.2026, полей нет — отсутствие читается как «не
+   * отметился».
+   */
+  startedAt?: string | null
+  returnedAt?: string | null
+  presenceStatus?: PresenceStatus
+  /** Кто поставил отметку: по нему на экране «отметил Сергей». */
+  presenceUpdatedByUserId?: string | null
+  presenceSource?: PresenceSource | null
 }
 
 /** Направление тикета: приглашение (организатор → человек) или заявка. */

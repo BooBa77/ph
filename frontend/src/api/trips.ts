@@ -7,6 +7,7 @@ import type {
   MealAllocationInput,
   ParticipantDecision,
   ParticipantStatus,
+  PresenceAction,
   RoleOption,
   RouteNightInput,
   Trip,
@@ -212,7 +213,7 @@ export async function listParticipants(tripId: string): Promise<TripParticipant[
  *
  * `declined` здесь законен и означает «не иду», но человек остаётся
  * в списке состава: состав — это история похода, а не только те, кто
- * в итоге пошёл.
+ * в итоге пошёл. Организатору сервер `declined` не разрешает (17.11.2026).
  */
 export async function setMyStatus(
   tripId: string,
@@ -224,6 +225,24 @@ export async function setMyStatus(
     body: JSON.stringify(
       eatsSeparately === undefined ? { status } : { status, eatsSeparately },
     ),
+  })
+}
+
+/**
+ * PUT /api/trips/:id/presence/:userId — отметка присутствия (17.11.2026).
+ *
+ * Отмечает любой идущий: себе и любому другому участнику, включая человека
+ * без аккаунта. `none` снимает отметки — исправить ошибочное нажатие можно
+ * там же. Ответ — обновлённый участник, чтобы экран заменил одну строку.
+ */
+export async function setTripPresence(
+  tripId: string,
+  userId: string,
+  status: PresenceAction,
+): Promise<TripParticipant> {
+  return apiFetch<TripParticipant>(`/trips/${tripId}/presence/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
   })
 }
 

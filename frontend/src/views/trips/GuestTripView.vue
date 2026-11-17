@@ -14,8 +14,10 @@ import {
 import { tripFrameParts, tripDatesText, formatTripDate } from '@/utils/tripDisplay'
 import {
   PARTICIPANT_STATUS_LABELS,
+  PRESENCE_STATUS_LABELS,
   TRIP_STATUS_LABELS,
   type GuestTrip,
+  type PresenceStatus,
   type TripParticipant,
   type TripRole,
 } from '@/types/trips'
@@ -125,6 +127,25 @@ function extraRoles(person: TripParticipant): TripRole[] {
   return person.roles.filter((role) => role.code !== 'organizer')
 }
 
+/**
+ * Присутствие видят и гости (решение 16.11.2026): «на маршруте» — публичная
+ * информация, группа вышла и кто-то вернулся. До старта похода статуса нет:
+ * «не отметился» за месяц до выхода — не факт, а шум.
+ */
+function presenceOf(person: TripParticipant): PresenceStatus {
+  return person.presenceStatus ?? 'none'
+}
+
+const hasStarted = computed(
+  () => trip.value?.startsAt != null && new Date(trip.value.startsAt).getTime() <= Date.now(),
+)
+
+function showPresence(person: TripParticipant): boolean {
+  if (person.status === 'declined') return false
+
+  return presenceOf(person) !== 'none' || hasStarted.value
+}
+
 onMounted(load)
 </script>
 
@@ -203,6 +224,13 @@ onMounted(load)
               · {{ extraRoles(person).map((role) => role.name).join(', ') }}
             </span>
             <span class="text-muted"> · {{ PARTICIPANT_STATUS_LABELS[person.status] }}</span>
+            <span
+              v-if="showPresence(person)"
+              class="text-muted"
+              data-test="guest-presence"
+            >
+              · {{ PRESENCE_STATUS_LABELS[presenceOf(person)] }}
+            </span>
           </li>
         </ul>
       </div>

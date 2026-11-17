@@ -7,8 +7,13 @@ import type { TripParticipant } from '../entities/trip-participant.entity';
 import {
   PARTICIPANT_DECISIONS,
   PARTICIPANT_STATUSES,
+  PRESENCE_ACTIONS,
+  PRESENCE_SOURCES,
   type ParticipantDecision,
   type ParticipantStatus,
+  type PresenceAction,
+  type PresenceSource,
+  type PresenceStatus,
 } from '../trip.types';
 
 /** Роль участника: код для логики, подпись для человека. */
@@ -116,6 +121,52 @@ export class TripParticipantDto {
   })
   updatedAt: string;
 
+  /**
+   * Присутствие (17.11.2026): перекличка «на маршруте / вернулся».
+   *
+   * `presenceStatus` — производное от двух времён: `returned` (есть
+   * возвращение), `route` (есть выход, возвращения нет), `none` (не
+   * отметился). Фронт по нему решает, что рисовать, и не сравнивает даты
+   * сам: правило одно и живёт на сервере.
+   */
+  @ApiProperty({
+    description: 'Когда человек отметил выход на маршрут',
+    nullable: true,
+  })
+  startedAt: string | null;
+
+  @ApiProperty({ description: 'Когда человек отметил возвращение', nullable: true })
+  returnedAt: string | null;
+
+  @ApiProperty({
+    description: 'Присутствие: route — на маршруте, returned — вернулся, none — не отметился',
+    enum: ['route', 'returned', 'none'],
+    example: 'route',
+  })
+  presenceStatus: PresenceStatus;
+
+  @ApiProperty({
+    description: 'Кто поставил отметку. null — её ещё не ставили',
+    nullable: true,
+  })
+  presenceUpdatedByUserId: string | null;
+
+  @ApiProperty({
+    description: 'Сам отметил (self) или другой идущий (other)',
+    enum: PRESENCE_SOURCES,
+    nullable: true,
+  })
+  presenceSource: PresenceSource | null;
+
+  static presenceOf(
+    participant: Pick<TripParticipant, 'startedAt' | 'returnedAt'>,
+  ): PresenceStatus {
+    if (participant.returnedAt) return 'returned';
+    if (participant.startedAt) return 'route';
+
+    return 'none';
+  }
+
   static from(
     participant: TripParticipant,
     roles: TripRoleDto[],
@@ -139,6 +190,11 @@ export class TripParticipantDto {
       isVirtual: participant.user?.isVirtual ?? false,
       createdAt: participant.createdAt.toISOString(),
       updatedAt: participant.updatedAt.toISOString(),
+      startedAt: participant.startedAt?.toISOString() ?? null,
+      returnedAt: participant.returnedAt?.toISOString() ?? null,
+      presenceStatus: TripParticipantDto.presenceOf(participant),
+      presenceUpdatedByUserId: participant.presenceUpdatedBy ?? null,
+      presenceSource: participant.presenceSource ?? null,
     };
   }
 }
@@ -151,8 +207,10 @@ export class ParticipantListDto {
 /**
  * Тело `PATCH /api/trips/:id/participants/me` — свой статус участия.
  *
- * Организатору это тоже доступно: «организую, но сам не иду» — законная
- * ситуация, и статус `declined` для него разрешён.
+ * Организатору доступно «пока не решил», но не `declined`: решение
+ * 16.11.2026 — организатор не может быть «не иду», он автор похода.
+ * Раньше `declined` разрешался, и это была ошибка: состав без автора
+ * выглядит как брошенный поход, а присутствие отмечают те, кто в поле.
  */
 export class UpdateMyStatusDto {
   @ApiProperty({
@@ -172,6 +230,26 @@ export class UpdateMyStatusDto {
   @IsOptional()
   @IsBoolean({ message: 'Флаг отдельного питания должен быть true или false' })
   eatsSeparately?: boolean;
+}
+
+/**
+ * Тело `PUT /api/trips/:id/presence/:userId` — отметка присутствия.
+ *
+ * Отмечает **любой идущий** участник: себе и любому другому, включая
+ * человека без аккаунта. Цель — любой участник, кроме `declined`.
+ * `none` снимает обе отметки: «нажал не туда» исправляется там же, где
+ * поставили, и не требует админки.
+ */
+export class UpdatePresenceDto {
+  @ApiProperty({
+    description: 'route — на маршруте, returned — вернулся, none — снять отметки',
+    enum: PRESENCE_ACTIONS,
+    example: 'route',
+  })
+  @IsIn(PRESENCE_ACTIONS, {
+    message: 'Отметка: route, returned или none',
+  })
+  status: PresenceAction;
 }
 
 /**

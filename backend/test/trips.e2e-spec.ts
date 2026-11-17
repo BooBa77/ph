@@ -1355,15 +1355,39 @@ describe('Походы (e2e)', () => {
         .send({ status: 'going' })
         .expect(404);
 
-      const changed = await request(app.getHttpServer())
+      /**
+       * Организатор не может быть «не иду» (решение 16.11.2026): он автор
+       * похода, а присутствие отмечают те, кто в поле. До 17.11.2026 это
+       * было разрешено — правило изменилось вместе с присутствием.
+       */
+      const organizer = await request(app.getHttpServer())
         .patch(`/api/trips/${tripId}/participants/me`)
         .set('Authorization', `Bearer ${accessToken}`)
         .send({ status: 'declined' })
+        .expect(400);
+
+      expect(organizer.body.message).toContain('Организатор');
+
+      // Обычный участник отказаться может: сначала он в составе.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: strangerId })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${strangerId}/accept`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ status: 'going' })
         .expect(200);
 
-      // Организатор тоже может не идти: «организую, но сам не пойду».
+      const changed = await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/me`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ status: 'declined' })
+        .expect(200);
+
       expect(changed.body.status).toBe('declined');
-      expect(changed.body.isOrganizer).toBe(true);
+      expect(changed.body.isOrganizer).toBe(false);
     });
 
     it('состав приватного похода постороннему не виден — 404', async () => {

@@ -12,6 +12,7 @@ import { useAppStore } from '@/stores/app'
 import { useAuthStore } from '@/stores/auth'
 import { useOfflineStore } from '@/stores/offline'
 import { flushDiaryOutboxes } from '@/offline/diaryOutbox'
+import { flushPresenceOutboxes } from '@/offline/presenceOutbox'
 import { useSwUpdate } from '@/composables/useSwUpdate'
 import { useTheme } from '@/composables/useTheme'
 import { useAuthRedirect } from '@/composables/useAuthRedirect'
@@ -43,6 +44,7 @@ onMounted(async () => {
   }
 
   void flushDiaryOutboxes()
+  void flushPresenceOutboxes()
 })
 
 /**
@@ -58,6 +60,7 @@ let retryTimer: number | null = null
 
 function onOnline(): void {
   void flushDiaryOutboxes()
+  void flushPresenceOutboxes()
 
   // Вторая попытка через несколько секунд: вместе со связью приложение
   // поднимает сессию (`resumeSession`), и первый заход мог прийтись
@@ -67,6 +70,7 @@ function onOnline(): void {
   retryTimer = window.setTimeout(() => {
     retryTimer = null
     void flushDiaryOutboxes()
+    void flushPresenceOutboxes()
   }, 5000)
 }
 

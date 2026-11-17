@@ -22,6 +22,7 @@ const mocks = vi.hoisted(() => ({
   listParticipants: vi.fn(),
   listRequests: vi.fn(),
   setMyStatus: vi.fn(),
+  setTripPresence: vi.fn(),
   removeParticipant: vi.fn(),
   createRequest: vi.fn(),
   acceptRequest: vi.fn(),
@@ -42,6 +43,7 @@ vi.mock('@/api/trips', () => ({
   listParticipants: mocks.listParticipants,
   listRequests: mocks.listRequests,
   setMyStatus: mocks.setMyStatus,
+  setTripPresence: mocks.setTripPresence,
   removeParticipant: mocks.removeParticipant,
   createRequest: mocks.createRequest,
   acceptRequest: mocks.acceptRequest,
@@ -598,5 +600,79 @@ describe('TripParticipants', () => {
     await flushPromises()
 
     expect(mocks.deleteRequest).toHaveBeenCalledWith('7', 'u-9')
+  })
+
+  // ───────────────────── присутствие (17.11.2026) ─────────────────────
+
+  it('идущий отмечает себя «на маршруте», и это уходит в API', async () => {
+    signIn(ME)
+    mocks.setTripPresence.mockResolvedValue(
+      person({
+        userId: ME,
+        presenceStatus: 'route',
+        startedAt: '2026-11-17T03:00:00.000Z',
+        presenceUpdatedByUserId: ME,
+        presenceSource: 'self',
+      }),
+    )
+
+    const wrapper = await open([person({ userId: ME })])
+
+    await wrapper.find(`[data-test="presence-mark-${ME}"]`).trigger('click')
+    await flushPromises()
+
+    expect(mocks.setTripPresence).toHaveBeenCalledWith('7', ME, 'route')
+    expect(wrapper.get('[data-test="presence-status-route"]').text()).toBe('На маршруте')
+  })
+
+  it('отметку другому подписывает автор', async () => {
+    signIn(ME)
+    const wrapper = await open([
+      person({ userId: ME, displayName: 'Сергей' }),
+      person({
+        userId: 'u-2',
+        displayName: 'Марина',
+        presenceStatus: 'returned',
+        presenceUpdatedByUserId: ME,
+        presenceSource: 'other',
+      }),
+    ])
+
+    const row = wrapper.findAll('[data-test="participant"]')[1]!
+    expect(row.get('[data-test="presence-status-returned"]').text()).toBe('Вернулся')
+    expect(row.get('[data-test="presence-updated-by"]').text()).toContain('отметил Сергей')
+  })
+
+  it('ошибочную отметку можно снять', async () => {
+    signIn(ME)
+    mocks.setTripPresence.mockResolvedValue(person({ userId: ME, presenceStatus: 'none' }))
+
+    const wrapper = await open([person({ userId: ME, presenceStatus: 'route' })])
+
+    await wrapper.find(`[data-test="presence-reset-${ME}"]`).trigger('click')
+    await flushPromises()
+
+    expect(mocks.setTripPresence).toHaveBeenCalledWith('7', ME, 'none')
+  })
+
+  it('отмечать может только идущий', async () => {
+    signIn(ME)
+    const wrapper = await open([
+      person({ userId: ME, status: 'maybe' }),
+      person({ userId: 'u-2', displayName: 'Марина' }),
+    ])
+
+    expect(wrapper.find(`[data-test="presence-mark-${ME}"]`).exists()).toBe(false)
+    expect(wrapper.find('[data-test="presence-mark-u-2"]').exists()).toBe(false)
+  })
+
+  it('вышедшего из похода не отмечают', async () => {
+    signIn(ME)
+    const wrapper = await open([
+      person({ userId: ME }),
+      person({ userId: 'u-3', displayName: 'Ушёл', status: 'declined' }),
+    ])
+
+    expect(wrapper.find('[data-test="presence-mark-u-3"]').exists()).toBe(false)
   })
 })

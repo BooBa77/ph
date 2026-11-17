@@ -14,6 +14,7 @@ import {
   removeParticipant,
   setMyStatus,
   setParticipantRoles,
+  setTripPresence,
 } from '@/api/trips'
 import {
   listMyVirtual,
@@ -24,11 +25,17 @@ import {
   type VirtualUser,
 } from '@/api/users'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import { queuePresenceChange } from '@/offline/presenceOutbox'
 import { useAuthStore } from '@/stores/auth'
+import { useOfflineStore } from '@/stores/offline'
+import { applyPresence } from '@/utils/presence'
 import TripChat from '@/views/trips/TripChat.vue'
 import {
   PARTICIPANT_STATUS_LABELS,
+  PRESENCE_STATUS_LABELS,
   type ParticipantStatus,
+  type PresenceAction,
+  type PresenceStatus,
   type RoleOption,
   type Trip,
   type TripParticipant,
@@ -84,6 +91,7 @@ const props = withDefaults(
 const emit = defineEmits<{ changed: [] }>()
 
 const auth = useAuthStore()
+const offline = useOfflineStore()
 
 /**
  * Свои варианты участия. «Не иду» подписано словами, а не статусом:
@@ -111,6 +119,124 @@ const isOrganizer = computed(() => props.trip.organizerUserId === auth.user?.id)
 const me = computed(
   () => participants.value.find((person) => person.userId === auth.user?.id) ?? null,
 )
+
+// ───────────────────────────── присутствие (17.11.2026) ─────────────────────────────
+
+/**
+ * «На маршруте / Вернулся / Не отметился» — перекличка, а не факт похода.
+ *
+ * Отмечает **любой идущий**: себе и любому другому, включая человека без
+ * аккаунта (решение 16.11.2026: «они теперь в одной лодке»). Поэтому
+ * кнопки есть у всех идущих, а не только у организатора.
+ *
+ * Отметки разрешены и без связи — это не правка похода, а личная отметка.
+ * Очередь отправки появится вместе с остальными офлайн-правками; пока
+ * сервер отвечает ошибкой связи, и экран говорит об этом текстом.
+ */
+const presenceBusyUserId = ref<string | null>(null)
+
+/** Отметка легла в очередь: связи нет, отправится, когда появится. */
+const presenceQueued = ref(false)
+
+const canMarkPresence = computed(() => me.value?.status === 'going')
+
+/** Статус присутствия: поле необязательное — старая копия его не знает. */
+function presenceOf(person: TripParticipant): PresenceStatus {
+  return person.presenceStatus ?? 'none'
+}
+
+/** Кто поставил отметку — имя из состава: автор всегда идущий участник. */
+function presenceUpdaterName(person: TripParticipant): string | null {
+  if (!person.presenceUpdatedByUserId) return null
+
+  const author = participants.value.find(
+    (item) => item.userId === person.presenceUpdatedByUserId,
+  )
+  if (author === undefined || author.userId === person.userId) return null
+
+  return author.displayName
+}
+
+/** Одна кнопка на строку: следующее осмысленное действие. */
+function nextPresenceAction(person: TripParticipant): PresenceAction {
+  return presenceOf(person) === 'route' ? 'returned' : 'route'
+}
+
+function nextPresenceLabel(person: TripParticipant): string {
+  return presenceOf(person) === 'route' ? 'Вернулся' : 'На маршруте'
+}
+
+/** Поход уже начался по плану — только тогда «не отметился» что-то значит. */
+const hasStarted = computed(
+  () => props.trip.startsAt !== null && new Date(props.trip.startsAt).getTime() <= Date.now(),
+)
+
+/** Показывать ли присутствие в строке: до старта «не отметился» — шум. */
+function showPresence(person: TripParticipant): boolean {
+  if (person.status === 'declined') return false
+
+  return presenceOf(person) !== 'none' || hasStarted.value
+}
+
+/** Цвет статуса: «на маршруте» — живой, «вернулся» и «не отметился» — тихие. */
+function presenceClass(person: TripParticipant): string {
+  return presenceOf(person) === 'route'
+    ? 'border-emerald-700 text-emerald-700'
+    : 'border-border text-muted'
+}
+
+async function markPresence(
+  person: TripParticipant,
+  action: PresenceAction,
+): Promise<void> {
+  if (presenceBusyUserId.value !== null) return
+
+  presenceBusyUserId.value = person.userId
+  actionError.value = null
+  presenceQueued.value = false
+
+  try {
+    // Без связи — в очередь: отметка не правка похода, её можно отправить
+    // позже. Экран показывает результат сразу, чтобы человек не нажимал
+    // второй раз «на всякий случай».
+    if (!offline.isOnline) {
+      const at = new Date().toISOString()
+      await queuePresenceChange(props.trip.id, {
+        userId: person.userId,
+        status: action,
+        at,
+      })
+
+      const index = participants.value.findIndex(
+        (item) => item.userId === person.userId,
+      )
+      if (index !== -1) {
+        participants.value[index] = applyPresence(
+          participants.value[index]!,
+          action,
+          auth.user?.id ?? person.userId,
+          at,
+        )
+      }
+
+      presenceQueued.value = true
+      return
+    }
+
+    const updated = await setTripPresence(props.trip.id, person.userId, action)
+    const index = participants.value.findIndex(
+      (item) => item.userId === updated.userId,
+    )
+    if (index !== -1) participants.value[index] = updated
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось поставить отметку присутствия'
+  } finally {
+    presenceBusyUserId.value = null
+  }
+}
 
 /**
  * Кто приводит своих людей: приглашает и заводит без аккаунта.
@@ -473,6 +599,10 @@ function invite(person: UserSearchResult) {
         {{ actionError }}
       </p>
 
+      <p v-if="presenceQueued" class="text-xs text-muted" data-test="presence-queued">
+        Нет связи: отметка уйдёт, когда появится сеть.
+      </p>
+
       <!-- Мой статус. Приглашённому сначала нужно ответить на приглашение -->
       <div
         v-if="me && !isOrganizer && me.status !== 'invited'"
@@ -822,10 +952,64 @@ function invite(person: UserSearchResult) {
                   {{ PARTICIPANT_STATUS_LABELS[person.status] }}
                   <template v-if="person.isOrganizer"> · организатор похода</template>
                 </span>
+
+                <!--
+                  Присутствие (17.11.2026): перекличка «на маршруте /
+                  вернулся». До старта похода «не отметился» не показываем —
+                  это шум; после — это и есть главный вопрос группы.
+                -->
+                <span
+                  v-if="showPresence(person)"
+                  class="flex flex-wrap items-center gap-1 text-xs"
+                  data-test="participant-presence"
+                >
+                  <span
+                    class="rounded-full border px-2 py-0.5"
+                    :class="presenceClass(person)"
+                    :data-test="`presence-status-${presenceOf(person)}`"
+                  >
+                    {{ PRESENCE_STATUS_LABELS[presenceOf(person)] }}
+                  </span>
+                  <span
+                    v-if="presenceUpdaterName(person)"
+                    class="text-muted"
+                    data-test="presence-updated-by"
+                  >
+                    отметил {{ presenceUpdaterName(person) }}
+                  </span>
+                </span>
               </span>
             </span>
 
             <div class="flex flex-wrap items-center gap-2">
+              <!--
+                Отметки ставит любой идущий — себе и любому, кроме вышедшего.
+                «Вернулся» и «На маршруте» — одно действие на строку, а
+                «Снять» исправляет ошибочное нажатие.
+              -->
+              <template v-if="canMarkPresence && person.status !== 'declined'">
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
+                  :disabled="presenceBusyUserId !== null"
+                  :data-test="`presence-mark-${person.userId}`"
+                  @click="markPresence(person, nextPresenceAction(person))"
+                >
+                  {{ nextPresenceLabel(person) }}
+                </button>
+
+                <button
+                  v-if="presenceOf(person) !== 'none'"
+                  type="button"
+                  class="cursor-pointer rounded-xl border border-border px-2 py-1.5 text-xs text-muted transition-colors hover:border-primary hover:text-text disabled:opacity-60"
+                  :disabled="presenceBusyUserId !== null"
+                  :data-test="`presence-reset-${person.userId}`"
+                  @click="markPresence(person, 'none')"
+                >
+                  Снять
+                </button>
+              </template>
+
               <button
                 v-if="canManageRoles && !person.isVirtual"
                 type="button"

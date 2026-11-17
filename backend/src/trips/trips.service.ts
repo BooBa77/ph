@@ -81,6 +81,7 @@ import {
   type ChatKind,
   type ParticipantDecision,
   type ParticipantStatus,
+  type PresenceAction,
   type TripStatus,
   type TripWhen,
 } from './trip.types';
@@ -1789,6 +1790,20 @@ export class TripsService {
         throw new NotFoundException('Ты не в составе этого похода');
       }
 
+      /**
+       * Организатор не может быть `declined` (решение 16.11.2026).
+       *
+       * Он автор похода: «организую, но не иду» раньше разрешалось, и это
+       * давало поход без ведущего в составе — а присутствие отмечают те,
+       * кто в поле. Отдельного статуса `helping` в словаре пока нет,
+       * поэтому честный вариант для организатора — «пока не решил».
+       */
+      if (status === 'declined' && trip.organizerUserId === participant.userId) {
+        throw new BadRequestException(
+          'Организатор не может быть «не иду»: он автор похода. Выбери «пока не решил»',
+        );
+      }
+
       const statusChanged = participant.status !== status;
       const dietChanged =
         eatsSeparately !== undefined &&
@@ -1846,6 +1861,91 @@ export class TripsService {
     }
 
     return result.participant;
+  }
+
+  /**
+   * Отметка присутствия: «на маршруте», «вернулся» или снять отметки.
+   *
+   * **Отмечает любой идущий** — себе и любому другому участнику, включая
+   * человека без аккаунта (решение 16.11.2026: «они теперь в одной лодке»).
+   * Организатор и соорганизатор отдельных прав здесь не имеют: в поле все
+   * равны, а присутствие нужно от тех, кто идёт.
+   *
+   * **Цель — любой участник, кроме `declined`.** Вышел из похода — залога
+   * с него нет и отметки тоже; `maybe` и `invited` отметить можно: человек
+   * мог выйти на маршрут, не ответив в приложении.
+   *
+   * **Отметка не меняет даты похода.** Это перекличка, а не факт: поход
+   * живёт по плановым датам, присутствие показывает реальность. «Вернулся»
+   * при идущем походе — норма, а не ошибка.
+   *
+   * Время ставит сервер: часы устройства в горах врут, а вопрос «когда
+   * отметил» задаётся уже после возвращения. Повторная отметка «на маршруте»
+   * не переписывает первый выход, если он уже был, — иначе «день 3» стал бы
+   * «днём 1» после случайного нажатия.
+   */
+  async setPresence(
+    userId: string,
+    id: number,
+    targetUserId: string,
+    action: PresenceAction,
+  ): Promise<TripParticipantDto> {
+    return this.dataSource.transaction(async (manager) => {
+      const trip = await this.findVisibleTrip(manager, userId, id);
+
+      const actor = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId },
+      });
+      if (!actor || actor.status !== 'going') {
+        throw new ForbiddenException(
+          'Отмечать присутствие может только идущий участник',
+        );
+      }
+
+      const target = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: targetUserId },
+        relations: { user: true },
+      });
+      if (!target) {
+        throw new NotFoundException('Такого участника нет в походе');
+      }
+      if (target.status === 'declined') {
+        throw new BadRequestException(
+          'Этот человек вышел из похода — отметить присутствие нельзя',
+        );
+      }
+
+      const now = new Date();
+
+      if (action === 'route') {
+        target.startedAt = target.startedAt ?? now;
+        target.returnedAt = null;
+      } else if (action === 'returned') {
+        // Вернуться, не выходя, нельзя: CHECK в базе держит то же правило,
+        // а здесь оно объясняется человеку текстом, а не 500-й.
+        target.startedAt = target.startedAt ?? now;
+        target.returnedAt = now;
+      } else {
+        target.startedAt = null;
+        target.returnedAt = null;
+      }
+
+      if (action === 'none') {
+        target.presenceUpdatedBy = null;
+        target.presenceSource = null;
+      } else {
+        target.presenceUpdatedBy = userId;
+        target.presenceSource = userId === targetUserId ? 'self' : 'other';
+      }
+
+      await manager.save(target);
+
+      return TripParticipantDto.from(
+        target,
+        await this.loadRoles(manager, trip.id, targetUserId),
+        trip.organizerUserId,
+      );
+    });
   }
 
   /**

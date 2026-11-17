@@ -193,6 +193,60 @@ describe('GuestTripView', () => {
     expect(wrapper.find('[data-test="guest-actual-dates"]').text()).toContain('2027')
   })
 
+  it('присутствие видно гостю: «на маршруте», «вернулся», «не отметился»', async () => {
+    mocked.fetchGuestTrip.mockResolvedValue(
+      makeGuest({
+        // Поход уже начался: только тогда «не отметился» — факт, а не шум.
+        startsAt: '2026-11-16T00:00:00.000Z',
+        participants: [
+          {
+            userId: 'u-1',
+            displayName: 'Сергей',
+            avatarUrl: null,
+            status: 'going',
+            roles: [],
+            isOrganizer: true,
+            isVirtual: false,
+            createdAt: '2026-10-14T10:00:00.000Z',
+            updatedAt: '2026-10-14T10:00:00.000Z',
+            presenceStatus: 'route',
+          },
+          {
+            userId: 'u-2',
+            displayName: 'Марина',
+            avatarUrl: null,
+            status: 'going',
+            roles: [],
+            isOrganizer: false,
+            isVirtual: false,
+            createdAt: '2026-10-14T10:00:00.000Z',
+            updatedAt: '2026-10-14T10:00:00.000Z',
+            presenceStatus: 'returned',
+          },
+          {
+            userId: 'u-3',
+            displayName: 'Пётр',
+            avatarUrl: null,
+            status: 'going',
+            roles: [],
+            isOrganizer: false,
+            isVirtual: false,
+            createdAt: '2026-10-14T10:00:00.000Z',
+            updatedAt: '2026-10-14T10:00:00.000Z',
+            presenceStatus: 'none',
+          },
+        ],
+      }),
+    )
+
+    const wrapper = await mountView()
+    const list = wrapper.get('[data-test="guest-participants"]')
+
+    expect(list.text()).toContain('На маршруте')
+    expect(list.text()).toContain('Вернулся')
+    expect(list.text()).toContain('Не отметился')
+  })
+
   it('404 объясняется словами «закрыт», а не пустой страницей', async () => {
     mocked.fetchGuestTrip.mockRejectedValue(new ApiError(404, 'Поход не найден', null))
 

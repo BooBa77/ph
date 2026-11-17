@@ -15,8 +15,10 @@ import { User } from '../../users/entities/user.entity';
 import {
   DEPOSIT_STATUSES,
   PARTICIPANT_STATUSES,
+  PRESENCE_SOURCES,
   type DepositStatus,
   type ParticipantStatus,
+  type PresenceSource,
 } from '../trip.types';
 import { Trip } from './trip.entity';
 
@@ -46,6 +48,14 @@ import { Trip } from './trip.entity';
 @Check(
   'chk_trip_participants_deposit_status',
   `"deposit_status" IN (${sqlValues(DEPOSIT_STATUSES)})`,
+)
+@Check(
+  'chk_trip_participants_presence_source',
+  `"presence_source" IS NULL OR "presence_source" IN (${sqlValues(PRESENCE_SOURCES)})`,
+)
+@Check(
+  'chk_trip_participants_presence_order',
+  `"returned_at" IS NULL OR "started_at" IS NOT NULL`,
 )
 export class TripParticipant {
   @PrimaryColumn({ name: 'trip_id', type: 'bigint' })
@@ -124,6 +134,43 @@ export class TripParticipant {
 
   @Column({ name: 'deposit_updated_at', type: 'timestamptz', nullable: true })
   depositUpdatedAt: Date | null;
+
+  /**
+   * Присутствие на маршруте (17.11.2026).
+   *
+   * Заказчик: «отметки о присутствии на маршруте», «любой идущий отмечает
+   * любого, даже офлайн — если кто-то потеряется, этого не скрыть». Это
+   * **перекличка**, а не факт похода: даты похода не меняются, первая
+   * отметка не начинает поход, последняя не закрывает.
+   *
+   * `started_at`/`returned_at` — моменты отметок, а не «план/факт».
+   * `presence_source` говорит, сам человек отметил (`self`) или другой
+   * идущий (`other`) — по нему на экране подпись «отметил Сергей».
+   * `presence_updated_by` хранит автора отметки, а не жертву доверия.
+   */
+  @Column({ name: 'started_at', type: 'timestamptz', nullable: true })
+  startedAt: Date | null;
+
+  @Column({ name: 'returned_at', type: 'timestamptz', nullable: true })
+  returnedAt: Date | null;
+
+  @Column({ name: 'presence_updated_by', type: 'uuid', nullable: true })
+  presenceUpdatedBy: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({
+    name: 'presence_updated_by',
+    foreignKeyConstraintName: 'FK_trip_participants_presence_updated_by',
+  })
+  presenceUpdatedByUser: User | null;
+
+  @Column({
+    name: 'presence_source',
+    type: 'varchar',
+    length: 10,
+    nullable: true,
+  })
+  presenceSource: PresenceSource | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

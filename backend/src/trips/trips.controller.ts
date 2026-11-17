@@ -38,6 +38,7 @@ import {
   TripParticipantDto,
   UpdateMyStatusDto,
   UpdateParticipantDietDto,
+  UpdatePresenceDto,
 } from './dto/participant.dto';
 import {
   CreateRequestDto,
@@ -290,6 +291,31 @@ export class TripsController {
       id,
       dto.status,
       dto.eatsSeparately,
+    );
+  }
+
+  /**
+   * Отметка присутствия: себе или другому участнику (17.11.2026).
+   *
+   * Отдельная ручка, а не поле статуса участия: присутствие — не участие,
+   * и «на маршруте» ставит любой идущий, а не только сам человек. Возврат —
+   * обновлённый участник, чтобы экран заменил одну строку, а не перечитывал
+   * весь состав.
+   */
+  @Put(':id/presence/:userId')
+  @ApiOperation({ summary: 'Отметить присутствие участника' })
+  @ApiOkResponse({ type: TripParticipantDto })
+  async setPresence(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('userId', ParseUUIDPipe) targetUserId: string,
+    @Body() dto: UpdatePresenceDto,
+  ): Promise<TripParticipantDto> {
+    return this.tripsService.setPresence(
+      authUser.id,
+      id,
+      targetUserId,
+      dto.status,
     );
   }
 

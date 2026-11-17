@@ -3,7 +3,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter, type Router } from 'vue-router'
 
-import type { Trip, TripTabCode, TripTabPermission } from '@/types/trips'
+import type { Trip, TripParticipant, TripTabCode, TripTabPermission } from '@/types/trips'
 import TripView from '@/views/trips/TripView.vue'
 import type { User } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   getTrip: vi.fn(),
   fetchTripTabs: vi.fn(),
   updateTrip: vi.fn(),
+  listParticipants: vi.fn(),
+  setTripPresence: vi.fn(),
 }))
 
 vi.mock('@/api/trips', async (importOriginal) => {
@@ -32,6 +34,8 @@ vi.mock('@/api/trips', async (importOriginal) => {
     getTrip: mocks.getTrip,
     fetchTripTabs: mocks.fetchTripTabs,
     updateTrip: mocks.updateTrip,
+    listParticipants: mocks.listParticipants,
+    setTripPresence: mocks.setTripPresence,
   }
 })
 
@@ -144,6 +148,7 @@ describe('TripView и мобильное меню', () => {
     vi.clearAllMocks()
     mocks.getTrip.mockResolvedValue(TRIP)
     mocks.fetchTripTabs.mockResolvedValue(permissions())
+    mocks.listParticipants.mockResolvedValue([])
   })
 
   it('нижней полосы вкладок больше нет', async () => {
@@ -245,5 +250,101 @@ describe('TripView и мобильное меню', () => {
     wrapper.unmount()
 
     expect(useMobileMenuStore().context).toBeNull()
+  })
+
+  // ───────────────────── присутствие (17.11.2026) ─────────────────────
+
+  /** Своя строка состава: ответ похода статуса участия не содержит. */
+  function me(overrides: Partial<TripParticipant> = {}): TripParticipant {
+    return {
+      userId: 'u-1',
+      displayName: 'Тест',
+      avatarUrl: null,
+      status: 'going',
+      roles: [],
+      isOrganizer: true,
+      isVirtual: false,
+      createdAt: '2026-10-14T10:00:00.000Z',
+      updatedAt: '2026-10-14T10:00:00.000Z',
+      presenceStatus: 'none',
+      ...overrides,
+    }
+  }
+
+  const daysFromNow = (days: number): string =>
+    new Date(Date.now() + days * 86_400_000).toISOString()
+
+  it('поход начался — спрашивает, стартанул ли я, и ставит «на маршруте»', async () => {
+    mocks.getTrip.mockResolvedValue({
+      ...TRIP,
+      startsAt: daysFromNow(-1),
+      endsAt: daysFromNow(2),
+    })
+    mocks.listParticipants.mockResolvedValue([me()])
+    mocks.setTripPresence.mockResolvedValue(
+      me({ presenceStatus: 'route', startedAt: daysFromNow(0) }),
+    )
+
+    const { wrapper } = await mountTrip()
+
+    expect(wrapper.get('[data-test="presence-question-text"]').text()).toContain('уже стартанул')
+
+    await wrapper.get('[data-test="presence-start"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setTripPresence).toHaveBeenCalledWith('1', 'u-1', 'route')
+    // Ответ получен — вопрос больше не висит.
+    expect(wrapper.find('[data-test="presence-question"]').exists()).toBe(false)
+  })
+
+  it('после окончания похода спрашивает о возвращении', async () => {
+    mocks.getTrip.mockResolvedValue({
+      ...TRIP,
+      startsAt: daysFromNow(-5),
+      endsAt: daysFromNow(-1),
+    })
+    mocks.listParticipants.mockResolvedValue([me({ presenceStatus: 'route' })])
+    mocks.setTripPresence.mockResolvedValue(
+      me({ presenceStatus: 'returned', returnedAt: daysFromNow(0) }),
+    )
+
+    const { wrapper } = await mountTrip()
+
+    expect(wrapper.get('[data-test="presence-question-text"]').text()).toContain('вернулся')
+
+    await wrapper.get('[data-test="presence-returned"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setTripPresence).toHaveBeenCalledWith('1', 'u-1', 'returned')
+  })
+
+  it('пока поход идёт, «Я вернулся» — кнопка, а не вопрос', async () => {
+    mocks.getTrip.mockResolvedValue({
+      ...TRIP,
+      startsAt: daysFromNow(-1),
+      endsAt: daysFromNow(2),
+    })
+    mocks.listParticipants.mockResolvedValue([me({ presenceStatus: 'route' })])
+
+    const { wrapper } = await mountTrip()
+
+    expect(wrapper.find('[data-test="presence-question"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="presence-return-row"]').exists()).toBe(true)
+  })
+
+  it('отложенный вопрос не показывается до следующего входа', async () => {
+    mocks.getTrip.mockResolvedValue({
+      ...TRIP,
+      startsAt: daysFromNow(-1),
+      endsAt: daysFromNow(2),
+    })
+    mocks.listParticipants.mockResolvedValue([me()])
+
+    const { wrapper } = await mountTrip()
+
+    await wrapper.get('[data-test="presence-later"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="presence-question"]').exists()).toBe(false)
   })
 })
