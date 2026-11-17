@@ -1308,12 +1308,14 @@ describe('Бухгалтерия похода (e2e)', () => {
   });
 
   /**
-   * Залог участия (17.11.2026).
+   * Залог участия (17.11.2026) и «залог как риск» (17.11.2026).
    *
    * Заказчик: «Организатор может установить залог на участие, размести это
-   * над секцией Движение денег». Проверяем три вещи, которые нельзя увидеть
-   * в юнит-тесте: сумма живёт в походе и правится его правкой, отметки ставит
-   * только организатор, а в балансы залог не попадает.
+   * над секцией Движение денег». Потом подтвердил, что удержанный залог —
+   * **доход фонда группы**: «A −залог, каждому идущему +залог/число идущих».
+   * Здесь проверяется то, чего не видит юнит-тест: сумма живёт в походе,
+   * отметки ставит только организатор, «Перевести залог» пишет держателя,
+   * а удержание двигает балансы и появляется в ленте.
    */
   describe('залог участия', () => {
     /** Поход №2: A — организатор, Б, В, Г идут, Д приглашён. */
@@ -1331,6 +1333,44 @@ describe('Бухгалтерия похода (e2e)', () => {
         person.token,
       ).send({ status });
 
+    /** «Перевести залог» — участник переводит его организатору. */
+    const transferDeposit = (person: Person, recipientUserId: string) =>
+      auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip2}/finance/deposit/transfer`,
+        ),
+        person.token,
+      ).send({ recipientUserId });
+
+    const decline = (person: Person) =>
+      auth(
+        request(app.getHttpServer()).patch(
+          `/api/trips/${trip2}/participants/me`,
+        ),
+        person.token,
+      ).send({ status: 'declined' });
+
+    /** Баланс человека в ответе вкладки (`0`, если строки нет). */
+    const balanceOf = (body: unknown, person: Person): number =>
+      ((body as { members: { userId: string; balanceRub: number }[] }).members.find(
+        (member) => member.userId === person.id,
+      )?.balanceRub ?? 0);
+
+    /** Строка залога в полном списке — секция риска её не всегда содержит. */
+    const depositRow = (body: unknown, person: Person) =>
+      (
+        body as {
+          deposit: {
+            allParticipants: {
+              userId: string;
+              status: string;
+              updatedByName: string | null;
+              holderName: string | null;
+            }[];
+          };
+        }
+      ).deposit.allParticipants.find((row) => row.userId === person.id)!;
+
     it('без залога блока нет', async () => {
       const response = await view(trip2, a);
 
@@ -1339,7 +1379,7 @@ describe('Бухгалтерия похода (e2e)', () => {
 
     it('залог ставится правкой похода и виден всем участникам', async () => {
       // В походе уже есть расходы из соседних тестов: залог обязан их
-      // не трогать — он не расход и не двигает баланс.
+      // не трогать — он не расход и баланс не двигает.
       const before = await view(trip2, b);
 
       const patched = await updateTrip(a, { depositRub: 2000 }).expect(200);
@@ -1350,19 +1390,24 @@ describe('Бухгалтерия похода (e2e)', () => {
       expect(asMember.body.deposit.amountRub).toBe(2000);
       expect(asMember.body.deposit.canManage).toBe(false);
       expect(
-        asMember.body.deposit.participants.map(
+        asMember.body.deposit.allParticipants.map(
           (person: { userId: string }) => person.userId,
         ),
       ).toEqual([a.id, b.id, c.id, g.id]);
+      expect(asMember.body.deposit.summary.total).toBe(4);
+      expect(asMember.body.deposit.summary.pending).toBe(4);
+      // Секция риска — только «не сдал»: сдавших и вложившихся в неё
+      // не кладут (слова заказчика про экономию места).
       expect(
         asMember.body.deposit.participants.every(
           (person: { status: string }) => person.status === 'pending',
         ),
       ).toBe(true);
 
-      // В ленте «Движения денег» залога нет и баланс он не двигает.
+      // Пока удержания нет, в ленте залога нет и баланс он не двигает.
       expect(asMember.body.expenses).toHaveLength(before.body.expenses.length);
       expect(asMember.body.me.balanceRub).toBe(before.body.me.balanceRub);
+      expect(asMember.body.depositForfeits).toEqual([]);
 
       const asOrganizer = await view(trip2, a);
       expect(asOrganizer.body.deposit.canManage).toBe(true);
@@ -1374,23 +1419,91 @@ describe('Бухгалтерия похода (e2e)', () => {
       await setDeposit(e, b, 'held').expect(403);
     });
 
-    it('«сдал» и «вернул» ставит организатор, участник видит автора', async () => {
+    it('«сдал» ставит организатор, и держателем становится он сам', async () => {
       const held = await setDeposit(a, b, 'held').expect(200);
-      const row = held.body.deposit.participants.find(
-        (person: { userId: string }) => person.userId === b.id,
-      );
+      const row = depositRow(held.body, b);
 
       expect(row.status).toBe('held');
       // Имя автора — имя организатора: залог держится на прозрачности.
       expect(row.updatedByName).toContain('fin-a-');
-      expect(row.updatedAt).not.toBeNull();
+      // Раз отметил он, деньги у него: «частичный держатель кассы».
+      expect(row.holderName).toContain('fin-a-');
+      expect(held.body.deposit.summary.cashRub).toBe(2000);
 
       const returned = await setDeposit(a, b, 'returned').expect(200);
+      expect(depositRow(returned.body, b).status).toBe('returned');
+      expect(returned.body.deposit.summary.cashRub).toBe(0);
+    });
+
+    it('«Перевести залог»: участник переводит его организатору без движения балансов', async () => {
+      const before = await view(trip2, c);
+
+      const transferred = await transferDeposit(c, a.id).expect(200);
+      const row = depositRow(transferred.body, c);
+
+      expect(row.status).toBe('held');
+      expect(row.holderName).toContain('fin-a-');
+      // Залог двигает балансы только в момент удержания.
+      expect(balanceOf(transferred.body, c)).toBe(balanceOf(before.body, c));
+      expect(transferred.body.depositForfeits).toEqual([]);
+
+      // Повторно переводить нечего — залог уже отмечен.
+      await transferDeposit(c, a.id).expect(400);
+
+      // Получатель — только организатор похода: Б не организатор.
+      await transferDeposit(g, b.id).expect(400);
+    });
+
+    it('«Удержать» отдаёт залог фонду группы: −залог источнику, +доля идущим', async () => {
+      // Заказчик: «Если участник отваливается и уже понёс расходы, залог
+      // ему не возвращается». Б выходит — и его залог решает организатор.
+      await decline(b).expect(200);
+
+      const before = await view(trip2, a);
+      const forfeited = await setDeposit(a, b, 'forfeited').expect(200);
+
+      expect(depositRow(forfeited.body, b).status).toBe('forfeited');
+
+      // У вышедшего баланс падает на залог — и он виден группе.
+      expect(balanceOf(forfeited.body, b)).toBe(
+        balanceOf(before.body, b) - 2000,
+      );
+
+      // Идущих трое: 2000 на троих — 667, 667 и 666 первым по составу.
+      expect(balanceOf(forfeited.body, a) - balanceOf(before.body, a)).toBe(667);
+      expect(balanceOf(forfeited.body, c) - balanceOf(before.body, c)).toBe(667);
+      expect(balanceOf(forfeited.body, g) - balanceOf(before.body, g)).toBe(666);
+
+      // В ленте — одна строка удержания; сумма долей равна залогу.
+      expect(forfeited.body.depositForfeits).toHaveLength(1);
+      const ledgerRow = forfeited.body.depositForfeits[0];
+      expect(ledgerRow.amountRub).toBe(2000);
+      expect(ledgerRow.sourceUserId).toBe(b.id);
       expect(
-        returned.body.deposit.participants.find(
-          (person: { userId: string }) => person.userId === b.id,
-        ).status,
-      ).toBe('returned');
+        ledgerRow.shares.reduce(
+          (sum: number, share: { amountRub: number }) => sum + share.amountRub,
+          0,
+        ),
+      ).toBe(2000);
+
+      // Сумма по всем, включая вышедшего, остаётся нулевой.
+      const total = (
+        forfeited.body.members as { balanceRub: number }[]
+      ).reduce((sum, member) => sum + member.balanceRub, 0);
+      expect(total).toBe(0);
+    });
+
+    it('«Вернуть» снимает удержание и возвращает балансы', async () => {
+      const before = await view(trip2, a);
+      const returned = await setDeposit(a, b, 'returned').expect(200);
+
+      // Отметку отказавшемуся организатор ставить может: это и есть его
+      // решение («вернуть или удержать»). Прежние 400 для `declined` сняты.
+      expect(depositRow(returned.body, b).status).toBe('returned');
+      expect(balanceOf(returned.body, b)).toBe(
+        balanceOf(before.body, b) + 2000,
+      );
+      expect(returned.body.depositForfeits).toEqual([]);
     });
 
     it('приглашённому залог не ставят: он ещё не ответил', async () => {

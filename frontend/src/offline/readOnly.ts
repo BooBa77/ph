@@ -13,7 +13,9 @@
 const READ_ONLY_FLAGS = new Set([
   'canEdit',
   'canEditGear',
+  'canManage',
   'canManageRoles',
+  'canTransfer',
   'canWrite',
   'canSpend',
 ])

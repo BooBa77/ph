@@ -2,6 +2,7 @@ import type {
   CompensationOption,
   CompensationPerson,
   TripCompensation,
+  TripDepositForfeit,
   TripExpense,
   TripFinance,
 } from '@/types/finance'
@@ -117,19 +118,40 @@ export function splitCaption(expense: TripExpense): string {
   return `${shares.map((share) => share.displayName).join(', ')} · ${perPerson}`
 }
 
-/** Одна строка таблицы движения денег — расход или компенсация. */
+/**
+ * Подпись удержанного залога: «в фонд группы · по 50 ₽».
+ *
+ * Заказчик: удержанный залог — «доход фонда группы», а не перевод человеку.
+ * Поэтому подпись говорит про фонд, а не перечисляет имена идущих: их доли
+ * и так видны в балансах, а строка ленты должна оставаться короткой.
+ * Остаток от деления — как у расходов: «по» показывает меньшую долю.
+ */
+export function forfeitCaption(forfeit: TripDepositForfeit): string {
+  if (forfeit.shares.length === 0) return 'в фонд группы'
+
+  const perPerson = Math.min(...forfeit.shares.map((share) => share.amountRub))
+
+  return `в фонд группы · по ${formatRub(perPerson)}`
+}
+
+/** Одна строка таблицы движения денег — расход, компенсация или залог. */
 export type MoneyRow =
   | { kind: 'expense'; key: string; at: string; expense: TripExpense }
   | { kind: 'compensation'; key: string; at: string; compensation: TripCompensation }
+  | { kind: 'deposit'; key: string; at: string; forfeit: TripDepositForfeit }
 
 /**
- * Расходы и компенсации одной лентой, свежие сверху.
+ * Расходы, компенсации и удержанные залоги одной лентой, свежие сверху.
  *
  * Ключ сортировки у расхода — дата траты (`ГГГГ-ММ-ДД`), у компенсации —
  * момент создания. Сравнение строк работает: `2026-11-11` лексикографически
  * меньше `2026-11-11T18:00:00Z`, то есть перевод, созданный в этот день,
  * встанет выше траты того же дня. Внутри дня сохраняется порядок ответа
  * сервера (`id` по убыванию), стабильная сортировка его не ломает.
+ *
+ * Удержание залога стоит здесь с 17.11.2026, потому что оно двигает
+ * балансы: у отказавшегося минус, у идущих плюс их доля. Молча менять
+ * цифры нельзя — человек должен видеть, откуда они.
  */
 export function movementRows(finance: TripFinance): MoneyRow[] {
   const rows: MoneyRow[] = [
@@ -144,6 +166,12 @@ export function movementRows(finance: TripFinance): MoneyRow[] {
       key: `compensation-${compensation.id}`,
       at: compensation.createdAt,
       compensation,
+    })),
+    ...(finance.depositForfeits ?? []).map((forfeit) => ({
+      kind: 'deposit' as const,
+      key: `deposit-${forfeit.id}`,
+      at: forfeit.at,
+      forfeit,
     })),
   ]
 

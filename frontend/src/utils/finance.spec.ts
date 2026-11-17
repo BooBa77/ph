@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest'
 
-import type { CompensationOption, TripCompensation, TripExpense, TripFinance } from '@/types/finance'
+import type {
+  CompensationOption,
+  TripCompensation,
+  TripDepositForfeit,
+  TripExpense,
+  TripFinance,
+} from '@/types/finance'
 import {
   compensationRequisites,
+  forfeitCaption,
   movementRows,
   noRequisitesPhrase,
   previewShares,
@@ -230,6 +237,40 @@ describe('movementRows', () => {
 
   it('пустая вкладка — пустая лента', () => {
     expect(movementRows(finance())).toEqual([])
+  })
+})
+
+describe('удержание залога в ленте (17.11.2026)', () => {
+  const forfeit: TripDepositForfeit = {
+    id: 'f1',
+    at: '2026-11-17T11:00:00.000Z',
+    sourceUserId: 'b',
+    sourceName: 'Борис',
+    amountRub: 2000,
+    shares: [
+      { userId: 'a', displayName: 'Анна', amountRub: 1000 },
+      { userId: 'g', displayName: 'Григорий', amountRub: 1000 },
+    ],
+  }
+
+  it('строка удержания стоит в ленте рядом с расходами', () => {
+    const rows = movementRows(
+      finance({
+        expenses: [expense({ spentAt: '2026-11-11' })],
+        depositForfeits: [forfeit],
+      }),
+    )
+
+    // Удержание двигает балансы — значит, оно в ленте, а не только в блоке.
+    expect(rows.map((row) => row.kind)).toEqual(['deposit', 'expense'])
+  })
+
+  it('подпись говорит про фонд группы, а не про перевод человеку', () => {
+    expect(forfeitCaption(forfeit)).toBe('в фонд группы · по 1 000 ₽')
+  })
+
+  it('без долей подпись не врёт про сумму', () => {
+    expect(forfeitCaption({ ...forfeit, shares: [] })).toBe('в фонд группы')
   })
 })
 

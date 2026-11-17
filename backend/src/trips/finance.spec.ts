@@ -10,6 +10,7 @@ import {
   joinNames,
   planCommonEaterShares,
   splitAmount,
+  type BalanceAdjustment,
   type BalanceCompensation,
   type BalanceExpense,
 } from './finance';
@@ -340,6 +341,73 @@ describe('общая касса семьи', () => {
     expect(joinNames(['Вася'])).toBe('Вася');
     expect(joinNames(['Вася', 'Аня'])).toBe('Вася и Аня');
     expect(joinNames(['Вася', 'Аня', 'Петя'])).toBe('Вася, Аня и Петя');
+  });
+});
+
+describe('удержание залога двигает балансы', () => {
+  // Пример заказчика: A оплатил продукты на 1 000 ₽, их делили пятеро
+  // (A, B, C, D, E), потом A отказался. Доли прошедшей траты не
+  // пересобираются (finance.md §2.1), поэтому у A +800, у остальных −200.
+  const products = expense('a', 1000, [
+    ['a', 200],
+    ['b', 200],
+    ['c', 200],
+    ['d', 200],
+    ['e', 200],
+  ]);
+
+  // Формула заказчика: «A −залог, каждому идущему +залог/число идущих».
+  // Залог 200 ₽, идут четверо — по 50 ₽.
+  const forfeit: BalanceAdjustment[] = [
+    { userId: 'a', amountRub: -200 },
+    { userId: 'b', amountRub: 50 },
+    { userId: 'c', amountRub: 50 },
+    { userId: 'd', amountRub: 50 },
+    { userId: 'e', amountRub: 50 },
+  ];
+
+  const going = ['b', 'c', 'd', 'e'];
+
+  it('источнику минус залог, каждому идущему плюс его доля', () => {
+    const balances = computeBalances([products], [], going, forfeit);
+
+    // A уже не в составе, но его баланс остаётся: удержанный залог — его.
+    expect(balances.get('a')).toBe(600);
+    expect(balances.get('b')).toBe(-150);
+    expect(balances.get('c')).toBe(-150);
+  });
+
+  it('сумма балансов — ноль, хотя источника нет в составе', () => {
+    const balances = computeBalances([products], [], going, forfeit);
+    const total = [...balances.values()].reduce((sum, value) => sum + value, 0);
+
+    expect(total).toBe(0);
+  });
+
+  it('без удержания баланс прежний: возвращённый залог ничего не двигает', () => {
+    const balances = computeBalances([products], [], going, []);
+
+    expect(balances.get('a')).toBe(800);
+    expect(balances.get('b')).toBe(-200);
+  });
+
+  it('остаток от деления не теряется: 200 ₽ на троих — 67, 67 и 66', () => {
+    const balances = computeBalances(
+      [],
+      [],
+      ['b', 'c', 'd'],
+      [
+        { userId: 'a', amountRub: -200 },
+        { userId: 'b', amountRub: 67 },
+        { userId: 'c', amountRub: 67 },
+        { userId: 'd', amountRub: 66 },
+      ],
+    );
+
+    expect(balances.get('a')).toBe(-200);
+    expect(
+      ['b', 'c', 'd'].reduce((sum, id) => sum + (balances.get(id) ?? 0), 0),
+    ).toBe(200);
   });
 });
 

@@ -20,6 +20,7 @@ import {
   CreateTripCompensationDto,
   SaveTripDepositDto,
   SaveTripExpenseDto,
+  TransferTripDepositDto,
   TripFinanceDto,
 } from './dto/trip-finance.dto';
 import { TripFinanceService } from './trip-finance.service';
@@ -143,5 +144,28 @@ export class TripFinanceController {
     @Body() dto: SaveTripDepositDto,
   ): Promise<TripFinanceDto> {
     return this.finance.setDepositStatus(authUser.id, id, targetUserId, dto.status);
+  }
+
+  /**
+   * «Перевести залог» — участник переводит его организатору (17.11.2026).
+   *
+   * Отдельная ручка, а не компенсация: прямой перевод между участниками
+   * не требует долга, и залог в балансы до удержания не попадает. Ответ —
+   * вся вкладка, как у остальных денежных действий.
+   */
+  @Post(':id/finance/deposit/transfer')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Перевести залог организатору (сам участник)' })
+  @ApiOkResponse({ type: TripFinanceDto })
+  async transferDeposit(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: TransferTripDepositDto,
+  ): Promise<TripFinanceDto> {
+    return this.finance.transferDeposit(
+      authUser.id,
+      id,
+      dto.recipientUserId,
+    );
   }
 }

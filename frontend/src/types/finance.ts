@@ -186,18 +186,87 @@ export interface DepositParticipant {
   updatedByName: string | null
   updatedAt: string | null
   isMe: boolean
+  /** Сколько человек уже оплатил расходов похода — «вложился». */
+  investedRub: number
+  /** У кого залог на руках. `null` — ещё не передан. */
+  holderName: string | null
+  /** Человек отказался от похода: ради него секция риска и существует. */
+  declined: boolean
+}
+
+/** Счётчики блока залога — вместо полного списка участников. */
+export interface DepositSummary {
+  /** Сколько человек в походе: going и maybe. */
+  total: number
+  /** Сколько идёт: «пока думаю» залог сдаёт, но в делёж не входит. */
+  going: number
+  held: number
+  returned: number
+  forfeited: number
+  pending: number
+  /** Сколько денег залога на руках у организаторов. */
+  cashRub: number
+}
+
+/** Мой залог: по нему экран решает, показывать ли «Перевести залог». */
+export interface MyDeposit {
+  status: DepositStatus
+  amountRub: number
+  /** Залог не сдан, я в походе и есть кому его перевести. */
+  canTransfer: boolean
+  /** Кому уже передан. */
+  holderName: string | null
+}
+
+/** Кому можно перевести залог: автор похода и соорганизаторы. */
+export interface DepositRecipient {
+  userId: string
+  displayName: string
+  role: 'organizer' | 'coOrganizer'
+  /** Пол нужен подписи об отсутствии реквизитов: «не указал» / «не указала». */
+  gender: 'm' | 'f'
+  paymentDetails: string | null
+  paymentBank: string | null
 }
 
 /**
  * Блок залога над «Движением денег». `null` в ответе — залога нет,
  * и блок не рисуется вовсе.
+ *
+ * `participants` — **не весь состав, а только риск** (17.11.2026):
+ * отказавшиеся и не вложившие сумму залога. Кто сдал или потратился
+ * достаточно — в списке не показывается, только в счётчиках.
  */
 export interface TripDeposit {
   /** Сумма с человека, целые рубли. Одна на поход. */
   amountRub: number
   /** Отметки ставит только организатор — он получает деньги. */
   canManage: boolean
+  summary: DepositSummary
+  /** Мой залог; `null` — меня нет в походе (например, я отказался). */
+  me: MyDeposit | null
+  /** Только риск: отказавшиеся и не вложившие сумму залога. */
   participants: DepositParticipant[]
+  /** Все участники с залогом — для «Показать всех» и снятия отметки. */
+  allParticipants: DepositParticipant[]
+  /** Кому можно перевести залог. */
+  recipients: DepositRecipient[]
+}
+
+/**
+ * Удержание залога в ленте «Движения денег» (17.11.2026).
+ *
+ * Удержание двигает балансы: у источника −залог, у идущих +его доля.
+ * Поэтому оно стоит в ленте рядом с расходами — иначе цифры меняются
+ * без объяснения.
+ */
+export interface TripDepositForfeit {
+  id: string
+  at: string
+  sourceUserId: string
+  sourceName: string
+  amountRub: number
+  shares: TripExpenseShare[]
 }
 
 /** Ответ `GET /api/trips/:id/finance` — вся вкладка одним запросом. */
@@ -212,6 +281,8 @@ export interface TripFinance {
   managedSenders: CompensationSender[]
   /** Залог участия; `null` или поля нет — залога нет. */
   deposit?: TripDeposit | null
+  /** Удержанные залоги: они двигают балансы и стоят в ленте. */
+  depositForfeits?: TripDepositForfeit[]
 }
 
 /**

@@ -474,15 +474,120 @@ export class DepositParticipantDto {
 
   @ApiProperty({ description: 'Отметка стоит на смотрящем' })
   isMe: boolean;
+
+  @ApiProperty({
+    description:
+      'Сколько человек уже вложил в поход: сумма расходов, которые он оплатил',
+    example: 1000,
+  })
+  investedRub: number;
+
+  @ApiProperty({
+    description: 'У кого залог на руках. null — ещё не передан',
+    nullable: true,
+  })
+  holderName: string | null;
+
+  @ApiProperty({ description: 'Человек отказался от похода' })
+  declined: boolean;
+}
+
+/** Счётчики блока залога: их видно в шапке вместо полного списка. */
+export class DepositSummaryDto {
+  @ApiProperty({ description: 'Сколько человек в походе: going и maybe' })
+  total: number;
+
+  @ApiProperty({
+    description:
+      'Сколько идёт: «пока думаю» залог сдаёт, но в делёж удержанного не входит',
+  })
+  going: number;
+
+  @ApiProperty({ description: 'Сдали залог' })
+  held: number;
+
+  @ApiProperty({ description: 'Залог вернули' })
+  returned: number;
+
+  @ApiProperty({ description: 'Залог удержан' })
+  forfeited: number;
+
+  @ApiProperty({ description: 'Ещё не сдавали' })
+  pending: number;
+
+  @ApiProperty({
+    description: 'Сколько денег залога на руках у организаторов',
+    example: 600,
+  })
+  cashRub: number;
+}
+
+/**
+ * Мой залог: из этого экран решает, показывать ли «Перевести залог».
+ *
+ * `canTransfer` — залог ещё не сдан, я в походе и есть кому его перевести.
+ * `holderName` — кому уже переведён, чтобы человек видел, у кого деньги.
+ */
+export class MyDepositDto {
+  @ApiProperty({ enum: DEPOSIT_STATUSES, example: 'pending' })
+  status: DepositStatus;
+
+  @ApiProperty({ description: 'Сумма моего залога', example: 2000 })
+  amountRub: number;
+
+  @ApiProperty({ description: 'Могу ли я перевести залог организатору' })
+  canTransfer: boolean;
+
+  @ApiProperty({
+    description: 'Кому залог уже передан. null — ещё никому',
+    nullable: true,
+  })
+  holderName: string | null;
+}
+
+/** Кому можно перевести залог: организатор и соорганизаторы. */
+export class DepositRecipientDto {
+  @ApiProperty()
+  userId: string;
+
+  @ApiProperty()
+  displayName: string;
+
+  @ApiProperty({
+    description:
+      'organizer — автор похода, coOrganizer — назначенный второй организатор',
+    enum: ['organizer', 'coOrganizer'],
+    example: 'organizer',
+  })
+  role: 'organizer' | 'coOrganizer';
+
+  @ApiProperty({
+    description: 'Пол: m — мужской, f — женский. Нужен подписи об отсутствии реквизитов',
+    enum: USER_GENDERS,
+    example: 'm',
+  })
+  gender: UserGender;
+
+  @ApiProperty({ nullable: true })
+  paymentDetails: string | null;
+
+  @ApiProperty({ nullable: true })
+  paymentBank: string | null;
 }
 
 /**
  * Залог участия — блок над «Движением денег» (`finance.md` §2.5).
  *
  * `null` в ответе вкладки значит «залога нет», и блок на экране не
- * рисуется вовсе. Список — все, кто в походе: `going` и `maybe`.
- * Приглашённый ещё не решил, отказавшийся уже вышел, и залог с них
- * не спрашивают.
+ * рисуется вовсе.
+ *
+ * **Список — не все участники, а только риск (17.11.2026).** Заказчик:
+ * «в секции нужны именно те, кто отказался, чтобы организатор решал,
+ * что делать с залогом. Можно также туда информативно разместить тех,
+ * кто не вложился на сумму залога. Тех же, кто перевёл залог или
+ * достаточно потратился, не стоит отображать — экономим пространство».
+ * Поэтому `participants` — отказавшиеся и не вложившие сумму залога;
+ * счётчики остальных — в `summary`.
  */
 export class TripDepositDto {
   @ApiProperty({ description: 'Сумма с человека, целые рубли', example: 2000 })
@@ -494,8 +599,58 @@ export class TripDepositDto {
   })
   canManage: boolean;
 
+  @ApiProperty({ type: DepositSummaryDto })
+  summary: DepositSummaryDto;
+
+  @ApiProperty({
+    description: 'Мой залог. null — я не в походе (например, уже отказался)',
+    type: MyDepositDto,
+    nullable: true,
+  })
+  me: MyDepositDto | null;
+
   @ApiProperty({ type: [DepositParticipantDto] })
   participants: DepositParticipantDto[];
+
+  @ApiProperty({
+    description:
+      'Все участники с залогом, включая сдавших и вложившихся: нужны для «Показать всех», чтобы ошибочную отметку можно было снять',
+    type: [DepositParticipantDto],
+  })
+  allParticipants: DepositParticipantDto[];
+
+  @ApiProperty({
+    description: 'Кому можно перевести залог: автор похода и соорганизаторы',
+    type: [DepositRecipientDto],
+  })
+  recipients: DepositRecipientDto[];
+}
+
+/**
+ * Одно удержание залога в ленте «Движения денег» (17.11.2026).
+ *
+ * Удержание двигает балансы, поэтому оно должно быть видно там же, где
+ * расходы и переводы: иначе у идущих меняются цифры без объяснения.
+ * `shares` — кому и сколько досталось; сумма долей равна `amountRub`.
+ */
+export class TripDepositForfeitDto {
+  @ApiProperty({ example: 'f1' })
+  id: string;
+
+  @ApiProperty({ description: 'Когда залог удержали' })
+  at: string;
+
+  @ApiProperty()
+  sourceUserId: string;
+
+  @ApiProperty({ example: 'Борис' })
+  sourceName: string;
+
+  @ApiProperty({ description: 'Сумма удержанного залога', example: 200 })
+  amountRub: number;
+
+  @ApiProperty({ type: [TripExpenseShareDto] })
+  shares: TripExpenseShareDto[];
 }
 
 /** Тело `PUT /api/trips/:id/finance/deposit/:userId`. */
@@ -509,6 +664,22 @@ export class SaveTripDepositDto {
     message: 'Состояние залога: pending, held, returned или forfeited',
   })
   status: DepositStatus;
+}
+
+/**
+ * Тело `POST /api/trips/:id/finance/deposit/transfer` (17.11.2026).
+ *
+ * Участник переводит залог организатору: прямых переводов между
+ * участниками в приложении нет, поэтому кнопка отдельная и получатель
+ * выбирается из организаторов похода.
+ */
+export class TransferTripDepositDto {
+  @ApiProperty({
+    description: 'Кому переводится залог: автор похода или соорганизатор',
+    example: '90ca6b06-fb04-4c5e-8c49-36ef5d188c50',
+  })
+  @IsUUID('all', { message: 'Получатель залога должен быть человеком' })
+  recipientUserId: string;
 }
 
 /** Ответ `GET /api/trips/:id/finance` — вся вкладка одним запросом. */
@@ -539,6 +710,13 @@ export class TripFinanceDto {
     nullable: true,
   })
   deposit: TripDepositDto | null;
+
+  @ApiProperty({
+    description:
+      'Удержанные залоги: они двигают балансы, поэтому стоят в ленте движения денег',
+    type: [TripDepositForfeitDto],
+  })
+  depositForfeits: TripDepositForfeitDto[];
 
   @ApiProperty({
     description:

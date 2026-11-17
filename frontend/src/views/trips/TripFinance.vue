@@ -17,13 +17,20 @@ import {
   type CompensationSender,
   type DepositStatus,
   type TripCompensation,
+  type TripDepositForfeit,
   type TripExpense,
   type TripFinance,
 } from '@/types/finance'
-import { movementRows, splitCaption, type MoneyRow } from '@/utils/finance'
+import {
+  forfeitCaption,
+  movementRows,
+  splitCaption,
+  type MoneyRow,
+} from '@/utils/finance'
 import { formatDay, formatRub, formatRubSigned } from '@/utils/money'
 import TripChat from '@/views/trips/TripChat.vue'
 import TripFinanceCompensationModal from '@/views/trips/TripFinanceCompensationModal.vue'
+import TripFinanceDepositModal from '@/views/trips/TripFinanceDepositModal.vue'
 import TripFinanceExpenseModal from '@/views/trips/TripFinanceExpenseModal.vue'
 
 /**
@@ -71,6 +78,7 @@ const busyCompensation = ref<string | null>(null)
 const expenseModalOpen = ref(false)
 const editingExpense = ref<TripExpense | null>(null)
 const compensationOpen = ref(false)
+const depositTransferOpen = ref(false)
 
 // ───────────────────────────── загрузка ─────────────────────────────
 
@@ -258,26 +266,80 @@ const hasRemainingShift = computed(
 // ───────────────────────────── залог участия ─────────────────────────────
 
 /**
- * Залог участия (17.11.2026).
+ * Залог участия (17.11.2026, переделан 17.11.2026 — «залог как риск»).
  *
  * Заказчик: «Организатор может установить залог на участие, размести это
  * над секцией Движение денег». Блок рисуется только когда залог есть:
  * пустой «Залог: 0 ₽» на экране бесполезен.
  *
- * **Это не расход и не перевод.** Сумма в ленту «Движения денег» не
- * попадает и балансы не двигает (`finance.md` §2.5): залог — обеспечительный
- * платёж, который организатор держит на руках. Отметки ставит он: «сдал» —
- * факт получения денег, и подтверждает его тот, кому их отдали.
+ * **С 17.11.2026 это секция риска, а не список всех.** Заказчик: «в секции
+ * нужны именно те, кто отказался, чтобы организатор решал, что делать
+ * с залогом. Можно также туда информативно разместить тех, кто не вложился
+ * на сумму залога. Тех же, кто перевёл залог или достаточно потратился,
+ * не стоит отображать — экономим пространство». Поэтому сервер присылает
+ * `participants` уже отфильтрованными, а полный список — `allParticipants`
+ * по кнопке «Все участники»: ошибочную отметку надо уметь снять.
+ *
+ * **Удержание двигает балансы.** Подтверждённая заказчиком формула:
+ * «A −залог, каждому идущему +залог/число идущих» — это доход фонда группы.
+ * Поэтому отметка «Удержать» здесь не просто подпись: строки удержания
+ * приходят в ответе (`depositForfeits`) и стоят в ленте «Движения денег».
  */
 const deposit = computed(() => finance.value?.deposit ?? null)
 
-/** Сколько из скольких отметились: их видно в шапке блока. */
-const depositTaken = computed(
-  () => deposit.value?.participants.filter((person) => person.status === 'held').length ?? 0,
+/** Мой залог: по нему в шапке появляется «Перевести залог». */
+const myDeposit = computed(() => deposit.value?.me ?? null)
+
+/** Переводить есть куда и нужно: залог не сдан, а я в походе. */
+const canTransferDeposit = computed(() => myDeposit.value?.canTransfer === true)
+
+/** Кому организатор ещё может поставить отметку. */
+const canManageDeposit = computed(() => deposit.value?.canManage === true)
+
+/**
+ * «Все участники» — по требованию. По умолчанию виден только риск
+ * (отказавшиеся и не вложившие сумму залога); полный список нужен, чтобы
+ * снять ошибочную отметку «сдал».
+ */
+const showAllDeposit = ref(false)
+
+const depositList = computed(() => {
+  if (deposit.value === null) return []
+
+  return showAllDeposit.value
+    ? deposit.value.allParticipants
+    : deposit.value.participants
+})
+
+/** Есть ли кого прятать: иначе кнопка «Все участники» бесполезна. */
+const hasHiddenDeposit = computed(
+  () =>
+    deposit.value !== null &&
+    deposit.value.allParticipants.length > deposit.value.participants.length,
 )
 
-/** Кому организатор ещё может поставить отметку (все, кроме себя). */
-const canManageDeposit = computed(() => deposit.value?.canManage === true)
+/** Есть ли уже удержанный залог: тогда показываем, как он двигает балансы. */
+const hasForfeitDeposit = computed(
+  () =>
+    deposit.value !== null &&
+    deposit.value.allParticipants.some((person) => person.status === 'forfeited'),
+)
+
+/**
+ * Доля одного идущего при удержании: `залог / число идущих`.
+ *
+ * Считает её сервер по `going` — «пока думаю» залог сдаёт, но в делёж
+ * удержанного не входит. Остаток от деления по рублю уходит первым
+ * по составу (как у долей расхода), поэтому в подписи — меньшая доля.
+ */
+const depositShareRub = computed(() => {
+  const amount = deposit.value?.amountRub ?? 0
+  const going = deposit.value?.summary.going ?? 0
+
+  if (amount <= 0 || going <= 0) return 0
+
+  return Math.floor(amount / going)
+})
 
 /** Какая строка сейчас отправляет запрос — чтобы не нажимали дважды. */
 const busyDeposit = ref<string | null>(null)
@@ -315,7 +377,7 @@ async function markDeposit(userId: string, status: DepositStatus): Promise<void>
  */
 interface MoneyRowView {
   key: string
-  kind: 'expense' | 'compensation'
+  kind: 'expense' | 'compensation' | 'deposit'
   day: string
   who: string
   amountRub: number
@@ -328,6 +390,7 @@ interface MoneyRowView {
   canCancel: boolean
   expense: TripExpense | null
   compensation: TripCompensation | null
+  forfeit: TripDepositForfeit | null
 }
 
 /**
@@ -356,6 +419,30 @@ function toView(row: MoneyRow): MoneyRowView {
       canCancel: false,
       expense: row.expense,
       compensation: null,
+      forfeit: null,
+    }
+  }
+
+  if (row.kind === 'deposit') {
+    // Удержание залога — не расход и не перевод: его никто не «платил»,
+    // это перераспределение на фонд группы. Поэтому ни правки, ни
+    // подтверждения у строки нет.
+    return {
+      key: row.key,
+      kind: 'deposit',
+      day: formatDay(row.at),
+      who: row.forfeit.sourceName,
+      amountRub: row.forfeit.amountRub,
+      description: 'Залог удержан',
+      caption: forfeitCaption(row.forfeit),
+      status: null,
+      confirmedDay: '',
+      canEdit: false,
+      canConfirm: false,
+      canCancel: false,
+      expense: null,
+      compensation: null,
+      forfeit: row.forfeit,
     }
   }
 
@@ -376,6 +463,7 @@ function toView(row: MoneyRow): MoneyRowView {
     canCancel: compensation.canCancel,
     expense: null,
     compensation,
+    forfeit: null,
   }
 }
 
@@ -396,6 +484,7 @@ function applyView(view: TripFinance): void {
   expenseModalOpen.value = false
   editingExpense.value = null
   compensationOpen.value = false
+  depositTransferOpen.value = false
 }
 
 function openNewExpense(): void {
@@ -439,6 +528,31 @@ async function openCompensation(): Promise<void> {
  * пойдёт от правды, а баланс на экране перестанет врать.
  */
 function onCompensationStale(): void {
+  void refreshQuietly()
+}
+
+/**
+ * «Перевести залог» (17.11.2026).
+ *
+ * Перед открытием перечитываем вкладку: залог мог быть отмечен организатором
+ * с другого устройства, и модалка с кнопкой «Я перевёл» предложила бы
+ * отправить деньги второй раз.
+ */
+async function openDepositTransfer(): Promise<void> {
+  if (!canTransferDeposit.value) return
+
+  await refreshQuietly()
+
+  if (!canTransferDeposit.value) {
+    actionError.value = 'Залог уже отмечен — переводить нечего.'
+    return
+  }
+
+  depositTransferOpen.value = true
+}
+
+/** Залог отметили, пока модалка была открыта: перечитываем вкладку. */
+function onDepositStale(): void {
   void refreshQuietly()
 }
 
@@ -534,14 +648,35 @@ function cancelRow(row: MoneyRowView): void {
               Добавить расход
             </button>
 
+            <!--
+              «Компенсация» прячется, когда переводить нечего (17.11.2026):
+              заказчик: «Кнопку Компенсация тоже можно скрывать если
+              в положительном балансе». Семейный долг и долг человека без
+              аккаунта кнопку сохраняют — за них платить есть кому.
+            -->
             <button
+              v-if="canCompensate"
               type="button"
-              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="!canCompensate"
+              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary"
               data-test="finance-compensate"
               @click="openCompensation"
             >
               Компенсация
+            </button>
+
+            <!--
+              «Перевести залог» — вместо прямого перевода между участниками
+              (17.11.2026): у приложения такого действия нет, поэтому залог
+              уходит организатору, и он держит кассу группы.
+            -->
+            <button
+              v-if="canTransferDeposit"
+              type="button"
+              class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90"
+              data-test="finance-deposit-transfer"
+              @click="openDepositTransfer"
+            >
+              Перевести залог
             </button>
           </div>
         </div>
@@ -582,12 +717,15 @@ function cancelRow(row: MoneyRowView): void {
 
       <!--
         Залог участия (17.11.2026) — **над** «Движением денег», как просил
-        заказчик. Оформлен карточкой, а не «листом ведомости»: залог не
-        расход и в ленту не пишется, и делать его похожим на трату значило
-        бы намекать, что он двигает баланс.
+        заказчик. С 17.11.2026 это **секция риска**: в списке только
+        отказавшиеся (организатор решает, вернуть залог или удержать)
+        и те, кто не вложил сумму залога. Кто сдал или потратился
+        достаточно — в счётчиках шапки; полный список открывается кнопкой
+        «Все участники», чтобы ошибочную отметку можно было снять.
 
-        Отметки ставит организатор. Участник видит свой статус и подпись
-        «отметил …» — залог держится на прозрачности, а не на удержаниях.
+        «Вернуть / Удержать» — флаг, а не два действия: заказчик просил
+        видеть выбранное решение. «Удержать» не просто подпись: залог
+        перераспределяется в фонд группы и меняет балансы.
       -->
       <div
         v-if="deposit"
@@ -604,16 +742,68 @@ function cancelRow(row: MoneyRowView): void {
         </div>
 
         <p class="text-xs text-muted" data-test="finance-deposit-summary">
-          Сдали {{ depositTaken }} из {{ deposit.participants.length }}. В «Движение
-          денег» залог не входит.
+          Сдали {{ deposit.summary.held }} из {{ deposit.summary.total }}.
+          <template v-if="deposit.summary.pending > 0">
+            Не сдавали {{ deposit.summary.pending }}.
+          </template>
+          <template v-if="deposit.summary.forfeited > 0">
+            Удержано {{ deposit.summary.forfeited }}.
+          </template>
+          <template v-if="deposit.summary.cashRub > 0">
+            На руках у организаторов {{ formatRub(deposit.summary.cashRub) }}.
+          </template>
+        </p>
+
+        <p
+          v-if="myDeposit"
+          class="flex flex-wrap items-center gap-2 text-sm text-text"
+          data-test="finance-deposit-me"
+        >
+          <span>
+            Твой залог:
+            <span
+              class="font-medium"
+              :class="DEPOSIT_CLASS[myDeposit.status]"
+              :data-test="`finance-deposit-me-${myDeposit.status}`"
+              >{{ DEPOSIT_STATUS_LABELS[myDeposit.status] }}</span
+            >
+            <span v-if="myDeposit.holderName" class="text-muted">
+              · у {{ myDeposit.holderName }}</span
+            >
+          </span>
+
+          <!--
+            Организатору переводить некому — деньги у него самого. Свой
+            залог он отмечает этой кнопкой. Участнику она не нужна: у него
+            «Перевести залог» в шапке.
+          -->
+          <button
+            v-if="canManageDeposit && myDeposit.status === 'pending'"
+            type="button"
+            class="cursor-pointer rounded-xl border border-emerald-700 px-2.5 py-1 text-xs text-emerald-700 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="busyDeposit !== null"
+            data-test="finance-deposit-take-me"
+            @click="markDeposit(meId, 'held')"
+          >
+            Сдал
+          </button>
+        </p>
+
+        <p
+          v-if="depositList.length === 0"
+          class="text-xs text-muted"
+          data-test="finance-deposit-clear"
+        >
+          Риска нет: все сдали залог или уже вложили в поход не меньше него.
         </p>
 
         <ul
+          v-else
           class="flex flex-col divide-y divide-border"
           data-test="finance-deposit-list"
         >
           <li
-            v-for="person in deposit.participants"
+            v-for="person in depositList"
             :key="person.userId"
             class="flex flex-wrap items-center justify-between gap-2 py-1.5"
             data-test="finance-deposit-person"
@@ -622,12 +812,20 @@ function cancelRow(row: MoneyRowView): void {
               <p class="flex flex-wrap items-baseline gap-x-2 text-sm">
                 <span class="text-text">{{ person.displayName }}</span>
                 <span v-if="person.isMe" class="text-xs text-muted">это ты</span>
+                <span v-if="person.declined" class="text-xs font-medium text-red-600">
+                  отказался
+                </span>
                 <span
                   class="text-xs font-medium"
                   :class="DEPOSIT_CLASS[person.status]"
                   :data-test="`finance-deposit-status-${person.status}`"
                   >{{ DEPOSIT_STATUS_LABELS[person.status] }}</span
                 >
+              </p>
+              <p class="text-xs text-muted" data-test="finance-deposit-invested">
+                вложил {{ formatRub(person.investedRub) }} из
+                {{ formatRub(deposit.amountRub) }}
+                <template v-if="person.holderName"> · у {{ person.holderName }}</template>
               </p>
               <p
                 v-if="person.updatedByName && person.status !== 'pending'"
@@ -638,7 +836,7 @@ function cancelRow(row: MoneyRowView): void {
               </p>
             </div>
 
-            <div v-if="canManageDeposit" class="flex flex-wrap gap-1">
+            <div v-if="canManageDeposit" class="flex flex-wrap items-center gap-1">
               <button
                 v-if="person.status === 'pending'"
                 type="button"
@@ -650,10 +848,19 @@ function cancelRow(row: MoneyRowView): void {
                 Сдал
               </button>
 
-              <template v-else-if="person.status === 'held'">
+              <div
+                v-else-if="person.declined"
+                class="inline-flex overflow-hidden rounded-xl border border-border"
+                data-test="finance-deposit-flag"
+              >
                 <button
                   type="button"
-                  class="cursor-pointer rounded-xl border border-border px-2.5 py-1 text-xs text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  class="cursor-pointer px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  :class="
+                    person.status === 'returned'
+                      ? 'bg-primary text-white'
+                      : 'text-text hover:bg-surface'
+                  "
                   :disabled="busyDeposit !== null"
                   data-test="finance-deposit-return"
                   @click="markDeposit(person.userId, 'returned')"
@@ -662,14 +869,19 @@ function cancelRow(row: MoneyRowView): void {
                 </button>
                 <button
                   type="button"
-                  class="cursor-pointer rounded-xl border border-red-600 px-2.5 py-1 text-xs text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  class="cursor-pointer border-l border-border px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                  :class="
+                    person.status === 'forfeited'
+                      ? 'bg-red-600 text-white'
+                      : 'text-text hover:bg-surface'
+                  "
                   :disabled="busyDeposit !== null"
                   data-test="finance-deposit-forfeit"
                   @click="markDeposit(person.userId, 'forfeited')"
                 >
                   Удержать
                 </button>
-              </template>
+              </div>
 
               <button
                 v-else
@@ -684,6 +896,25 @@ function cancelRow(row: MoneyRowView): void {
             </div>
           </li>
         </ul>
+
+        <p
+          v-if="hasForfeitDeposit"
+          class="text-xs text-muted"
+          data-test="finance-deposit-effect"
+        >
+          Удержание — доход фонда группы: у отказавшегося −{{ formatRub(deposit.amountRub) }},
+          у каждого идущего +{{ formatRub(depositShareRub) }}.
+        </p>
+
+        <button
+          v-if="canManageDeposit && hasHiddenDeposit"
+          type="button"
+          class="cursor-pointer self-start text-xs text-primary underline"
+          data-test="finance-deposit-toggle"
+          @click="showAllDeposit = !showAllDeposit"
+        >
+          {{ showAllDeposit ? 'Только риски' : `Все участники (${deposit.allParticipants.length})` }}
+        </button>
       </div>
 
       <!--
@@ -731,6 +962,9 @@ function cancelRow(row: MoneyRowView): void {
               </p>
 
               <p v-if="row.kind === 'expense'" class="text-sm text-text">
+                {{ row.description }}
+              </p>
+              <p v-else-if="row.kind === 'deposit'" class="text-sm text-text">
                 {{ row.description }}
               </p>
               <p v-else class="text-xs" :class="row.status === 'pending' ? 'text-orange-700' : 'text-muted'">
@@ -806,6 +1040,16 @@ function cancelRow(row: MoneyRowView): void {
         @saved="applyView"
         @stale="onCompensationStale"
         @close="compensationOpen = false"
+      />
+
+      <TripFinanceDepositModal
+        v-if="depositTransferOpen && deposit"
+        :trip-id="tripId"
+        :amount-rub="deposit.amountRub"
+        :recipients="deposit.recipients"
+        @saved="applyView"
+        @stale="onDepositStale"
+        @close="depositTransferOpen = false"
       />
     </template>
 

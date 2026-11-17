@@ -155,18 +155,36 @@ export interface BalanceCompensation {
 }
 
 /**
+ * Корректировка баланса от удержания залога (17.11.2026).
+ *
+ * Удержанный залог заказчик назвал «доходом фонда группы»: у отказавшегося
+ * баланс падает на сумму залога, у каждого идущего растёт на её долю
+ * («A −залог, каждому идущему +залог/число идущих»). Сумма по всем строкам
+ * одного удержания — ноль, поэтому баланс группы сходится.
+ */
+export interface BalanceAdjustment {
+  userId: string;
+  amountRub: number;
+}
+
+/**
  * Баланс каждого: «заплатил − его доля + отправленные подтверждённые
- * − полученные подтверждённые».
+ * − полученные подтверждённые + корректировки залога».
  *
  * Положительный — человеку должны, отрицательный — он должен. Сумма
  * по всем всегда ноль: каждая трата кому-то плюс, кому-то минус.
  * Нулевыми в карту попадают все участники — иначе на экране «нет строки»
  * и «баланс ноль» выглядели бы по-разному.
+ *
+ * Корректировки — единственное место, где в карту может попасть человек
+ * вне состава `memberIds`: удержанный залог отказавшегося остаётся в его
+ * балансе, хотя он уже не идёт.
  */
 export function computeBalances(
   expenses: readonly BalanceExpense[],
   compensations: readonly BalanceCompensation[],
   memberIds: readonly string[],
+  adjustments: readonly BalanceAdjustment[] = [],
 ): Map<string, number> {
   const balances = new Map<string, number>();
   const add = (userId: string, delta: number): void => {
@@ -185,6 +203,11 @@ export function computeBalances(
     if (compensation.status !== 'confirmed') continue;
     add(compensation.fromUserId, compensation.amountRub);
     add(compensation.toUserId, -compensation.amountRub);
+  }
+
+  // Удержание залога — окончательное: оно уже произошло, как и расход.
+  for (const adjustment of adjustments) {
+    add(adjustment.userId, adjustment.amountRub);
   }
 
   return balances;
@@ -340,6 +363,7 @@ export function balancesFromEntities(
   expenses: readonly TripExpense[],
   compensations: readonly TripCompensation[],
   memberIds: readonly string[],
+  adjustments: readonly BalanceAdjustment[] = [],
 ): Map<string, number> {
   return computeBalances(
     expenses.map((expense) => ({
@@ -357,6 +381,7 @@ export function balancesFromEntities(
       status: compensation.status,
     })),
     memberIds,
+    adjustments,
   );
 }
 
@@ -365,9 +390,10 @@ export function remainingFromEntities(
   expenses: readonly TripExpense[],
   compensations: readonly TripCompensation[],
   memberIds: readonly string[],
+  adjustments: readonly BalanceAdjustment[] = [],
 ): Map<string, number> {
   return computeRemaining(
-    balancesFromEntities(expenses, compensations, memberIds),
+    balancesFromEntities(expenses, compensations, memberIds, adjustments),
     compensations.map((compensation) => ({
       fromUserId: compensation.fromUserId,
       toUserId: compensation.toUserId,

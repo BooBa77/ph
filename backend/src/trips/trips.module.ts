@@ -25,6 +25,7 @@ import { TripMembershipRequest } from './entities/trip-membership-request.entity
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripCompensation } from './entities/trip-compensation.entity';
+import { TripDepositAdjustment } from './entities/trip-deposit-adjustment.entity';
 import { TripExpense } from './entities/trip-expense.entity';
 import { TripExpenseShare } from './entities/trip-expense-share.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
@@ -109,6 +110,7 @@ import { ObjectsService } from './objects.service';
       TripExpense,
       TripExpenseShare,
       TripCompensation,
+      TripDepositAdjustment,
       Conversation,
       ConversationMember,
       Message,

@@ -136,6 +136,25 @@ export class TripParticipant {
   depositUpdatedAt: Date | null;
 
   /**
+   * У кого залог на руках (17.11.2026).
+   *
+   * Прямых переводов между участниками в приложении нет, поэтому участник
+   * переводит залог **организатору**: тот становится частичным держателем
+   * кассы. Здесь хранится, кому именно, — по слову заказчика это видно
+   * на экране, а не только в переписке. На балансы перевод не влияет:
+   * залог двигает их только в момент удержания.
+   */
+  @Column({ name: 'deposit_holder_user_id', type: 'uuid', nullable: true })
+  depositHolderUserId: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({
+    name: 'deposit_holder_user_id',
+    foreignKeyConstraintName: 'FK_trip_participants_deposit_holder',
+  })
+  depositHolderUser: User | null;
+
+  /**
    * Присутствие на маршруте (17.11.2026).
    *
    * Заказчик: «отметки о присутствии на маршруте», «любой идущий отмечает

@@ -19,6 +19,9 @@ describe('readOnlyCopy', () => {
         { code: 'gear', canEdit: false },
       ],
       me: { canSpend: true },
+      // Залог (17.11.2026): в офлайне ни отметок, ни перевода — иначе
+      // кнопка оставила бы человека с ошибкой связи вместо «сейчас нельзя».
+      deposit: { canManage: true, me: { canTransfer: true } },
     }
 
     const copy = readOnlyCopy(source)
@@ -29,6 +32,8 @@ describe('readOnlyCopy', () => {
     expect(copy.permissions[0]?.canEdit).toBe(false)
     expect(copy.permissions[1]?.canEdit).toBe(false)
     expect(copy.me.canSpend).toBe(false)
+    expect(copy.deposit.canManage).toBe(false)
+    expect(copy.deposit.me.canTransfer).toBe(false)
   })
 
   it('не трогает остальные поля', () => {

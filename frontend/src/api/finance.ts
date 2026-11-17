@@ -108,3 +108,20 @@ export async function setTripDepositStatus(
     body: JSON.stringify({ status }),
   })
 }
+
+/**
+ * POST /api/trips/:id/finance/deposit/transfer — «Перевести залог» (17.11.2026).
+ *
+ * Отдельная кнопка, а не «Компенсация»: прямой перевод между участниками
+ * не требует долга, и до удержания залог в балансы не попадает. Деньги
+ * уходят организатору — он держит кассу группы.
+ */
+export async function transferTripDeposit(
+  tripId: string,
+  recipientUserId: string,
+): Promise<TripFinance> {
+  return apiFetch<TripFinance>(`/trips/${tripId}/finance/deposit/transfer`, {
+    method: 'POST',
+    body: JSON.stringify({ recipientUserId }),
+  })
+}

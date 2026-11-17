@@ -747,7 +747,10 @@ defineExpose({ validationProblem })
       Залог участия (17.11.2026). Заказчик: «Организатор может установить
       залог на участие». Живёт отдельно от коммерции: залог берут и в
       бесплатном походе, а в «Бухгалтерии» у него свой блок. Пусто — залога
-      нет; сумма в рублях с человека, в балансы не входит.
+      нет; сумма в рублях с человека.
+
+      Подпись «в балансы не входит» убрана 17.11.2026 по слову заказчика:
+      удержанный залог теперь доход фонда группы и балансы двигает.
     -->
     <div v-if="!isIdea" class="flex flex-col gap-2 border-t border-border pt-4">
       <label class="flex flex-col gap-2">
@@ -761,9 +764,6 @@ defineExpose({ validationProblem })
           class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:max-w-xs"
           data-test="deposit"
         />
-        <span class="text-xs text-muted">
-          В «Движение денег» он не пишется и в балансы не входит.
-        </span>
       </label>
     </div>
 
