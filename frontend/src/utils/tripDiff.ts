@@ -51,6 +51,8 @@ export function buildTripPatch(initial: Trip, payload: CreateTripRequest): Updat
   set('openParticipation', initial.openParticipation, payload.openParticipation ?? true)
   set('priceRub', initial.priceRub, payload.priceRub ?? null)
   set('priceNote', initial.priceNote, payload.priceNote ?? null)
+  // Залог: пустое поле формы и `null` в походе — одно и то же «залога нет».
+  set('depositRub', initial.depositRub, payload.depositRub ?? null)
 
   /**
    * Типы похода сравниваются **как множество, а не как список**.

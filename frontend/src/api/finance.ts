@@ -1,6 +1,7 @@
 import { apiFetch } from '@/api/client'
 import type {
   CreateTripCompensationInput,
+  DepositStatus,
   SaveTripExpenseInput,
   TripFinance,
 } from '@/types/finance'
@@ -88,4 +89,22 @@ export async function deleteTripCompensation(
     `/trips/${tripId}/finance/compensations/${compensationId}`,
     { method: 'DELETE' },
   )
+}
+
+/**
+ * PUT /api/trips/:id/finance/deposit/:userId — отметка о залоге (17.11.2026).
+ *
+ * Ставит организатор; сумма залога живёт в походе и правится в «Правке
+ * похода», а здесь меняется только состояние одного человека. Ответ —
+ * вся вкладка, как у остальных денежных действий.
+ */
+export async function setTripDepositStatus(
+  tripId: string,
+  userId: string,
+  status: DepositStatus,
+): Promise<TripFinance> {
+  return apiFetch<TripFinance>(`/trips/${tripId}/finance/deposit/${userId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ status }),
+  })
 }

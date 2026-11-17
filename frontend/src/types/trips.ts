@@ -194,6 +194,8 @@ export function emptyVariantDraft(id: number): DateVariantDraft {
   openParticipation?: boolean
   priceRub?: number | null
   priceNote?: string | null
+  /** Залог участия, рублей с человека. В балансы и «Движение денег» не входит. */
+  depositRub?: number | null
   dateVariants?: TripDateVariantInput[]
 }
 
@@ -235,6 +237,8 @@ export interface UpdateTripRequest {
   openParticipation?: boolean
   priceRub?: number | null
   priceNote?: string | null
+  /** Залог участия, рублей с человека. `null` — залога нет. */
+  depositRub?: number | null
   activityTypeIds?: number[]
   dateVariants?: TripDateVariantInput[]
 }
@@ -287,6 +291,15 @@ export interface Trip {
   openParticipation: boolean
   priceRub: number | null
   priceNote: string | null
+  /**
+   * Залог участия, рублей с человека. `null` — залога нет, и блок залога
+   * в «Бухгалтерии» не рисуется. В балансы похода не входит.
+   *
+   * Необязательное в типе намеренно: в офлайн-копии на устройстве лежат
+   * ответы, записанные до 17.11.2026, и в них поля нет. Новый код читает
+   * отсутствие как «залога нет», а не падает на старой копии.
+   */
+  depositRub?: number | null
   /** Когда поход отменён. В ленту отменённые не попадают, но по id видны. */
   cancelledAt: string | null
   createdAt: string

@@ -12,7 +12,12 @@ import {
 
 import { sqlValues } from '../../users/sport-experience.types';
 import { User } from '../../users/entities/user.entity';
-import { PARTICIPANT_STATUSES, type ParticipantStatus } from '../trip.types';
+import {
+  DEPOSIT_STATUSES,
+  PARTICIPANT_STATUSES,
+  type DepositStatus,
+  type ParticipantStatus,
+} from '../trip.types';
 import { Trip } from './trip.entity';
 
 /**
@@ -37,6 +42,10 @@ import { Trip } from './trip.entity';
 @Check(
   'chk_trip_participants_status',
   `"status" IN (${sqlValues(PARTICIPANT_STATUSES)})`,
+)
+@Check(
+  'chk_trip_participants_deposit_status',
+  `"deposit_status" IN (${sqlValues(DEPOSIT_STATUSES)})`,
 )
 export class TripParticipant {
   @PrimaryColumn({ name: 'trip_id', type: 'bigint' })
@@ -81,6 +90,40 @@ export class TripParticipant {
    */
   @Column({ name: 'gear_sections_seeded_at', type: 'timestamptz', nullable: true })
   gearSectionsSeededAt: Date | null;
+
+  /**
+   * Залог участия этого человека (17.11.2026).
+   *
+   * Смысл имеет только при `trips.deposit_rub IS NOT NULL`; отдельного
+   * «залога нет» здесь нет — об этом говорит сам поход. `pending` по
+   * умолчанию: как только организатор назначил залог, сдавать его должны
+   * все, кто в походе, а не только те, кого он отметил руками.
+   *
+   * Ставит организатор, **не сам участник**: «сдал» — это факт получения
+   * денег, и подтверждать его должен тот, кому их отдали. Кто и когда
+   * поставил отметку, хранится рядом — заказчик просил, чтобы было видно
+   * авторство («вопрос совести» держится на прозрачности, а не на запретах).
+   */
+  @Column({
+    name: 'deposit_status',
+    type: 'varchar',
+    length: 20,
+    default: 'pending',
+  })
+  depositStatus: DepositStatus;
+
+  @Column({ name: 'deposit_updated_by', type: 'uuid', nullable: true })
+  depositUpdatedBy: string | null;
+
+  @ManyToOne(() => User, { onDelete: 'SET NULL', nullable: true })
+  @JoinColumn({
+    name: 'deposit_updated_by',
+    foreignKeyConstraintName: 'FK_trip_participants_deposit_updated_by',
+  })
+  depositUpdatedByUser: User | null;
+
+  @Column({ name: 'deposit_updated_at', type: 'timestamptz', nullable: true })
+  depositUpdatedAt: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;

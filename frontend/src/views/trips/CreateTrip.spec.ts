@@ -325,6 +325,26 @@ describe('CreateTrip', () => {
     })
   })
 
+  it('залог участия уходит в тело и снимается пустым полем (17.11.2026)', async () => {
+    const wrapper = mount(CreateTrip)
+    await chooseGoal(wrapper)
+
+    // Поле есть только у настоящего похода: у мечты подготовки нет.
+    expect(wrapper.find('[data-test="deposit"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="status"]').setValue('decided')
+    await wrapper.find('[data-test="starts-at"]').setValue('2027-05-05T09:00')
+    await wrapper.find('[data-test="ends-at"]').setValue('2027-05-09T18:00')
+
+    // Пустое поле — «залога нет»: в теле `null`, а не 0.
+    await submit(wrapper)
+    expect(lastPayload().depositRub).toBeNull()
+
+    await wrapper.find('[data-test="deposit"]').setValue('2000')
+    await submit(wrapper)
+    expect(lastPayload().depositRub).toBe(2000)
+  })
+
   it('коммерческий поход без цены не отправляется', async () => {
     const wrapper = mount(CreateTrip)
     await chooseGoal(wrapper)

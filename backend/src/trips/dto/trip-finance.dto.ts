@@ -18,6 +18,10 @@ import type { TripCompensation } from '../entities/trip-compensation.entity';
 import type { TripExpense } from '../entities/trip-expense.entity';
 import { USER_GENDERS, type UserGender } from '../../users/gender.types';
 import {
+  DEPOSIT_STATUSES,
+  type DepositStatus,
+} from '../trip.types';
+import {
   EXPENSE_SPLITS,
   type CompensationOption,
   type ExpenseSplit,
@@ -438,6 +442,75 @@ export class CompensationSenderDto {
   suggestions: CompensationOptionDto[];
 }
 
+/**
+ * Состояние залога одного участника (17.11.2026).
+ *
+ * Отметку ставит организатор, поэтому рядом с состоянием — кто и когда её
+ * поставил: заказчик называл залог «вопросом совести», и держится он на
+ * прозрачности, а не на запретах. `updatedByName` пустой у состояния
+ * по умолчанию: его никто не ставил, оно появилось вместе с суммой залога.
+ */
+export class DepositParticipantDto {
+  @ApiProperty()
+  userId: string;
+
+  @ApiProperty()
+  displayName: string;
+
+  @ApiProperty({ nullable: true })
+  avatarUrl: string | null;
+
+  @ApiProperty({ enum: DEPOSIT_STATUSES, example: 'pending' })
+  status: DepositStatus;
+
+  @ApiProperty({
+    description: 'Кто поставил отметку. null — её ещё не ставили',
+    nullable: true,
+  })
+  updatedByName: string | null;
+
+  @ApiProperty({ description: 'Когда поставили отметку', nullable: true })
+  updatedAt: string | null;
+
+  @ApiProperty({ description: 'Отметка стоит на смотрящем' })
+  isMe: boolean;
+}
+
+/**
+ * Залог участия — блок над «Движением денег» (`finance.md` §2.5).
+ *
+ * `null` в ответе вкладки значит «залога нет», и блок на экране не
+ * рисуется вовсе. Список — все, кто в походе: `going` и `maybe`.
+ * Приглашённый ещё не решил, отказавшийся уже вышел, и залог с них
+ * не спрашивают.
+ */
+export class TripDepositDto {
+  @ApiProperty({ description: 'Сумма с человека, целые рубли', example: 2000 })
+  amountRub: number;
+
+  @ApiProperty({
+    description:
+      'Может ли смотрящий ставить отметки: только организатор — он получает деньги',
+  })
+  canManage: boolean;
+
+  @ApiProperty({ type: [DepositParticipantDto] })
+  participants: DepositParticipantDto[];
+}
+
+/** Тело `PUT /api/trips/:id/finance/deposit/:userId`. */
+export class SaveTripDepositDto {
+  @ApiProperty({
+    description: 'Новое состояние залога участника',
+    enum: DEPOSIT_STATUSES,
+    example: 'held',
+  })
+  @IsIn(DEPOSIT_STATUSES, {
+    message: 'Состояние залога: pending, held, returned или forfeited',
+  })
+  status: DepositStatus;
+}
+
 /** Ответ `GET /api/trips/:id/finance` — вся вкладка одним запросом. */
 export class TripFinanceDto {
   @ApiProperty({ type: [TripExpenseDto] })
@@ -458,6 +531,14 @@ export class TripFinanceDto {
 
   @ApiProperty({ type: MyFinanceDto })
   me: MyFinanceDto;
+
+  @ApiProperty({
+    description:
+      'Залог участия. null — залога нет, блок над «Движением денег» не рисуется',
+    type: TripDepositDto,
+    nullable: true,
+  })
+  deposit: TripDepositDto | null;
 
   @ApiProperty({
     description:

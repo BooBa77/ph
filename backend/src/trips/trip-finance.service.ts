@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager, Not } from 'typeorm';
+import { DataSource, EntityManager, In, Not } from 'typeorm';
 
 import {
   CompensationOptionDto,
@@ -15,6 +15,7 @@ import {
   MyFinanceDto,
   SaveTripExpenseDto,
   TripCompensationDto,
+  TripDepositDto,
   TripExpenseDto,
   TripFinanceDto,
 } from './dto/trip-finance.dto';
@@ -22,6 +23,8 @@ import { TripCompensation } from './entities/trip-compensation.entity';
 import { TripExpense } from './entities/trip-expense.entity';
 import { TripExpenseShare } from './entities/trip-expense-share.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
+import { Trip } from './entities/trip.entity';
+import type { DepositStatus } from './trip.types';
 import {
   balancesFromEntities,
   compensationOptions,
@@ -81,7 +84,7 @@ export class TripFinanceService {
     const trip = await this.trips.getVisibleTrip(userId, tripId);
     await this.assertParticipant(manager, String(trip.id), userId);
 
-    return this.buildView(manager, String(trip.id), userId);
+    return this.buildView(manager, trip, userId);
   }
 
   /**
@@ -124,7 +127,7 @@ export class TripFinanceService {
 
       await this.saveShares(manager, saved.id, shares);
 
-      return this.buildView(manager, String(trip.id), userId);
+      return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
@@ -177,7 +180,7 @@ export class TripFinanceService {
       await manager.delete(TripExpenseShare, { expenseId: expense.id });
       await this.saveShares(manager, expense.id, shares);
 
-      return this.buildView(manager, String(trip.id), userId);
+      return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
@@ -204,7 +207,7 @@ export class TripFinanceService {
 
       await manager.delete(TripExpense, { id: expense.id });
 
-      return this.buildView(manager, String(trip.id), userId);
+      return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
@@ -320,7 +323,7 @@ export class TripFinanceService {
         }),
       );
 
-      return this.buildView(manager, String(trip.id), userId);
+      return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
@@ -365,7 +368,7 @@ export class TripFinanceService {
         await manager.save(compensation);
       }
 
-      return this.buildView(manager, String(trip.id), userId);
+      return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
@@ -409,7 +412,7 @@ export class TripFinanceService {
 
       await manager.delete(TripCompensation, { id: compensation.id });
 
-      return this.buildView(manager, String(trip.id), userId);
+      return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
@@ -420,9 +423,10 @@ export class TripFinanceService {
 
   private async buildView(
     manager: EntityManager,
-    tripId: string,
+    trip: Trip,
     viewerId: string,
   ): Promise<TripFinanceDto> {
+    const tripId = String(trip.id);
     const { expenses, compensations } = await this.loadMoney(manager, tripId);
     const participants = await this.goingParticipants(manager, tripId);
     const memberIds = participants.map((item) => item.userId);
@@ -567,7 +571,110 @@ export class TripFinanceService {
       families: familyDtos,
       me,
       managedSenders,
+      deposit: await this.buildDeposit(manager, trip, viewerId),
     };
+  }
+
+  /**
+   * Блок залога: сумма и состояние каждого, с кем он заключён.
+   *
+   * `null` — залога нет, и на экране нет ничего: пустой блок «Залог: 0 ₽»
+   * только сбивал бы с толку. Список шире, чем «идущие»: `maybe` тоже
+   * в походе, и с него залог спрашивают — иначе «пока думаю» стало бы
+   * способом не сдавать деньги.
+   */
+  private async buildDeposit(
+    manager: EntityManager,
+    trip: Trip,
+    viewerId: string,
+  ): Promise<TripDepositDto | null> {
+    if (trip.depositRub === null || trip.depositRub <= 0) return null;
+
+    const participants = await manager.find(TripParticipant, {
+      where: { tripId: String(trip.id), status: In(['going', 'maybe']) },
+      relations: { user: true, depositUpdatedByUser: true },
+      order: { createdAt: 'ASC', userId: 'ASC' },
+    });
+
+    return {
+      amountRub: trip.depositRub,
+      canManage: trip.organizerUserId === viewerId,
+      participants: participants.map((participant) => ({
+        userId: participant.userId,
+        displayName: participant.user?.displayName ?? '',
+        avatarUrl: participant.user?.avatarUrl ?? null,
+        status: participant.depositStatus,
+        updatedByName: participant.depositUpdatedByUser?.displayName ?? null,
+        updatedAt: participant.depositUpdatedAt?.toISOString() ?? null,
+        isMe: participant.userId === viewerId,
+      })),
+    };
+  }
+
+  /**
+   * Поставить состояние залога участнику (17.11.2026).
+   *
+   * Отмечает **только организатор**: «сдал» — это факт получения денег,
+   * и подтверждает его тот, кому их отдали. Участник видит свой статус,
+   * но не правит его: иначе «сдал» ставили бы себе все, и залог перестал
+   * бы что-либо значить.
+   *
+   * Правила по цели:
+   * - `declined` — 400: вышел из похода, залога с него больше нет;
+   * - `invited` — 400: ещё не решил, спрашивать нечего;
+   * - любой другой участник похода — можно, в том числе `maybe`.
+   *
+   * Сумма залога приходит из похода, а не из тела запроса: одна цифра
+   * на всех — её правят в «Правке похода», и второй источник суммы здесь
+   * однажды разошёлся бы с первым.
+   */
+  async setDepositStatus(
+    userId: string,
+    tripId: number,
+    targetUserId: string,
+    status: DepositStatus,
+  ): Promise<TripFinanceDto> {
+    const view = await this.dataSource.transaction(async (manager) => {
+      const trip = await this.trips.getVisibleTrip(userId, tripId);
+
+      if (trip.organizerUserId !== userId) {
+        throw new ForbiddenException('Отметки о залоге ставит организатор похода');
+      }
+
+      if (trip.depositRub === null || trip.depositRub <= 0) {
+        throw new BadRequestException('У этого похода нет залога');
+      }
+
+      const participant = await manager.findOne(TripParticipant, {
+        where: { tripId: String(trip.id), userId: targetUserId },
+      });
+
+      if (!participant) {
+        throw new NotFoundException('Этот человек не участвует в походе');
+      }
+
+      if (participant.status === 'declined') {
+        throw new BadRequestException(
+          'Этот человек вышел из похода — залога с него нет',
+        );
+      }
+
+      if (participant.status === 'invited') {
+        throw new BadRequestException(
+          'Этот человек ещё не ответил на приглашение',
+        );
+      }
+
+      participant.depositStatus = status;
+      participant.depositUpdatedBy = userId;
+      participant.depositUpdatedAt = new Date();
+      await manager.save(participant);
+
+      return this.buildView(manager, trip, userId);
+    });
+
+    this.events.emitFinance(String(tripId), userId);
+    return view;
   }
 
   /** Расходы с долями и именами плюс компенсации с людьми — два запроса. */

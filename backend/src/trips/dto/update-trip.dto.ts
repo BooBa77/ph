@@ -232,6 +232,18 @@ export class UpdateTripDto {
   priceNote?: string | null;
 
   @ApiProperty({
+    description:
+      'Залог участия, рублей с человека. null — залога нет. В балансы не входит',
+    example: 2000,
+    nullable: true,
+    required: false,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Залог должен быть целым числом рублей' })
+  @Min(1, { message: 'Залог должен быть больше нуля' })
+  depositRub?: number | null;
+
+  @ApiProperty({
     description: 'Активности из справочника календаря',
     type: [Number],
     required: false,

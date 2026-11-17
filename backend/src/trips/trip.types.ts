@@ -57,6 +57,27 @@ export const PARTICIPANT_STATUSES = [
 export type ParticipantStatus = (typeof PARTICIPANT_STATUSES)[number];
 
 /**
+ * Состояние залога участия (17.11.2026).
+ *
+ * `pending` — надо сдать; `held` — сдан и лежит у организатора;
+ * `returned` — вернули; `forfeited` — удержан. Отдельного `none` нет:
+ * «залога нет» — это `trips.deposit_rub IS NULL`, и хранить это ещё и
+ * у каждого участника значило бы держать два источника правды.
+ *
+ * Залог — обеспечительный платёж, а не расход (`finance.md` §2.5), поэтому
+ * в «Движение денег» и в балансы он не попадает: заказчик назвал его
+ * «вопросом совести», удержаний из будущих расчётов нет.
+ */
+export const DEPOSIT_STATUSES = [
+  'pending',
+  'held',
+  'returned',
+  'forfeited',
+] as const;
+
+export type DepositStatus = (typeof DEPOSIT_STATUSES)[number];
+
+/**
  * Чем можно ответить на приглашение или заявку: «иду» или «пока не решил».
  *
  * `declined` сюда не входит намеренно — отказ не ответ, а удаление: он

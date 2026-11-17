@@ -8,14 +8,17 @@ import {
   confirmTripCompensation,
   deleteTripCompensation,
   getTripFinance,
+  setTripDepositStatus,
 } from '@/api/finance'
 import { useAuthStore } from '@/stores/auth'
-import type {
-  CompensationOption,
-  CompensationSender,
-  TripCompensation,
-  TripExpense,
-  TripFinance,
+import {
+  DEPOSIT_STATUS_LABELS,
+  type CompensationOption,
+  type CompensationSender,
+  type DepositStatus,
+  type TripCompensation,
+  type TripExpense,
+  type TripFinance,
 } from '@/types/finance'
 import { movementRows, splitCaption, type MoneyRow } from '@/utils/finance'
 import { formatDay, formatRub, formatRubSigned } from '@/utils/money'
@@ -251,6 +254,56 @@ const hasRemainingShift = computed(
     finance.value !== null &&
     finance.value.me.remainingRub !== finance.value.me.balanceRub,
 )
+
+// ───────────────────────────── залог участия ─────────────────────────────
+
+/**
+ * Залог участия (17.11.2026).
+ *
+ * Заказчик: «Организатор может установить залог на участие, размести это
+ * над секцией Движение денег». Блок рисуется только когда залог есть:
+ * пустой «Залог: 0 ₽» на экране бесполезен.
+ *
+ * **Это не расход и не перевод.** Сумма в ленту «Движения денег» не
+ * попадает и балансы не двигает (`finance.md` §2.5): залог — обеспечительный
+ * платёж, который организатор держит на руках. Отметки ставит он: «сдал» —
+ * факт получения денег, и подтверждает его тот, кому их отдали.
+ */
+const deposit = computed(() => finance.value?.deposit ?? null)
+
+/** Сколько из скольких отметились: их видно в шапке блока. */
+const depositTaken = computed(
+  () => deposit.value?.participants.filter((person) => person.status === 'held').length ?? 0,
+)
+
+/** Кому организатор ещё может поставить отметку (все, кроме себя). */
+const canManageDeposit = computed(() => deposit.value?.canManage === true)
+
+/** Какая строка сейчас отправляет запрос — чтобы не нажимали дважды. */
+const busyDeposit = ref<string | null>(null)
+
+/** Цвет состояния: «не сдал» — внимание, «сдал» — хорошо, остальное нейтрально. */
+const DEPOSIT_CLASS: Record<DepositStatus, string> = {
+  pending: 'text-orange-700',
+  held: 'text-emerald-700',
+  returned: 'text-muted',
+  forfeited: 'text-red-600',
+}
+
+async function markDeposit(userId: string, status: DepositStatus): Promise<void> {
+  if (busyDeposit.value !== null) return
+
+  busyDeposit.value = userId
+  actionError.value = null
+
+  try {
+    applyView(await setTripDepositStatus(props.tripId, userId, status))
+  } catch (problem) {
+    actionError.value = messageOf(problem, 'Не удалось сохранить отметку о залоге')
+  } finally {
+    busyDeposit.value = null
+  }
+}
 
 // ───────────────────────────── таблица движения денег ─────────────────────────────
 
@@ -525,6 +578,112 @@ function cancelRow(row: MoneyRowView): void {
             </li>
           </ul>
         </div>
+      </div>
+
+      <!--
+        Залог участия (17.11.2026) — **над** «Движением денег», как просил
+        заказчик. Оформлен карточкой, а не «листом ведомости»: залог не
+        расход и в ленту не пишется, и делать его похожим на трату значило
+        бы намекать, что он двигает баланс.
+
+        Отметки ставит организатор. Участник видит свой статус и подпись
+        «отметил …» — залог держится на прозрачности, а не на удержаниях.
+      -->
+      <div
+        v-if="deposit"
+        class="flex flex-col gap-2 rounded-2xl border border-border bg-surface p-4"
+        data-test="finance-deposit"
+      >
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 class="text-xs text-muted" data-test="finance-deposit-title">
+            Залог участия
+          </h2>
+          <p class="text-sm font-medium text-text" data-test="finance-deposit-amount">
+            {{ formatRub(deposit.amountRub) }} с человека
+          </p>
+        </div>
+
+        <p class="text-xs text-muted" data-test="finance-deposit-summary">
+          Сдали {{ depositTaken }} из {{ deposit.participants.length }}. В «Движение
+          денег» залог не входит.
+        </p>
+
+        <ul
+          class="flex flex-col divide-y divide-border"
+          data-test="finance-deposit-list"
+        >
+          <li
+            v-for="person in deposit.participants"
+            :key="person.userId"
+            class="flex flex-wrap items-center justify-between gap-2 py-1.5"
+            data-test="finance-deposit-person"
+          >
+            <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+              <p class="flex flex-wrap items-baseline gap-x-2 text-sm">
+                <span class="text-text">{{ person.displayName }}</span>
+                <span v-if="person.isMe" class="text-xs text-muted">это ты</span>
+                <span
+                  class="text-xs font-medium"
+                  :class="DEPOSIT_CLASS[person.status]"
+                  :data-test="`finance-deposit-status-${person.status}`"
+                  >{{ DEPOSIT_STATUS_LABELS[person.status] }}</span
+                >
+              </p>
+              <p
+                v-if="person.updatedByName && person.status !== 'pending'"
+                class="text-xs text-muted"
+                data-test="finance-deposit-updated-by"
+              >
+                отметил {{ person.updatedByName }}
+              </p>
+            </div>
+
+            <div v-if="canManageDeposit" class="flex flex-wrap gap-1">
+              <button
+                v-if="person.status === 'pending'"
+                type="button"
+                class="cursor-pointer rounded-xl border border-emerald-700 px-2.5 py-1 text-xs text-emerald-700 transition-colors hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="busyDeposit !== null"
+                data-test="finance-deposit-take"
+                @click="markDeposit(person.userId, 'held')"
+              >
+                Сдал
+              </button>
+
+              <template v-else-if="person.status === 'held'">
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-xl border border-border px-2.5 py-1 text-xs text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="busyDeposit !== null"
+                  data-test="finance-deposit-return"
+                  @click="markDeposit(person.userId, 'returned')"
+                >
+                  Вернуть
+                </button>
+                <button
+                  type="button"
+                  class="cursor-pointer rounded-xl border border-red-600 px-2.5 py-1 text-xs text-red-600 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="busyDeposit !== null"
+                  data-test="finance-deposit-forfeit"
+                  @click="markDeposit(person.userId, 'forfeited')"
+                >
+                  Удержать
+                </button>
+              </template>
+
+              <button
+                v-else
+                type="button"
+                class="cursor-pointer rounded-xl border border-border px-2.5 py-1 text-xs text-muted transition-colors hover:border-primary hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="busyDeposit !== null"
+                data-test="finance-deposit-reset"
+                @click="markDeposit(person.userId, 'pending')"
+              >
+                Надо сдать
+              </button>
+            </div>
+          </li>
+        </ul>
       </div>
 
       <!--

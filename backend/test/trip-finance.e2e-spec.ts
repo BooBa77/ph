@@ -1306,4 +1306,111 @@ describe('Бухгалтерия похода (e2e)', () => {
       ).toBe('confirmed');
     });
   });
+
+  /**
+   * Залог участия (17.11.2026).
+   *
+   * Заказчик: «Организатор может установить залог на участие, размести это
+   * над секцией Движение денег». Проверяем три вещи, которые нельзя увидеть
+   * в юнит-тесте: сумма живёт в походе и правится его правкой, отметки ставит
+   * только организатор, а в балансы залог не попадает.
+   */
+  describe('залог участия', () => {
+    /** Поход №2: A — организатор, Б, В, Г идут, Д приглашён. */
+    const updateTrip = (person: Person, body: Record<string, unknown>) =>
+      auth(
+        request(app.getHttpServer()).patch(`/api/trips/${trip2}`),
+        person.token,
+      ).send(body);
+
+    const setDeposit = (person: Person, target: Person, status: string) =>
+      auth(
+        request(app.getHttpServer()).put(
+          `/api/trips/${trip2}/finance/deposit/${target.id}`,
+        ),
+        person.token,
+      ).send({ status });
+
+    it('без залога блока нет', async () => {
+      const response = await view(trip2, a);
+
+      expect(response.body.deposit).toBeNull();
+    });
+
+    it('залог ставится правкой похода и виден всем участникам', async () => {
+      // В походе уже есть расходы из соседних тестов: залог обязан их
+      // не трогать — он не расход и не двигает баланс.
+      const before = await view(trip2, b);
+
+      const patched = await updateTrip(a, { depositRub: 2000 }).expect(200);
+      expect(patched.body.depositRub).toBe(2000);
+
+      // Смотрящий — не организатор: видит сумму и состояния, но не правит.
+      const asMember = await view(trip2, b);
+      expect(asMember.body.deposit.amountRub).toBe(2000);
+      expect(asMember.body.deposit.canManage).toBe(false);
+      expect(
+        asMember.body.deposit.participants.map(
+          (person: { userId: string }) => person.userId,
+        ),
+      ).toEqual([a.id, b.id, c.id, g.id]);
+      expect(
+        asMember.body.deposit.participants.every(
+          (person: { status: string }) => person.status === 'pending',
+        ),
+      ).toBe(true);
+
+      // В ленте «Движения денег» залога нет и баланс он не двигает.
+      expect(asMember.body.expenses).toHaveLength(before.body.expenses.length);
+      expect(asMember.body.me.balanceRub).toBe(before.body.me.balanceRub);
+
+      const asOrganizer = await view(trip2, a);
+      expect(asOrganizer.body.deposit.canManage).toBe(true);
+    });
+
+    it('отметки ставит только организатор', async () => {
+      // Участник — 403, посторонний — тоже: деньги получает организатор.
+      await setDeposit(b, b, 'held').expect(403);
+      await setDeposit(e, b, 'held').expect(403);
+    });
+
+    it('«сдал» и «вернул» ставит организатор, участник видит автора', async () => {
+      const held = await setDeposit(a, b, 'held').expect(200);
+      const row = held.body.deposit.participants.find(
+        (person: { userId: string }) => person.userId === b.id,
+      );
+
+      expect(row.status).toBe('held');
+      // Имя автора — имя организатора: залог держится на прозрачности.
+      expect(row.updatedByName).toContain('fin-a-');
+      expect(row.updatedAt).not.toBeNull();
+
+      const returned = await setDeposit(a, b, 'returned').expect(200);
+      expect(
+        returned.body.deposit.participants.find(
+          (person: { userId: string }) => person.userId === b.id,
+        ).status,
+      ).toBe('returned');
+    });
+
+    it('приглашённому залог не ставят: он ещё не ответил', async () => {
+      await setDeposit(a, d, 'held').expect(400);
+    });
+
+    it('неизвестное состояние и чужой поход отклоняются', async () => {
+      await setDeposit(a, b, 'сдал').expect(400);
+
+      // Человек не из этого похода — 404, а не тихая запись в никуда.
+      await setDeposit(a, a, 'held').expect(200);
+      await setDeposit(a, e, 'held').expect(404);
+    });
+
+    it('залог снимается правкой похода, и блок исчезает', async () => {
+      const patched = await updateTrip(a, { depositRub: null }).expect(200);
+      expect(patched.body.depositRub).toBeNull();
+
+      const response = await view(trip2, a);
+      expect(response.body.deposit).toBeNull();
+    });
+  });
 });

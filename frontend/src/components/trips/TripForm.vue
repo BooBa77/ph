@@ -306,6 +306,14 @@ const priceRub = ref(initial?.priceRub ? String(initial.priceRub) : '')
 const priceNote = ref(initial?.priceNote ?? '')
 
 /**
+ * Залог участия (17.11.2026). «Вопрос совести»: организатор назначает сумму,
+ * люди сдают её наличными или переводом, сайт только помнит, кто сдал.
+ * Поэтому поле стоит отдельно от коммерции — залог берут и в бесплатном
+ * походе, — а в «Бухгалтерии» по нему есть свой блок над «Движением денег».
+ */
+const depositRub = ref(initial?.depositRub ? String(initial.depositRub) : '')
+
+/**
  * Что мешает отправить форму. `null` — можно.
  *
  * Порядок проверок — от обязательного к уточняющему, и показываем одну
@@ -441,6 +449,8 @@ function buildPayload(): CreateTripRequest {
     openParticipation: openParticipation.value,
     priceRub: isCommercial.value ? Number(priceRub.value) : null,
     priceNote: isCommercial.value ? priceNote.value.trim() || null : null,
+    // Пустое поле — «залога нет»: `null` стирает сумму в походе.
+    depositRub: Number(depositRub.value) > 0 ? Number(depositRub.value) : null,
   }
 
   /**
@@ -692,6 +702,31 @@ defineExpose({ validationProblem })
           class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none"
           data-test="price-note"
         />
+      </label>
+    </div>
+
+    <!--
+      Залог участия (17.11.2026). Заказчик: «Организатор может установить
+      залог на участие». Живёт отдельно от коммерции: залог берут и в
+      бесплатном походе, а в «Бухгалтерии» у него свой блок. Пусто — залога
+      нет; сумма в рублях с человека, в балансы не входит.
+    -->
+    <div v-if="!isIdea" class="flex flex-col gap-2 border-t border-border pt-4">
+      <label class="flex flex-col gap-2">
+        <span class="text-sm text-muted">Залог участия, ₽ с человека</span>
+        <input
+          v-model="depositRub"
+          type="number"
+          min="1"
+          step="1"
+          placeholder="Не назначен"
+          class="w-full rounded-xl border border-border bg-field px-3 py-2 text-base text-text transition-colors focus:border-primary focus:outline-none md:max-w-xs"
+          data-test="deposit"
+        />
+        <span class="text-xs text-muted">
+          Обеспечительный платёж: сдал — иду, ушёл — залог не возвращается.
+          В «Движение денег» он не пишется и в балансы не входит.
+        </span>
       </label>
     </div>
 

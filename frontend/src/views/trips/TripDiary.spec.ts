@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { OfflineError } from '@/api/errors'
 import type { TripDiaryEntry } from '@/types/diary'
 import type { Trip, TripParticipant } from '@/types/trips'
+import { tripDayNumber } from '@/utils/tripDay'
 import TripDiaryView from '@/views/trips/TripDiary.vue'
 
 /**
@@ -264,14 +265,23 @@ describe('вкладка «Дневник»', () => {
   it('кнопка «День N» вставляет номер дня похода', async () => {
     const wrapper = await mountDiary()
 
-    expect(wrapper.get('[data-test="diary-insert-day"]').text()).toContain('День 3')
+    /**
+     * Номер считаем тем же правилом, что и компонент: тест не должен
+     * ломаться оттого, что сегодня другой день. Сама арифметика покрыта
+     * в `utils/tripDay.spec.ts`, здесь проверяется, что кнопка её
+     * показывает и вставляет в текст.
+     */
+    const day = tripDayNumber(makeTrip())
+    expect(day).not.toBeNull()
+
+    expect(wrapper.get('[data-test="diary-insert-day"]').text()).toContain(`День ${day}`)
 
     await wrapper.get('[data-test="diary-insert-day"]').trigger('click')
     await flushPromises()
 
     expect(
       wrapper.findComponent(MarkdownEditorStub).props('modelValue'),
-    ).toContain('День 3')
+    ).toContain(`День ${day}`)
   })
 
   it('время и дата вставляются в текст записи', async () => {

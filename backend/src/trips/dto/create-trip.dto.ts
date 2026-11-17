@@ -283,6 +283,18 @@ export class CreateTripDto {
   priceNote?: string | null;
 
   @ApiProperty({
+    description:
+      'Залог участия, рублей с человека. В балансы и «Движение денег» не входит',
+    example: 2000,
+    required: false,
+    nullable: true,
+  })
+  @IsOptional()
+  @IsInt({ message: 'Залог должен быть целым числом рублей' })
+  @Min(1, { message: 'Залог должен быть больше нуля' })
+  depositRub?: number | null;
+
+  @ApiProperty({
     description: 'Варианты дат — прогноз: «эти выходные или следующие»',
     type: [TripDateVariantDto],
     required: false,

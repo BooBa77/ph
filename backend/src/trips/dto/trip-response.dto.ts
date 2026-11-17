@@ -238,6 +238,14 @@ export class TripResponseDto {
   priceNote: string | null;
 
   @ApiProperty({
+    description:
+      'Залог участия, рублей с человека. null — залога нет. В балансы и «Движение денег» не входит',
+    example: 2000,
+    nullable: true,
+  })
+  depositRub: number | null;
+
+  @ApiProperty({
     description: 'Когда поход отменён. null — не отменён',
     nullable: true,
   })
@@ -288,6 +296,7 @@ export class TripResponseDto {
       openParticipation: trip.openParticipation,
       priceRub: trip.priceRub,
       priceNote: trip.priceNote,
+      depositRub: trip.depositRub,
       cancelledAt: trip.cancelledAt?.toISOString() ?? null,
       createdAt: trip.createdAt.toISOString(),
       updatedAt: trip.updatedAt.toISOString(),

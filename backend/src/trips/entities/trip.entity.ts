@@ -122,6 +122,10 @@ import { GeoObject } from './geo-object.entity';
   `"price_note" IS NULL OR "is_commercial"`,
 )
 @Check('chk_trips_price_positive', `"price_rub" IS NULL OR "price_rub" > 0`)
+@Check(
+  'chk_trips_deposit_positive',
+  `"deposit_rub" IS NULL OR "deposit_rub" > 0`,
+)
 export class Trip {
   @PrimaryGeneratedColumn({ type: 'bigint' })
   id: string;
@@ -301,6 +305,22 @@ export class Trip {
   /** Что входит в стоимость: markdown. Осмысленно только с ценой. */
   @Column({ name: 'price_note', type: 'text', nullable: true })
   priceNote: string | null;
+
+  /**
+   * Залог участия (17.11.2026) — сумма с человека, целые рубли.
+   *
+   * Заказчик: «Организатор может установить залог на участие, размести это
+   * над секцией Движение денег». Одна сумма на поход, а не своя каждому:
+   * разные суммы — это уже индивидуальные договорённости, и в походе
+   * равных участников они выглядят как отношения «кто ближе к организатору».
+   *
+   * `NULL` — залога нет. В балансы и ленту «Движения денег» залог **не
+   * пишется** (`finance.md` §2.5): это обеспечительный платёж, который
+   * организатор держит на руках, а не расход похода. Иначе удержанный залог
+   * посчитался бы дважды — и как потерянные деньги, и как доля в расходах.
+   */
+  @Column({ name: 'deposit_rub', type: 'int', nullable: true })
+  depositRub: number | null;
 
   /**
    * Отменённый поход остаётся в базе: история подготовки нужна для

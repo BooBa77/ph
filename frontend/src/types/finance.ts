@@ -156,6 +156,50 @@ export interface CompensationSender {
   suggestions: CompensationOption[]
 }
 
+/**
+ * Состояние залога участия (17.11.2026).
+ *
+ * `pending` — надо сдать, `held` — сдан и лежит у организатора,
+ * `returned` — вернули, `forfeited` — удержан. Словарь общий с бэкендом
+ * (`DEPOSIT_STATUSES`); «залога нет» — это `deposit === null`, а не
+ * отдельное состояние человека.
+ */
+export const DEPOSIT_STATUSES = ['pending', 'held', 'returned', 'forfeited'] as const
+
+export type DepositStatus = (typeof DEPOSIT_STATUSES)[number]
+
+/** Подписи состояний в блоке залога. */
+export const DEPOSIT_STATUS_LABELS: Record<DepositStatus, string> = {
+  pending: 'не сдал',
+  held: 'сдал',
+  returned: 'вернули',
+  forfeited: 'удержан',
+}
+
+/** Состояние залога одного участника: кто и когда поставил отметку. */
+export interface DepositParticipant {
+  userId: string
+  displayName: string
+  avatarUrl: string | null
+  status: DepositStatus
+  /** `null` — отметку ещё не ставили: состояние по умолчанию. */
+  updatedByName: string | null
+  updatedAt: string | null
+  isMe: boolean
+}
+
+/**
+ * Блок залога над «Движением денег». `null` в ответе — залога нет,
+ * и блок не рисуется вовсе.
+ */
+export interface TripDeposit {
+  /** Сумма с человека, целые рубли. Одна на поход. */
+  amountRub: number
+  /** Отметки ставит только организатор — он получает деньги. */
+  canManage: boolean
+  participants: DepositParticipant[]
+}
+
 /** Ответ `GET /api/trips/:id/finance` — вся вкладка одним запросом. */
 export interface TripFinance {
   expenses: TripExpense[]
@@ -166,6 +210,8 @@ export interface TripFinance {
   me: MyFinance
   /** Люди без аккаунта, которых веду я: за них можно записать перевод. */
   managedSenders: CompensationSender[]
+  /** Залог участия; `null` или поля нет — залога нет. */
+  deposit?: TripDeposit | null
 }
 
 /**

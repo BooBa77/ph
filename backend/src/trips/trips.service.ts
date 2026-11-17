@@ -260,6 +260,7 @@ export class TripsService {
           openParticipation: dto.openParticipation ?? true,
           priceRub: dto.priceRub ?? null,
           priceNote: dto.priceNote ?? null,
+          depositRub: dto.depositRub ?? null,
         }),
       );
 
@@ -1429,6 +1430,9 @@ export class TripsService {
         if (dto.isOfficial !== undefined) trip.isOfficial = dto.isOfficial;
         trip.priceRub = priceRub;
         trip.priceNote = priceNote;
+        // Залог — обеспечительный платёж, а не цена: снимается `null`-ом
+        // независимо от коммерции, и на балансы похода не влияет.
+        if (dto.depositRub !== undefined) trip.depositRub = dto.depositRub;
 
         const saved = await manager.save(trip);
 

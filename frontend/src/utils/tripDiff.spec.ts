@@ -99,6 +99,16 @@ describe('buildTripPatch', () => {
     expect(patch).toEqual({ isCommercial: true, priceRub: 25000 })
   })
 
+  it('залог уезжает в патч при смене и снимается `null`-ом (17.11.2026)', () => {
+    expect(buildTripPatch(TRIP, payload({ depositRub: 2000 }))).toEqual({ depositRub: 2000 })
+    expect(buildTripPatch({ ...TRIP, depositRub: 2000 }, payload({ depositRub: null }))).toEqual({
+      depositRub: null,
+    })
+    // Пустое поле пустого похода — не изменение: иначе форма каждый раз
+    // «стирала» бы отсутствующий залог.
+    expect(buildTripPatch(TRIP, payload({}))).toEqual({})
+  })
+
   /**
    * Типы похода — множество: порядок чипсов в форме значит не больше, чем
    * порядок строк в связке `trip_types`. Сравнение «как есть» гнало бы

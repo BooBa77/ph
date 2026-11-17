@@ -7,8 +7,10 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  ParseUUIDPipe,
   Patch,
   Post,
+  Put,
 } from '@nestjs/common';
 import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -16,6 +18,7 @@ import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
   CreateTripCompensationDto,
+  SaveTripDepositDto,
   SaveTripExpenseDto,
   TripFinanceDto,
 } from './dto/trip-finance.dto';
@@ -120,5 +123,25 @@ export class TripFinanceController {
     @Param('compensationId', ParseIntPipe) compensationId: number,
   ): Promise<TripFinanceDto> {
     return this.finance.deleteCompensation(authUser.id, id, compensationId);
+  }
+
+  /**
+   * Отметка о залоге: «сдал», «вернул», «удержал».
+   *
+   * Ставит организатор — тот, кому отдают деньги. Отдельная ручка, а не
+   * `PATCH` похода: масса залога одна на поход и правится в «Правке похода»,
+   * а здесь меняется состояние одного человека, и ответ — вся вкладка,
+   * как у остальных денежных действий.
+   */
+  @Put(':id/finance/deposit/:userId')
+  @ApiOperation({ summary: 'Отметить состояние залога участника (только организатор)' })
+  @ApiOkResponse({ type: TripFinanceDto })
+  async setDepositStatus(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('userId', ParseUUIDPipe) targetUserId: string,
+    @Body() dto: SaveTripDepositDto,
+  ): Promise<TripFinanceDto> {
+    return this.finance.setDepositStatus(authUser.id, id, targetUserId, dto.status);
   }
 }
