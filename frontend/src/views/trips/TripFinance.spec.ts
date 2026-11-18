@@ -726,7 +726,13 @@ describe('вкладка «Бухгалтерия»', () => {
     // Касса семьи в минусе из-за Анны: личный плюс не должен мешать.
     expect(wrapper.find('[data-test="finance-compensate"]').exists()).toBe(true)
 
-    await wrapper.get('[data-test="finance-compensate"]').trigger('click')
+    // «Компенсация» — такая же основная кнопка, как «Добавить чек»
+    // и «Перевести залог» (18.11.2026): заливка primary, белый текст.
+    const compensate = wrapper.get('[data-test="finance-compensate"]')
+    expect(compensate.classes()).toContain('bg-primary')
+    expect(compensate.classes()).toContain('text-white')
+
+    await compensate.trigger('click')
     await flushPromises()
 
     expect(wrapper.get('[data-test="compensation-modal-stub"]').text()).toBe('1')
@@ -803,6 +809,12 @@ describe('вкладка «Бухгалтерия»', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-empty"]').text()).toContain('Пока никто ничего не тратил')
+    // 18.11.2026: «расход» в интерфейсе стал «чеком» — кнопка и обещание
+    // пустой ленты говорят об одном и том же.
+    expect(wrapper.get('[data-test="finance-add-expense"]').text()).toBe('Добавить чек')
+    expect(wrapper.get('[data-test="finance-empty"]').text()).toContain(
+      '«Добавить чек» запишет первую трату',
+    )
     expect(wrapper.find('[data-test="finance-rows"]').exists()).toBe(false)
   })
 
@@ -987,8 +999,9 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(rows[0]?.text()).toContain('Борис')
     expect(rows[0]?.text()).toContain('отказался')
     expect(rows[0]?.text()).toContain('залог удержан')
-    expect(rows[1]?.text()).toContain('не перевёл залог и недостаточно вложился')
-    expect(rows[1]?.text()).toContain('вложил 0 ₽ из 2 000 ₽')
+    expect(rows[1]?.text()).toContain('залог не покрыт')
+    expect(rows[1]?.text()).toContain('вложено 0 ₽ из 2 000 ₽')
+    expect(rows[1]?.text()).toContain('не хватает 2 000 ₽')
     expect(block.text()).not.toContain('Анна')
 
     // Кнопок «Сдал» и «Снять» нет: сдачу подтверждает получатель перевода,
@@ -1023,7 +1036,7 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(mocks.setTripDepositStatus).toHaveBeenCalledWith('7', BORIS, 'returned')
   })
 
-  it('отказавшемуся без покрытия решать нечего — флага нет', async () => {
+  it('отказавшемуся без покрытия решать нечего — ни флага, ни подсказки', async () => {
     const view = depositState()
     view.deposit!.participants = [
       depositPerson(BORIS, 'Борис', 'pending', {
@@ -1041,8 +1054,16 @@ describe('вкладка «Бухгалтерия»', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="finance-deposit-flag"]').exists()).toBe(false)
-    expect(wrapper.get('[data-test="finance-deposit-hint"]').text()).toBe(
-      'залог не покрыт — решать нечего',
+    // Правой колонки подсказок больше нет (18.11.2026): ни «залог не покрыт —
+    // решать нечего», ни «переводит сам участник». В строке — имя, статус
+    // и цифры.
+    expect(wrapper.find('[data-test="finance-deposit-hint"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="finance-deposit-person"]').text()).toContain('Борис')
+    expect(wrapper.get('[data-test="finance-deposit-person"]').text()).toContain(
+      'отказался',
+    )
+    expect(wrapper.get('[data-test="finance-deposit-invested"]').text()).toContain(
+      'вложено 0 ₽',
     )
   })
 
@@ -1151,9 +1172,34 @@ describe('вкладка «Бухгалтерия»', () => {
     // Строка залога — в карточке «Твой баланс», а не отдельным блоком.
     const self = wrapper.get('[data-test="finance-deposit-self"]')
     expect(self.text()).toContain('В походе установлен залог — 2 000 ₽')
-    expect(self.text()).toContain('вложил 0 ₽ из 2 000 ₽')
-    expect(self.text()).toContain('не покрыто 2 000 ₽')
+    expect(self.text()).toContain('вложено 0 ₽ из 2 000 ₽')
+    expect(self.text()).toContain('не хватает 2 000 ₽')
     expect(wrapper.find('[data-test="finance-deposit-transfer"]').exists()).toBe(true)
+  })
+
+  it('организатор: строки «твой залог у тебя» больше нет', async () => {
+    const view = depositState()
+    // Организатор держит свой залог сам — раньше под суммой стояло
+    // «твой залог у тебя — переводить не нужно» (18.11.2026: убрано целиком).
+    view.deposit!.me = {
+      ...view.deposit!.me!,
+      selfHeld: true,
+      investedRub: 2000,
+      coveredRub: 2000,
+      missingRub: 0,
+      dueRub: 0,
+      canTransfer: false,
+    }
+
+    mocks.getTripFinance.mockResolvedValue(view)
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const self = wrapper.get('[data-test="finance-deposit-self"]')
+    expect(self.text()).toContain('В походе установлен залог — 2 000 ₽')
+    expect(self.text()).not.toContain('твой залог у тебя')
+    expect(wrapper.find('[data-test="finance-deposit-self-details"]').exists()).toBe(false)
   })
 
   it('залог покрыт расходами — кнопки нет', async () => {
@@ -1179,7 +1225,7 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(wrapper.find('[data-test="finance-deposit-transfer"]').exists()).toBe(false)
   })
 
-  it('частичное покрытие: вложил и перевёл, остаток виден', async () => {
+  it('частичное покрытие: вложено и переведено, остаток виден', async () => {
     const view = depositState()
     view.deposit!.me = {
       ...view.deposit!.me!,
@@ -1197,9 +1243,9 @@ describe('вкладка «Бухгалтерия»', () => {
     await flushPromises()
 
     const self = wrapper.get('[data-test="finance-deposit-self"]')
-    expect(self.text()).toContain('вложил 500 ₽ из 2 000 ₽')
-    expect(self.text()).toContain('перевёл 500 ₽')
-    expect(self.text()).toContain('не покрыто 1 000 ₽')
+    expect(self.text()).toContain('вложено 500 ₽ из 2 000 ₽')
+    expect(self.text()).toContain('переведено 500 ₽')
+    expect(self.text()).toContain('не хватает 1 000 ₽')
   })
 
   it('организатор с человеком без аккаунта видит «Перевести залог»', async () => {

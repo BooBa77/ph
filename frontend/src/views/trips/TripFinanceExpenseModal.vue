@@ -244,7 +244,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
     >
       <div class="flex items-baseline justify-between gap-2">
         <h2 id="finance-expense-title" class="text-lg font-semibold text-text">
-          {{ isEdit ? 'Изменить расход' : 'Добавить расход' }}
+          {{ isEdit ? 'Изменить расходный чек' : 'Добавить расходный чек' }}
         </h2>
 
         <button

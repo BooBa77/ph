@@ -285,7 +285,7 @@ const hasRemainingShift = computed(
  *
  * **Секция риска — только организатору и соорганизатору.** В ней ушедшие
  * с ненулевым покрытием (решить, вернуть залог или удержать) и идущие,
- * которые не добрали залог: «не перевёл залог и недостаточно вложился».
+ * которые не добрали залог: «залог не покрыт».
  * Ушедшего с нулём нет вовсе — решать нечего. Кнопки «Снять» больше нет:
  * только «Вернуть» и «Удержать».
  */
@@ -640,7 +640,7 @@ function cancelRow(row: MoneyRowView): void {
               data-test="finance-add-expense"
               @click="openNewExpense"
             >
-              Добавить расход
+              Добавить чек
             </button>
 
             <!--
@@ -652,7 +652,7 @@ function cancelRow(row: MoneyRowView): void {
             <button
               v-if="canCompensate"
               type="button"
-              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary"
+              class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
               data-test="finance-compensate"
               @click="openCompensation"
             >
@@ -690,31 +690,34 @@ function cancelRow(row: MoneyRowView): void {
             </button>
           </div>
 
+          <!--
+            У организатора (selfHeld) второй строки нет вовсе: его залог
+            и так у него, объяснять нечего. У остальных — нейтральные цифры
+            без рода: «вложено · переведено · не хватает», чтобы одна и та же
+            строка годилась и мужчине, и женщине.
+          -->
           <p
-            v-if="myDeposit"
+            v-if="myDeposit && !myDeposit.selfHeld"
             class="text-xs text-muted"
             data-test="finance-deposit-self-details"
           >
-            <template v-if="myDeposit.selfHeld">твой залог у тебя — переводить не нужно</template>
-            <template v-else>
-              вложил {{ formatRub(myDeposit.investedRub) }} из
-              {{ formatRub(deposit.amountRub) }} · перевёл
-              {{ formatRub(myDeposit.transferredRub) }} ·
-              <span
-                v-if="myDeposit.missingRub > 0"
-                class="font-medium text-orange-700"
-                data-test="finance-deposit-self-missing"
-                >не покрыто {{ formatRub(myDeposit.missingRub) }}</span
-              >
-              <span v-else class="font-medium text-emerald-700" data-test="finance-deposit-self-covered"
-                >залог покрыт</span
-              >
-              <template v-if="myDeposit.hasPendingTransfer">
-                · в пути {{ formatRub(myDeposit.pendingRub) }}, ждёт подтверждения
-              </template>
-              <template v-if="myDeposit.holderName && myDeposit.transferredRub > 0">
-                · держит {{ myDeposit.holderName }}
-              </template>
+            вложено {{ formatRub(myDeposit.investedRub) }} из
+            {{ formatRub(deposit.amountRub) }} · переведено
+            {{ formatRub(myDeposit.transferredRub) }} ·
+            <span
+              v-if="myDeposit.missingRub > 0"
+              class="font-medium text-orange-700"
+              data-test="finance-deposit-self-missing"
+              >не хватает {{ formatRub(myDeposit.missingRub) }}</span
+            >
+            <span v-else class="font-medium text-emerald-700" data-test="finance-deposit-self-covered"
+              >залог покрыт</span
+            >
+            <template v-if="myDeposit.hasPendingTransfer">
+              · в пути {{ formatRub(myDeposit.pendingRub) }}, ждёт подтверждения
+            </template>
+            <template v-if="myDeposit.holderName && myDeposit.transferredRub > 0">
+              · держит {{ myDeposit.holderName }}
             </template>
           </p>
         </div>
@@ -759,7 +762,9 @@ function cancelRow(row: MoneyRowView): void {
         Заказчик: «тех, кто вложился в поход свыше залога, не нужны…
         экономим пространство». Поэтому в списке только ушедшие с ненулевым
         покрытием (решить, вернуть залог или удержать) и идущие, которые
-        не добрали залог — «не перевёл залог и недостаточно вложился».
+        не добрали залог — «залог не покрыт». Правой колонки подсказок нет:
+        «переводит сам участник» и «решать нечего» убраны 18.11.2026 — в строке
+        остались имя, «отказался», статус и нейтральные цифры.
         Ушедший с нулём не показывается вовсе: решать нечего. Кнопки
         «Снять» и «Сдал/не сдал» убраны — сдачу подтверждает получатель
         перевода, а из решения остались только «Вернуть» и «Удержать».
@@ -817,15 +822,15 @@ function cancelRow(row: MoneyRowView): void {
               </p>
               <p class="text-xs text-muted" data-test="finance-deposit-invested">
                 <template v-if="person.declined">
-                  вложил {{ formatRub(person.investedRub) }} · перевёл
+                  вложено {{ formatRub(person.investedRub) }} · переведено
                   {{ formatRub(person.transferredRub) }} · покрыто
                   {{ formatRub(person.coveredRub) }} из
                   {{ formatRub(deposit.amountRub) }}
                 </template>
                 <template v-else>
-                  вложил {{ formatRub(person.investedRub) }} из
-                  {{ formatRub(deposit.amountRub) }} · перевёл
-                  {{ formatRub(person.transferredRub) }} · осталось
+                  вложено {{ formatRub(person.investedRub) }} из
+                  {{ formatRub(deposit.amountRub) }} · переведено
+                  {{ formatRub(person.transferredRub) }} · не хватает
                   {{ formatRub(person.missingRub) }}
                 </template>
                 <template v-if="person.holderName">
@@ -878,15 +883,6 @@ function cancelRow(row: MoneyRowView): void {
                 </button>
               </div>
             </div>
-
-            <span
-              v-else
-              class="text-xs text-muted"
-              data-test="finance-deposit-hint"
-            >
-              <template v-if="person.declined">залог не покрыт — решать нечего</template>
-              <template v-else>переводит сам участник</template>
-            </span>
           </li>
         </ul>
 
@@ -926,7 +922,7 @@ function cancelRow(row: MoneyRowView): void {
           class="text-sm text-muted"
           data-test="finance-empty"
         >
-          Пока никто ничего не тратил. «Добавить расход» запишет первую трату
+          Пока никто ничего не тратил. «Добавить чек» запишет первую трату
           и посчитает, кто кому сколько должен.
         </p>
 

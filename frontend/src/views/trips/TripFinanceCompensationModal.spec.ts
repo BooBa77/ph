@@ -186,7 +186,7 @@ describe('модалка компенсации', () => {
     const wrapper = mountModal([SUGGESTIONS[1]!])
 
     expect(wrapper.get('[data-test="finance-compensation-no-requisites"]').text()).toBe(
-      'Борис не указал реквизиты в своём профиле, придётся спросить у них самих.',
+      'Борис не указал реквизиты в своём профиле, придётся спросить у него самого.',
     )
     expect(wrapper.find('[data-test="finance-compensation-details"]').exists()).toBe(false)
   })

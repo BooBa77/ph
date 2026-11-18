@@ -116,6 +116,9 @@ describe('модалка расхода', () => {
   it('новый расход: «за всех», дата платежа и никаких долей до суммы', async () => {
     const wrapper = mountModal()
 
+    // 18.11.2026: заголовок модалки говорит «чек» — как кнопка и лента.
+    expect(wrapper.get('#finance-expense-title').text()).toBe('Добавить расходный чек')
+
     expect(wrapper.get('[data-test="finance-expense-date"]').element).toHaveProperty(
       'value',
       localToday(),
@@ -243,6 +246,7 @@ describe('модалка расхода', () => {
   it('правка чека: третий сегмент на месте, пустой комментарий допустим', async () => {
     const wrapper = mountModal(joinExpense({ description: '' }))
 
+    expect(wrapper.get('#finance-expense-title').text()).toBe('Изменить расходный чек')
     expect(wrapper.find('[data-test="finance-expense-split-commonEaters"]').exists()).toBe(true)
 
     await wrapper.get('form').trigger('submit')

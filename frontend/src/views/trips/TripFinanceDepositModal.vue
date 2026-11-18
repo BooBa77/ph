@@ -118,9 +118,13 @@ const isValidAmount = computed(() => {
 const noRequisitesText = computed(() => {
   if (selected.value === null) return ''
 
-  const verb = selected.value.gender === 'f' ? 'не указала' : 'не указал'
+  // Пол в профиле есть — согласуем не только глагол, но и хвост: «спросить
+  // у него самого» / «у неё самой». «У них самих» остаётся только семье.
+  if (selected.value.gender === 'f') {
+    return `${selected.value.displayName} не указала реквизиты в своём профиле, придётся спросить у неё самой.`
+  }
 
-  return `${selected.value.displayName} ${verb} реквизиты в своём профиле, придётся спросить у него самого.`
+  return `${selected.value.displayName} не указал реквизиты в своём профиле, придётся спросить у него самого.`
 })
 
 const roleLabel = (recipient: { role: 'organizer' | 'coOrganizer' }): string =>
