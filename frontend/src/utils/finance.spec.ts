@@ -176,6 +176,18 @@ describe('splitCaption', () => {
     ).toBe('Анна, Борис · по 500 ₽')
   })
 
+  it('группа из одного человека — без «по»', () => {
+    expect(
+      splitCaption(
+        expense({
+          split: 'group',
+          amountRub: 50,
+          shares: [{ userId: 'a', displayName: 'Анна', amountRub: 50 }],
+        }),
+      ),
+    ).toBe('Анна · 50 ₽')
+  })
+
   it('чек из «Питания» подписан питающимися с общего', () => {
     expect(
       splitCaption(

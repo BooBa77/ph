@@ -107,6 +107,10 @@ export function sharesPreview(amountRub: number, members: PreviewMember[]): stri
  * уходит первым по составу, и список цифр на экране только мешал читать
  * сумму. Заказчик 12.11.2026: «херня какая-то, „по 583 ₽“ и пересчитывается
  * каждый раз». Цифра — меньшая доля: её получат все, кроме первых по составу.
+ *
+ * **Группа из одного человека — без «по».** Заказчик 18.11.2026: «Анна ·
+ * по 50 ₽» выглядит некорректно, нужно «Анна · 50 ₽». Предлог «по» имеет
+ * смысл только при дележе между несколькими.
  */
 export function splitCaption(expense: TripExpense): string {
   const shares = expense.shares
@@ -116,6 +120,12 @@ export function splitCaption(expense: TripExpense): string {
 
   if (expense.split === 'all') return `на всех · ${perPerson}`
   if (expense.split === 'commonEaters') return `на питающихся с общего · ${perPerson}`
+
+  const [only] = shares
+  if (shares.length === 1 && only !== undefined) {
+    // Доля одного человека — вся сумма расхода: «Анна · 50 ₽».
+    return `${only.displayName} · ${formatRub(only.amountRub)}`
+  }
 
   return `${shares.map((share) => share.displayName).join(', ')} · ${perPerson}`
 }

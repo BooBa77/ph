@@ -349,7 +349,6 @@ interface MoneyRowView {
   description: string
   caption: string
   status: 'pending' | 'confirmed' | null
-  confirmedDay: string
   canEdit: boolean
   canConfirm: boolean
   canCancel: boolean
@@ -379,7 +378,6 @@ function toView(row: MoneyRow): MoneyRowView {
       description: row.expense.description,
       caption: splitCaption(row.expense),
       status: null,
-      confirmedDay: '',
       canEdit: row.expense.canEdit,
       canConfirm: false,
       canCancel: false,
@@ -402,7 +400,6 @@ function toView(row: MoneyRow): MoneyRowView {
       description: 'Залог удержан',
       caption: forfeitCaption(),
       status: null,
-      confirmedDay: '',
       canEdit: false,
       canConfirm: false,
       canCancel: false,
@@ -426,7 +423,6 @@ function toView(row: MoneyRow): MoneyRowView {
       description: 'Залог возвращён',
       caption: depositReturnCaption(row.returned),
       status: null,
-      confirmedDay: '',
       canEdit: false,
       canConfirm: false,
       canCancel: false,
@@ -451,7 +447,6 @@ function toView(row: MoneyRow): MoneyRowView {
       compensation.kind === 'deposit' ? 'Залог за участие' : '',
     caption: '',
     status: compensation.status,
-    confirmedDay: compensation.confirmedAt ? formatDay(compensation.confirmedAt) : '',
     canEdit: false,
     canConfirm: compensation.canConfirm,
     canCancel: compensation.canCancel,
@@ -701,16 +696,22 @@ function cancelRow(row: MoneyRowView): void {
             class="text-xs text-muted"
             data-test="finance-deposit-self-details"
           >
-            вложено {{ formatRub(myDeposit.investedRub) }} из
-            {{ formatRub(deposit.amountRub) }} · переведено
-            {{ formatRub(myDeposit.transferredRub) }} ·
+            вложено {{ formatRub(myDeposit.investedRub) }}
+            <template v-if="myDeposit.transferredRub > 0">
+              · переведено {{ formatRub(myDeposit.transferredRub) }}
+            </template>
+            <template v-if="myDeposit.missingRub > 0 && myDeposit.coveredRub > 0">
+              ·
+              <span
+                class="font-medium text-orange-700"
+                data-test="finance-deposit-self-missing"
+                >не хватает {{ formatRub(myDeposit.missingRub) }}</span
+              >
+            </template>
             <span
-              v-if="myDeposit.missingRub > 0"
-              class="font-medium text-orange-700"
-              data-test="finance-deposit-self-missing"
-              >не хватает {{ formatRub(myDeposit.missingRub) }}</span
-            >
-            <span v-else class="font-medium text-emerald-700" data-test="finance-deposit-self-covered"
+              v-if="myDeposit.missingRub === 0"
+              class="font-medium text-emerald-700"
+              data-test="finance-deposit-self-covered"
               >залог покрыт</span
             >
             <template v-if="myDeposit.hasPendingTransfer">
@@ -828,10 +829,13 @@ function cancelRow(row: MoneyRowView): void {
                   {{ formatRub(deposit.amountRub) }}
                 </template>
                 <template v-else>
-                  вложено {{ formatRub(person.investedRub) }} из
-                  {{ formatRub(deposit.amountRub) }} · переведено
-                  {{ formatRub(person.transferredRub) }} · не хватает
-                  {{ formatRub(person.missingRub) }}
+                  вложено {{ formatRub(person.investedRub) }}
+                  <template v-if="person.transferredRub > 0">
+                    · переведено {{ formatRub(person.transferredRub) }}
+                  </template>
+                  <template v-if="person.missingRub > 0 && person.coveredRub > 0">
+                    · не хватает {{ formatRub(person.missingRub) }}
+                  </template>
                 </template>
                 <template v-if="person.holderName">
                   · держит {{ person.holderName }}
@@ -942,14 +946,6 @@ function cancelRow(row: MoneyRowView): void {
               <p v-if="row.description" class="text-sm text-text">
                 {{ row.description }}
               </p>
-              <p
-                v-if="row.kind === 'compensation'"
-                class="text-xs"
-                :class="row.status === 'pending' ? 'text-orange-700' : 'text-muted'"
-              >
-                <template v-if="row.status === 'pending'">ждём подтверждения</template>
-                <template v-else>получено {{ row.confirmedDay }}</template>
-              </p>
 
               <p v-if="row.caption" class="text-xs text-muted" data-test="finance-row-caption">
                 {{ row.caption }}
@@ -959,6 +955,19 @@ function cancelRow(row: MoneyRowView): void {
             <div class="flex flex-col items-end gap-1">
               <p class="whitespace-nowrap text-sm font-semibold text-text tabular-nums">
                 {{ formatRub(row.amountRub) }}
+              </p>
+
+              <!--
+                У ожидающего перевода «не подтверждено» стоит под суммой
+                (18.11.2026): дату «получено 18.11.2026» заказчик просил
+                не печатать, а после подтверждения подписи нет вовсе.
+              -->
+              <p
+                v-if="row.kind === 'compensation' && row.status === 'pending'"
+                class="text-xs text-orange-700"
+                data-test="finance-compensation-pending"
+              >
+                не подтверждено
               </p>
 
               <div class="flex flex-wrap items-center justify-end gap-2">

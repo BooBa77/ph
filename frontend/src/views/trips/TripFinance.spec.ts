@@ -605,7 +605,7 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(modal.props('members')).toHaveLength(3)
   })
 
-  it('компенсация: «ждём подтверждения» и кнопка у получателя', async () => {
+  it('компенсация: «не подтверждено» и кнопка у получателя', async () => {
     mocks.getTripFinance.mockResolvedValue(state({ compensations: [compensation()] }))
 
     const wrapper = mountView()
@@ -613,7 +613,10 @@ describe('вкладка «Бухгалтерия»', () => {
 
     const row = wrapper.get('[data-test="finance-row-compensation"]')
     expect(row.text()).toContain('Анна → Я')
-    expect(row.text()).toContain('ждём подтверждения')
+    // 18.11.2026: «ждём подтверждения» заменили подписью под суммой,
+    // а дату подтверждения больше не печатаем.
+    expect(row.text()).toContain('не подтверждено')
+    expect(row.find('[data-test="finance-compensation-pending"]').exists()).toBe(true)
     expect(row.find('[data-test="finance-compensation-confirm"]').exists()).toBe(true)
     // Отменить может только отправитель, а отправитель здесь Анна.
     expect(row.find('[data-test="finance-compensation-cancel"]').exists()).toBe(false)
@@ -644,7 +647,11 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(mocks.confirmTripCompensation).toHaveBeenCalledWith('7', 'c1')
 
     const row = wrapper.get('[data-test="finance-row-compensation"]')
-    expect(row.text()).toContain('получено 12.11.2026')
+    // После подтверждения подписи нет вовсе — ни «получено 12.11.2026»,
+    // ни «не подтверждено» (18.11.2026).
+    expect(row.text()).not.toContain('получено 12.11.2026')
+    expect(row.text()).not.toContain('не подтверждено')
+    expect(row.find('[data-test="finance-compensation-pending"]').exists()).toBe(false)
     // Баланс пересчитан ответом сервера, а не на экране.
     expect(wrapper.get('[data-test="finance-balance"]').text()).toBe('0 ₽')
   })
@@ -1000,8 +1007,11 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(rows[0]?.text()).toContain('отказался')
     expect(rows[0]?.text()).toContain('залог удержан')
     expect(rows[1]?.text()).toContain('залог не покрыт')
-    expect(rows[1]?.text()).toContain('вложено 0 ₽ из 2 000 ₽')
-    expect(rows[1]?.text()).toContain('не хватает 2 000 ₽')
+    // Пока не вложено ничего, строка не перечисляет нули: «вложено 0 ₽»,
+    // сумму залога называет строка выше (18.11.2026).
+    expect(rows[1]?.text()).toContain('вложено 0 ₽')
+    expect(rows[1]?.text()).not.toContain('переведено 0 ₽')
+    expect(rows[1]?.text()).not.toContain('не хватает')
     expect(block.text()).not.toContain('Анна')
 
     // Кнопок «Сдал» и «Снять» нет: сдачу подтверждает получатель перевода,
@@ -1123,7 +1133,7 @@ describe('вкладка «Бухгалтерия»', () => {
 
     expect(row).toBeDefined()
     expect(row!.text()).toContain('Я → Организатор')
-    expect(row!.text()).toContain('ждём подтверждения')
+    expect(row!.text()).toContain('не подтверждено')
     // Отменить ожидающий перевод может отправитель.
     expect(row!.find('[data-test="finance-compensation-cancel"]').exists()).toBe(true)
   })
@@ -1172,8 +1182,9 @@ describe('вкладка «Бухгалтерия»', () => {
     // Строка залога — в карточке «Твой баланс», а не отдельным блоком.
     const self = wrapper.get('[data-test="finance-deposit-self"]')
     expect(self.text()).toContain('В походе установлен залог — 2 000 ₽')
-    expect(self.text()).toContain('вложено 0 ₽ из 2 000 ₽')
-    expect(self.text()).toContain('не хватает 2 000 ₽')
+    expect(self.text()).toContain('вложено 0 ₽')
+    expect(self.text()).not.toContain('переведено')
+    expect(self.text()).not.toContain('не хватает')
     expect(wrapper.find('[data-test="finance-deposit-transfer"]').exists()).toBe(true)
   })
 
@@ -1243,7 +1254,7 @@ describe('вкладка «Бухгалтерия»', () => {
     await flushPromises()
 
     const self = wrapper.get('[data-test="finance-deposit-self"]')
-    expect(self.text()).toContain('вложено 500 ₽ из 2 000 ₽')
+    expect(self.text()).toContain('вложено 500 ₽')
     expect(self.text()).toContain('переведено 500 ₽')
     expect(self.text()).toContain('не хватает 1 000 ₽')
   })
