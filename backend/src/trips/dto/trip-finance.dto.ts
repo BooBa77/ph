@@ -498,6 +498,37 @@ export class DepositParticipantDto {
   investedRub: number;
 
   @ApiProperty({
+    description: 'Сумма подтверждённых переводов залога (18.11.2026)',
+    example: 100,
+  })
+  transferredRub: number;
+
+  @ApiProperty({
+    description:
+      'Сумма переводов, которые ждут подтверждения получателем. Они бронируют недостачу, но в покрытие не входят',
+    example: 0,
+  })
+  pendingRub: number;
+
+  @ApiProperty({
+    description: 'Какая часть залога покрыта: min(D, вложено + переведено)',
+    example: 200,
+  })
+  coveredRub: number;
+
+  @ApiProperty({
+    description: 'Сколько ещё не покрыто: max(0, D − покрыто)',
+    example: 0,
+  })
+  missingRub: number;
+
+  @ApiProperty({
+    description: 'Сколько осталось перевести: недостача минус уже отправленное',
+    example: 0,
+  })
+  dueRub: number;
+
+  @ApiProperty({
     description: 'У кого залог на руках. null — ещё не передан',
     nullable: true,
   })
@@ -514,7 +545,7 @@ export class DepositParticipantDto {
 
   @ApiProperty({
     description:
-      'Есть что решать: залог уже у организатора (held) или решение принято (returned/forfeited). У «надо сдать» решать нечего',
+      'Есть что решать: у отказавшегося хоть что-то покрыто (covered > 0). С 18.11.2026 это не зависит от deposit_status: залог мог покрыться расходами',
   })
   canDecide: boolean;
 }
@@ -522,8 +553,16 @@ export class DepositParticipantDto {
 /**
  * Мой залог: из этого экран решает, показывать ли «Перевести залог».
  *
- * `canTransfer` — залог ещё не сдан, я в походе и есть кому его перевести.
- * `holderName` — кому уже передан, чтобы человек видел, у кого деньги.
+ * С 18.11.2026 (v3) залог покрывается расходами человека, поэтому кроме
+ * состояния здесь лежит сам расчёт: `investedRub` (оплатил расходов),
+ * `transferredRub` (подтверждённые переводы), `pendingRub` (переводы
+ * в пути), `coveredRub`/`missingRub` — покрытие, `dueRub` — сколько
+ * осталось перевести (недостача минус уже отправленное).
+ *
+ * `canTransfer` — `dueRub > 0`, нет перевода в пути и есть кому перевести:
+ * пока перевод ждёт «Получено», кнопка скрыта, чтобы не отправить ту же
+ * сумму дважды. `selfHeld` — организатор держит свой залог сам, переводить
+ * его не нужно.
  */
 export class MyDepositDto {
   @ApiProperty({ enum: DEPOSIT_STATUSES, example: 'pending' })
@@ -532,8 +571,34 @@ export class MyDepositDto {
   @ApiProperty({ description: 'Сумма моего залога', example: 2000 })
   amountRub: number;
 
+  @ApiProperty({ description: 'Сколько я оплатил расходов похода', example: 50 })
+  investedRub: number;
+
+  @ApiProperty({ description: 'Сколько подтверждённых переводов залога я сделал', example: 100 })
+  transferredRub: number;
+
+  @ApiProperty({ description: 'Сколько я перевёл, но получатель ещё не подтвердил', example: 0 })
+  pendingRub: number;
+
+  @ApiProperty({ description: 'Какая часть залога покрыта', example: 150 })
+  coveredRub: number;
+
+  @ApiProperty({ description: 'Сколько ещё не покрыто', example: 50 })
+  missingRub: number;
+
+  @ApiProperty({
+    description: 'Сколько осталось перевести: недостача минус уже отправленное',
+    example: 50,
+  })
+  dueRub: number;
+
   @ApiProperty({ description: 'Могу ли я перевести залог организатору' })
   canTransfer: boolean;
+
+  @ApiProperty({
+    description: 'Организатор держит свой залог сам — переводить не нужно',
+  })
+  selfHeld: boolean;
 
   @ApiProperty({
     description: 'Кому залог уже передан. null — ещё никому',
@@ -565,6 +630,13 @@ export class DepositSenderDto {
 
   @ApiProperty({ description: 'Это сам смотрящий' })
   isMe: boolean;
+
+  @ApiProperty({
+    description:
+      'Сколько осталось перевести этому человеку: его недостача минус уже отправленное. Подставляется в модалку',
+    example: 150,
+  })
+  dueRub: number;
 
   @ApiProperty({
     description: 'Кому может перевести залог именно этот отправитель',
@@ -616,8 +688,9 @@ export class DepositRecipientDto {
  * нет.
  *
  * `canManage` — автор похода или соорганизатор: секция риска только для
- * них. Рядовой участник видит свой залог в `me` и сумму залога в шапке
- * похода.
+ * них. Рядовой участник видит свой залог в `me` — строкой «В походе
+ * установлен залог — 200 ₽» в «Твоём балансе» (v3, 18.11.2026), сумма
+ * залога есть и в шапке похода.
  */
 export class TripDepositDto {
   @ApiProperty({ description: 'Сумма с человека, целые рубли', example: 2000 })
@@ -717,12 +790,17 @@ export class SaveTripDepositDto {
 }
 
 /**
- * Тело `POST /api/trips/:id/finance/deposit/transfer` (18.11.2026).
+ * Тело `POST /api/trips/:id/finance/deposit/transfer` (18.11.2026, v3).
  *
  * Участник переводит залог организатору: прямых переводов между
  * участниками в приложении нет, поэтому кнопка отдельная, а получатель
  * выбирается из организаторов похода. `fromUserId` — за человека
  * без аккаунта, которого ведёт смотрящий.
+ *
+ * **Сумма произвольная (v3).** В модалке подставлена недостача `dueRub`,
+ * но её можно изменить, в том числе в бо́льшую сторону — заказчик разрешил
+ * перевести «с запасом». Несколько переводов до покрытия разрешены:
+ * залог можно докладывать частями.
  */
 export class TransferTripDepositDto {
   @ApiProperty({
@@ -731,6 +809,19 @@ export class TransferTripDepositDto {
   })
   @IsUUID('all', { message: 'Получатель залога должен быть человеком' })
   recipientUserId: string;
+
+  @ApiProperty({
+    description: 'Сумма перевода в рублях, целая',
+    example: 150,
+    minimum: 1,
+    maximum: MAX_AMOUNT_RUB,
+  })
+  @IsInt({ message: 'Сумма перевода — целое число рублей' })
+  @Min(1, { message: 'Сумма перевода должна быть больше нуля' })
+  @Max(MAX_AMOUNT_RUB, {
+    message: `Сумма перевода не должна превышать ${MAX_AMOUNT_RUB} ₽`,
+  })
+  amountRub: number;
 
   @ApiProperty({
     description:

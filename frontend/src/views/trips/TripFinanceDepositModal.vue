@@ -7,19 +7,19 @@ import type { DepositSender, TripFinance } from '@/types/finance'
 import { formatRub } from '@/utils/money'
 
 /**
- * «Перевести залог» (17.11.2026, переписано 18.11.2026).
+ * «Перевести залог» (17.11.2026, v3 — 18.11.2026).
  *
- * Заказчик: «Фактически „Перевести залог“ — перевод суммы организаторам.
- * Это отдельная кнопка из-за того, что у нас нет прямых переводов между
- * участниками. Если участник ещё никому не должен, общих расходов
- * не производит, но хочет внести залог, инструментов нет. В этом случае
- * организатор становится частичным держателем кассы».
+ * Заказчик: «Фактически „Перевести залог“ — перевод суммы организаторам…
+ * Если участник ещё никому не должен, общих расходов не производит, но
+ * хочет внести залог, инструментов нет. В этом случае организатор
+ * становится частичным держателем кассы».
  *
- * **С 18.11.2026 это настоящий перевод в «Движении денег».** Модалка
- * создаёт ожидающую строку, организатор подтверждает её кнопкой
- * «Получено», и только тогда балансы меняются: у отправителя плюс,
- * у получателя минус — «теперь он должен». Поэтому здесь нет слов
- * «в балансы не входит».
+ * **С 18.11.2026 (v3) в модалке подставлена недостача, и её можно менять.**
+ * Заказчик: «если потратился, но меньше залога, кнопка есть, а в модалке
+ * перевода подставим недостающую сумму, её конечно же можно изменить
+ * на любую, может решит перевести организатору с запасом». Поэтому здесь
+ * поле суммы: больше остатка разрешено, лишнее при подтверждении станет
+ * обычным переводом (деньги не пропадут ни при удержании, ни при возврате).
  *
  * **Кто сдаёт.** Себя выбирает сам участник; за человека без аккаунта —
  * тот, кто его ведёт. Поэтому в модалке есть выбор отправителя, как
@@ -60,6 +60,15 @@ const selectedSender = computed(
     ) ?? null,
 )
 
+/** Сколько осталось перевести выбранному отправителю — с сервера. */
+const dueRub = computed(() => selectedSender.value?.dueRub ?? props.amountRub)
+
+/**
+ * Сумма перевода: по умолчанию недостача, но её можно менять.
+ * `null` — поле пустое или в нём не целое число.
+ */
+const amount = ref<number | null>(dueRub.value)
+
 /**
  * Получатели зависят от отправителя: виртуальный человек платит
  * организатору, который его ведёт, а сам участник себе не переводит.
@@ -68,23 +77,22 @@ const availableRecipients = computed(
   () => selectedSender.value?.recipients ?? [],
 )
 
-const selectedUserId = ref(
-  availableRecipients.value.find(
-    (recipient) => recipient.paymentDetails !== null,
-  )?.userId ??
-    availableRecipients.value[0]?.userId ??
-    '',
-)
-
-// Сменили отправителя — получатель тоже мог смениться: по умолчанию
-// снова первый с реквизитами, иначе первый в списке.
-watch(selectedSenderId, () => {
-  selectedUserId.value =
+function defaultRecipientUserId(): string {
+  return (
     availableRecipients.value.find(
       (recipient) => recipient.paymentDetails !== null,
     )?.userId ??
     availableRecipients.value[0]?.userId ??
     ''
+  )
+}
+
+const selectedUserId = ref(defaultRecipientUserId())
+
+// Сменили отправителя — сменились и получатель, и недостача.
+watch(selectedSenderId, () => {
+  selectedUserId.value = defaultRecipientUserId()
+  amount.value = dueRub.value
 })
 
 const selected = computed(
@@ -93,6 +101,19 @@ const selected = computed(
       (recipient) => recipient.userId === selectedUserId.value,
     ) ?? null,
 )
+
+/** Сумма сверх недостачи: разрешена, но должна быть видна человеку. */
+const excessRub = computed(() => {
+  if (amount.value === null) return 0
+
+  return Math.max(0, amount.value - dueRub.value)
+})
+
+const isValidAmount = computed(() => {
+  const value = amount.value
+
+  return value !== null && Number.isInteger(value) && value >= 1 && value <= 10_000_000
+})
 
 const noRequisitesText = computed(() => {
   if (selected.value === null) return ''
@@ -113,7 +134,9 @@ async function save(): Promise<void> {
   if (
     isSaving.value ||
     selected.value === null ||
-    selectedSender.value === null
+    selectedSender.value === null ||
+    !isValidAmount.value ||
+    amount.value === null
   ) {
     return
   }
@@ -127,14 +150,15 @@ async function save(): Promise<void> {
       await transferTripDeposit(
         props.tripId,
         selected.value.userId,
+        amount.value,
         selectedSender.value.isMe ? undefined : selectedSender.value.userId,
       ),
     )
   } catch (problem) {
     error.value = messageOf(problem, 'Не удалось записать перевод залога')
 
-    // 400 «уже переведён» значит, что его отправили после загрузки
-    // вкладки: родитель перечитает её, а сообщение сервера правдиво.
+    // 400 значит, что перевод уже сделали с другого устройства: родитель
+    // перечитает вкладку, а сообщение сервера правдиво.
     if (problem instanceof ApiError && problem.status === 400) emit('stale')
   } finally {
     isSaving.value = false
@@ -192,7 +216,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         <p>
           Перевод встанет в «Движение денег» строкой «Залог за участие».
           Организатор подтвердит получение — тогда у тебя станет плюс
-          {{ formatRub(amountRub) }}, а у него минус: он теперь должен группе.
+          на сумму перевода, а у него минус: он теперь должен группе.
         </p>
       </div>
 
@@ -201,7 +225,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         class="text-sm text-muted"
         data-test="finance-deposit-no-sender"
       >
-        Передавать нечего: залог уже переведён или ждёт подтверждения.
+        Передавать нечего: залог уже покрыт или ждёт подтверждения.
       </p>
 
       <p
@@ -247,6 +271,9 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             <span class="text-text">{{ sender.displayName }}</span>
             <span v-if="sender.isMe" class="text-xs text-muted">это ты</span>
             <span v-else class="text-xs text-muted">человек без аккаунта</span>
+            <span class="ml-auto whitespace-nowrap text-xs text-muted">
+              осталось {{ formatRub(sender.dueRub) }}
+            </span>
           </label>
         </fieldset>
 
@@ -273,9 +300,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
             />
             <span class="text-text">{{ recipient.displayName }}</span>
             <span class="text-xs text-muted">{{ roleLabel(recipient) }}</span>
-            <span class="ml-auto whitespace-nowrap text-xs font-medium text-text">
-              {{ formatRub(amountRub) }}
-            </span>
           </label>
         </fieldset>
 
@@ -302,6 +326,46 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           </p>
         </div>
 
+        <!--
+          Сумма: по умолчанию недостача, но её можно менять — заказчик
+          разрешил «перевести с запасом». Больше остатка не ошибка, а кредит
+          перед группой, и модалка честно говорит, во что он превратится.
+        -->
+        <div class="flex flex-col gap-1">
+          <label class="flex flex-wrap items-center gap-2 text-sm text-text">
+            <span>Сумма перевода</span>
+            <input
+              v-model.number="amount"
+              type="number"
+              min="1"
+              step="1"
+              inputmode="numeric"
+              class="w-28 rounded-xl border border-border bg-field px-3 py-1.5 text-right text-sm text-text"
+              data-test="finance-deposit-amount"
+            />
+            <span class="text-xs text-muted">
+              осталось {{ formatRub(dueRub) }}
+            </span>
+          </label>
+
+          <p
+            v-if="excessRub > 0"
+            class="text-xs text-muted"
+            data-test="finance-deposit-excess"
+          >
+            Сверх остатка — {{ formatRub(excessRub) }}. Залог покроется, а излишек
+            станет обычным переводом: он виден в движении и пойдёт в расчёты.
+          </p>
+
+          <p
+            v-else-if="!isValidAmount"
+            class="text-xs text-red-600"
+            data-test="finance-deposit-amount-error"
+          >
+            Сумма — целое число рублей больше нуля.
+          </p>
+        </div>
+
         <p v-if="error" class="text-sm text-red-600" data-test="finance-deposit-error">
           {{ error }}
         </p>
@@ -310,10 +374,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <button
             type="submit"
             class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-            :disabled="isSaving || selected === null || selectedSender === null"
+            :disabled="
+              isSaving ||
+              selected === null ||
+              selectedSender === null ||
+              !isValidAmount
+            "
             data-test="finance-deposit-save"
           >
-            {{ isSaving ? 'Записываем…' : `Я передал ${formatRub(amountRub)}` }}
+            {{ isSaving ? 'Записываем…' : `Я передал ${formatRub(amount ?? 0)}` }}
           </button>
 
           <button

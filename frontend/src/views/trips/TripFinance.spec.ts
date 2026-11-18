@@ -316,7 +316,7 @@ const CompensationModalStub = defineComponent({
   },
 })
 
-/** Строка залога: по умолчанию — «не сдал, ничего не вложил». */
+/** Строка залога: по умолчанию — «ничего не вложил, залог не покрыт». */
 function depositPerson(
   userId: string,
   displayName: string,
@@ -332,6 +332,11 @@ function depositPerson(
     updatedAt: null,
     isMe: false,
     investedRub: 0,
+    transferredRub: 0,
+    pendingRub: 0,
+    coveredRub: 0,
+    missingRub: 2000,
+    dueRub: 2000,
     holderName: null,
     declined: false,
     hasPendingTransfer: false,
@@ -341,11 +346,11 @@ function depositPerson(
 }
 
 /**
- * Вкладка с залогом 2 000 ₽ (17.11.2026, переписано 18.11.2026).
+ * Вкладка с залогом 2 000 ₽ (17.11.2026, v3 — 18.11.2026).
  *
- * Я ещё не сдал и ничего не вложил, Анна сдала и потратила 3 000 ₽,
+ * Я ещё не вложил и не перевёл ничего, Анна покрыла залог расходами,
  * Борис отказался, и его залог удержан. В секции риска — Борис первым
- * и я; Анна не показывается: она сдала и вложилась.
+ * и я; Анны нет: её залог покрыт расходами.
  */
 function depositState(overrides: Partial<TripFinance> = {}): TripFinance {
   const base = state()
@@ -358,15 +363,27 @@ function depositState(overrides: Partial<TripFinance> = {}): TripFinance {
       me: {
         status: 'pending',
         amountRub: 2000,
+        investedRub: 0,
+        transferredRub: 0,
+        pendingRub: 0,
+        coveredRub: 0,
+        missingRub: 2000,
+        dueRub: 2000,
         canTransfer: true,
+        selfHeld: false,
         holderName: null,
         hasPendingTransfer: false,
       },
-      // Секция риска: отказавшиеся первыми, потом не вложившие залог.
+      // Секция риска: отказавшиеся первыми, потом не добравшие залог.
       participants: [
         depositPerson(BORIS, 'Борис', 'forfeited', {
           declined: true,
           canDecide: true,
+          investedRub: 0,
+          transferredRub: 2000,
+          coveredRub: 2000,
+          missingRub: 0,
+          dueRub: 0,
           updatedByName: 'Организатор',
           updatedAt: '2026-11-17T11:00:00.000Z',
         }),
@@ -377,6 +394,7 @@ function depositState(overrides: Partial<TripFinance> = {}): TripFinance {
           userId: ME,
           displayName: 'Я',
           isMe: true,
+          dueRub: 2000,
           recipients: [
             {
               userId: 'org-1',
@@ -945,9 +963,9 @@ describe('вкладка «Бухгалтерия»', () => {
     wrapper.unmount()
   })
 
-  // ─────────────────────── залог участия (17.11.2026, переписан 18.11.2026) ───────────────────────
+  // ─────────────────────── залог участия (v3, 18.11.2026) ───────────────────────
 
-  it('секция риска над «Движением денег»: только отказавшиеся и не вложившие', async () => {
+  it('секция риска над «Движением денег»: отказавшиеся и идущие с недостатком', async () => {
     mocks.getTripFinance.mockResolvedValue(depositState())
 
     const wrapper = mountView()
@@ -962,36 +980,58 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(wrapper.find('[data-test="finance-deposit-summary"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="finance-deposit-toggle"]').exists()).toBe(false)
 
-    // В списке только риск: отказавшийся Борис и не вложивший я.
-    // Анна сдала и потратилась — её тут нет.
+    // В списке только риск: отказавшийся Борис и не добравший залог я.
+    // Анна покрыла залог расходами — её тут нет.
     const rows = wrapper.findAll('[data-test="finance-deposit-person"]')
     expect(rows).toHaveLength(2)
     expect(rows[0]?.text()).toContain('Борис')
     expect(rows[0]?.text()).toContain('отказался')
-    expect(rows[0]?.text()).toContain('удержан')
+    expect(rows[0]?.text()).toContain('залог удержан')
+    expect(rows[1]?.text()).toContain('не перевёл залог и недостаточно вложился')
     expect(rows[1]?.text()).toContain('вложил 0 ₽ из 2 000 ₽')
     expect(block.text()).not.toContain('Анна')
 
-    // Кнопок «Сдал» нет: сдачу подтверждает получатель перевода.
+    // Кнопок «Сдал» и «Снять» нет: сдачу подтверждает получатель перевода,
+    // а из решения остались два сегмента — «Вернуть» и «Удержать».
     expect(wrapper.find('[data-test="finance-deposit-take"]').exists()).toBe(false)
-
-    // Мой залог — отдельной строкой.
-    expect(wrapper.get('[data-test="finance-deposit-me"]').text()).toContain('не сдан')
-    expect(block.text()).toContain('отметил Организатор')
+    expect(wrapper.find('[data-test="finance-deposit-reset"]').exists()).toBe(false)
 
     // Блок выше ленты: «размести это над секцией Движение денег».
-    const blockIndex = wrapper.html().indexOf('finance-deposit"')
-    const ledgerIndex = wrapper.html().indexOf('finance-ledger"')
-    expect(blockIndex).toBeGreaterThan(-1)
-    expect(blockIndex).toBeLessThan(ledgerIndex)
+    expect(wrapper.html().indexOf('finance-deposit"')).toBeLessThan(
+      wrapper.html().indexOf('finance-ledger"'),
+    )
   })
 
-  it('отказавшемуся без сданного залога решать нечего — флага нет', async () => {
+  it('«Снять» убран: флаг «Вернуть/Удержать» и никакого сброса', async () => {
+    mocks.getTripFinance.mockResolvedValue(depositState())
+    mocks.setTripDepositStatus.mockResolvedValue(depositState())
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const flag = wrapper.get('[data-test="finance-deposit-flag"]')
+    expect(flag.text()).toContain('Вернуть')
+    expect(flag.text()).toContain('Удержать')
+    // Сейчас удержан — выбран именно «Удержать» (класс заливки).
+    expect(wrapper.get('[data-test="finance-deposit-forfeit"]').classes()).toContain(
+      'bg-red-600',
+    )
+
+    await wrapper.get('[data-test="finance-deposit-return"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setTripDepositStatus).toHaveBeenCalledWith('7', BORIS, 'returned')
+  })
+
+  it('отказавшемуся без покрытия решать нечего — флага нет', async () => {
     const view = depositState()
     view.deposit!.participants = [
       depositPerson(BORIS, 'Борис', 'pending', {
         declined: true,
         canDecide: false,
+        coveredRub: 0,
+        missingRub: 2000,
+        dueRub: 2000,
       }),
     ]
 
@@ -1001,9 +1041,9 @@ describe('вкладка «Бухгалтерия»', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="finance-deposit-flag"]').exists()).toBe(false)
-    expect(
-      wrapper.get('[data-test="finance-deposit-no-deposit"]').text(),
-    ).toBe('залог не сдан — решать нечего')
+    expect(wrapper.get('[data-test="finance-deposit-hint"]').text()).toBe(
+      'залог не покрыт — решать нечего',
+    )
   })
 
   it('удержание — строка фонда, а не пересборка личных балансов', async () => {
@@ -1029,32 +1069,6 @@ describe('вкладка «Бухгалтерия»', () => {
 
     expect(wrapper.find('[data-test="finance-deposit"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="finance-deposit-self"]').exists()).toBe(false)
-  })
-
-  it('«Вернуть/Удержать» — флаг: выбранное решение видно, «Снять» возвращает в решение', async () => {
-    mocks.getTripFinance.mockResolvedValue(depositState())
-    mocks.setTripDepositStatus.mockResolvedValue(depositState())
-
-    const wrapper = mountView()
-    await flushPromises()
-
-    const flag = wrapper.get('[data-test="finance-deposit-flag"]')
-    expect(flag.text()).toContain('Вернуть')
-    expect(flag.text()).toContain('Удержать')
-    // Сейчас удержан — выбран именно «Удержать» (класс заливки).
-    expect(wrapper.get('[data-test="finance-deposit-forfeit"]').classes()).toContain(
-      'bg-red-600',
-    )
-
-    await wrapper.get('[data-test="finance-deposit-return"]').trigger('click')
-    await flushPromises()
-
-    expect(mocks.setTripDepositStatus).toHaveBeenCalledWith('7', BORIS, 'returned')
-
-    await wrapper.get('[data-test="finance-deposit-reset"]').trigger('click')
-    await flushPromises()
-
-    expect(mocks.setTripDepositStatus).toHaveBeenCalledWith('7', BORIS, 'pending')
   })
 
   it('перевод залога стоит в ленте строкой «Залог за участие»', async () => {
@@ -1119,7 +1133,7 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(row.text()).toContain('доля ушедшего · по 1 000 ₽')
   })
 
-  it('рядовой участник видит свой залог, но не секцию риска', async () => {
+  it('рядовой участник: залог в «Твоём балансе», секции риска нет', async () => {
     const view = depositState()
     view.deposit!.canManage = false
     view.deposit!.participants = []
@@ -1134,11 +1148,58 @@ describe('вкладка «Бухгалтерия»', () => {
     expect(wrapper.find('[data-test="finance-deposit-return"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="finance-deposit-forfeit"]').exists()).toBe(false)
 
-    // Личная строка со суммой и статусом есть.
+    // Строка залога — в карточке «Твой баланс», а не отдельным блоком.
     const self = wrapper.get('[data-test="finance-deposit-self"]')
-    expect(self.text()).toContain('2 000 ₽ с человека')
-    expect(self.text()).toContain('твой залог не сдан')
-    expect(wrapper.find('[data-test="finance-deposit-self-transfer"]').exists()).toBe(true)
+    expect(self.text()).toContain('В походе установлен залог — 2 000 ₽')
+    expect(self.text()).toContain('вложил 0 ₽ из 2 000 ₽')
+    expect(self.text()).toContain('не покрыто 2 000 ₽')
+    expect(wrapper.find('[data-test="finance-deposit-transfer"]').exists()).toBe(true)
+  })
+
+  it('залог покрыт расходами — кнопки нет', async () => {
+    const view = depositState()
+    view.deposit!.me = {
+      ...view.deposit!.me!,
+      status: 'held',
+      investedRub: 3000,
+      coveredRub: 2000,
+      missingRub: 0,
+      dueRub: 0,
+      canTransfer: false,
+    }
+    view.deposit!.senders = []
+
+    mocks.getTripFinance.mockResolvedValue(view)
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const self = wrapper.get('[data-test="finance-deposit-self"]')
+    expect(self.text()).toContain('залог покрыт')
+    expect(wrapper.find('[data-test="finance-deposit-transfer"]').exists()).toBe(false)
+  })
+
+  it('частичное покрытие: вложил и перевёл, остаток виден', async () => {
+    const view = depositState()
+    view.deposit!.me = {
+      ...view.deposit!.me!,
+      investedRub: 500,
+      transferredRub: 500,
+      coveredRub: 1000,
+      missingRub: 1000,
+      dueRub: 1000,
+      canTransfer: true,
+    }
+
+    mocks.getTripFinance.mockResolvedValue(view)
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const self = wrapper.get('[data-test="finance-deposit-self"]')
+    expect(self.text()).toContain('вложил 500 ₽ из 2 000 ₽')
+    expect(self.text()).toContain('перевёл 500 ₽')
+    expect(self.text()).toContain('не покрыто 1 000 ₽')
   })
 
   it('организатор с человеком без аккаунта видит «Перевести залог»', async () => {
@@ -1148,6 +1209,7 @@ describe('вкладка «Бухгалтерия»', () => {
         userId: 'virtual-1',
         displayName: 'Дядя Витя',
         isMe: false,
+        dueRub: 2000,
         recipients: [],
       },
     ]
@@ -1157,7 +1219,7 @@ describe('вкладка «Бухгалтерия»', () => {
     const wrapper = mountView()
     await flushPromises()
 
-    // Кнопка в шапке баланса — за виртуального залог передаёт ведущий.
+    // Кнопка в «Твоём балансе» — за виртуального залог передаёт ведущий.
     expect(wrapper.find('[data-test="finance-deposit-transfer"]').exists()).toBe(true)
   })
 
@@ -1190,6 +1252,9 @@ describe('вкладка «Бухгалтерия»', () => {
     view.deposit!.senders = []
     view.deposit!.me!.status = 'held'
     view.deposit!.me!.canTransfer = false
+    view.deposit!.me!.coveredRub = 2000
+    view.deposit!.me!.missingRub = 0
+    view.deposit!.me!.dueRub = 0
     view.deposit!.me!.holderName = 'Организатор'
 
     mocks.getTripFinance.mockResolvedValue(view)

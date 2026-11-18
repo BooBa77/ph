@@ -4,12 +4,14 @@ import {
   compensationOptions,
   computeBalances,
   computeRemaining,
+  depositCoverage,
   familyBalance,
   familyCredit,
   familyDebt,
   joinNames,
   planCommonEaterShares,
   splitAmount,
+  splitDepositExcess,
   type BalanceAdjustment,
   type BalanceCompensation,
   type BalanceExpense,
@@ -517,6 +519,113 @@ describe('planCommonEaterShares', () => {
 
     // Делить не на кого: терять сумму нельзя, история остаётся.
     expect(desired).toBeNull();
+  });
+});
+
+/**
+ * Покрытие залога расходами и переводами (18.11.2026, v3).
+ *
+ * Заказчик: «если участник не потратился на сумму залога, то доступна кнопка
+ * „Перевести залог“; если он понёс расходов больше залоговой суммы, то
+ * кнопка скрыта… если потратился, но меньше залога, кнопка есть, а в модалке
+ * перевода подставим недостающую сумму». Примеры плана — 1–3.
+ */
+describe('залог v3: покрытие расходами', () => {
+  const D = 200;
+
+  it('A вложил 1 000 ₽ при залоге 200 — покрыт, переводить нечего', () => {
+    const coverage = depositCoverage({
+      amountRub: D,
+      investedRub: 1000,
+      transferredRub: 0,
+    });
+
+    expect(coverage.coveredRub).toBe(200);
+    expect(coverage.missingRub).toBe(0);
+    expect(coverage.dueRub).toBe(0);
+  });
+
+  it('B ничего не потратил — недостача равна залогу', () => {
+    const coverage = depositCoverage({
+      amountRub: D,
+      investedRub: 0,
+      transferredRub: 0,
+    });
+
+    expect(coverage.coveredRub).toBe(0);
+    expect(coverage.missingRub).toBe(200);
+    expect(coverage.dueRub).toBe(200);
+  });
+
+  it('C потратил 50 — осталось 150, перевёл 100 — осталось 50', () => {
+    const before = depositCoverage({
+      amountRub: D,
+      investedRub: 50,
+      transferredRub: 0,
+    });
+    expect(before.dueRub).toBe(150);
+
+    const part = depositCoverage({
+      amountRub: D,
+      investedRub: 50,
+      transferredRub: 100,
+    });
+    expect(part.coveredRub).toBe(150);
+    expect(part.missingRub).toBe(50);
+    expect(part.dueRub).toBe(50);
+
+    const full = depositCoverage({
+      amountRub: D,
+      investedRub: 50,
+      transferredRub: 150,
+    });
+    expect(full.missingRub).toBe(0);
+    expect(full.dueRub).toBe(0);
+  });
+
+  it('перевод в пути бронирует недостачу: кнопка не предлагает ту же сумму', () => {
+    const coverage = depositCoverage({
+      amountRub: D,
+      investedRub: 0,
+      transferredRub: 0,
+      pendingRub: 200,
+    });
+
+    // Покрытие — только подтверждённое, но переводить больше нечего.
+    expect(coverage.coveredRub).toBe(0);
+    expect(coverage.missingRub).toBe(200);
+    expect(coverage.dueRub).toBe(0);
+  });
+
+  it('перевод «с запасом» покрытие не увеличивает', () => {
+    const coverage = depositCoverage({
+      amountRub: D,
+      investedRub: 0,
+      transferredRub: 300,
+    });
+
+    expect(coverage.coveredRub).toBe(200);
+    expect(coverage.missingRub).toBe(0);
+    // Переведено больше залога — это кредит человека, а не покрытие.
+    expect(coverage.transferredRub).toBe(300);
+  });
+
+  it('излишек «с запасом» при подтверждении становится обычным переводом', () => {
+    // Залог 200, расходов нет, переведено 300: 200 — залог, 100 — перевод.
+    expect(splitDepositExcess(300, 200)).toEqual({
+      depositRub: 200,
+      excessRub: 100,
+    });
+    // Ровно недостача — делить нечего.
+    expect(splitDepositExcess(200, 200)).toEqual({
+      depositRub: 200,
+      excessRub: 0,
+    });
+    // Залог уже покрыт расходами: вся сумма — обычный перевод.
+    expect(splitDepositExcess(200, 0)).toEqual({
+      depositRub: 0,
+      excessRub: 200,
+    });
   });
 });
 

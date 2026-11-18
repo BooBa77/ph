@@ -12,8 +12,6 @@ import {
 } from '@/api/finance'
 import { useAuthStore } from '@/stores/auth'
 import {
-  DEPOSIT_STATE_LABELS,
-  DEPOSIT_STATUS_LABELS,
   type CompensationOption,
   type CompensationSender,
   type DepositDecision,
@@ -26,6 +24,7 @@ import {
 } from '@/types/finance'
 import {
   depositReturnCaption,
+  depositStatusCaption,
   forfeitCaption,
   movementRows,
   splitCaption,
@@ -270,28 +269,32 @@ const hasRemainingShift = computed(
 // ───────────────────────────── залог участия ─────────────────────────────
 
 /**
- * Залог участия (17.11.2026, переписан 18.11.2026).
+ * Залог участия (17.11.2026, v3 — 18.11.2026).
  *
- * Заказчик: «Организатор может установить залог на участие, размести это
- * над секцией Движение денег». Блок рисуется только когда залог есть.
+ * Заказчик: «Мне не нравится блок „Залог“, у рядового участника это лишнее.
+ * Перенесём это всё в блок „Баланс“, сверху информация „В походе установлен
+ * залог — 200 руб“, и если участник не потратился на сумму залога, то
+ * доступна кнопка „Перевести залог“». Поэтому отдельного блока у рядового
+ * участника больше нет: строка и кнопка живут в «Твоём балансе».
  *
- * **18.11.2026 залог — это деньги, а не отметки.** Перевод залога идёт
- * через «Движение денег»: «Я передал» → организатор жмёт «Получено»,
- * и только тогда меняются балансы. Ручных кнопок «Сдал/не сдал» больше
- * нет, счётчиков «Сдали 3 из 6» и переключателя «Только риски» — тоже:
- * заказчик просил их убрать.
+ * **Залог покрывается расходами.** `covered = min(D, invested +
+ * transferred)` считает сервер: если человек уже оплатил расходов на сумму
+ * залога, отдельные 200 ₽ он не переводит. Переводить можно только
+ * недостачу, частями; в модалке сумма подставлена, её можно менять, в том
+ * числе в бо́льшую сторону.
  *
- * **Секция риска — только организатору.** В ней отказавшиеся (флаг
- * «Вернуть/Удержать») и не вложившие сумму залога; те, кто вложился
- * в поход свыше залога, не показываются. Рядовой участник видит свой
- * залог и кнопку перевода, а сумма залога есть в шапке похода.
+ * **Секция риска — только организатору и соорганизатору.** В ней ушедшие
+ * с ненулевым покрытием (решить, вернуть залог или удержать) и идущие,
+ * которые не добрали залог: «не перевёл залог и недостаточно вложился».
+ * Ушедшего с нулём нет вовсе — решать нечего. Кнопки «Снять» больше нет:
+ * только «Вернуть» и «Удержать».
  */
 const deposit = computed(() => finance.value?.deposit ?? null)
 
-/** Мой залог: по нему экран решает, что показать в личной строке. */
+/** Мой залог: покрытие и кнопка «Перевести залог» в «Твоём балансе». */
 const myDeposit = computed(() => deposit.value?.me ?? null)
 
-/** Есть за кого передать залог: я или мой человек без аккаунта. */
+/** Есть кого/за кого передать залог: я или мой человек без аккаунта. */
 const canSendDeposit = computed(() => (deposit.value?.senders.length ?? 0) > 0)
 
 /** Секцию риска видит организатор и соорганизатор. */
@@ -303,7 +306,7 @@ const depositRisk = computed(() => deposit.value?.participants ?? [])
 /** Какая строка сейчас отправляет запрос — чтобы не нажимали дважды. */
 const busyDeposit = ref<string | null>(null)
 
-/** Цвет состояния: «не сдал» — внимание, «сдал» — хорошо, остальное нейтрально. */
+/** Цвет состояния: не покрыт — внимание, покрыт — хорошо, остальное нейтрально. */
 const DEPOSIT_CLASS: Record<DepositStatus, string> = {
   pending: 'text-orange-700',
   held: 'text-emerald-700',
@@ -526,8 +529,8 @@ function onCompensationStale(): void {
 /**
  * «Перевести залог» (18.11.2026).
  *
- * Перед открытием перечитываем вкладку: залог мог быть переведён
- * или отмечен с другого устройства, и модалка предложила бы отправить
+ * Перед открытием перечитываем вкладку: залог мог быть покрыт расходами
+ * или переведён с другого устройства, и модалка предложила бы отправить
  * деньги второй раз.
  */
 async function openDepositTransfer(): Promise<void> {
@@ -536,7 +539,7 @@ async function openDepositTransfer(): Promise<void> {
   await refreshQuietly()
 
   if (!canSendDeposit.value) {
-    actionError.value = 'Залог уже переведён или ждёт подтверждения.'
+    actionError.value = 'Залог уже покрыт или ждёт подтверждения.'
     return
   }
 
@@ -658,6 +661,64 @@ function cancelRow(row: MoneyRowView): void {
           </div>
         </div>
 
+        <!--
+          Залог участия (v3, 18.11.2026) — больше не отдельный блок:
+          заказчик просил перенести его в «Твой баланс». Сверху — сумма,
+          ниже — покрытие: залог считается закрытым расходами человека,
+          и переводить нужно только недостачу. Кнопка есть, пока недостача
+          не закрыта (в том числе у организатора — за виртуальных друзей).
+        -->
+        <div
+          v-if="deposit"
+          class="flex flex-col gap-1 border-t border-border pt-2"
+          data-test="finance-deposit-self"
+        >
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <p class="text-sm text-text" data-test="finance-deposit-self-text">
+              В походе установлен залог —
+              <span class="font-medium">{{ formatRub(deposit.amountRub) }}</span>
+            </p>
+
+            <button
+              v-if="canSendDeposit"
+              type="button"
+              class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90"
+              data-test="finance-deposit-transfer"
+              @click="openDepositTransfer"
+            >
+              Перевести залог
+            </button>
+          </div>
+
+          <p
+            v-if="myDeposit"
+            class="text-xs text-muted"
+            data-test="finance-deposit-self-details"
+          >
+            <template v-if="myDeposit.selfHeld">твой залог у тебя — переводить не нужно</template>
+            <template v-else>
+              вложил {{ formatRub(myDeposit.investedRub) }} из
+              {{ formatRub(deposit.amountRub) }} · перевёл
+              {{ formatRub(myDeposit.transferredRub) }} ·
+              <span
+                v-if="myDeposit.missingRub > 0"
+                class="font-medium text-orange-700"
+                data-test="finance-deposit-self-missing"
+                >не покрыто {{ formatRub(myDeposit.missingRub) }}</span
+              >
+              <span v-else class="font-medium text-emerald-700" data-test="finance-deposit-self-covered"
+                >залог покрыт</span
+              >
+              <template v-if="myDeposit.hasPendingTransfer">
+                · в пути {{ formatRub(myDeposit.pendingRub) }}, ждёт подтверждения
+              </template>
+              <template v-if="myDeposit.holderName && myDeposit.transferredRub > 0">
+                · держит {{ myDeposit.holderName }}
+              </template>
+            </template>
+          </p>
+        </div>
+
         <p v-if="actionError" class="text-sm text-red-600" data-test="finance-action-error">
           {{ actionError }}
         </p>
@@ -693,16 +754,15 @@ function cancelRow(row: MoneyRowView): void {
       </div>
 
       <!--
-        Залог участия (17.11.2026, переписан 18.11.2026) — **над**
-        «Движением денег», как просил заказчик. Для организатора это секция
-        риска: отказавшиеся (решить, вернуть залог или удержать) и те, кто
-        не вложил сумму залога. Сдавших и потратившихся в списке нет:
-        заказчик просил их не показывать. Счётчиков «Сдали 3 из 6» и
-        переключателя «Только риски» тоже больше нет.
-
-        Перевод залога — не отметка, а деньги: он стоит в «Движении денег»
-        ожидающей строкой, организатор жмёт «Получено», и балансы меняются.
-        «Вернуть / Удержать» — флаг, а не два независимых действия.
+        Секция риска залога (17.11.2026, v3 — 18.11.2026) — только
+        организатору и соорганизатору, **над** «Движением денег».
+        Заказчик: «тех, кто вложился в поход свыше залога, не нужны…
+        экономим пространство». Поэтому в списке только ушедшие с ненулевым
+        покрытием (решить, вернуть залог или удержать) и идущие, которые
+        не добрали залог — «не перевёл залог и недостаточно вложился».
+        Ушедший с нулём не показывается вовсе: решать нечего. Кнопки
+        «Снять» и «Сдал/не сдал» убраны — сдачу подтверждает получатель
+        перевода, а из решения остались только «Вернуть» и «Удержать».
       -->
       <div
         v-if="deposit && canManageDeposit"
@@ -719,33 +779,12 @@ function cancelRow(row: MoneyRowView): void {
         </div>
 
         <p
-          v-if="myDeposit"
-          class="flex flex-wrap items-center gap-x-2 text-sm text-text"
-          data-test="finance-deposit-me"
-        >
-          <span>
-            Твой залог:
-            <span
-              class="font-medium"
-              :class="DEPOSIT_CLASS[myDeposit.status]"
-              :data-test="`finance-deposit-me-${myDeposit.status}`"
-              >{{ DEPOSIT_STATE_LABELS[myDeposit.status] }}</span
-            >
-            <span v-if="myDeposit.holderName" class="text-muted">
-              · держит {{ myDeposit.holderName }}</span
-            >
-          </span>
-          <span v-if="myDeposit.hasPendingTransfer" class="text-xs text-muted">
-            · ждёт подтверждения
-          </span>
-        </p>
-
-        <p
           v-if="depositRisk.length === 0"
           class="text-xs text-muted"
           data-test="finance-deposit-clear"
         >
-          Риска нет: все сдали залог или уже вложили в поход не меньше него.
+          Риска нет: все либо вложились в поход не меньше залога, либо перевели
+          его.
         </p>
 
         <ul
@@ -770,7 +809,7 @@ function cancelRow(row: MoneyRowView): void {
                   class="text-xs font-medium"
                   :class="DEPOSIT_CLASS[person.status]"
                   :data-test="`finance-deposit-status-${person.status}`"
-                  >{{ DEPOSIT_STATUS_LABELS[person.status] }}</span
+                  >{{ depositStatusCaption(person, deposit.amountRub) }}</span
                 >
                 <span v-if="person.hasPendingTransfer" class="text-xs text-muted">
                   · ждёт подтверждения
@@ -778,28 +817,28 @@ function cancelRow(row: MoneyRowView): void {
               </p>
               <p class="text-xs text-muted" data-test="finance-deposit-invested">
                 <template v-if="person.declined">
-                  вложил {{ formatRub(person.investedRub) }}
+                  вложил {{ formatRub(person.investedRub) }} · перевёл
+                  {{ formatRub(person.transferredRub) }} · покрыто
+                  {{ formatRub(person.coveredRub) }} из
+                  {{ formatRub(deposit.amountRub) }}
                 </template>
                 <template v-else>
                   вложил {{ formatRub(person.investedRub) }} из
-                  {{ formatRub(deposit.amountRub) }}
+                  {{ formatRub(deposit.amountRub) }} · перевёл
+                  {{ formatRub(person.transferredRub) }} · осталось
+                  {{ formatRub(person.missingRub) }}
                 </template>
-                <template v-if="person.holderName"> · держит {{ person.holderName }}</template>
-              </p>
-              <p
-                v-if="person.updatedByName && person.status !== 'pending'"
-                class="text-xs text-muted"
-                data-test="finance-deposit-updated-by"
-              >
-                отметил {{ person.updatedByName }}
+                <template v-if="person.holderName">
+                  · держит {{ person.holderName }}
+                </template>
               </p>
             </div>
 
             <!--
-              Флаг решения — два подсвечиваемых сегмента. Кнопок «Сдал»
-              здесь нет: сдачу подтверждает получатель перевода в «Движении
-              денег», как компенсацию. Если залог не сдан, решать нечего:
-              «вернуть» нечего, «удержать» — тоже.
+              Флаг решения — два сегмента, без «Снять»: заказчик просил
+              оставить только «Вернуть» и «Удержать». Решать есть что,
+              когда у ушедшего хоть что-то покрыто: залог мог покрыться
+              расходами, без единого перевода.
             -->
             <div
               v-if="person.declined && person.canDecide"
@@ -838,29 +877,15 @@ function cancelRow(row: MoneyRowView): void {
                   Удержать
                 </button>
               </div>
-
-              <button
-                v-if="person.status === 'returned' || person.status === 'forfeited'"
-                type="button"
-                class="cursor-pointer text-xs text-muted underline transition-colors hover:text-text disabled:opacity-50"
-                :disabled="busyDeposit !== null"
-                data-test="finance-deposit-reset"
-                @click="markDeposit(person.userId, 'pending')"
-              >
-                Снять
-              </button>
             </div>
 
             <span
-              v-else-if="person.declined"
+              v-else
               class="text-xs text-muted"
-              data-test="finance-deposit-no-deposit"
+              data-test="finance-deposit-hint"
             >
-              залог не сдан — решать нечего
-            </span>
-
-            <span v-else class="text-xs text-muted" data-test="finance-deposit-hint">
-              залог переводит сам участник
+              <template v-if="person.declined">залог не покрыт — решать нечего</template>
+              <template v-else>переводит сам участник</template>
             </span>
           </li>
         </ul>
@@ -872,56 +897,6 @@ function cancelRow(row: MoneyRowView): void {
         >
           Удержанный залог остаётся в фонде группы и виден в «Движении денег».
         </p>
-
-        <!--
-          Организатору кнопка нужна, если он ведёт человека без аккаунта:
-          залог за виртуального передаёт он. Свой залог организатор
-          не переводит — деньги у него самого.
-        -->
-        <button
-          v-if="canSendDeposit"
-          type="button"
-          class="cursor-pointer self-start rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90"
-          data-test="finance-deposit-transfer"
-          @click="openDepositTransfer"
-        >
-          Перевести залог
-        </button>
-      </div>
-
-      <!--
-        Личная строка рядового участника: секции риска он не видит, но
-        должен знать сумму, свой статус и куда переводить залог.
-      -->
-      <div
-        v-else-if="deposit && myDeposit"
-        class="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-border bg-surface p-4"
-        data-test="finance-deposit-self"
-      >
-        <div class="flex flex-col gap-0.5">
-          <p class="text-xs text-muted">Твой залог</p>
-          <p class="text-sm text-text" data-test="finance-deposit-self-text">
-            {{ formatRub(deposit.amountRub) }} с человека ·
-            <span
-              class="font-medium"
-              :class="DEPOSIT_CLASS[myDeposit.status]"
-              :data-test="`finance-deposit-me-${myDeposit.status}`"
-              >твой залог {{ DEPOSIT_STATE_LABELS[myDeposit.status] }}</span
-            >
-            <template v-if="myDeposit.holderName"> · держит {{ myDeposit.holderName }}</template>
-            <template v-if="myDeposit.hasPendingTransfer"> · ждёт подтверждения</template>
-          </p>
-        </div>
-
-        <button
-          v-if="canSendDeposit"
-          type="button"
-          class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90"
-          data-test="finance-deposit-self-transfer"
-          @click="openDepositTransfer"
-        >
-          Перевести залог
-        </button>
       </div>
 
       <!--

@@ -247,6 +247,105 @@ export function computeRemaining(
 }
 
 /**
+ * Покрытие залога участия (18.11.2026, v3).
+ *
+ * Заказчик: «Мне не нравится блок „Залог“ у рядового участника… Перенесём
+ * это всё в блок „Баланс“… если участник не потратился на сумму залога,
+ * то доступна кнопка „Перевести залог“». Поэтому залог **не отдельный
+ * платёж для всех**: расходы, которые человек уже оплатил, идут в зачёт,
+ * а переводить нужно только недостачу.
+ *
+ * ```
+ * covered = min(D, invested + transferred)
+ * missing = max(0, D - covered)
+ * due     = max(0, missing - pending)
+ * ```
+ *
+ * - `invested` — сумма расходов, которые человек **оплатил**
+ *   (`trip_expenses.author_user_id`), а не его долей: залог покрывают
+ *   только реально вложенные в поход деньги;
+ * - `transferred` — сумма **подтверждённых** переводов залога;
+ * - `pending` — отправленные, но ещё не подтверждённые переводы. Они
+ *   недостачу **бронируют**, иначе человек отправил бы ту же сумму второй
+ *   раз, пока первый перевод ждёт «Получено». В `covered` они не входят:
+ *   деньги двигает только подтверждение.
+ *
+ * `due` — сколько осталось перевести; именно оно подставляется в модалку
+ * и определяет, есть ли кнопка «Перевести залог». При `missing = 0`
+ * недостачи нет вовсе — залог покрыт расходами и/или переводами.
+ *
+ * Сумма перевода не ограничена остатком: заказчик разрешил «перевести
+ * с запасом». Излишек покрытие не увеличивает (`min` не даёт), и при
+ * подтверждении он становится обычным переводом — см. `splitDepositExcess`.
+ */
+export interface DepositCoverage {
+  /** Сколько человек оплатил расходов похода. */
+  investedRub: number;
+  /** Подтверждённые переводы залога. */
+  transferredRub: number;
+  /** Отправленные, но ещё не подтверждённые переводы. */
+  pendingRub: number;
+  /** `min(D, invested + transferred)` — какая часть залога покрыта. */
+  coveredRub: number;
+  /** `max(0, D - covered)` — сколько ещё не покрыто. */
+  missingRub: number;
+  /** `max(0, missing - pending)` — сколько осталось перевести. */
+  dueRub: number;
+}
+
+export function depositCoverage(input: {
+  amountRub: number;
+  investedRub: number;
+  transferredRub: number;
+  pendingRub?: number;
+}): DepositCoverage {
+  const amountRub = Number.isFinite(input.amountRub)
+    ? Math.max(0, input.amountRub)
+    : 0;
+  const investedRub = Math.max(0, input.investedRub);
+  const transferredRub = Math.max(0, input.transferredRub);
+  const pendingRub = Math.max(0, input.pendingRub ?? 0);
+
+  const coveredRub = Math.min(amountRub, investedRub + transferredRub);
+  const missingRub = Math.max(0, amountRub - coveredRub);
+
+  return {
+    investedRub,
+    transferredRub,
+    pendingRub,
+    coveredRub,
+    missingRub,
+    dueRub: Math.max(0, missingRub - pendingRub),
+  };
+}
+
+/**
+ * Излишек перевода залога сверх покрытия (18.11.2026, v3).
+ *
+ * Заказчик разрешил переводить «с запасом», но покрытие у залога конечно:
+ * `covered = min(D, invested + transferred)`. Если оставить всю сумму одной
+ * строкой залога, при удержании она исчезла бы целиком, а при возврате
+ * человек не получил бы кредита за лишнее. Поэтому при подтверждении сумма
+ * делится: сколько нужно для покрытия — остаётся залогом, остальное
+ * становится **обычным подтверждённым переводом** и живёт в расчётах
+ * по общим правилам.
+ *
+ * Возвращает, сколько оставить залогом и сколько увести в компенсацию.
+ * `cap <= 0` значит, что залог уже покрыт (например, расходами) и вся сумма
+ * — обычный перевод.
+ */
+export function splitDepositExcess(
+  amountRub: number,
+  capRub: number,
+): { depositRub: number; excessRub: number } {
+  const cap = Math.max(0, capRub);
+
+  if (amountRub <= cap) return { depositRub: amountRub, excessRub: 0 };
+
+  return { depositRub: cap, excessRub: amountRub - cap };
+}
+
+/**
  * Один вариант «кому и сколько» в модалке компенсации.
  *
  * С 12.11.2026 вариантом может быть **семья целиком**: Вася и Аня получают

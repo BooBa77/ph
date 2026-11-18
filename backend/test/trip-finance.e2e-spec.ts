@@ -37,6 +37,8 @@ describe('Бухгалтерия похода (e2e)', () => {
   let trip5: string;
   /** Пример заказчика по залогу: A платит продукты, выходит, E решает. */
   let trip6: string;
+  /** Залог v3: частичные переводы, «запас» и ушедшие с разным покрытием. */
+  let trip7: string;
   let virtualPersonId: string;
   let lastCode: string | null = null;
 
@@ -237,7 +239,7 @@ describe('Бухгалтерия похода (e2e)', () => {
     if (dataSource?.isInitialized) {
       // Расходы, доли и компенсации уходят каскадом вместе с походами.
       await dataSource.query('DELETE FROM trips WHERE id = ANY($1::bigint[])', [
-        [trip1, trip2, trip3, trip4, trip5, trip6].filter(Boolean),
+        [trip1, trip2, trip3, trip4, trip5, trip6, trip7].filter(Boolean),
       ]);
       // Человек без аккаунта ссылается на владельца — удаляем его первым.
       if (virtualPersonId) {
@@ -1314,7 +1316,7 @@ describe('Бухгалтерия похода (e2e)', () => {
   });
 
   /**
-   * Залог участия: деньги и риск (18.11.2026).
+   * Залог участия: покрытие расходами и решения (v3, 18.11.2026).
    *
    * Пример заказчика дословно: «A,B,C,D,E готовятся к походу, есть залог
    * 200р, A купил продуктов на 1000р и отказался от участия, организатор
@@ -1322,10 +1324,67 @@ describe('Бухгалтерия похода (e2e)', () => {
    * B,C,D,E=-200… A уговорил организатора вернуть залог, баланс стал
    * A=+1000, B,C,D,E=-250 разошли полюбовно».
    *
-   * E — организатор, A платит продукты и выходит. Отдельный поход, чтобы
-   * расходы соседних тестов не мешали ровно этим цифрам.
+   * **В v3 A не переводит залог:** он вложил 1 000 ₽ — больше залога (200),
+   * поэтому залог покрыт расходами и кнопки у A нет. Это и проверяет
+   * первый блок. Частичные переводы и «запас» проверяются на отдельном
+   * походе (trip7), чтобы их движения не мешали ровно этим цифрам.
+   *
+   * E — организатор, A платит продукты и выходит.
    */
-  describe('залог участия: деньги и риск', () => {
+  describe('залог участия: покрытие расходами и решения (v3)', () => {
+    /** Мой залог в ответе вкладки: расчёт покрытия приходит с сервера. */
+    interface DepositMeView {
+      status: string;
+      amountRub: number;
+      investedRub: number;
+      transferredRub: number;
+      pendingRub: number;
+      coveredRub: number;
+      missingRub: number;
+      dueRub: number;
+      canTransfer: boolean;
+      selfHeld: boolean;
+      hasPendingTransfer: boolean;
+      holderName: string | null;
+    }
+
+    /** Строка секции риска: тот же расчёт плюс решение. */
+    interface DepositRowView {
+      userId: string;
+      status: string;
+      declined: boolean;
+      investedRub: number;
+      transferredRub: number;
+      coveredRub: number;
+      missingRub: number;
+      dueRub: number;
+      canDecide: boolean;
+      hasPendingTransfer: boolean;
+      holderName: string | null;
+    }
+
+    interface DepositView {
+      amountRub: number;
+      canManage: boolean;
+      me: DepositMeView | null;
+      participants: DepositRowView[];
+      senders: {
+        userId: string;
+        isMe: boolean;
+        dueRub: number;
+        recipients: { userId: string }[];
+      }[];
+    }
+
+    interface CompensationView {
+      id: string;
+      kind: string;
+      status: string;
+      fromUserId: string;
+      toUserId: string;
+      amountRub: number;
+    }
+
     const updateTrip = (person: Person, body: Record<string, unknown>) =>
       auth(
         request(app.getHttpServer()).patch(`/api/trips/${trip6}`),
@@ -1333,92 +1392,62 @@ describe('Бухгалтерия похода (e2e)', () => {
       ).send(body);
 
     /** Решение организатора: «Вернуть», «Удержать» или снять решение. */
-    const setDecision = (person: Person, target: Person, status: string) =>
+    const setDecision = (
+      tripId: string,
+      person: Person,
+      target: Person,
+      status: string,
+    ) =>
       auth(
         request(app.getHttpServer()).put(
-          `/api/trips/${trip6}/finance/deposit/${target.id}`,
+          `/api/trips/${tripId}/finance/deposit/${target.id}`,
         ),
         person.token,
       ).send({ status });
 
     const transferDeposit = (
+      tripId: string,
       person: Person,
       recipientUserId: string,
+      amountRub: number,
       fromUserId?: string,
     ) =>
       auth(
         request(app.getHttpServer()).post(
-          `/api/trips/${trip6}/finance/deposit/transfer`,
+          `/api/trips/${tripId}/finance/deposit/transfer`,
         ),
         person.token,
-      ).send({ recipientUserId, fromUserId });
+      ).send({ recipientUserId, amountRub, fromUserId });
 
-    const confirm = (person: Person, id: string) =>
+    const confirm = (tripId: string, person: Person, id: string) =>
       auth(
         request(app.getHttpServer()).post(
-          `/api/trips/${trip6}/finance/compensations/${id}/confirm`,
+          `/api/trips/${tripId}/finance/compensations/${id}/confirm`,
         ),
         person.token,
       );
 
-    const decline = (person: Person) =>
+    const decline = (tripId: string, person: Person) =>
       auth(
         request(app.getHttpServer()).patch(
-          `/api/trips/${trip6}/participants/me`,
+          `/api/trips/${tripId}/participants/me`,
         ),
         person.token,
       ).send({ status: 'declined' });
 
     /** Баланс человека в ответе вкладки (`0`, если строки нет). */
     const balanceOf = (body: unknown, person: Person): number =>
-      (body as { members: { userId: string; balanceRub: number }[] }).members.find(
-        (member) => member.userId === person.id,
-      )?.balanceRub ?? 0;
-
-    const depositOf = (body: unknown) =>
       (
-        body as {
-          deposit: {
-            amountRub: number;
-            canManage: boolean;
-            me: {
-              status: string;
-              canTransfer: boolean;
-              hasPendingTransfer: boolean;
-              holderName: string | null;
-            } | null;
-            participants: {
-              userId: string;
-              status: string;
-              declined: boolean;
-              hasPendingTransfer: boolean;
-              holderName: string | null;
-            }[];
-            senders: {
-              userId: string;
-              isMe: boolean;
-              recipients: { userId: string }[];
-            }[];
-          };
-          compensations: {
-            id: string;
-            kind: string;
-            status: string;
-            fromUserId: string;
-            toUserId: string;
-            amountRub: number;
-          }[];
-          depositForfeits: { sourceUserId: string; amountRub: number }[];
-          depositReturns: {
-            sourceUserId: string;
-            amountRub: number;
-            shares: { userId: string; amountRub: number }[];
-          }[];
-        }
-      ).deposit;
+        body as { members: { userId: string; balanceRub: number }[] }
+      ).members.find((member) => member.userId === person.id)?.balanceRub ?? 0;
+
+    const depositOf = (body: unknown) => (body as { deposit: DepositView }).deposit;
 
     const riskOf = (body: unknown, person: Person) =>
       depositOf(body).participants.find((row) => row.userId === person.id);
+
+    const compensationsOf = (body: unknown) =>
+      (body as { compensations: CompensationView[] }).compensations;
 
     beforeAll(async () => {
       const created = await auth(
@@ -1462,13 +1491,36 @@ describe('Бухгалтерия похода (e2e)', () => {
       expect(balanceOf(response.body, e)).toBe(-200);
     });
 
-    it('рядовой участник видит свой залог и сумму, но не секцию риска', async () => {
+    it('A вложил больше залога: кнопки нет, переводить нечего', async () => {
       const member = await view(trip6, a);
 
       expect(depositOf(member.body).amountRub).toBe(200);
       expect(depositOf(member.body).canManage).toBe(false);
       expect(depositOf(member.body).me).toMatchObject({
-        status: 'pending',
+        investedRub: 1000,
+        transferredRub: 0,
+        pendingRub: 0,
+        coveredRub: 200,
+        missingRub: 0,
+        dueRub: 0,
+        canTransfer: false,
+      });
+      // Секция риска — только организатору: рядовому она не отдаётся.
+      expect(depositOf(member.body).participants).toEqual([]);
+
+      // Залог уже покрыт расходами — перевод отклоняется.
+      await transferDeposit(trip6, a, e.id, 200).expect(400);
+    });
+
+    it('B ничего не вложил: недостача 200, кнопка есть', async () => {
+      const member = await view(trip6, b);
+
+      expect(depositOf(member.body).me).toMatchObject({
+        investedRub: 0,
+        transferredRub: 0,
+        coveredRub: 0,
+        missingRub: 200,
+        dueRub: 200,
         canTransfer: true,
         hasPendingTransfer: false,
       });
@@ -1477,11 +1529,9 @@ describe('Бухгалтерия похода (e2e)', () => {
           (row) => row.userId,
         ),
       ).toEqual([e.id]);
-      // Секция риска — только организатору: рядовому она не отдаётся.
-      expect(depositOf(member.body).participants).toEqual([]);
     });
 
-    it('секция риска: отказавшиеся и не вложившие сумму, без сдавших и потратившихся', async () => {
+    it('секция риска: идущие с недостатком, без вложившегося A и без организатора', async () => {
       const organizer = await view(trip6, e);
       const risk = depositOf(organizer.body).participants;
 
@@ -1489,70 +1539,44 @@ describe('Бухгалтерия похода (e2e)', () => {
       // B, C, D (g) не вложили ничего. E — организатор, своего залога
       // в списке нет.
       expect(risk.map((row) => row.userId)).toEqual([b.id, c.id, g.id]);
+      expect(risk.every((row) => row.missingRub === 200)).toBe(true);
       expect(depositOf(organizer.body).canManage).toBe(true);
     });
 
-    it('свой залог организатор считает сданным: деньги у него', async () => {
+    it('свой залог организатор считает покрытым: деньги у него', async () => {
       const organizer = await view(trip6, e);
 
       expect(depositOf(organizer.body).me).toMatchObject({
         status: 'held',
+        selfHeld: true,
+        coveredRub: 200,
+        missingRub: 0,
         canTransfer: false,
         holderName: expect.stringContaining('fin-e-'),
       });
     });
 
-    it('«Перевести залог» — ожидающий перевод, балансы двигает подтверждение', async () => {
-      const before = await view(trip6, a);
+    it('«Удержать»: A решения хватает по расходам — +800 / −200', async () => {
+      await decline(trip6, a).expect(200);
 
-      const transferred = await transferDeposit(a, e.id).expect(200);
-
-      expect(transferred.body.compensations).toHaveLength(1);
-      expect(transferred.body.compensations[0]).toMatchObject({
-        kind: 'deposit',
-        status: 'pending',
-        fromUserId: a.id,
-        toUserId: e.id,
-        amountRub: 200,
-      });
-      // До «Получено» деньги не двигались: это намерение, как компенсация.
-      expect(balanceOf(transferred.body, a)).toBe(balanceOf(before.body, a));
-      expect(balanceOf(transferred.body, e)).toBe(balanceOf(before.body, e));
-      expect(depositOf(transferred.body).me).toMatchObject({
-        status: 'pending',
-        canTransfer: false,
-        hasPendingTransfer: true,
+      // A покрыл залог продуктами: перевода у него нет, но решать есть что.
+      const before = await view(trip6, e);
+      expect(riskOf(before.body, a)).toMatchObject({
+        declined: true,
+        coveredRub: 200,
+        canDecide: true,
       });
 
-      const confirmed = await confirm(e, transferred.body.compensations[0].id)
-        .expect(200);
-
-      // Подтверждённый залог: A заплатил (+200), у E деньги (−200),
-      // «теперь он должен».
-      expect(balanceOf(confirmed.body, a)).toBe(1000);
-      expect(balanceOf(confirmed.body, e)).toBe(-400);
-      expect(depositOf(confirmed.body).me).toMatchObject({
-        status: 'held',
-        holderName: expect.stringContaining('fin-e-'),
-      });
-
-      // Второй раз переводить нечего.
-      await transferDeposit(a, e.id).expect(400);
-    });
-
-    it('«Удержать»: залог в фонде, балансы остаются A +800 / −200', async () => {
-      await decline(a).expect(200);
-
-      const forfeited = await setDecision(e, a, 'forfeited').expect(200);
+      const forfeited = await setDecision(trip6, e, a, 'forfeited').expect(200);
 
       expect(riskOf(forfeited.body, a)).toMatchObject({
         status: 'forfeited',
         declined: true,
       });
-      // После удержания перевод залога снят: A теряет свой перевод, но
-      // его доля продуктов остаётся за ним — залог её и покрывает.
+      // После удержания личные балансы прежние: залог покрывает долю A.
       expect(balanceOf(forfeited.body, a)).toBe(800);
       expect(balanceOf(forfeited.body, b)).toBe(-200);
+      expect(balanceOf(forfeited.body, c)).toBe(-200);
       expect(balanceOf(forfeited.body, g)).toBe(-200);
       expect(balanceOf(forfeited.body, e)).toBe(-200);
 
@@ -1562,16 +1586,10 @@ describe('Бухгалтерия похода (e2e)', () => {
         amountRub: 200,
       });
       expect(forfeited.body.depositReturns).toEqual([]);
-      // Сумма по всем, включая вышедшего, остаётся нулевой.
-      const total = (forfeited.body.members as { balanceRub: number }[]).reduce(
-        (sum, member) => sum + member.balanceRub,
-        0,
-      );
-      expect(total).toBe(0);
     });
 
-    it('«Вернуть»: запись удержания снята, доля ушла на идущих — A +1000 / −250', async () => {
-      const returned = await setDecision(e, a, 'returned').expect(200);
+    it('«Вернуть»: доля ушедшего на идущих — A +1000 / −250', async () => {
+      const returned = await setDecision(trip6, e, a, 'returned').expect(200);
 
       expect(riskOf(returned.body, a)?.status).toBe('returned');
       expect(returned.body.depositForfeits).toEqual([]);
@@ -1597,27 +1615,25 @@ describe('Бухгалтерия похода (e2e)', () => {
 
     it('решения ставит только организатор', async () => {
       // A — рядовой участник, пусть и уже вышедший.
-      await setDecision(a, b, 'forfeited').expect(403);
+      await setDecision(trip6, a, b, 'forfeited').expect(403);
       // B идёт: удерживать с него нечего, это не выход из похода.
-      await setDecision(e, b, 'forfeited').expect(400);
+      await setDecision(trip6, e, b, 'forfeited').expect(400);
       // «Сдал» руками больше не ставится: только подтверждение перевода.
-      await setDecision(e, b, 'held').expect(400);
+      await setDecision(trip6, e, b, 'held').expect(400);
     });
 
-    it('без сданного залога решать нечего', async () => {
-      // Б выходит, но залог не переводил: «вернуть» и «удержать» нечего —
-      // денег у организатора нет.
-      await decline(b).expect(200);
+    it('ушедший без вложений не показывается: решать нечего', async () => {
+      // B выходит, но не вложил ни рубля и ничего не переводил.
+      await decline(trip6, b).expect(200);
 
       const viewAfter = await view(trip6, e);
-      expect(riskOf(viewAfter.body, b)).toMatchObject({
-        status: 'pending',
-        declined: true,
-        canDecide: false,
-      });
+      expect(riskOf(viewAfter.body, b)).toBeUndefined();
+      expect(
+        depositOf(viewAfter.body).participants.map((row) => row.userId),
+      ).not.toContain(b.id);
 
-      await setDecision(e, b, 'forfeited').expect(400);
-      await setDecision(e, b, 'returned').expect(400);
+      await setDecision(trip6, e, b, 'forfeited').expect(400);
+      await setDecision(trip6, e, b, 'returned').expect(400);
     });
 
     it('приглашённому решение не ставится, чужой человек — 404', async () => {
@@ -1628,8 +1644,9 @@ describe('Бухгалтерия похода (e2e)', () => {
         .send({ direction: 'invite', userId: d.id })
         .expect(201);
 
-      await setDecision(e, d, 'pending').expect(400);
+      await setDecision(trip6, e, d, 'pending').expect(400);
       await setDecision(
+        trip6,
         e,
         { token: '', id: '00000000-0000-4000-8000-000000000000', email: '' },
         'pending',
@@ -1642,6 +1659,213 @@ describe('Бухгалтерия похода (e2e)', () => {
 
       const response = await view(trip6, e);
       expect(response.body.deposit).toBeNull();
+    });
+
+    /**
+     * Частичные переводы и «запас» — отдельный поход (v3, 18.11.2026).
+     *
+     * Примеры плана 2–6: C потратил 50 ₽ (недостача 150), перевёл 100,
+     * кнопка осталась; доложил 50 — кнопка исчезла. B перевёл 300 «с
+     * запасом»: 200 остаются залогом, 100 — обычным переводом. D вложил
+     * 50 и вышел: решать есть что, удержание — на покрытую часть.
+     * G не вложил ничего и вышел: в секции его нет.
+     */
+    describe('частичные переводы и перевод с запасом', () => {
+      beforeAll(async () => {
+        trip7 = await createTrip('Залог v3: частичные переводы');
+        for (const person of [b, c, d, g]) await addGoing(trip7, person);
+
+        await auth(
+          request(app.getHttpServer()).patch(`/api/trips/${trip7}`),
+          a.token,
+        )
+          .send({ depositRub: 200 })
+          .expect(200);
+
+        // C и D «вложились» по 50 ₽: расход только на себя, чтобы балансы
+        // остальных не сдвигались — важна именно сумма покрытия.
+        await addExpense(trip7, c, {
+          amountRub: 50,
+          split: 'group',
+          participantIds: [c.id],
+          description: 'Личная закупка C',
+          spentAt: '2026-11-18',
+        });
+        await addExpense(trip7, d, {
+          amountRub: 50,
+          split: 'group',
+          participantIds: [d.id],
+          description: 'Личная закупка D',
+          spentAt: '2026-11-18',
+        });
+      });
+
+      it('C вложил 50 — в модалке 150', async () => {
+        const member = await view(trip7, c);
+
+        expect(depositOf(member.body).me).toMatchObject({
+          investedRub: 50,
+          transferredRub: 0,
+          coveredRub: 50,
+          missingRub: 150,
+          dueRub: 150,
+          canTransfer: true,
+        });
+        expect(depositOf(member.body).senders[0]).toMatchObject({
+          isMe: true,
+          dueRub: 150,
+        });
+      });
+
+      it('C перевёл 100 — кнопка осталась, осталось 50', async () => {
+        const transferred = await transferDeposit(trip7, c, a.id, 100).expect(200);
+        const [row] = compensationsOf(transferred.body);
+
+        expect(row).toMatchObject({ kind: 'deposit', status: 'pending', amountRub: 100 });
+        // До подтверждения перевод бронирует недостачу, но не покрывает её.
+        expect(depositOf(transferred.body).me).toMatchObject({
+          transferredRub: 0,
+          pendingRub: 100,
+          coveredRub: 50,
+          missingRub: 150,
+          dueRub: 50,
+          canTransfer: false,
+          hasPendingTransfer: true,
+        });
+
+        const confirmed = await confirm(trip7, a, row!.id).expect(200);
+        // Ответ подтверждения — вкладка **получателя**: свой залог смотрим
+        // его же глазами.
+        expect(compensationsOf(confirmed.body)[0]?.status).toBe('confirmed');
+
+        const afterC = await view(trip7, c);
+        expect(depositOf(afterC.body).me).toMatchObject({
+          status: 'pending',
+          transferredRub: 100,
+          pendingRub: 0,
+          coveredRub: 150,
+          missingRub: 50,
+          dueRub: 50,
+          canTransfer: true,
+        });
+      });
+
+      it('C докладывает 50 — залог покрыт, кнопка исчезла', async () => {
+        const transferred = await transferDeposit(trip7, c, a.id, 50).expect(200);
+        const row = compensationsOf(transferred.body).find(
+          (item) => item.status === 'pending',
+        );
+
+        await confirm(trip7, a, row!.id).expect(200);
+        const afterC = await view(trip7, c);
+
+        expect(depositOf(afterC.body).me).toMatchObject({
+          status: 'held',
+          coveredRub: 200,
+          missingRub: 0,
+          dueRub: 0,
+          canTransfer: false,
+        });
+        expect(depositOf(afterC.body).senders).toEqual([]);
+        // C заплатил 50 ₽ расходом (доля 50 ₽ — баланс 0) и перевёл 150 ₽:
+        // залог 200 ₽ целиком у организатора, значит, ему должны 150 ₽.
+        expect(balanceOf(afterC.body, c)).toBe(150);
+      });
+
+      it('B перевёл 300 с запасом: 200 — залог, 100 — обычный перевод', async () => {
+        const transferred = await transferDeposit(trip7, b, a.id, 300).expect(200);
+        const row = compensationsOf(transferred.body).find(
+          (item) => item.kind === 'deposit',
+        );
+
+        const confirmed = await confirm(trip7, a, row!.id).expect(200);
+        const rows = compensationsOf(confirmed.body);
+
+        // Излишек отделён, а не растворён в залоге: иначе при удержании
+        // он исчез бы вместе с ним, а при возврате — потерялся.
+        expect(
+          rows
+            .filter((item) => item.kind === 'deposit' && item.fromUserId === b.id)
+            .map((item) => item.amountRub),
+        ).toEqual([200]);
+        expect(
+          rows
+            .filter((item) => item.kind === 'compensation' && item.fromUserId === b.id)
+            .map((item) => item.amountRub),
+        ).toEqual([100]);
+
+        const afterB = await view(trip7, b);
+        expect(depositOf(afterB.body).me).toMatchObject({
+          transferredRub: 200,
+          coveredRub: 200,
+          missingRub: 0,
+          status: 'held',
+          canTransfer: false,
+        });
+        // 300 ₽ — кредит B перед группой: 200 залога и 100 обычного перевода.
+        expect(balanceOf(afterB.body, b)).toBe(300);
+      });
+
+      it('G ничего не вложил — в секции риска с недостачей', async () => {
+        const organizer = await view(trip7, a);
+        const row = riskOf(organizer.body, g);
+
+        expect(row).toMatchObject({
+          investedRub: 0,
+          transferredRub: 0,
+          coveredRub: 0,
+          missingRub: 200,
+          declined: false,
+          canDecide: false,
+        });
+        // C и B покрыли залог — их в списке нет; D вложил 50, ему не хватает
+        // 150 — он в списке «недостаточно вложился» вместе с G.
+        expect(
+          depositOf(organizer.body).participants.map((item) => item.userId),
+        ).toEqual([d.id, g.id]);
+        expect(riskOf(organizer.body, d)).toMatchObject({
+          investedRub: 50,
+          missingRub: 150,
+        });
+      });
+
+      it('D вложил 50 и вышел: решать есть что, удержание — на покрытую часть', async () => {
+        await decline(trip7, d).expect(200);
+
+        const before = await view(trip7, a);
+        expect(riskOf(before.body, d)).toMatchObject({
+          status: 'pending',
+          declined: true,
+          coveredRub: 50,
+          canDecide: true,
+        });
+
+        const forfeited = await setDecision(trip7, a, d, 'forfeited').expect(200);
+
+        // Удерживается покрытая часть (50), а не вся сумма залога: больше
+        // у D ничего нет.
+        expect(forfeited.body.depositForfeits).toHaveLength(1);
+        expect(forfeited.body.depositForfeits[0]).toMatchObject({
+          sourceUserId: d.id,
+          amountRub: 50,
+        });
+        expect(balanceOf(forfeited.body, d)).toBe(0);
+      });
+
+      it('G вышел с нулём — в секции его нет', async () => {
+        await decline(trip7, g).expect(200);
+
+        const after = await view(trip7, a);
+
+        // Остался только D с решённым залогом.
+        expect(
+          depositOf(after.body).participants.map((item) => item.userId),
+        ).toEqual([d.id]);
+        expect(riskOf(after.body, g)).toBeUndefined();
+
+        await setDecision(trip7, a, g, 'forfeited').expect(400);
+        await setDecision(trip7, a, g, 'returned').expect(400);
+      });
     });
   });
 });

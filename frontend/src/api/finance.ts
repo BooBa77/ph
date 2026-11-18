@@ -114,20 +114,22 @@ export async function setTripDepositStatus(
  * POST /api/trips/:id/finance/deposit/transfer — «Перевести залог» (18.11.2026).
  *
  * Создаёт ожидающий перевод организатору: подтверждение — кнопкой
- * «Получено», как у компенсации. `fromUserId` — за человека без аккаунта,
- * которого ведёт смотрящий.
+ * «Получено», как у компенсации. Сумма произвольная (v3): по умолчанию
+ * недостача `dueRub`, но её можно изменить, в том числе в бо́льшую сторону.
+ * `fromUserId` — за человека без аккаунта, которого ведёт смотрящий.
  */
 export async function transferTripDeposit(
   tripId: string,
   recipientUserId: string,
+  amountRub: number,
   fromUserId?: string,
 ): Promise<TripFinance> {
   return apiFetch<TripFinance>(`/trips/${tripId}/finance/deposit/transfer`, {
     method: 'POST',
     body: JSON.stringify(
       fromUserId === undefined
-        ? { recipientUserId }
-        : { recipientUserId, fromUserId },
+        ? { recipientUserId, amountRub }
+        : { recipientUserId, amountRub, fromUserId },
     ),
   })
 }

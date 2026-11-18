@@ -37,17 +37,21 @@ import { Role } from './entities/role.entity';
 import { COORGANIZER_ROLE_CODE } from './trip-tabs';
 import {
   type DepositDecision,
+  type DepositStatus,
 } from './trip.types';
 import {
   balancesFromEntities,
   compensationOptions,
+  depositCoverage,
   familyBalance,
   familyCredit,
   familyDebt,
   joinNames,
   remainingFromEntities,
   splitAmount,
+  splitDepositExcess,
   type BalanceAdjustment,
+  type DepositCoverage,
   type ShareAmount,
 } from './finance';
 import { TripEventsService } from './trip-events.service';
@@ -391,10 +395,12 @@ export class TripFinanceService {
         await manager.save(compensation);
       }
 
-      // Залог — тот же перевод, но подтверждение ещё и ставит человеку
-      // состояние `held`: с этого момента деньги у получателя, и в списке
-      // риска он «сдал», а не «не сдал» (18.11.2026).
+      // Залог — тот же перевод, но у него есть покрытие (v3, 18.11.2026):
+      // сумма сверх недостачи становится обычным переводом, а состояние
+      // `held` ставится только тогда, когда залог покрыт целиком.
       if (compensation.kind === 'deposit') {
+        await this.splitDepositOnConfirm(manager, trip, compensation);
+
         const sender = await manager.findOne(TripParticipant, {
           where: {
             tripId: String(trip.id),
@@ -402,9 +408,18 @@ export class TripFinanceService {
           },
         });
 
-        if (sender !== null && sender.depositStatus === 'pending') {
-          sender.depositStatus = 'held';
+        if (sender !== null && trip.depositRub !== null && trip.depositRub > 0) {
+          const coverage = await this.depositCoverageOf(
+            manager,
+            String(trip.id),
+            trip.depositRub,
+            compensation.fromUserId,
+          );
+
           sender.depositHolderUserId = compensation.toUserId;
+          if (coverage.dueRub === 0 && sender.depositStatus === 'pending') {
+            sender.depositStatus = 'held';
+          }
           sender.depositUpdatedBy = userId;
           sender.depositUpdatedAt = compensation.confirmedAt ?? new Date();
           await manager.save(sender);
@@ -656,21 +671,27 @@ export class TripFinanceService {
   }
 
   /**
-   * Блок залога (17.11.2026, переписан 18.11.2026).
+   * Блок залога (17.11.2026, v3 — 18.11.2026).
    *
    * `null` — залога нет, и на экране нет ничего: пустой блок «Залог: 0 ₽»
    * только сбивал бы с толку.
    *
-   * **Секция — не весь состав.** Заказчик: «в секции нужны именно те, кто
-   * отказался… тех, кто вложился в поход свыше залога, не нужны». Поэтому
-   * `participants` — отказавшиеся (организатор решает, вернуть залог или
-   * удержать) и не вложившие сумму залога. Остальные в списке не нужны;
-   * счётчиков и переключателя «Только риски» больше нет — заказчик просил
-   * их убрать.
+   * **Залог покрывается расходами (v3).** Заказчик: «если участник
+   * не потратился на сумму залога, то доступна кнопка „Перевести залог“…
+   * если он понёс расходов больше залоговой суммы, то кнопка скрыта».
+   * Поэтому у каждого человека считается `covered = min(D, invested +
+   * transferred)`: расходы, которые он оплатил, и подтверждённые переводы
+   * идут в зачёт. Отдельные 200 ₽ переводит только тот, кому расходов
+   * не хватает до суммы залога.
    *
-   * **Рядовой участник секцию не видит.** Он получает `me` — свой залог
-   * и кнопку «Перевести залог»; сумма залога видна в шапке похода. Секция
-   * риска — только организатору и соорганизатору.
+   * **Секция — не весь состав, а риск.** Ушедшие с ненулевым покрытием
+   * (у них решают, вернуть залог или удержать) и идущие, которые не добрали
+   * залог («не перевёл залог и недостаточно вложился»). Ушедший с нулём
+   * не показывается вовсе: решать нечего.
+   *
+   * **Рядовой участник секцию не видит.** Он получает `me` — свой залог,
+   * покрытие и кнопку «Перевести залог» в «Твоём балансе»; секция риска —
+   * только организатору и соорганизатору.
    */
   private async buildDeposit(
     manager: EntityManager,
@@ -684,15 +705,34 @@ export class TripFinanceService {
     const amountRub = trip.depositRub;
     const participants = await this.loadDepositParticipants(manager, trip);
 
-    // Переводы залога, которые ещё ждут «Получено»: человек уже нажал
-    // «Я передал», но балансы не двинулись, и в списке риска это видно.
-    const pendingTransfers = new Set(
-      compensations
-        .filter(
-          (row) => row.kind === 'deposit' && row.status === 'pending',
-        )
-        .map((row) => row.fromUserId),
-    );
+    // «Вложился» — сколько человек уже оплатил расходов похода.
+    const investedByUser = new Map<string, number>();
+    for (const expense of expenses) {
+      investedByUser.set(
+        expense.authorUserId,
+        (investedByUser.get(expense.authorUserId) ?? 0) + expense.amountRub,
+      );
+    }
+
+    // Переводы залога: подтверждённые покрывают залог, ожидающие его
+    // бронируют — иначе человек отправил бы ту же недостачу второй раз,
+    // пока первый перевод ждёт «Получено» (v3, 18.11.2026).
+    const transferredByUser = new Map<string, number>();
+    const pendingByUser = new Map<string, number>();
+    for (const row of compensations) {
+      if (row.kind !== 'deposit') continue;
+      const target =
+        row.status === 'confirmed' ? transferredByUser : pendingByUser;
+      target.set(row.fromUserId, (target.get(row.fromUserId) ?? 0) + row.amountRub);
+    }
+
+    const coverageOf = (userId: string): DepositCoverage =>
+      depositCoverage({
+        amountRub,
+        investedRub: investedByUser.get(userId) ?? 0,
+        transferredRub: transferredByUser.get(userId) ?? 0,
+        pendingRub: pendingByUser.get(userId) ?? 0,
+      });
 
     const organizerRoles = await this.organizerRoles(manager, trip);
     // Получатели для самого смотрящего. Виртуальному человеку список
@@ -705,35 +745,22 @@ export class TripFinanceService {
       viewerId,
     );
 
-    // «Вложился» — сколько человек уже оплатил расходов похода. Залог
-    // закрывает риск потерять эти деньги, поэтому не вложивших сумму
-    // залога организатору видно отдельно.
-    const invested = new Map<string, number>();
-    for (const expense of expenses) {
-      invested.set(
-        expense.authorUserId,
-        (invested.get(expense.authorUserId) ?? 0) + expense.amountRub,
-      );
-    }
-
     const rows = participants.map((participant) =>
       this.depositRow(
         participant,
         viewerId,
-        invested.get(participant.userId) ?? 0,
-        pendingTransfers.has(participant.userId),
+        coverageOf(participant.userId),
         organizerRoles.has(participant.userId),
       ),
     );
 
-    const declined = rows.filter((row) => row.declined);
+    // Список — не весь состав, а **риск** (18.11.2026): ушедшие, у которых
+    // хоть что-то покрыто (решать есть что), и идущие, которые не добрали
+    // залог. Ушедший с нулём не показывается вовсе: ни денег, ни расходов,
+    // решать нечего — заказчик просил его не упоминать.
+    const declined = rows.filter((row) => row.declined && row.coveredRub > 0);
     const uncovered = rows.filter(
-      (row) =>
-        !row.declined &&
-        !organizerRoles.has(row.userId) &&
-        row.status === 'pending' &&
-        !row.hasPendingTransfer &&
-        row.investedRub < amountRub,
+      (row) => !row.declined && !organizerRoles.has(row.userId) && row.missingRub > 0,
     );
 
     const mine = participants.find(
@@ -741,24 +768,38 @@ export class TripFinanceService {
     );
     const myRow = rows.find((row) => row.isMe) ?? null;
     const organizerRole = organizerRoles.get(viewerId);
+    const isActive = (status: string | undefined): boolean =>
+      status === 'going' || status === 'maybe';
     const canManage =
       organizerRole === 'organizer' ||
-      (organizerRole === 'coOrganizer' &&
-        (mine?.status === 'going' || mine?.status === 'maybe'));
+      (organizerRole === 'coOrganizer' && isActive(mine?.status));
+
+    // Свой залог организатор не переводит: деньги у него самого. В расчёте
+    // экрана это `selfHeld`, а не выдуманный перевод.
+    const selfHeld =
+      myRow !== null &&
+      organizerRole !== undefined &&
+      isActive(mine?.status);
 
     const me: MyDepositDto | null =
-      mine !== undefined &&
-      (mine.status === 'going' || mine.status === 'maybe')
+      mine !== undefined && isActive(mine.status) && myRow !== null
         ? {
-            status: myRow?.status ?? 'pending',
+            status: myRow.status,
             amountRub,
+            investedRub: myRow.investedRub,
+            transferredRub: myRow.transferredRub,
+            pendingRub: myRow.pendingRub,
+            coveredRub: selfHeld ? amountRub : myRow.coveredRub,
+            missingRub: selfHeld ? 0 : myRow.missingRub,
+            dueRub: selfHeld ? 0 : myRow.dueRub,
             canTransfer:
-              organizerRole === undefined &&
-              myRow?.status === 'pending' &&
-              myRow?.hasPendingTransfer !== true &&
+              !selfHeld &&
+              myRow.pendingRub === 0 &&
+              myRow.dueRub > 0 &&
               selfRecipients.length > 0,
-            holderName: myRow?.holderName ?? null,
-            hasPendingTransfer: myRow?.hasPendingTransfer ?? false,
+            selfHeld,
+            holderName: myRow.holderName,
+            hasPendingTransfer: myRow.hasPendingTransfer,
           }
         : null;
 
@@ -771,25 +812,25 @@ export class TripFinanceService {
         userId: viewerId,
         displayName: mine.user?.displayName ?? '',
         isMe: true,
+        dueRub: me.dueRub,
         recipients: selfRecipients,
       });
     }
     for (const participant of participants) {
       if (participant.userId === viewerId) continue;
-      if (
-        participant.status !== 'going' &&
-        participant.status !== 'maybe'
-      ) {
-        continue;
-      }
-      if (participant.depositStatus !== 'pending') continue;
-      if (pendingTransfers.has(participant.userId)) continue;
+      if (!isActive(participant.status)) continue;
+      if (organizerRoles.has(participant.userId)) continue;
       if (
         participant.user?.isVirtual !== true ||
         participant.user.virtualOwnerUserId !== viewerId
       ) {
         continue;
       }
+
+      const coverage = coverageOf(participant.userId);
+      // Пока перевод в пути, кнопку не показываем и за виртуального: второй
+      // перевод до подтверждения первого — двойная отправка денег.
+      if (coverage.dueRub <= 0 || coverage.pendingRub > 0) continue;
 
       const senderRecipients = await this.depositRecipients(
         manager,
@@ -803,6 +844,7 @@ export class TripFinanceService {
         userId: participant.userId,
         displayName: participant.user.displayName ?? '',
         isMe: false,
+        dueRub: coverage.dueRub,
         recipients: senderRecipients,
       });
     }
@@ -824,35 +866,48 @@ export class TripFinanceService {
   private depositRow(
     participant: TripParticipant,
     viewerId: string,
-    investedRub: number,
-    hasPendingTransfer: boolean,
+    coverage: DepositCoverage,
     isOrganizer: boolean,
   ): DepositParticipantDto {
+    const isActive =
+      participant.status === 'going' || participant.status === 'maybe';
     // Свой залог организатор не «сдаёт»: деньги у него самого. Показываем
     // это как `held`, хотя в базе человек мог не отмечать ничего.
-    const selfHeld =
-      isOrganizer &&
-      (participant.status === 'going' || participant.status === 'maybe') &&
-      participant.depositStatus === 'pending';
+    const selfHeld = isOrganizer && isActive;
+
+    // Решение организатора хранится в `deposit_status`; `held` вычисляется
+    // из покрытия: залог покрыт расходами, переводом или деньгами
+    // организатора — значит, сдавать больше нечего (v3, 18.11.2026).
+    const decision =
+      participant.depositStatus === 'returned' ||
+      participant.depositStatus === 'forfeited'
+        ? participant.depositStatus
+        : null;
+    const status: DepositStatus =
+      decision ?? (selfHeld || coverage.missingRub === 0 ? 'held' : 'pending');
 
     return {
       userId: participant.userId,
       displayName: participant.user?.displayName ?? '',
       avatarUrl: participant.user?.avatarUrl ?? null,
-      status: selfHeld ? 'held' : participant.depositStatus,
+      status,
       updatedByName: participant.depositUpdatedByUser?.displayName ?? null,
       updatedAt: participant.depositUpdatedAt?.toISOString() ?? null,
       isMe: participant.userId === viewerId,
-      investedRub,
+      investedRub: coverage.investedRub,
+      transferredRub: coverage.transferredRub,
+      pendingRub: coverage.pendingRub,
+      coveredRub: selfHeld ? coverage.coveredRub + coverage.missingRub : coverage.coveredRub,
+      missingRub: selfHeld ? 0 : coverage.missingRub,
+      dueRub: selfHeld ? 0 : coverage.dueRub,
       holderName:
         participant.depositHolderUser?.displayName ??
         (selfHeld ? participant.user?.displayName ?? null : null),
       declined: participant.status === 'declined',
-      hasPendingTransfer,
-      // Решать судьбу залога можно, только когда он уже у организатора
-      // (`held`) или решение принято (`returned`/`forfeited`). У «надо
-      // сдать» денег на руках нет: «вернуть» нечего, «удержать» — нечего.
-      canDecide: selfHeld || participant.depositStatus !== 'pending',
+      hasPendingTransfer: coverage.pendingRub > 0,
+      // Решать судьбу залога можно, только когда хоть что-то покрыто:
+      // ушедший с нулём в списке не показывается вовсе (v3).
+      canDecide: participant.status === 'declined' && coverage.coveredRub > 0,
     };
   }
 
@@ -892,7 +947,8 @@ export class TripFinanceService {
    * только если сам в походе: переводить деньги тому, кто вышел, незачем.
    *
    * Себя из списка убираем: переводить залог самому себе бессмысленно.
-   * Организатор, который сам идёт, отмечает свой залог кнопкой «Сдал».
+   * Организатор свой залог не переводит — деньги у него самого; кнопка
+   * с этим списком нужна ему за людей без аккаунта.
    */
   private async depositRecipients(
     manager: EntityManager,
@@ -1113,19 +1169,141 @@ export class TripFinanceService {
   }
 
   /**
-   * Решение организатора по залогу отказавшегося (17.11.2026, переписано
-   * 18.11.2026).
+   * Покрытие залога одного человека по данным базы (v3, 18.11.2026).
+   *
+   * Тот же расчёт, что в `buildDeposit`, но без готового ответа вкладки:
+   * нужен действиям — переводу и решению организатора. Считается по
+   * **оплаченным** расходам (`author_user_id`), а не по долям: залог
+   * покрывают реально вложенные деньги.
+   */
+  private async depositCoverageOf(
+    manager: EntityManager,
+    tripId: string,
+    amountRub: number,
+    userId: string,
+  ): Promise<DepositCoverage> {
+    const [expenses, transfers] = await Promise.all([
+      manager.find(TripExpense, { where: { tripId } }),
+      manager.find(TripCompensation, {
+        where: { tripId, fromUserId: userId, kind: 'deposit' },
+      }),
+    ]);
+
+    const investedRub = expenses
+      .filter((row) => row.authorUserId === userId)
+      .reduce((sum, row) => sum + row.amountRub, 0);
+
+    let transferredRub = 0;
+    let pendingRub = 0;
+    for (const row of transfers) {
+      if (row.status === 'confirmed') transferredRub += row.amountRub;
+      else pendingRub += row.amountRub;
+    }
+
+    return depositCoverage({
+      amountRub,
+      investedRub,
+      transferredRub,
+      pendingRub,
+    });
+  }
+
+  /**
+   * Подтверждённый перевод залога: отделить излишек «с запасом».
+   *
+   * Заказчик разрешил переводить больше недостачи. Залогом остаётся ровно
+   * столько, сколько нужно для покрытия (с учётом расходов и других
+   * переводов), остальное — **обычный подтверждённый перевод**: он виден
+   * в движении и живёт в расчётах по общим правилам, поэтому при удержании
+   * не исчезает вместе с залогом, а при возврате не теряется.
+   *
+   * Если залог уже покрыт (например, расходами), вся строка становится
+   * обычным переводом: `kind = 'deposit'` с нулевым покрытием врал бы.
+   */
+  private async splitDepositOnConfirm(
+    manager: EntityManager,
+    trip: Trip,
+    compensation: TripCompensation,
+  ): Promise<void> {
+    const amountRub = trip.depositRub;
+    if (amountRub === null || amountRub <= 0) return;
+
+    const expenses = await manager.find(TripExpense, {
+      where: { tripId: String(trip.id) },
+    });
+    const investedRub = expenses
+      .filter((row) => row.authorUserId === compensation.fromUserId)
+      .reduce((sum, row) => sum + row.amountRub, 0);
+
+    // Текущая строка уже помечена подтверждённой, поэтому её вычитаем:
+    // «другие переводы» — это то, что было покрыто до неё.
+    const confirmed = await manager.find(TripCompensation, {
+      where: {
+        tripId: String(trip.id),
+        fromUserId: compensation.fromUserId,
+        kind: 'deposit',
+        status: 'confirmed',
+      },
+    });
+    const otherTransferredRub = confirmed
+      .filter((row) => row.id !== compensation.id)
+      .reduce((sum, row) => sum + row.amountRub, 0);
+
+    const coveredByOthersRub = Math.min(
+      amountRub,
+      investedRub + otherTransferredRub,
+    );
+    const { depositRub, excessRub } = splitDepositExcess(
+      compensation.amountRub,
+      Math.max(0, amountRub - coveredByOthersRub),
+    );
+
+    if (depositRub === 0) {
+      compensation.kind = 'compensation';
+      await manager.save(compensation);
+      return;
+    }
+
+    if (excessRub <= 0) return;
+
+    compensation.amountRub = depositRub;
+    await manager.save(compensation);
+
+    await manager.save(
+      manager.create(TripCompensation, {
+        tripId: String(trip.id),
+        fromUserId: compensation.fromUserId,
+        toUserId: compensation.toUserId,
+        amountRub: excessRub,
+        // Получатель уже нажал «Получено» на всю сумму: излишек — обычный
+        // перевод, и подтверждать его второй раз незачем.
+        kind: 'compensation',
+        status: 'confirmed',
+        confirmedAt: compensation.confirmedAt ?? new Date(),
+      }),
+    );
+  }
+
+  /**
+   * Решение организатора по залогу вышедшего (17.11.2026, v3 — 18.11.2026).
    *
    * «Сдал» здесь больше нет: сдачу подтверждает получатель перевода, как
    * компенсацию. Организатор решает только судьбу залога вышедшего:
    *
-   * - `forfeited` — залог остаётся в фонде группы. Перевод залога
-   *   удаляется (деньги больше не принадлежат ушедшему), в ленте
-   *   появляется строка «Залог удержан». Личные балансы не двигаются:
-   *   залог покрывает долю ушедшего.
-   * - `returned` — залог возвращается: удаляются и перевод, и удержание,
+   * - `forfeited` — залог остаётся в фонде группы. Переводы залога
+   *   удаляются (деньги больше не принадлежат ушедшему), в ленте
+   *   появляется строка «Залог удержан» на **покрытую** часть
+   *   `min(D, covered)`. Личные балансы не двигаются: залог покрывает
+   *   долю ушедшего.
+   * - `returned` — залог возвращается: удаляются и переводы, и удержание,
    *   а доля ушедшего расходится на идущих (`syncDepositAdjustments`).
-   * - `pending` — снять решение и вернуть человека в «надо решить».
+   * - `pending` — снять решение (в интерфейсе v3 кнопки «Снять» нет;
+   *   значение осталось для API и повторного открытия решения).
+   *
+   * **Решают по покрытию, а не по `deposit_status`** (v3): ушедший мог
+   * покрыть залог расходами и не иметь ни одного перевода — в примере
+   * заказчика A вложил 1 000 ₽ при залоге 200 ₽. У такого человека
+   * `covered = 200 > 0`, и «Вернуть/Удержать» работать обязано.
    *
    * Правила по цели: `invited` — 400 (ещё не ответил); решения
    * `forfeited`/`returned` — только `declined` (ради этого секция и нужна);
@@ -1181,13 +1359,21 @@ export class TripFinanceService {
         );
       }
 
-      // Решать судьбу залога можно, только когда он уже у организатора:
-      // у «надо сдать» нет денег, которые можно вернуть или удержать.
+      // Решать судьбу залога можно, когда **покрыто хоть что-то** (v3,
+      // 18.11.2026): залог мог быть покрыт расходами, а не переводом.
+      // Ушедшего с нулём в списке риска нет вовсе — и решать там нечего.
+      const coverage = await this.depositCoverageOf(
+        manager,
+        String(trip.id),
+        trip.depositRub,
+        targetUserId,
+      );
+
       if (
         (status === 'forfeited' || status === 'returned') &&
-        participant.depositStatus === 'pending'
+        coverage.coveredRub <= 0
       ) {
-        throw new BadRequestException('Залог не сдан — решать нечего');
+        throw new BadRequestException('Залог не покрыт — решать нечего');
       }
 
       // Залог больше не принадлежит ушедшему: его перевод удаляется при
@@ -1208,7 +1394,10 @@ export class TripFinanceService {
           manager.create(TripDepositForfeit, {
             tripId: String(trip.id),
             sourceUserId: targetUserId,
-            amountRub: trip.depositRub,
+            // Удерживается покрытая часть залога, а не всегда вся сумма:
+            // у ушедшего с 50 ₽ вложений залог покрыт лишь на 50 ₽
+            // (v3, 18.11.2026 — предлагалось в плане, принято здесь).
+            amountRub: Math.min(trip.depositRub, coverage.coveredRub),
           }),
         );
       } else {
@@ -1243,7 +1432,7 @@ export class TripFinanceService {
 
   /**
    * «Перевести залог» — участник переводит его организатору (17.11.2026,
-   * переписано 18.11.2026).
+   * v3 — 18.11.2026).
    *
    * Заказчик: «Перевод организатору — это „залог за участие“ в движении,
    * у организатора соответственно уменьшается баланс, теперь он должен».
@@ -1251,6 +1440,11 @@ export class TripFinanceService {
    * с `kind = 'deposit'`. Получатель подтверждает его кнопкой «Получено»
    * (тот же механизм, что у компенсации), и только тогда балансы двигаются:
    * у отправителя плюс, у организатора минус.
+   *
+   * **Сумма — недостача, но её можно менять (v3).** Заказчик: «в модалке
+   * перевода подставим недостающую сумму, её конечно же можно изменить
+   * на любую». Переводов до покрытия может быть несколько: залог
+   * докладывают частями.
    *
    * `fromUserId` — за человека без аккаунта, которого ведёт смотрящий:
    * у виртуального нет входа, и залог за него передаёт ведущий. Это и есть
@@ -1260,6 +1454,7 @@ export class TripFinanceService {
     userId: string,
     tripId: number,
     recipientUserId: string,
+    amountRub: number,
     fromUserId?: string,
   ): Promise<TripFinanceDto> {
     const view = await this.dataSource.transaction(async (manager) => {
@@ -1282,28 +1477,26 @@ export class TripFinanceService {
         relations: { user: true },
       });
 
-      if (
-        sender === null ||
-        (sender.status !== 'going' && sender.status !== 'maybe')
-      ) {
+      if (sender === null || (sender.status !== 'going' && sender.status !== 'maybe')) {
         throw new ForbiddenException('Залог переводит участник похода');
       }
 
-      if (sender.depositStatus !== 'pending') {
-        throw new BadRequestException('Залог уже отмечен — переводить нечего');
+      // Покрытие: оплаченные расходы человека плюс подтверждённые переводы
+      // (v3, 18.11.2026). Пока недостача не закрыта, переводить можно
+      // частями; отправленное, но ещё не подтверждённое бронирует остаток,
+      // чтобы человек не отправил ту же сумму второй раз.
+      const coverage = await this.depositCoverageOf(
+        manager,
+        String(trip.id),
+        trip.depositRub,
+        senderId,
+      );
+
+      if (coverage.coveredRub >= trip.depositRub) {
+        throw new BadRequestException('Залог уже покрыт — переводить нечего');
       }
 
-      // Один залог — одна строка. Пока перевод ждёт подтверждения, второй
-      // отправил бы деньги дважды; после подтверждения состояния уже не
-      // `pending`, и сюда не попадём.
-      const existing = await manager.count(TripCompensation, {
-        where: {
-          tripId: String(trip.id),
-          fromUserId: senderId,
-          kind: 'deposit',
-        },
-      });
-      if (existing > 0) {
+      if (coverage.dueRub <= 0) {
         throw new BadRequestException(
           'Залог уже переведён или ждёт подтверждения',
         );
@@ -1332,7 +1525,10 @@ export class TripFinanceService {
           tripId: String(trip.id),
           fromUserId: senderId,
           toUserId: recipientUserId,
-          amountRub: trip.depositRub,
+          // Сумма произвольная: в модалке подставлена недостача, но её
+          // можно изменить, в том числе в бо́льшую сторону — «с запасом».
+          // Излишек при подтверждении станет обычным переводом.
+          amountRub,
           kind: 'deposit',
           status: 'pending',
           confirmedAt: null,

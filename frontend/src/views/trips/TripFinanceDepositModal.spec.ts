@@ -6,15 +6,14 @@ import type { DepositRecipient, DepositSender, TripFinance } from '@/types/finan
 import TripFinanceDepositModal from '@/views/trips/TripFinanceDepositModal.vue'
 
 /**
- * Модалка «Перевести залог» (18.11.2026).
+ * Модалка «Перевести залог» (v3, 18.11.2026).
  *
- * Заказчик: «Перевод организатору — это „залог за участие“ в движении,
- * у организатора уменьшается баланс, теперь он должен». Поэтому модалка
- * создаёт ожидающий перевод, а не отметку «сдал».
- *
- * Тест держит три вещи, на которых уже спотыкались: получатель выбирается
- * с реквизитами, за человека без аккаунта платит ведущий (и его список
- * получателей свой), а 400 «уже переведён» перечитывает вкладку.
+ * Заказчик: «если потратился, но меньше залога, кнопка есть, а в модалке
+ * перевода подставим недостающую сумму, её конечно же можно изменить
+ * на любую, может решит перевести организатору с запасом». Поэтому тест
+ * держит четыре вещи: подставленную недостачу, возможность её увеличить,
+ * отдельный список получателей у человека без аккаунта и 400 «залог
+ * уже покрыт», который перечитывает вкладку.
  */
 const mocks = vi.hoisted(() => ({
   transferTripDeposit: vi.fn(),
@@ -44,6 +43,7 @@ function sender(overrides: Partial<DepositSender> = {}): DepositSender {
     userId: ME,
     displayName: 'Я',
     isMe: true,
+    dueRub: 2000,
     recipients: [recipient()],
     ...overrides,
   }
@@ -83,7 +83,7 @@ describe('модалка «Перевести залог»', () => {
     mocks.transferTripDeposit.mockResolvedValue(state())
   })
 
-  it('по умолчанию переводит сам участник и показывает реквизиты', async () => {
+  it('по умолчанию переводит сам участник и подставляет недостачу', async () => {
     const wrapper = mountModal([sender()])
     await flushPromises()
 
@@ -93,14 +93,69 @@ describe('модалка «Перевести залог»', () => {
     // Список отправителей из одного себя не занимает место.
     expect(wrapper.find('[data-test="finance-deposit-senders"]').exists()).toBe(false)
 
+    const amount = wrapper.get('[data-test="finance-deposit-amount"]')
+    expect((amount.element as HTMLInputElement).value).toBe('2000')
+    expect(wrapper.get('[data-test="finance-deposit-save"]').text()).toBe(
+      'Я передал 2 000 ₽',
+    )
+
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(mocks.transferTripDeposit).toHaveBeenCalledWith('7', 'org-1', undefined)
+    expect(mocks.transferTripDeposit).toHaveBeenCalledWith('7', 'org-1', 2000, undefined)
     expect(wrapper.emitted('saved')).toHaveLength(1)
   })
 
-  it('за человека без аккаунта переводит ведущий, и получатель — организатор', async () => {
+  it('сумму можно увеличить «с запасом»', async () => {
+    const wrapper = mountModal([sender()])
+    await flushPromises()
+
+    await wrapper.get('[data-test="finance-deposit-amount"]').setValue('3000')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="finance-deposit-excess"]').text()).toContain(
+      'Сверх остатка — 1 000 ₽',
+    )
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.transferTripDeposit).toHaveBeenCalledWith('7', 'org-1', 3000, undefined)
+  })
+
+  it('частичный перевод: подставлена недостача, можно уменьшить', async () => {
+    const wrapper = mountModal([sender({ dueRub: 150 })])
+    await flushPromises()
+
+    const amount = wrapper.get('[data-test="finance-deposit-amount"]')
+    expect((amount.element as HTMLInputElement).value).toBe('150')
+
+    await amount.setValue('100')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.transferTripDeposit).toHaveBeenCalledWith('7', 'org-1', 100, undefined)
+  })
+
+  it('сумма меньше рубля не отправляется', async () => {
+    const wrapper = mountModal([sender()])
+    await flushPromises()
+
+    await wrapper.get('[data-test="finance-deposit-amount"]').setValue('0')
+    await flushPromises()
+
+    expect(
+      wrapper.get('[data-test="finance-deposit-save"]').attributes('disabled'),
+    ).toBeDefined()
+    expect(wrapper.find('[data-test="finance-deposit-amount-error"]').exists()).toBe(true)
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.transferTripDeposit).not.toHaveBeenCalled()
+  })
+
+  it('за человека без аккаунта переводит ведущий, и его недостача своя', async () => {
     const wrapper = mountModal([
       sender(),
       sender({
@@ -108,6 +163,7 @@ describe('модалка «Перевести залог»', () => {
         displayName: 'Дядя Витя',
         isMe: false,
         // Виртуальный платит организатору, который его ведёт.
+        dueRub: 150,
         recipients: [recipient()],
       }),
     ])
@@ -120,10 +176,16 @@ describe('модалка «Перевести залог»', () => {
       .setValue()
     await flushPromises()
 
+    // Недостача пересчиталась вместе с отправителем.
+    expect(
+      (wrapper.get('[data-test="finance-deposit-amount"]').element as HTMLInputElement)
+        .value,
+    ).toBe('150')
+
     await wrapper.get('form').trigger('submit')
     await flushPromises()
 
-    expect(mocks.transferTripDeposit).toHaveBeenCalledWith('7', 'org-1', VIRTUAL)
+    expect(mocks.transferTripDeposit).toHaveBeenCalledWith('7', 'org-1', 150, VIRTUAL)
   })
 
   it('без реквизитов объясняет словами заказчика, по полу', async () => {
@@ -148,9 +210,9 @@ describe('модалка «Перевести залог»', () => {
     )
   })
 
-  it('400 «уже переведён» показывает ответ сервера и просит перечитать вкладку', async () => {
+  it('400 «залог покрыт» показывает ответ сервера и просит перечитать вкладку', async () => {
     mocks.transferTripDeposit.mockRejectedValue(
-      new ApiError(400, 'Залог уже переведён или ждёт подтверждения'),
+      new ApiError(400, 'Залог уже покрыт — переводить нечего'),
     )
 
     const wrapper = mountModal([sender()])
@@ -160,7 +222,7 @@ describe('модалка «Перевести залог»', () => {
     await flushPromises()
 
     expect(wrapper.get('[data-test="finance-deposit-error"]').text()).toBe(
-      'Залог уже переведён или ждёт подтверждения',
+      'Залог уже покрыт — переводить нечего',
     )
     expect(wrapper.emitted('stale')).toHaveLength(1)
   })

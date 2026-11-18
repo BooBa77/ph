@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type {
   CompensationOption,
+  DepositParticipant,
   TripCompensation,
   TripDepositForfeit,
   TripDepositReturn,
@@ -11,6 +12,7 @@ import type {
 import {
   compensationRequisites,
   depositReturnCaption,
+  depositStatusCaption,
   forfeitCaption,
   movementRows,
   noRequisitesPhrase,
@@ -388,5 +390,69 @@ describe('вариант компенсации: реквизиты и подп�
     expect(noRequisitesPhrase(family)).toBe(
       'Вася и Аня не указали реквизиты в своих профилях, придётся спросить у них самих.',
     )
+  })
+})
+
+/**
+ * Подпись залога в секции организатора (v3, 18.11.2026).
+ *
+ * Заказчик: идущий, который не добрал залог, — «не перевёл залог и
+ * недостаточно вложился». У ушедшего подпись зависит от решения, потому
+ * что «не сдал» больше не описывает состояние: залог мог покрыться
+ * расходами, без единого перевода.
+ */
+describe('depositStatusCaption', () => {
+  function row(overrides: Partial<DepositParticipant> = {}): DepositParticipant {
+    return {
+      userId: 'b',
+      displayName: 'Борис',
+      avatarUrl: null,
+      status: 'pending',
+      updatedByName: null,
+      updatedAt: null,
+      isMe: false,
+      investedRub: 0,
+      transferredRub: 0,
+      pendingRub: 0,
+      coveredRub: 0,
+      missingRub: 200,
+      dueRub: 200,
+      holderName: null,
+      declined: false,
+      hasPendingTransfer: false,
+      canDecide: false,
+      ...overrides,
+    }
+  }
+
+  it('идущий с недостатком — слова заказчика', () => {
+    expect(depositStatusCaption(row(), 200)).toBe(
+      'не перевёл залог и недостаточно вложился',
+    )
+  })
+
+  it('ушедший без решения — насколько покрыт', () => {
+    expect(
+      depositStatusCaption(
+        row({ declined: true, status: 'held', coveredRub: 50 }),
+        200,
+      ),
+    ).toBe('покрыто 50 ₽ из 200 ₽')
+
+    expect(
+      depositStatusCaption(
+        row({ declined: true, status: 'held', coveredRub: 200, missingRub: 0 }),
+        200,
+      ),
+    ).toBe('залог покрыт')
+  })
+
+  it('ушедший с решением — «вернули» или «удержан»', () => {
+    expect(
+      depositStatusCaption(row({ declined: true, status: 'returned' }), 200),
+    ).toBe('залог вернули')
+    expect(
+      depositStatusCaption(row({ declined: true, status: 'forfeited' }), 200),
+    ).toBe('залог удержан')
   })
 })

@@ -1,6 +1,7 @@
 import type {
   CompensationOption,
   CompensationPerson,
+  DepositParticipant,
   TripCompensation,
   TripDepositForfeit,
   TripDepositReturn,
@@ -117,6 +118,31 @@ export function splitCaption(expense: TripExpense): string {
   if (expense.split === 'commonEaters') return `на питающихся с общего · ${perPerson}`
 
   return `${shares.map((share) => share.displayName).join(', ')} · ${perPerson}`
+}
+
+/**
+ * Подпись состояния залога в секции организатора (v3, 18.11.2026).
+ *
+ * Заказчик назвал текст для идущего, который не добрал залог: «не перевёл
+ * залог и недостаточно вложился». У ушедшего подпись зависит от решения:
+ * «залог вернули», «залог удержан», а пока решения нет — насколько залог
+ * покрыт (`покрыто 50 ₽ из 200 ₽`). Одна фраза «не сдал» здесь больше
+ * не годится: залог мог покрыться расходами, без единого перевода.
+ */
+export function depositStatusCaption(
+  row: DepositParticipant,
+  amountRub: number,
+): string {
+  if (row.declined) {
+    if (row.status === 'returned') return 'залог вернули'
+    if (row.status === 'forfeited') return 'залог удержан'
+
+    return row.coveredRub >= amountRub
+      ? 'залог покрыт'
+      : `покрыто ${formatRub(row.coveredRub)} из ${formatRub(amountRub)}`
+  }
+
+  return 'не перевёл залог и недостаточно вложился'
 }
 
 /**
