@@ -20,6 +20,7 @@ import { useAuthStore } from '@/stores/auth'
 import { useMobileMenuStore } from '@/stores/mobileMenu'
 import { useOfflineStore } from '@/stores/offline'
 import { applyPresence } from '@/utils/presence'
+import { formatRub } from '@/utils/money'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
 import TripDiary from '@/views/trips/TripDiary.vue'
 import TripFinance from '@/views/trips/TripFinance.vue'
@@ -451,6 +452,19 @@ async function toggleRecruitment() {
  * Не загрузилось — просто не показываем вопрос, вкладки от него не зависят.
  */
 const myParticipant = ref<TripParticipant | null>(null)
+
+/**
+ * Человек в составе, а не гость.
+ *
+ * Своя строка состава грузится отдельным запросом и приходит позже вкладок;
+ * чтобы «Залог участия» не мигал, считаем участником и по набору вкладок:
+ * гостю бэкенд отдаёт только «Гостевую».
+ */
+const isTripParticipant = computed(
+  () =>
+    myParticipant.value !== null ||
+    permissions.value.some((permission) => permission.code !== 'guest'),
+)
 const presenceDismissed = ref(false)
 const isMarkingPresence = ref(false)
 
@@ -619,6 +633,20 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
           <template v-if="trip.isCommercial"> · коммерческий</template>
           <template v-if="trip.isOfficial"> · официальный поход</template>
           <template v-if="trip.isRecruitmentClosed"> · набор закрыт</template>
+        </p>
+
+        <!--
+          Объявленный залог участия (18.11.2026). Раньше сумма жила только
+          в секции «Бухгалтерии», а её видит организатор; рядовой участник
+          не знал, что залог вообще объявлен. Здесь строка видна каждому
+          участнику похода, в том числе на «Гостевой».
+        -->
+        <p
+          v-if="isTripParticipant && trip.depositRub"
+          class="text-sm text-muted"
+          data-test="trip-deposit"
+        >
+          Залог участия: {{ formatRub(trip.depositRub) }} с человека
         </p>
 
         <!--

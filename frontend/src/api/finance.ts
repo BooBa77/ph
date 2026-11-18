@@ -1,7 +1,7 @@
 import { apiFetch } from '@/api/client'
 import type {
   CreateTripCompensationInput,
-  DepositStatus,
+  DepositDecision,
   SaveTripExpenseInput,
   TripFinance,
 } from '@/types/finance'
@@ -92,16 +92,17 @@ export async function deleteTripCompensation(
 }
 
 /**
- * PUT /api/trips/:id/finance/deposit/:userId — отметка о залоге (17.11.2026).
+ * PUT /api/trips/:id/finance/deposit/:userId — решение по залогу (18.11.2026).
  *
- * Ставит организатор; сумма залога живёт в походе и правится в «Правке
- * похода», а здесь меняется только состояние одного человека. Ответ —
- * вся вкладка, как у остальных денежных действий.
+ * Ставит организатор или соорганизатор; сумма залога живёт в походе
+ * и правится в «Правке похода», а здесь решается судьба залога одного
+ * человека: вернуть, удержать или снять решение. «Сдал» руками больше
+ * не ставится — это подтверждение перевода получателем.
  */
 export async function setTripDepositStatus(
   tripId: string,
   userId: string,
-  status: DepositStatus,
+  status: DepositDecision,
 ): Promise<TripFinance> {
   return apiFetch<TripFinance>(`/trips/${tripId}/finance/deposit/${userId}`, {
     method: 'PUT',
@@ -110,18 +111,23 @@ export async function setTripDepositStatus(
 }
 
 /**
- * POST /api/trips/:id/finance/deposit/transfer — «Перевести залог» (17.11.2026).
+ * POST /api/trips/:id/finance/deposit/transfer — «Перевести залог» (18.11.2026).
  *
- * Отдельная кнопка, а не «Компенсация»: прямой перевод между участниками
- * не требует долга, и до удержания залог в балансы не попадает. Деньги
- * уходят организатору — он держит кассу группы.
+ * Создаёт ожидающий перевод организатору: подтверждение — кнопкой
+ * «Получено», как у компенсации. `fromUserId` — за человека без аккаунта,
+ * которого ведёт смотрящий.
  */
 export async function transferTripDeposit(
   tripId: string,
   recipientUserId: string,
+  fromUserId?: string,
 ): Promise<TripFinance> {
   return apiFetch<TripFinance>(`/trips/${tripId}/finance/deposit/transfer`, {
     method: 'POST',
-    body: JSON.stringify({ recipientUserId }),
+    body: JSON.stringify(
+      fromUserId === undefined
+        ? { recipientUserId }
+        : { recipientUserId, fromUserId },
+    ),
   })
 }

@@ -12,7 +12,7 @@ import {
   CompensationSenderDto,
   DepositParticipantDto,
   DepositRecipientDto,
-  DepositSummaryDto,
+  DepositSenderDto,
   FinanceFamilyDto,
   FinanceMemberDto,
   MyDepositDto,
@@ -21,11 +21,13 @@ import {
   TripCompensationDto,
   TripDepositDto,
   TripDepositForfeitDto,
+  TripDepositReturnDto,
   TripExpenseDto,
   TripFinanceDto,
 } from './dto/trip-finance.dto';
 import { TripCompensation } from './entities/trip-compensation.entity';
 import { TripDepositAdjustment } from './entities/trip-deposit-adjustment.entity';
+import { TripDepositForfeit } from './entities/trip-deposit-forfeit.entity';
 import { TripExpense } from './entities/trip-expense.entity';
 import { TripExpenseShare } from './entities/trip-expense-share.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
@@ -34,8 +36,7 @@ import { Trip } from './entities/trip.entity';
 import { Role } from './entities/role.entity';
 import { COORGANIZER_ROLE_CODE } from './trip-tabs';
 import {
-  ORGANIZER_ROLE_CODE,
-  type DepositStatus,
+  type DepositDecision,
 } from './trip.types';
 import {
   balancesFromEntities,
@@ -331,6 +332,7 @@ export class TripFinanceService {
           // подтвердить может любой родной, см. `buildView`).
           toUserId,
           amountRub,
+          kind: 'compensation',
           status: 'pending',
           confirmedAt: null,
         }),
@@ -356,7 +358,6 @@ export class TripFinanceService {
   ): Promise<TripFinanceDto> {
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
-      await this.assertGoing(manager, String(trip.id), userId);
 
       // `FOR UPDATE`: два устройства могут подтвердить одновременно,
       // и без блокировки оба записали бы одно и то же время.
@@ -365,6 +366,15 @@ export class TripFinanceService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!compensation) throw new NotFoundException('Компенсация не найдена');
+
+      // Обычную компенсацию подтверждает идущий. Залог — не компенсация:
+      // организатор может быть «не иду», но деньги залога всё равно
+      // принимает он. Поэтому для `deposit` проверка «идёт» снята,
+      // а право остаётся у получателя (или его семьи / ведущего).
+      if (compensation.kind !== 'deposit') {
+        await this.assertGoing(manager, String(trip.id), userId);
+      }
+
       if (
         compensation.toUserId !== userId &&
         !(await this.isFamilyOf(manager, compensation.toUserId, userId)) &&
@@ -379,6 +389,26 @@ export class TripFinanceService {
         compensation.status = 'confirmed';
         compensation.confirmedAt = new Date();
         await manager.save(compensation);
+      }
+
+      // Залог — тот же перевод, но подтверждение ещё и ставит человеку
+      // состояние `held`: с этого момента деньги у получателя, и в списке
+      // риска он «сдал», а не «не сдал» (18.11.2026).
+      if (compensation.kind === 'deposit') {
+        const sender = await manager.findOne(TripParticipant, {
+          where: {
+            tripId: String(trip.id),
+            userId: compensation.fromUserId,
+          },
+        });
+
+        if (sender !== null && sender.depositStatus === 'pending') {
+          sender.depositStatus = 'held';
+          sender.depositHolderUserId = compensation.toUserId;
+          sender.depositUpdatedBy = userId;
+          sender.depositUpdatedAt = compensation.confirmedAt ?? new Date();
+          await manager.save(sender);
+        }
       }
 
       return this.buildView(manager, trip, userId);
@@ -444,9 +474,11 @@ export class TripFinanceService {
     const participants = await this.goingParticipants(manager, tripId);
     const memberIds = participants.map((item) => item.userId);
 
-    // Удержанные залоги двигают балансы (17.11.2026): заказчик назвал
-    // удержание доходом фонда группы. Это отдельные строки, а не расходы:
-    // у источника сумма отрицательная, у идущих — его доля.
+    // 18.11.2026: перевод залога идёт через `trip_compensations`
+    // (`kind = 'deposit'`), поэтому баланс уже считает его обычным
+    // переводом: у отправителя плюс, у организатора минус — «теперь он
+    // должен». Корректировки остались только на возврат залога: тогда доля
+    // ушедшего расходится на идущих.
     const adjustments = await manager.find(TripDepositAdjustment, {
       where: { tripId },
       relations: { sourceUser: true, user: true },
@@ -456,6 +488,13 @@ export class TripFinanceService {
       userId: row.userId,
       amountRub: row.amountRub,
     }));
+
+    // Строки фонда: удержанный залог, который уже не вернуть молча.
+    const forfeits = await manager.find(TripDepositForfeit, {
+      where: { tripId },
+      relations: { sourceUser: true },
+      order: { createdAt: 'DESC', id: 'DESC' },
+    });
 
     const balances = balancesFromEntities(
       expenses,
@@ -604,37 +643,66 @@ export class TripFinanceService {
       families: familyDtos,
       me,
       managedSenders,
-      deposit: await this.buildDeposit(manager, trip, viewerId, expenses),
-      depositForfeits: this.buildDepositForfeits(adjustments),
+      deposit: await this.buildDeposit(
+        manager,
+        trip,
+        viewerId,
+        expenses,
+        compensations,
+      ),
+      depositForfeits: this.buildDepositForfeits(forfeits),
+      depositReturns: this.buildDepositReturns(adjustments),
     };
   }
 
   /**
-   * Блок залога: сумма, счётчики и **секция риска** (17.11.2026).
+   * Блок залога (17.11.2026, переписан 18.11.2026).
    *
    * `null` — залога нет, и на экране нет ничего: пустой блок «Залог: 0 ₽»
    * только сбивал бы с толку.
    *
-   * Список — не весь состав, а только те, с кем организатору ещё что-то
-   * делать (слова заказчика): **отказавшиеся** (решить, вернуть залог или
-   * удержать) и **не вложившие сумму залога** (`investedRub` меньше суммы).
-   * Кто залог уже перевёл или потратился на поход не меньше залога —
-   * в списке не показываются, «экономим пространство»: их видно
-   * в счётчиках шапки.
+   * **Секция — не весь состав.** Заказчик: «в секции нужны именно те, кто
+   * отказался… тех, кто вложился в поход свыше залога, не нужны». Поэтому
+   * `participants` — отказавшиеся (организатор решает, вернуть залог или
+   * удержать) и не вложившие сумму залога. Остальные в списке не нужны;
+   * счётчиков и переключателя «Только риски» больше нет — заказчик просил
+   * их убрать.
+   *
+   * **Рядовой участник секцию не видит.** Он получает `me` — свой залог
+   * и кнопку «Перевести залог»; сумма залога видна в шапке похода. Секция
+   * риска — только организатору и соорганизатору.
    */
   private async buildDeposit(
     manager: EntityManager,
     trip: Trip,
     viewerId: string,
     expenses: readonly TripExpense[],
+    compensations: readonly TripCompensation[],
   ): Promise<TripDepositDto | null> {
     if (trip.depositRub === null || trip.depositRub <= 0) return null;
 
     const amountRub = trip.depositRub;
     const participants = await this.loadDepositParticipants(manager, trip);
-    const inTrip = participants.filter(
-      (participant) =>
-        participant.status === 'going' || participant.status === 'maybe',
+
+    // Переводы залога, которые ещё ждут «Получено»: человек уже нажал
+    // «Я передал», но балансы не двинулись, и в списке риска это видно.
+    const pendingTransfers = new Set(
+      compensations
+        .filter(
+          (row) => row.kind === 'deposit' && row.status === 'pending',
+        )
+        .map((row) => row.fromUserId),
+    );
+
+    const organizerRoles = await this.organizerRoles(manager, trip);
+    // Получатели для самого смотрящего. Виртуальному человеку список
+    // считается отдельно: он платит организатору, который его ведёт,
+    // а тот сам себе залог не переводит.
+    const selfRecipients = await this.depositRecipients(
+      manager,
+      trip,
+      participants,
+      viewerId,
     );
 
     // «Вложился» — сколько человек уже оплатил расходов похода. Залог
@@ -649,92 +717,142 @@ export class TripFinanceService {
     }
 
     const rows = participants.map((participant) =>
-      this.depositRow(participant, viewerId, invested.get(participant.userId) ?? 0),
+      this.depositRow(
+        participant,
+        viewerId,
+        invested.get(participant.userId) ?? 0,
+        pendingTransfers.has(participant.userId),
+        organizerRoles.has(participant.userId),
+      ),
     );
 
     const declined = rows.filter((row) => row.declined);
     const uncovered = rows.filter(
       (row) =>
         !row.declined &&
+        !organizerRoles.has(row.userId) &&
         row.status === 'pending' &&
+        !row.hasPendingTransfer &&
         row.investedRub < amountRub,
-    );
-
-    const count = (status: DepositStatus): number =>
-      inTrip.filter((participant) => participant.depositStatus === status)
-        .length;
-
-    const summary: DepositSummaryDto = {
-      total: inTrip.length,
-      // Доли удержания делятся по идущим: «пока думаю» ещё может отказаться.
-      going: inTrip.filter((participant) => participant.status === 'going')
-        .length,
-      held: count('held'),
-      returned: count('returned'),
-      forfeited: count('forfeited'),
-      pending: count('pending'),
-      // Наличные на руках считаются по всем, включая отказавшихся: их залог
-      // у организатора остаётся, пока он не решил, что с ним делать.
-      cashRub:
-        participants.filter(
-          (participant) => participant.depositStatus === 'held',
-        ).length * amountRub,
-    };
-
-    const recipients = await this.depositRecipients(
-      manager,
-      trip,
-      participants,
-      viewerId,
     );
 
     const mine = participants.find(
       (participant) => participant.userId === viewerId,
     );
+    const myRow = rows.find((row) => row.isMe) ?? null;
+    const organizerRole = organizerRoles.get(viewerId);
+    const canManage =
+      organizerRole === 'organizer' ||
+      (organizerRole === 'coOrganizer' &&
+        (mine?.status === 'going' || mine?.status === 'maybe'));
+
     const me: MyDepositDto | null =
       mine !== undefined &&
       (mine.status === 'going' || mine.status === 'maybe')
         ? {
-            status: mine.depositStatus,
+            status: myRow?.status ?? 'pending',
             amountRub,
             canTransfer:
-              mine.depositStatus === 'pending' && recipients.length > 0,
-            holderName: mine.depositHolderUser?.displayName ?? null,
+              organizerRole === undefined &&
+              myRow?.status === 'pending' &&
+              myRow?.hasPendingTransfer !== true &&
+              selfRecipients.length > 0,
+            holderName: myRow?.holderName ?? null,
+            hasPendingTransfer: myRow?.hasPendingTransfer ?? false,
           }
         : null;
 
+    // Кто может нажать «Я передал»: сам смотрящий и люди без аккаунта,
+    // которых он ведёт. Без этого организатор с виртуальными друзьями
+    // не увидел бы кнопку вовсе (замечание заказчика 18.11.2026).
+    const senders: DepositSenderDto[] = [];
+    if (me?.canTransfer && mine !== undefined) {
+      senders.push({
+        userId: viewerId,
+        displayName: mine.user?.displayName ?? '',
+        isMe: true,
+        recipients: selfRecipients,
+      });
+    }
+    for (const participant of participants) {
+      if (participant.userId === viewerId) continue;
+      if (
+        participant.status !== 'going' &&
+        participant.status !== 'maybe'
+      ) {
+        continue;
+      }
+      if (participant.depositStatus !== 'pending') continue;
+      if (pendingTransfers.has(participant.userId)) continue;
+      if (
+        participant.user?.isVirtual !== true ||
+        participant.user.virtualOwnerUserId !== viewerId
+      ) {
+        continue;
+      }
+
+      const senderRecipients = await this.depositRecipients(
+        manager,
+        trip,
+        participants,
+        participant.userId,
+      );
+      if (senderRecipients.length === 0) continue;
+
+      senders.push({
+        userId: participant.userId,
+        displayName: participant.user.displayName ?? '',
+        isMe: false,
+        recipients: senderRecipients,
+      });
+    }
+
     return {
       amountRub,
-      canManage: trip.organizerUserId === viewerId,
-      summary,
+      canManage,
       me,
-      // Отказавшиеся — первыми: ради них секция и существует.
-      participants: [...declined, ...uncovered],
-      // Полный список — только по запросу «Показать всех»: ошибочную
-      // отметку организатор должен уметь снять, а место на экране
-      // заказчик просил экономить.
-      allParticipants: rows,
-      recipients,
+      // Секция риска — только организатору и соорганизатору: рядовому
+      // участнику незачем видеть решения по чужим залогам, а свой он видит
+      // в `me`. Пустой массив вместо списка — чтобы правило было видно
+      // и в данных, а не только в вёрстке.
+      participants: canManage ? [...declined, ...uncovered] : [],
+      senders,
     };
   }
 
-  /** Строка участника для секции залога. */
+  /** Строка участника для секции риска. */
   private depositRow(
     participant: TripParticipant,
     viewerId: string,
     investedRub: number,
+    hasPendingTransfer: boolean,
+    isOrganizer: boolean,
   ): DepositParticipantDto {
+    // Свой залог организатор не «сдаёт»: деньги у него самого. Показываем
+    // это как `held`, хотя в базе человек мог не отмечать ничего.
+    const selfHeld =
+      isOrganizer &&
+      (participant.status === 'going' || participant.status === 'maybe') &&
+      participant.depositStatus === 'pending';
+
     return {
       userId: participant.userId,
       displayName: participant.user?.displayName ?? '',
       avatarUrl: participant.user?.avatarUrl ?? null,
-      status: participant.depositStatus,
+      status: selfHeld ? 'held' : participant.depositStatus,
       updatedByName: participant.depositUpdatedByUser?.displayName ?? null,
       updatedAt: participant.depositUpdatedAt?.toISOString() ?? null,
       isMe: participant.userId === viewerId,
       investedRub,
-      holderName: participant.depositHolderUser?.displayName ?? null,
+      holderName:
+        participant.depositHolderUser?.displayName ??
+        (selfHeld ? participant.user?.displayName ?? null : null),
       declined: participant.status === 'declined',
+      hasPendingTransfer,
+      // Решать судьбу залога можно, только когда он уже у организатора
+      // (`held`) или решение принято (`returned`/`forfeited`). У «надо
+      // сдать» денег на руках нет: «вернуть» нечего, «удержать» — нечего.
+      canDecide: selfHeld || participant.depositStatus !== 'pending',
     };
   }
 
@@ -782,24 +900,7 @@ export class TripFinanceService {
     participants: readonly TripParticipant[],
     viewerId: string,
   ): Promise<DepositRecipientDto[]> {
-    const roleRows = await manager.find(TripParticipantRole, {
-      where: { tripId: String(trip.id) },
-    });
-
-    const roles = await manager.find(Role, {
-      where: { code: In([ORGANIZER_ROLE_CODE, COORGANIZER_ROLE_CODE]) },
-    });
-    const coOrganizerRoleIds = new Set(
-      roles
-        .filter((role) => role.code === COORGANIZER_ROLE_CODE)
-        .map((role) => role.id),
-    );
-    const coOrganizerIds = new Set(
-      roleRows
-        .filter((row) => coOrganizerRoleIds.has(row.roleId))
-        .map((row) => row.userId),
-    );
-
+    const roles = await this.organizerRoles(manager, trip);
     const byId = new Map(
       participants.map((participant) => [participant.userId, participant]),
     );
@@ -813,7 +914,7 @@ export class TripFinanceService {
     for (const participant of participants) {
       if (participant.userId === trip.organizerUserId) continue;
       if (participant.userId === viewerId) continue;
-      if (!coOrganizerIds.has(participant.userId)) continue;
+      if (roles.get(participant.userId) !== 'coOrganizer') continue;
       if (participant.status !== 'going' && participant.status !== 'maybe') {
         continue;
       }
@@ -822,6 +923,36 @@ export class TripFinanceService {
     }
 
     return recipients;
+  }
+
+  /**
+   * Автор похода и соорганизаторы: кому переводят залог и кто решает
+   * его судьбу. Автор — всегда, даже «не иду»: организовывать и ходить
+   * разные вещи. Соорганизатор — только пока идёт: он должен видеть
+   * залоги и подтверждать получение.
+   */
+  private async organizerRoles(
+    manager: EntityManager,
+    trip: Trip,
+  ): Promise<Map<string, 'organizer' | 'coOrganizer'>> {
+    const roles = new Map<string, 'organizer' | 'coOrganizer'>();
+    roles.set(trip.organizerUserId, 'organizer');
+
+    const roleRows = await manager.find(TripParticipantRole, {
+      where: { tripId: String(trip.id) },
+    });
+    const coOrganizer = await manager.findOne(Role, {
+      where: { code: COORGANIZER_ROLE_CODE },
+    });
+    if (coOrganizer === null) return roles;
+
+    for (const row of roleRows) {
+      if (row.roleId !== coOrganizer.id) continue;
+      if (roles.has(row.userId)) continue;
+      roles.set(row.userId, 'coOrganizer');
+    }
+
+    return roles;
   }
 
   private toDepositRecipient(
@@ -839,15 +970,36 @@ export class TripFinanceService {
   }
 
   /**
-   * Удержания залогов для ленты «Движения денег» (17.11.2026).
+   * Удержания залогов для ленты «Движения денег» (18.11.2026).
    *
-   * Строки удержания двигают балансы, поэтому их видно там же, где расходы
-   * и переводы: иначе у идущих молча меняются цифры. Одно удержание —
-   * одна строка ленты со списком тех, кому достались доли.
+   * Удержание не двигает личные балансы, но пополняет фонд группы, поэтому
+   * человек должен видеть, откуда плюс в бюджете. Одно удержание — одна
+   * строка с суммой; долей идущим здесь больше нет, потому что удержанный
+   * залог покрывает долю самого ушедшего.
    */
   private buildDepositForfeits(
-    adjustments: readonly TripDepositAdjustment[],
+    rows: readonly TripDepositForfeit[],
   ): TripDepositForfeitDto[] {
+    return rows.map((row) => ({
+      id: String(row.id),
+      at: row.createdAt.toISOString(),
+      sourceUserId: row.sourceUserId,
+      sourceName: row.sourceUser?.displayName ?? '',
+      amountRub: row.amountRub,
+    }));
+  }
+
+  /**
+   * Возвраты залогов для ленты (18.11.2026).
+   *
+   * Заказчик просил «удалить запись в Движении средств» при возврате —
+   * удаляется запись **удержания**. Но возврат пересобирает доли: ушедшему
+   * плюс его доля, идущим минус их часть. Эти цифры меняются, и лента
+   * обязана их объяснить, иначе они «за спиной». Одна строка на возврат.
+   */
+  private buildDepositReturns(
+    adjustments: readonly TripDepositAdjustment[],
+  ): TripDepositReturnDto[] {
     const groups = new Map<string, TripDepositAdjustment[]>();
 
     for (const row of adjustments) {
@@ -860,9 +1012,10 @@ export class TripFinanceService {
       .map(([sourceUserId, rows]) => {
         const positive = rows.filter((row) => row.amountRub > 0);
         const at = rows[0]?.createdAt ?? new Date();
-        const amountRub =
-          positive.reduce((sum, row) => sum + row.amountRub, 0) ||
-          Math.abs(rows.find((row) => row.amountRub < 0)?.amountRub ?? 0);
+        const amountRub = positive.reduce(
+          (sum, row) => sum + row.amountRub,
+          0,
+        );
 
         return {
           id: `${sourceUserId}-${at.getTime()}`,
@@ -870,107 +1023,135 @@ export class TripFinanceService {
           sourceUserId,
           sourceName: rows[0]?.sourceUser?.displayName ?? '',
           amountRub,
-          shares: positive.map((row) => ({
-            userId: row.userId,
-            displayName: row.user?.displayName ?? '',
-            amountRub: row.amountRub,
-          })),
+          shares: rows
+            .filter((row) => row.amountRub < 0)
+            .map((row) => ({
+              userId: row.userId,
+              displayName: row.user?.displayName ?? '',
+              amountRub: Math.abs(row.amountRub),
+            })),
         };
       })
-      .sort((left, right) => (left.at < right.at ? 1 : left.at > right.at ? -1 : 0));
+      .filter((row) => row.amountRub > 0)
+      .sort((left, right) =>
+        left.at < right.at ? 1 : left.at > right.at ? -1 : 0,
+      );
   }
 
   /**
-   * Создать или снять корректировки баланса от удержания залога.
+   * Пересобрать доли ушедшего при возврате залога (18.11.2026).
    *
-   * Формула заказчика: «A −залог, каждому идущему +залог/число идущих».
-   * Делит `splitAmount`, поэтому остаток от деления по рублю уходит первым
-   * по составу — как у долей расхода, и сумма строк всегда ноль.
+   * Заказчик: «A уговорил организатора вернуть залог, баланс стал A +1000,
+   * B, C, D, E −250, разошли полюбовно». Значит, доля A в общих расходах
+   * ложится на идущих: у источника **плюс** его доля, у каждого идущего
+   * **минус** его часть. Считаем по сохранённым долям расходов
+   * (`trip_expense_shares`) и ничего в истории не переписываем: это
+   * сегодняшнее решение организатора, а не прошедшая трата.
    *
-   * Если идущих нет (все отказались), удерживать не для кого: балансы
-   * не трогаем, залог остаётся у организатора.
+   * **Удержание корректировок не создаёт.** Залог покрывает долю ушедшего,
+   * и личные балансы остаются прежними: в примере заказчика после
+   * удержания всё ещё A +800, B, C, D, E −200. Поэтому `forfeited`
+   * и `pending` просто очищают строки, а строки появляются только
+   * у `returned`.
    */
   private async syncDepositAdjustments(
     manager: EntityManager,
     trip: Trip,
     targetUserId: string,
-    status: DepositStatus,
+    status: DepositDecision,
   ): Promise<void> {
     await manager.delete(TripDepositAdjustment, {
       tripId: String(trip.id),
       sourceUserId: targetUserId,
     });
 
-    if (status !== 'forfeited') return;
+    if (status !== 'returned') return;
 
-    const amountRub = trip.depositRub ?? 0;
-    if (amountRub <= 0) return;
+    // Доля ушедшего — сумма всех его долей по расходам похода. Расход
+    // ещё и плательщика: если он платил, это уже в его балансе, а здесь
+    // важна именно доля, которую теперь берут на себя идущие.
+    const expenses = await manager.find(TripExpense, {
+      where: { tripId: String(trip.id) },
+      relations: { shares: true },
+    });
+    const shareRub = expenses.reduce(
+      (sum, expense) =>
+        sum +
+        (expense.shares ?? [])
+          .filter((share) => share.userId === targetUserId)
+          .reduce((inner, share) => inner + share.amountRub, 0),
+      0,
+    );
+    if (shareRub <= 0) return;
 
     const going = await this.goingParticipants(manager, String(trip.id));
-    const shares: ShareAmount[] = splitAmount(
-      amountRub,
+    // Делить не на кого — все вышли: возвращать долю некому, строк нет.
+    if (going.length === 0) return;
+
+    const shares = splitAmount(
+      shareRub,
       going.map((participant) => participant.userId),
     );
-    if (shares.length === 0) return;
-
-    const deltas = new Map<string, number>();
-    deltas.set(targetUserId, -amountRub);
-    for (const share of shares) {
-      deltas.set(
-        share.userId,
-        (deltas.get(share.userId) ?? 0) + share.amountRub,
-      );
-    }
-
-    // У источника-идущего обе строки сходятся в одну: он и теряет залог,
-    // и получает свою долю, поэтому пары «минус и плюс» на него не нужно.
-    const rows = [...deltas.entries()]
-      .filter(([, amount]) => amount !== 0)
-      .map(([userId, amount]) =>
+    const rows = [
+      manager.create(TripDepositAdjustment, {
+        tripId: String(trip.id),
+        sourceUserId: targetUserId,
+        userId: targetUserId,
+        amountRub: shareRub,
+      }),
+      ...shares.map((share) =>
         manager.create(TripDepositAdjustment, {
           tripId: String(trip.id),
           sourceUserId: targetUserId,
-          userId,
-          amountRub: amount,
+          userId: share.userId,
+          amountRub: -share.amountRub,
         }),
-      );
+      ),
+    ];
 
-    if (rows.length > 0) await manager.save(rows);
+    await manager.save(rows);
   }
 
   /**
-   * Поставить состояние залога участнику (17.11.2026).
+   * Решение организатора по залогу отказавшегося (17.11.2026, переписано
+   * 18.11.2026).
    *
-   * Отмечает **только организатор**: «сдал» — это факт получения денег,
-   * и подтверждает его тот, кому их отдали. Сам участник с 17.11.2026 может
-   * только **перевести** залог (`transferDeposit`), а не выставить себе
-   * «удержан» или «вернули».
+   * «Сдал» здесь больше нет: сдачу подтверждает получатель перевода, как
+   * компенсацию. Организатор решает только судьбу залога вышедшего:
    *
-   * Правила по цели:
-   * - `invited` — 400: ещё не решил, спрашивать нечего;
-   * - `declined` — **можно**, и это главный случай: залог у организатора
-   *   остался, и он решает, вернуть его или удержать;
-   * - любой другой участник похода — можно, в том числе `maybe`.
+   * - `forfeited` — залог остаётся в фонде группы. Перевод залога
+   *   удаляется (деньги больше не принадлежат ушедшему), в ленте
+   *   появляется строка «Залог удержан». Личные балансы не двигаются:
+   *   залог покрывает долю ушедшего.
+   * - `returned` — залог возвращается: удаляются и перевод, и удержание,
+   *   а доля ушедшего расходится на идущих (`syncDepositAdjustments`).
+   * - `pending` — снять решение и вернуть человека в «надо решить».
    *
-   * `forfeited` не просто меняет подпись: он перераспределяет залог между
-   * идущими (`syncDepositAdjustments`). Возврат залога или сброс отметки
-   * снимает это перераспределение.
-   *
-   * Сумма залога приходит из похода, а не из тела запроса: одна цифра
-   * на всех — её правят в «Правке похода», и второй источник суммы здесь
-   * однажды разошёлся бы с первым.
+   * Правила по цели: `invited` — 400 (ещё не ответил); решения
+   * `forfeited`/`returned` — только `declined` (ради этого секция и нужна);
+   * сброс `pending` — любому участнику.
    */
   async setDepositStatus(
     userId: string,
     tripId: number,
     targetUserId: string,
-    status: DepositStatus,
+    status: DepositDecision,
   ): Promise<TripFinanceDto> {
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
 
-      if (trip.organizerUserId !== userId) {
-        throw new ForbiddenException('Отметки о залоге ставит организатор похода');
+      const roles = await this.organizerRoles(manager, trip);
+      const role = roles.get(userId);
+      const actor = await manager.findOne(TripParticipant, {
+        where: { tripId: String(trip.id), userId },
+        relations: { user: true },
+      });
+      const canManage =
+        role === 'organizer' ||
+        (role === 'coOrganizer' &&
+          (actor?.status === 'going' || actor?.status === 'maybe'));
+      if (!canManage) {
+        throw new ForbiddenException('Судьбу залога решает организатор похода');
       }
 
       if (trip.depositRub === null || trip.depositRub <= 0) {
@@ -991,23 +1172,67 @@ export class TripFinanceService {
         );
       }
 
-      const previous = participant.depositStatus;
+      if (
+        (status === 'forfeited' || status === 'returned') &&
+        participant.status !== 'declined'
+      ) {
+        throw new BadRequestException(
+          'Залог решают, когда человек вышел из похода',
+        );
+      }
+
+      // Решать судьбу залога можно, только когда он уже у организатора:
+      // у «надо сдать» нет денег, которые можно вернуть или удержать.
+      if (
+        (status === 'forfeited' || status === 'returned') &&
+        participant.depositStatus === 'pending'
+      ) {
+        throw new BadRequestException('Залог не сдан — решать нечего');
+      }
+
+      // Залог больше не принадлежит ушедшему: его перевод удаляется при
+      // любом решении. Возврат возвращает деньги, удержание оставляет их
+      // в фонде — но строку «он заплатил» в обоих случаях заменяет решение.
+      await manager.delete(TripCompensation, {
+        tripId: String(trip.id),
+        fromUserId: targetUserId,
+        kind: 'deposit',
+      });
+
+      if (status === 'forfeited') {
+        await manager.delete(TripDepositForfeit, {
+          tripId: String(trip.id),
+          sourceUserId: targetUserId,
+        });
+        await manager.save(
+          manager.create(TripDepositForfeit, {
+            tripId: String(trip.id),
+            sourceUserId: targetUserId,
+            amountRub: trip.depositRub,
+          }),
+        );
+      } else {
+        await manager.delete(TripDepositForfeit, {
+          tripId: String(trip.id),
+          sourceUserId: targetUserId,
+        });
+      }
+
+      await this.syncDepositAdjustments(
+        manager,
+        trip,
+        targetUserId,
+        status,
+      );
 
       participant.depositStatus = status;
       participant.depositUpdatedBy = userId;
       participant.depositUpdatedAt = new Date();
-      // «Надо сдать» — это новая раздача: прежний держатель больше не при чём.
-      if (status === 'pending') participant.depositHolderUserId = null;
-      // «Сдал» руками — деньги у того, кто отметил: организатор и есть
-      // держатель кассы. Переведённый залог держателя уже знает.
-      if (status === 'held' && participant.depositHolderUserId === null) {
-        participant.depositHolderUserId = userId;
-      }
+      // Удержанный залог остаётся у того, кто решил; возвращённый и снятый
+      // держателя не имеют — деньги ушли или решение отменено.
+      participant.depositHolderUserId =
+        status === 'forfeited' ? userId : null;
       await manager.save(participant);
-
-      if (previous !== status) {
-        await this.syncDepositAdjustments(manager, trip, targetUserId, status);
-      }
 
       return this.buildView(manager, trip, userId);
     });
@@ -1017,22 +1242,25 @@ export class TripFinanceService {
   }
 
   /**
-   * «Перевести залог» — участник переводит залог организатору (17.11.2026).
+   * «Перевести залог» — участник переводит его организатору (17.11.2026,
+   * переписано 18.11.2026).
    *
-   * Заказчик: «прямых переводов между участниками нет; если участник ещё
-   * никому не должен и общих расходов не производит, но хочет внести залог,
-   * инструментов нет. В этом случае организатор становится частичным
-   * держателем кассы». Поэтому кнопка отдельная: она не требует долга
-   * (компенсация требует) и не двигает балансы — залог двигает их только
-   * в момент удержания.
+   * Заказчик: «Перевод организатору — это „залог за участие“ в движении,
+   * у организатора соответственно уменьшается баланс, теперь он должен».
+   * Поэтому это не отметка, а **ожидающий перевод** в `trip_compensations`
+   * с `kind = 'deposit'`. Получатель подтверждает его кнопкой «Получено»
+   * (тот же механизм, что у компенсации), и только тогда балансы двигаются:
+   * у отправителя плюс, у организатора минус.
    *
-   * Статус сразу `held`: приложение доверяет группе (как с присутствием
-   * и отметками питания), а факт перевода виден организатору в блоке.
+   * `fromUserId` — за человека без аккаунта, которого ведёт смотрящий:
+   * у виртуального нет входа, и залог за него передаёт ведущий. Это и есть
+   * ответ на «у меня есть виртуальные друзья, а кнопки не вижу».
    */
   async transferDeposit(
     userId: string,
     tripId: number,
     recipientUserId: string,
+    fromUserId?: string,
   ): Promise<TripFinanceDto> {
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
@@ -1041,19 +1269,44 @@ export class TripFinanceService {
         throw new BadRequestException('У этого похода нет залога');
       }
 
-      const participant = await manager.findOne(TripParticipant, {
-        where: { tripId: String(trip.id), userId },
+      const senderId = fromUserId ?? userId;
+      await this.assertCanActFor(
+        manager,
+        String(trip.id),
+        userId,
+        senderId,
+      );
+
+      const sender = await manager.findOne(TripParticipant, {
+        where: { tripId: String(trip.id), userId: senderId },
+        relations: { user: true },
       });
 
       if (
-        participant === null ||
-        (participant.status !== 'going' && participant.status !== 'maybe')
+        sender === null ||
+        (sender.status !== 'going' && sender.status !== 'maybe')
       ) {
         throw new ForbiddenException('Залог переводит участник похода');
       }
 
-      if (participant.depositStatus !== 'pending') {
+      if (sender.depositStatus !== 'pending') {
         throw new BadRequestException('Залог уже отмечен — переводить нечего');
+      }
+
+      // Один залог — одна строка. Пока перевод ждёт подтверждения, второй
+      // отправил бы деньги дважды; после подтверждения состояния уже не
+      // `pending`, и сюда не попадём.
+      const existing = await manager.count(TripCompensation, {
+        where: {
+          tripId: String(trip.id),
+          fromUserId: senderId,
+          kind: 'deposit',
+        },
+      });
+      if (existing > 0) {
+        throw new BadRequestException(
+          'Залог уже переведён или ждёт подтверждения',
+        );
       }
 
       const participants = await this.loadDepositParticipants(manager, trip);
@@ -1061,18 +1314,30 @@ export class TripFinanceService {
         manager,
         trip,
         participants,
-        userId,
+        senderId,
       );
 
-      if (!recipients.some((recipient) => recipient.userId === recipientUserId)) {
-        throw new BadRequestException('Залог переводится организатору похода');
+      if (
+        !recipients.some(
+          (recipient) => recipient.userId === recipientUserId,
+        )
+      ) {
+        throw new BadRequestException(
+          'Залог переводится организатору похода',
+        );
       }
 
-      participant.depositStatus = 'held';
-      participant.depositUpdatedBy = userId;
-      participant.depositUpdatedAt = new Date();
-      participant.depositHolderUserId = recipientUserId;
-      await manager.save(participant);
+      await manager.save(
+        manager.create(TripCompensation, {
+          tripId: String(trip.id),
+          fromUserId: senderId,
+          toUserId: recipientUserId,
+          amountRub: trip.depositRub,
+          kind: 'deposit',
+          status: 'pending',
+          confirmedAt: null,
+        }),
+      );
 
       return this.buildView(manager, trip, userId);
     });

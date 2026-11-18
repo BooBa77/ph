@@ -45,6 +45,14 @@ export interface TripExpense {
 
 export type CompensationStatus = 'pending' | 'confirmed'
 
+/**
+ * Вид перевода: обычная компенсация или залог за участие (18.11.2026).
+ *
+ * Залог идёт той же механикой, что компенсация, — «я перевёл» → «получено»;
+ * отличается только подпись в ленте.
+ */
+export type CompensationKind = 'compensation' | 'deposit'
+
 /** Строка компенсации: «должник перевёл кредитору». */
 export interface TripCompensation {
   id: string
@@ -54,6 +62,7 @@ export interface TripCompensation {
   toUserId: string
   toName: string
   amountRub: number
+  kind: CompensationKind
   status: CompensationStatus
   confirmedAt: string | null
   /** «Получено» — только у получателя и только у ожидающей. */
@@ -157,9 +166,9 @@ export interface CompensationSender {
 }
 
 /**
- * Состояние залога участия (17.11.2026).
+ * Состояние залога участия (17.11.2026, переписано 18.11.2026).
  *
- * `pending` — надо сдать, `held` — сдан и лежит у организатора,
+ * `pending` — надо сдать, `held` — сдан и подтверждён получателем,
  * `returned` — вернули, `forfeited` — удержан. Словарь общий с бэкендом
  * (`DEPOSIT_STATUSES`); «залога нет» — это `deposit === null`, а не
  * отдельное состояние человека.
@@ -175,6 +184,22 @@ export const DEPOSIT_STATUS_LABELS: Record<DepositStatus, string> = {
   returned: 'вернули',
   forfeited: 'удержан',
 }
+
+/**
+ * Подписи для фразы «Твой залог: …» — про деньги, а не про человека.
+ *
+ * «Борис не сдал» правильно, а «твой залог не сдал» — нет: залог
+ * «не сдан», «возвращён». Поэтому у личной строки свой словарь.
+ */
+export const DEPOSIT_STATE_LABELS: Record<DepositStatus, string> = {
+  pending: 'не сдан',
+  held: 'сдан',
+  returned: 'возвращён',
+  forfeited: 'удержан',
+}
+
+/** Решение организатора по залогу отказавшегося: «сдал» ставит получатель. */
+export type DepositDecision = 'pending' | 'returned' | 'forfeited'
 
 /** Состояние залога одного участника: кто и когда поставил отметку. */
 export interface DepositParticipant {
@@ -192,20 +217,13 @@ export interface DepositParticipant {
   holderName: string | null
   /** Человек отказался от похода: ради него секция риска и существует. */
   declined: boolean
-}
-
-/** Счётчики блока залога — вместо полного списка участников. */
-export interface DepositSummary {
-  /** Сколько человек в походе: going и maybe. */
-  total: number
-  /** Сколько идёт: «пока думаю» залог сдаёт, но в делёж не входит. */
-  going: number
-  held: number
-  returned: number
-  forfeited: number
-  pending: number
-  /** Сколько денег залога на руках у организаторов. */
-  cashRub: number
+  /** Перевод залога ждёт подтверждения получателем (18.11.2026). */
+  hasPendingTransfer: boolean
+  /**
+   * Есть что решать: залог уже у организатора (`held`) или решение принято
+   * (`returned`/`forfeited`). У «надо сдать» решать нечего.
+   */
+  canDecide: boolean
 }
 
 /** Мой залог: по нему экран решает, показывать ли «Перевести залог». */
@@ -216,6 +234,23 @@ export interface MyDeposit {
   canTransfer: boolean
   /** Кому уже передан. */
   holderName: string | null
+  /** Мой перевод ждёт подтверждения. */
+  hasPendingTransfer: boolean
+}
+
+/**
+ * Кто может нажать «Я передал»: сам участник и люди без аккаунта,
+ * которых он ведёт. У виртуального нет входа, поэтому залог за него
+ * передаёт ведущий.
+ *
+ * `recipients` — свои для каждого отправителя: виртуальный платит
+ * организатору, который его ведёт, а сам участник себе не переводит.
+ */
+export interface DepositSender {
+  userId: string
+  displayName: string
+  isMe: boolean
+  recipients: DepositRecipient[]
 }
 
 /** Кому можно перевести залог: автор похода и соорганизаторы. */
@@ -233,38 +268,50 @@ export interface DepositRecipient {
  * Блок залога над «Движением денег». `null` в ответе — залога нет,
  * и блок не рисуется вовсе.
  *
- * `participants` — **не весь состав, а только риск** (17.11.2026):
- * отказавшиеся и не вложившие сумму залога. Кто сдал или потратился
- * достаточно — в списке не показывается, только в счётчиках.
+ * `participants` — **не весь состав, а только риск** (18.11.2026):
+ * отказавшиеся и не вложившие сумму залога. Приходит только организатору
+ * и соорганизатору; рядовой участник видит свой залог в `me`.
  */
 export interface TripDeposit {
   /** Сумма с человека, целые рубли. Одна на поход. */
   amountRub: number
-  /** Отметки ставит только организатор — он получает деньги. */
+  /** Решает судьбу залога автор похода или соорганизатор. */
   canManage: boolean
-  summary: DepositSummary
   /** Мой залог; `null` — меня нет в походе (например, я отказался). */
   me: MyDeposit | null
   /** Только риск: отказавшиеся и не вложившие сумму залога. */
   participants: DepositParticipant[]
-  /** Все участники с залогом — для «Показать всех» и снятия отметки. */
-  allParticipants: DepositParticipant[]
-  /** Кому можно перевести залог. */
-  recipients: DepositRecipient[]
+  /** За кого смотрящий может передать залог. */
+  senders: DepositSender[]
 }
 
 /**
- * Удержание залога в ленте «Движения денег» (17.11.2026).
+ * Удержание залога в ленте «Движения денег» (18.11.2026).
  *
- * Удержание двигает балансы: у источника −залог, у идущих +его доля.
- * Поэтому оно стоит в ленте рядом с расходами — иначе цифры меняются
- * без объяснения.
+ * Удержание не двигает личные балансы: залог покрывает долю ушедшего.
+ * Но в фонде группы появляются деньги, и лента объясняет, откуда плюс.
  */
 export interface TripDepositForfeit {
   id: string
   at: string
   sourceUserId: string
   sourceName: string
+  amountRub: number
+}
+
+/**
+ * Возврат залога в ленте (18.11.2026).
+ *
+ * Запись удержания при возврате удаляется, но балансы меняются: доля
+ * ушедшего расходится на идущих. Эта строка объясняет, почему у идущих
+ * стало больше долга, а у ушедшего — больше кредита.
+ */
+export interface TripDepositReturn {
+  id: string
+  at: string
+  sourceUserId: string
+  sourceName: string
+  /** Доля ушедшего, разошедшаяся на идущих. */
   amountRub: number
   shares: TripExpenseShare[]
 }
@@ -281,8 +328,10 @@ export interface TripFinance {
   managedSenders: CompensationSender[]
   /** Залог участия; `null` или поля нет — залога нет. */
   deposit?: TripDeposit | null
-  /** Удержанные залоги: они двигают балансы и стоят в ленте. */
+  /** Удержанные залоги: пополняют фонд группы и стоят в ленте. */
   depositForfeits?: TripDepositForfeit[]
+  /** Возвраты залогов: объясняют пересборку долей в ленте. */
+  depositReturns?: TripDepositReturn[]
 }
 
 /**

@@ -4,11 +4,13 @@ import type {
   CompensationOption,
   TripCompensation,
   TripDepositForfeit,
+  TripDepositReturn,
   TripExpense,
   TripFinance,
 } from '@/types/finance'
 import {
   compensationRequisites,
+  depositReturnCaption,
   forfeitCaption,
   movementRows,
   noRequisitesPhrase,
@@ -54,6 +56,7 @@ function compensation(overrides: Partial<TripCompensation> = {}): TripCompensati
     toUserId: 'g',
     toName: 'Григорий',
     amountRub: 1000,
+    kind: 'compensation',
     status: 'pending',
     confirmedAt: null,
     canConfirm: true,
@@ -240,10 +243,18 @@ describe('movementRows', () => {
   })
 })
 
-describe('удержание залога в ленте (17.11.2026)', () => {
+describe('залог в ленте (18.11.2026)', () => {
   const forfeit: TripDepositForfeit = {
     id: 'f1',
     at: '2026-11-17T11:00:00.000Z',
+    sourceUserId: 'b',
+    sourceName: 'Борис',
+    amountRub: 2000,
+  }
+
+  const returned: TripDepositReturn = {
+    id: 'r1',
+    at: '2026-11-18T11:00:00.000Z',
     sourceUserId: 'b',
     sourceName: 'Борис',
     amountRub: 2000,
@@ -253,24 +264,33 @@ describe('удержание залога в ленте (17.11.2026)', () => {
     ],
   }
 
-  it('строка удержания стоит в ленте рядом с расходами', () => {
+  it('удержание, возврат и расход стоят в ленте одной лентой', () => {
     const rows = movementRows(
       finance({
         expenses: [expense({ spentAt: '2026-11-11' })],
         depositForfeits: [forfeit],
+        depositReturns: [returned],
       }),
     )
 
-    // Удержание двигает балансы — значит, оно в ленте, а не только в блоке.
-    expect(rows.map((row) => row.kind)).toEqual(['deposit', 'expense'])
+    // Свежие сверху: возврат 18.11, удержание 17.11, расход 11.11.
+    expect(rows.map((row) => row.kind)).toEqual([
+      'depositReturn',
+      'deposit',
+      'expense',
+    ])
   })
 
-  it('подпись говорит про фонд группы, а не про перевод человеку', () => {
-    expect(forfeitCaption(forfeit)).toBe('в фонд группы · по 1 000 ₽')
+  it('удержание подписано фондом группы: долей идущим больше нет', () => {
+    expect(forfeitCaption()).toBe('в фонд группы')
   })
 
-  it('без долей подпись не врёт про сумму', () => {
-    expect(forfeitCaption({ ...forfeit, shares: [] })).toBe('в фонд группы')
+  it('возврат объясняет, по сколько разошлась доля ушедшего', () => {
+    expect(depositReturnCaption(returned)).toBe('доля ушедшего · по 1 000 ₽')
+  })
+
+  it('возврат без долей не врёт про сумму', () => {
+    expect(depositReturnCaption({ ...returned, shares: [] })).toBe('доля ушедшего')
   })
 })
 

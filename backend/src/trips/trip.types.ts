@@ -57,16 +57,16 @@ export const PARTICIPANT_STATUSES = [
 export type ParticipantStatus = (typeof PARTICIPANT_STATUSES)[number];
 
 /**
- * Состояние залога участия (17.11.2026).
+ * Состояние залога участия (17.11.2026, переписано 18.11.2026).
  *
- * `pending` — надо сдать; `held` — сдан и лежит у организатора;
+ * `pending` — надо сдать; `held` — сдан и подтверждён получателем;
  * `returned` — вернули; `forfeited` — удержан. Отдельного `none` нет:
  * «залога нет» — это `trips.deposit_rub IS NULL`, и хранить это ещё и
  * у каждого участника значило бы держать два источника правды.
  *
- * Залог — обеспечительный платёж, а не расход (`finance.md` §2.5), поэтому
- * в «Движение денег» и в балансы он не попадает: заказчик назвал его
- * «вопросом совести», удержаний из будущих расчётов нет.
+ * С 18.11.2026 `held` ставит **только подтверждение перевода**: отметки
+ * руками «сдал/не сдал» убраны. У организатора свой залог считается
+ * сданным сам собой — деньги у него.
  */
 export const DEPOSIT_STATUSES = [
   'pending',
@@ -76,6 +76,17 @@ export const DEPOSIT_STATUSES = [
 ] as const;
 
 export type DepositStatus = (typeof DEPOSIT_STATUSES)[number];
+
+/**
+ * Решения организатора по залогу отказавшегося.
+ *
+ * `held` сюда не входит: «сдал» подтверждает получатель перевода, а не
+ * организатор в списке риска. `pending` — снять решение и вернуть человека
+ * в «надо решить», `returned`/`forfeited` — сами решения.
+ */
+export const DEPOSIT_DECISIONS = ['pending', 'returned', 'forfeited'] as const;
+
+export type DepositDecision = (typeof DEPOSIT_DECISIONS)[number];
 
 /**
  * Присутствие на маршруте (17.11.2026) — перекличка, а не «факт похода».

@@ -17,6 +17,17 @@ export const COMPENSATION_STATUSES = ['pending', 'confirmed'] as const;
 export type CompensationStatus = (typeof COMPENSATION_STATUSES)[number];
 
 /**
+ * Вид перевода: обычная компенсация или залог за участие (18.11.2026).
+ *
+ * Залог идёт той же механикой — ожидающий перевод и подтверждение
+ * получателем, — потому что заказчик просил «подтверждение перевода теми же
+ * механизмами, что и при компенсации». Отличается только подпись в ленте
+ * и то, что подтверждение залога ставит человеку состояние `held`.
+ */
+export const COMPENSATION_KINDS = ['compensation', 'deposit'] as const;
+export type CompensationKind = (typeof COMPENSATION_KINDS)[number];
+
+/**
  * Компенсация — «должник перевёл кредитору» (11.11.2026).
  *
  * Отдельная таблица, а не `message_actions`: строке в таблице движения
@@ -43,6 +54,7 @@ export type CompensationStatus = (typeof COMPENSATION_STATUSES)[number];
 @Entity('trip_compensations')
 @Index('IDX_trip_compensations_trip_created', ['tripId', 'createdAt'])
 @Index('IDX_trip_compensations_to_status', ['toUserId', 'status'])
+@Index('IDX_trip_compensations_trip_kind', ['tripId', 'kind'])
 @Check('chk_trip_compensations_amount', `"amount_rub" > 0`)
 @Check(
   'chk_trip_compensations_status',
@@ -55,6 +67,10 @@ export type CompensationStatus = (typeof COMPENSATION_STATUSES)[number];
 @Check(
   'chk_trip_compensations_confirmed',
   `("status" = 'confirmed') = ("confirmed_at" IS NOT NULL)`,
+)
+@Check(
+  'chk_trip_compensations_kind',
+  `"kind" IN ('compensation', 'deposit')`,
 )
 export class TripCompensation {
   @PrimaryGeneratedColumn({ type: 'bigint' })
@@ -94,6 +110,16 @@ export class TripCompensation {
 
   @Column({ name: 'amount_rub', type: 'integer' })
   amountRub: number;
+
+  /**
+   * Компенсация или залог за участие (18.11.2026).
+   *
+   * Залог приходит в ту же таблицу, потому что подтверждение у него такое
+   * же: «я перевёл» → «получено». Отдельная сущность повторила бы права,
+   * бронирование кредита и строку ленты, и две копии разошлись бы.
+   */
+  @Column({ type: 'varchar', length: 20, default: 'compensation' })
+  kind: CompensationKind;
 
   @Column({ type: 'varchar', length: 20, default: 'pending' })
   status: CompensationStatus;

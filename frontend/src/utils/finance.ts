@@ -3,6 +3,7 @@ import type {
   CompensationPerson,
   TripCompensation,
   TripDepositForfeit,
+  TripDepositReturn,
   TripExpense,
   TripFinance,
 } from '@/types/finance'
@@ -119,39 +120,52 @@ export function splitCaption(expense: TripExpense): string {
 }
 
 /**
- * Подпись удержанного залога: «в фонд группы · по 50 ₽».
+ * Подпись удержанного залога: «в фонд группы».
  *
- * Заказчик: удержанный залог — «доход фонда группы», а не перевод человеку.
- * Поэтому подпись говорит про фонд, а не перечисляет имена идущих: их доли
- * и так видны в балансах, а строка ленты должна оставаться короткой.
- * Остаток от деления — как у расходов: «по» показывает меньшую долю.
+ * С 18.11.2026 удержание не делит деньги между идущими: залог покрывает
+ * долю самого ушедшего, а в фонд группы приходит вся сумма. Поэтому
+ * подпись короткая — «куда», а не «кому и сколько».
  */
-export function forfeitCaption(forfeit: TripDepositForfeit): string {
-  if (forfeit.shares.length === 0) return 'в фонд группы'
-
-  const perPerson = Math.min(...forfeit.shares.map((share) => share.amountRub))
-
-  return `в фонд группы · по ${formatRub(perPerson)}`
+export function forfeitCaption(): string {
+  return 'в фонд группы'
 }
 
-/** Одна строка таблицы движения денег — расход, компенсация или залог. */
+/**
+ * Подпись возврата залога: «доля ушедшего · по 50 ₽».
+ *
+ * Заказчик просил при возврате удалить запись удержания. Сама запись
+ * исчезает, но доли идущих меняются — это и объясняет строка возврата.
+ * Остаток от деления — как у расходов: «по» показывает меньшую долю.
+ */
+export function depositReturnCaption(row: TripDepositReturn): string {
+  if (row.shares.length === 0) return 'доля ушедшего'
+
+  const perPerson = Math.min(...row.shares.map((share) => share.amountRub))
+
+  return `доля ушедшего · по ${formatRub(perPerson)}`
+}
+
+/** Одна строка таблицы движения денег — расход, перевод или залог. */
 export type MoneyRow =
   | { kind: 'expense'; key: string; at: string; expense: TripExpense }
   | { kind: 'compensation'; key: string; at: string; compensation: TripCompensation }
   | { kind: 'deposit'; key: string; at: string; forfeit: TripDepositForfeit }
+  | { kind: 'depositReturn'; key: string; at: string; returned: TripDepositReturn }
 
 /**
- * Расходы, компенсации и удержанные залоги одной лентой, свежие сверху.
+ * Расходы, переводы, удержания и возвраты залогов одной лентой, свежие
+ * сверху.
  *
- * Ключ сортировки у расхода — дата траты (`ГГГГ-ММ-ДД`), у компенсации —
+ * Ключ сортировки у расхода — дата траты (`ГГГГ-ММ-ДД`), у перевода —
  * момент создания. Сравнение строк работает: `2026-11-11` лексикографически
  * меньше `2026-11-11T18:00:00Z`, то есть перевод, созданный в этот день,
  * встанет выше траты того же дня. Внутри дня сохраняется порядок ответа
  * сервера (`id` по убыванию), стабильная сортировка его не ломает.
  *
- * Удержание залога стоит здесь с 17.11.2026, потому что оно двигает
- * балансы: у отказавшегося минус, у идущих плюс их доля. Молча менять
- * цифры нельзя — человек должен видеть, откуда они.
+ * Залог стоит здесь с 18.11.2026: перевод залога двигает балансы
+ * (у отправителя плюс, у организатора минус), удержание пополняет фонд,
+ * а возврат пересобирает доли. Молча менять цифры нельзя — человек должен
+ * видеть, откуда они.
  */
 export function movementRows(finance: TripFinance): MoneyRow[] {
   const rows: MoneyRow[] = [
@@ -172,6 +186,12 @@ export function movementRows(finance: TripFinance): MoneyRow[] {
       key: `deposit-${forfeit.id}`,
       at: forfeit.at,
       forfeit,
+    })),
+    ...(finance.depositReturns ?? []).map((returned) => ({
+      kind: 'depositReturn' as const,
+      key: `deposit-return-${returned.id}`,
+      at: returned.at,
+      returned,
     })),
   ]
 

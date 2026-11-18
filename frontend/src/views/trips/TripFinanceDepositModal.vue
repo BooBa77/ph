@@ -1,13 +1,13 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import { ApiError } from '@/api/errors'
 import { transferTripDeposit } from '@/api/finance'
-import type { DepositRecipient, TripFinance } from '@/types/finance'
+import type { DepositSender, TripFinance } from '@/types/finance'
 import { formatRub } from '@/utils/money'
 
 /**
- * «Перевести залог» (17.11.2026).
+ * «Перевести залог» (17.11.2026, переписано 18.11.2026).
  *
  * Заказчик: «Фактически „Перевести залог“ — перевод суммы организаторам.
  * Это отдельная кнопка из-за того, что у нас нет прямых переводов между
@@ -15,51 +15,81 @@ import { formatRub } from '@/utils/money'
  * не производит, но хочет внести залог, инструментов нет. В этом случае
  * организатор становится частичным держателем кассы».
  *
- * Поэтому модалка — не «Компенсация»: она не требует долга, сумма не
- * правится (залог один на поход), а получатель выбирается из организаторов
- * похода. Реквизиты показываются те же, что в профиле, — переводить
- * некуда, если человек их не заполнил, и об этом говорится прямо.
+ * **С 18.11.2026 это настоящий перевод в «Движении денег».** Модалка
+ * создаёт ожидающую строку, организатор подтверждает её кнопкой
+ * «Получено», и только тогда балансы меняются: у отправителя плюс,
+ * у получателя минус — «теперь он должен». Поэтому здесь нет слов
+ * «в балансы не входит».
  *
- * **Балансы это не двигает.** Залог меняет их только в момент удержания
- * (`finance.md` §2.5), поэтому сумма здесь — не перевод долга, а передача
- * денег на хранение.
+ * **Кто сдаёт.** Себя выбирает сам участник; за человека без аккаунта —
+ * тот, кто его ведёт. Поэтому в модалке есть выбор отправителя, как
+ * у компенсации: иначе организатор с виртуальными друзьями не смог бы
+ * передать их залог.
  */
 const props = defineProps<{
   tripId: string
   /** Сумма залога с человека — одна на поход, из «Правки похода». */
   amountRub: number
-  /** Кому можно перевести: автор похода и соорганизаторы. */
-  recipients: DepositRecipient[]
+  /** Кто может передать: я и люди без аккаунта, которых я веду. */
+  senders: DepositSender[]
 }>()
 
 const emit = defineEmits<{
   /** Сервер вернул вкладку целиком — родитель заменяет состояние. */
   saved: [view: TripFinance]
-  /** Вкладка устарела: залог уже отмечен, надо перечитать. */
+  /** Вкладка устарела: залог уже переведён, надо перечитать. */
   stale: []
   close: []
 }>()
 
-/**
- * По умолчанию — первый получатель с реквизитами, иначе первый в списке:
- * человек чаще всего переводит тому, у кого есть куда.
- */
-const initialRecipient = computed(
+const initialSender = computed(
   () =>
-    props.recipients.find(
-      (recipient) => recipient.paymentDetails !== null,
-    ) ??
-    props.recipients[0] ??
+    props.senders.find((sender) => sender.isMe) ??
+    props.senders[0] ??
     null,
 )
 
-const selectedUserId = ref(initialRecipient.value?.userId ?? '')
+const selectedSenderId = ref(initialSender.value?.userId ?? '')
 const isSaving = ref(false)
 const error = ref<string | null>(null)
 
+const selectedSender = computed(
+  () =>
+    props.senders.find(
+      (sender) => sender.userId === selectedSenderId.value,
+    ) ?? null,
+)
+
+/**
+ * Получатели зависят от отправителя: виртуальный человек платит
+ * организатору, который его ведёт, а сам участник себе не переводит.
+ */
+const availableRecipients = computed(
+  () => selectedSender.value?.recipients ?? [],
+)
+
+const selectedUserId = ref(
+  availableRecipients.value.find(
+    (recipient) => recipient.paymentDetails !== null,
+  )?.userId ??
+    availableRecipients.value[0]?.userId ??
+    '',
+)
+
+// Сменили отправителя — получатель тоже мог смениться: по умолчанию
+// снова первый с реквизитами, иначе первый в списке.
+watch(selectedSenderId, () => {
+  selectedUserId.value =
+    availableRecipients.value.find(
+      (recipient) => recipient.paymentDetails !== null,
+    )?.userId ??
+    availableRecipients.value[0]?.userId ??
+    ''
+})
+
 const selected = computed(
   () =>
-    props.recipients.find(
+    availableRecipients.value.find(
       (recipient) => recipient.userId === selectedUserId.value,
     ) ?? null,
 )
@@ -72,7 +102,7 @@ const noRequisitesText = computed(() => {
   return `${selected.value.displayName} ${verb} реквизиты в своём профиле, придётся спросить у него самого.`
 })
 
-const roleLabel = (recipient: DepositRecipient): string =>
+const roleLabel = (recipient: { role: 'organizer' | 'coOrganizer' }): string =>
   recipient.role === 'organizer' ? 'организатор' : 'соорганизатор'
 
 function messageOf(cause: unknown, fallback: string): string {
@@ -80,17 +110,30 @@ function messageOf(cause: unknown, fallback: string): string {
 }
 
 async function save(): Promise<void> {
-  if (isSaving.value || selected.value === null) return
+  if (
+    isSaving.value ||
+    selected.value === null ||
+    selectedSender.value === null
+  ) {
+    return
+  }
 
   isSaving.value = true
   error.value = null
 
   try {
-    emit('saved', await transferTripDeposit(props.tripId, selected.value.userId))
+    emit(
+      'saved',
+      await transferTripDeposit(
+        props.tripId,
+        selected.value.userId,
+        selectedSender.value.isMe ? undefined : selectedSender.value.userId,
+      ),
+    )
   } catch (problem) {
     error.value = messageOf(problem, 'Не удалось записать перевод залога')
 
-    // 400 «залог уже отмечен» значит, что его отметили после загрузки
+    // 400 «уже переведён» значит, что его отправили после загрузки
     // вкладки: родитель перечитает её, а сообщение сервера правдиво.
     if (problem instanceof ApiError && problem.status === 400) emit('stale')
   } finally {
@@ -142,29 +185,76 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
         data-test="finance-deposit-note"
       >
         <p>
-          Залог {{ formatRub(amountRub) }} уходит организатору: прямых переводов между
-          участниками в приложении нет. Он держит эти деньги до конца похода.
+          Залог {{ formatRub(amountRub) }} уходит организатору: прямых переводов
+          между участниками в приложении нет. Он держит эти деньги до конца
+          похода.
         </p>
         <p>
-          В балансах залог появится, только если его удержат: тогда он станет доходом
-          фонда группы.
+          Перевод встанет в «Движение денег» строкой «Залог за участие».
+          Организатор подтвердит получение — тогда у тебя станет плюс
+          {{ formatRub(amountRub) }}, а у него минус: он теперь должен группе.
         </p>
       </div>
 
       <p
-        v-if="recipients.length === 0"
+        v-if="senders.length === 0"
+        class="text-sm text-muted"
+        data-test="finance-deposit-no-sender"
+      >
+        Передавать нечего: залог уже переведён или ждёт подтверждения.
+      </p>
+
+      <p
+        v-else-if="availableRecipients.length === 0"
         class="text-sm text-muted"
         data-test="finance-deposit-empty"
       >
-        Переводить некому: в походе нет организатора, которому можно передать залог.
+        Переводить некому: в походе нет организатора, которому можно передать
+        залог.
       </p>
 
       <template v-else>
+        <!--
+          Кто сдаёт: себя участник выбирает сам, за человека без аккаунта
+          действует ведущий. Список из одного себя не показываем — незачем
+          занимать место.
+        -->
+        <fieldset
+          v-if="senders.length > 1"
+          class="flex flex-col gap-1"
+          data-test="finance-deposit-senders"
+        >
+          <legend class="text-xs text-muted">Кто сдаёт</legend>
+
+          <label
+            v-for="sender in senders"
+            :key="sender.userId"
+            class="flex cursor-pointer items-baseline gap-2 rounded-xl border px-3 py-2 text-sm transition-colors"
+            :class="
+              selectedSenderId === sender.userId
+                ? 'border-primary bg-field'
+                : 'border-border bg-surface hover:border-primary'
+            "
+          >
+            <input
+              v-model="selectedSenderId"
+              type="radio"
+              name="finance-deposit-from"
+              class="h-4 w-4 cursor-pointer accent-[var(--theme-primary)]"
+              :value="sender.userId"
+              :data-test="`finance-deposit-from-${sender.userId}`"
+            />
+            <span class="text-text">{{ sender.displayName }}</span>
+            <span v-if="sender.isMe" class="text-xs text-muted">это ты</span>
+            <span v-else class="text-xs text-muted">человек без аккаунта</span>
+          </label>
+        </fieldset>
+
         <fieldset class="flex flex-col gap-1" data-test="finance-deposit-people">
           <legend class="text-xs text-muted">Кому переводишь</legend>
 
           <label
-            v-for="recipient in recipients"
+            v-for="recipient in availableRecipients"
             :key="recipient.userId"
             class="flex cursor-pointer items-baseline gap-2 rounded-xl border px-3 py-2 text-sm transition-colors"
             :class="
@@ -220,10 +310,10 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
           <button
             type="submit"
             class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
-            :disabled="isSaving || selected === null"
+            :disabled="isSaving || selected === null || selectedSender === null"
             data-test="finance-deposit-save"
           >
-            {{ isSaving ? 'Записываем…' : `Я перевёл ${formatRub(amountRub)}` }}
+            {{ isSaving ? 'Записываем…' : `Я передал ${formatRub(amountRub)}` }}
           </button>
 
           <button
