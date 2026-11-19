@@ -1310,7 +1310,7 @@ export class TripsService {
     id: number,
     dto: UpdateTripDto,
   ): Promise<TripResponseDto> {
-    const { response, gearChanged, depositChanged } =
+    const { response, gearChanged, depositChanged, datesChanged } =
       await this.dataSource.transaction(async (manager) => {
         const trip = await this.findOwnedTrip(manager, userId, id);
 
@@ -1547,6 +1547,7 @@ export class TripsService {
           response: TripResponseDto.from(saved, savedVariants),
           gearChanged: conflictText !== null,
           depositChanged: previousDepositRub !== saved.depositRub,
+          datesChanged,
         };
       },
     );
@@ -1559,6 +1560,14 @@ export class TripsService {
     // Правили в «Правке похода» — вкладка должна узнать об этом по SSE,
     // а не ждать перезагрузки.
     if (depositChanged) this.events.emitFinance(String(id), userId);
+
+    /**
+     * Смена дат двигает плашки пустой таблицы «Ночёвок» (19.11.2026):
+     * записанные ночи хранят свои даты и правку переживают, а у похода
+     * без таблицы ночи считаются от `starts_at`/`ends_at`. Раньше вкладка
+     * об этом не узнавала до перезагрузки.
+     */
+    if (datesChanged) this.events.emitRoute(String(id), userId);
 
     return response;
   }

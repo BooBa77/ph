@@ -88,6 +88,20 @@ describe('TripEventsService', () => {
     subscription.unsubscribe();
   });
 
+  it('событие «Ночёвок» несёт свой scope (19.11.2026)', () => {
+    const service = new TripEventsService();
+    const received: TripEvent[] = [];
+
+    const subscription = service.stream('679').subscribe((event) => received.push(event));
+    service.emitRoute('679', 'user-7');
+
+    expect(received).toEqual([
+      { scope: 'route', actorId: 'user-7', at: expect.any(String) },
+    ]);
+
+    subscription.unsubscribe();
+  });
+
   it('событие без подписчиков не падает и канал не создаёт', () => {
     const service = new TripEventsService();
 

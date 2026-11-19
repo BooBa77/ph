@@ -31,8 +31,8 @@ import { useAuthStore } from '@/stores/auth'
  * хуже, чем лишний запрос раз в несколько секунд.
  */
 
-/** Что изменилось на вкладке: снаряжение, чек-листы, деньги, питание или дневник. */
-export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals' | 'diary'
+/** Что изменилось на вкладке: снаряжение, чек-листы, деньги, питание, дневник или ночёвки. */
+export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals' | 'diary' | 'route'
 
 /** Адрес потока: у «Снаряжения», «Бухгалтерии», «Питания» и «Дневника» свои контроллеры. */
 export type TripEventChannel = 'gear' | 'finance' | 'meals' | 'diary'
@@ -92,7 +92,8 @@ function isTripEvent(value: unknown): value is TripEvent {
     (event.scope === 'gear' ||
       event.scope === 'checklist' ||
       event.scope === 'finance' ||
-      event.scope === 'meals') &&
+      event.scope === 'meals' ||
+      event.scope === 'route') &&
     typeof event.actorId === 'string' &&
     typeof event.at === 'string'
   )

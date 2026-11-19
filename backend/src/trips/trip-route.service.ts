@@ -151,6 +151,11 @@ export class TripRouteService {
     // в «Снаряжении» — сообщаем потоку (13.11.2026).
     this.events.emitGear(String(trip.id), userId);
 
+    // Сама таблица «Ночёвок» — отдельным сигналом (19.11.2026): `gear`
+    // перечитывает вещи, а черновики ночей от чужого события намеренно
+    // не трогаются, поэтому правку соседа по вкладке видно только так.
+    this.events.emitRoute(String(trip.id), userId);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -316,6 +321,10 @@ export class TripRouteService {
       );
     }
 
+    // Кто где живёт, видно и в «Ночёвках», и в «в палатку» «Снаряжения»
+    // (19.11.2026): событие зовёт соседнюю вкладку перечитать данные.
+    this.events.emitRoute(String(trip.id), userId);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -359,6 +368,8 @@ export class TripRouteService {
       );
     }
 
+    this.events.emitRoute(String(trip.id), userId);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -396,6 +407,8 @@ export class TripRouteService {
 
       await manager.delete(TripRouteLodger, { id: lodger.id });
     }
+
+    this.events.emitRoute(String(trip.id), userId);
 
     return this.buildPlan(manager, trip, userId);
   }

@@ -5,7 +5,7 @@ import { subscribeTripEvents } from '@/api/events'
 import type { TripEvent } from '@/api/events'
 import { listTripGear } from '@/api/gear'
 import { ApiError } from '@/api/errors'
-import { fetchTripRoute, saveRouteNights } from '@/api/trips'
+import { fetchTripRoute, getTrip, saveRouteNights } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
 import type { TripGearItem } from '@/types/gear'
 import type {
@@ -115,6 +115,20 @@ const saveError = ref<string | null>(null)
 
 const rows = ref<NightDraft[]>([])
 
+/**
+ * Свежие даты похода, пришедшие живым обновлением (19.11.2026).
+ *
+ * `trip` — свойство родителя: его даты меняются, только когда «Правку
+ * похода» сохранил этот же человек и экран перезаехал. Сосед по походу
+ * двигает даты у себя — сигнал `route` приносит только «перечитай»,
+ * и без собственного `GET /trips/:id` пустая таблица считала бы ночи
+ * по старым числам. `null` — живых дат не было, берём свойства.
+ */
+const liveTrip = ref<Trip | null>(null)
+
+/** Даты, от которых считаются ночи пустой таблицы. */
+const planTrip = computed(() => liveTrip.value ?? props.trip)
+
 /** Правит ли смотрящий таблицу — решает сервер, фронт не считает права сам. */
 const canEdit = computed(() => plan.value?.canEdit === true)
 
@@ -160,8 +174,9 @@ const planned = computed<{
   nights: { position: number; date: string }[]
   note: string | null
 }>(() => {
-  const start = props.trip.startsAt ? new Date(props.trip.startsAt) : null
-  const end = props.trip.endsAt ? new Date(props.trip.endsAt) : null
+  const trip = planTrip.value
+  const start = trip.startsAt ? new Date(trip.startsAt) : null
+  const end = trip.endsAt ? new Date(trip.endsAt) : null
   const total = start !== null && end !== null ? dayNumber(end) - dayNumber(start) : 0
 
   if (start !== null && total > 0) {
@@ -290,6 +305,7 @@ async function load(): Promise<void> {
     if (current !== requestId) return
 
     plan.value = route
+    liveTrip.value = null
     gear.value = list?.items ?? []
     gearError.value = list === null ? 'Снаряжение похода не загрузилось' : null
     rows.value = draftsOf(route).rows
@@ -318,25 +334,54 @@ watch(planned, () => {
 // ───────────────────────── живые обновления (13.11.2026) ─────────────────────────
 
 /**
- * «Ночёвки» и «Снаряжение» — одни и те же вещи в двух вкладках: палатку,
- * котёл и спальник добавляют здесь, а видны они и в «Таборе», и в «Берём».
- * Поэтому вкладка слушает поток `gear` и тихо перечитывает свои данные.
+ * Поток `gear` — общие вещи: палатку, котёл и спальник добавляют здесь,
+ * а видны они и в «Таборе», и в «Берём». Поэтому вкладка тихо перечитывает
+ * свои данные на `gear`.
  *
- * Своё действие тоже перечитываем: `actorId` не различает вкладки одного
- * аккаунта, а лишний `GET` дешевле расходящихся пилюль. **Черновики таблицы
- * `rows` тихое обновление не трогает** — иначе чужое событие стирало бы
- * недописанное место ночёвки; ночи меняются только своим `PUT`, и ответ
- * на него разбирается отдельно (`onRouteUpdated`).
+ * **С 19.11.2026 поток несёт и `route`** — правку таблицы ночей, кто где
+ * живёт и даты похода. Раньше чужое изменение ночей приходило только
+ * `gear`-событием: данные перечитывались, но `rows` намеренно не трогались,
+ * и сосед видел старое до перезахода. Теперь `route` заменяет строки,
+ * когда на экране нет несохранённого (`refreshAfterRoute`), а смена дат
+ * обновляет ещё и даты пустой таблицы через `GET /trips/:id`.
+ *
+ * Своё действие (`gear`) тоже перечитываем: `actorId` не различает вкладки
+ * одного аккаунта, а лишний `GET` дешевле расходящихся пилюль. Для `route`
+ * свои события наоборот пропускаются: ответ на `PUT` уже применён.
  */
 const LIVE_REFRESH_DELAY = 300
 
 let stopLiveEvents: (() => void) | null = null
 let gearRefreshTimer: ReturnType<typeof setTimeout> | null = null
+let routeRefreshTimer: ReturnType<typeof setTimeout> | null = null
+
+/**
+ * Живая правка ночей пришла, пока на экране была наша несохранённая:
+ * тихое обновление откладывается, а не выбрасывается (19.11.2026).
+ */
+let routeRefreshQueued = false
 
 /** Ключ перезагрузки для секции «Готовка»: она грузит снаряжение сама. */
 const gearReloadKey = ref(0)
 
 function onLiveEvent(event: TripEvent): void {
+  if (event.scope === 'route') {
+    /**
+     * Своё действие не перечитываем: `PUT` уже вернул вкладку. `actorId`
+     * не различает вкладки одного человека, поэтому второе устройство
+     * того же аккаунта дождётся следующего события — лишний `GET` дешевле
+     * расходящейся таблицы, но здесь важнее не мигать на своём же вводе.
+     */
+    if (event.actorId === useAuthStore().user?.id) return
+    if (routeRefreshTimer !== null) return
+
+    routeRefreshTimer = setTimeout(() => {
+      routeRefreshTimer = null
+      void refreshAfterRoute()
+    }, LIVE_REFRESH_DELAY)
+    return
+  }
+
   if (event.scope !== 'gear') return
   if (gearRefreshTimer !== null) return
 
@@ -375,6 +420,46 @@ async function refreshAfterGear(): Promise<void> {
 }
 
 /**
+ * Чужое изменение «Ночёвок»: перечитать таблицу, не стирая недописанное.
+ *
+ * Пока текст «Места» ждёт паузы или уже летит `PUT`, тихое обновление
+ * откладывается, а не выбрасывается: ответ на нашу правку вернётся позже
+ * и уже содержит её, а подмена строк посреди набора потеряла бы слово.
+ * `rows` заменяются только в спокойный момент.
+ */
+async function refreshAfterRoute(): Promise<void> {
+  if (isLoading.value) return
+
+  if (isFlushing || saveTimer !== null) {
+    routeRefreshQueued = true
+    return
+  }
+
+  const tripId = props.trip.id
+
+  try {
+    const route = await fetchTripRoute(tripId)
+
+    if (tripId !== props.trip.id) return
+
+    /**
+     * Даты похода нужны, только когда таблица пуста: записанная ночь
+     * хранит свою дату и правку дат переживает (`route.md` §2).
+     */
+    if (route.nights.length === 0) {
+      liveTrip.value = await getTrip(tripId)
+      if (tripId !== props.trip.id) return
+    }
+
+    plan.value = route
+    rows.value = draftsOf(route).rows
+    saveError.value = null
+  } catch {
+    // Тихо: живое обновление — удобство, а не данные.
+  }
+}
+
+/**
  * Поток живёт, пока вкладка на экране. Переключили поход — старый закрываем:
  * события чужого похода к этому экрану не относятся (как в `TripGear.vue`).
  */
@@ -393,6 +478,9 @@ onBeforeUnmount(() => {
 
   if (gearRefreshTimer !== null) clearTimeout(gearRefreshTimer)
   gearRefreshTimer = null
+
+  if (routeRefreshTimer !== null) clearTimeout(routeRefreshTimer)
+  routeRefreshTimer = null
 })
 
 // ───────────────────────────── сохранение на лету ─────────────────────────────
@@ -476,6 +564,12 @@ async function flush(): Promise<void> {
   } finally {
     isFlushing = false
     isSaving.value = false
+
+    // Пока летел наш `PUT`, пришло чужое изменение — теперь можно показать.
+    if (routeRefreshQueued) {
+      routeRefreshQueued = false
+      void refreshAfterRoute()
+    }
   }
 }
 

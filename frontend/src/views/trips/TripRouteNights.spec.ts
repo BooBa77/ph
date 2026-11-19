@@ -31,6 +31,7 @@ import TripRouteNights from '@/views/trips/TripRouteNights.vue'
 const mocks = vi.hoisted(() => ({
   fetchTripRoute: vi.fn(),
   saveRouteNights: vi.fn(),
+  getTrip: vi.fn(),
   addRouteSleeping: vi.fn(),
   removeRouteSleeping: vi.fn(),
   lodgeRoute: vi.fn(),
@@ -53,6 +54,7 @@ vi.mock('@/api/events', () => ({
 vi.mock('@/api/trips', () => ({
   fetchTripRoute: mocks.fetchTripRoute,
   saveRouteNights: mocks.saveRouteNights,
+  getTrip: mocks.getTrip,
   addRouteSleeping: mocks.addRouteSleeping,
   removeRouteSleeping: mocks.removeRouteSleeping,
   lodgeRoute: mocks.lodgeRoute,
@@ -302,6 +304,77 @@ describe('плашки ночёвок', () => {
 
     expect(mocks.fetchTripRoute).toHaveBeenCalledTimes(1)
     expect(mocks.listTripGear).toHaveBeenCalledTimes(1)
+  })
+
+  /** Обработчик потока, который вкладка передала в `subscribeTripEvents`. */
+  function liveHandler(): (event: {
+    scope: string
+    actorId: string
+    at: string
+  }) => void {
+    return mocks.subscribeTripEvents.mock.calls[0]![1] as (event: {
+      scope: string
+      actorId: string
+      at: string
+    }) => void
+  }
+
+  it('чужая правка ночей приходит событием `route` и заменяет таблицу (19.11.2026)', async () => {
+    const wrapper = await mounted(trip(TWO_NIGHTS))
+    mocks.fetchTripRoute.mockClear()
+
+    mocks.fetchTripRoute.mockResolvedValue(
+      emptyRoute({
+        nights: [
+          routeNight({
+            position: 1,
+            date: '2026-10-29',
+            place: 'Ольхон',
+            kind: 'tent',
+          }),
+        ],
+      }),
+    )
+
+    liveHandler()({ scope: 'route', actorId: ANNA, at: '2026-11-19T10:00:00Z' })
+    await settle(350)
+
+    expect(mocks.fetchTripRoute).toHaveBeenCalledTimes(1)
+
+    const place = wrapper.get('[data-test="route-night-place"]')
+    expect((place.element as HTMLInputElement).value).toBe('Ольхон')
+  })
+
+  it('своё событие `route` не перечитывается: ответ на `PUT` уже применён', async () => {
+    await mounted(trip(TWO_NIGHTS))
+    mocks.fetchTripRoute.mockClear()
+
+    liveHandler()({ scope: 'route', actorId: ME, at: '2026-11-19T10:00:01Z' })
+    await settle(350)
+
+    expect(mocks.fetchTripRoute).not.toHaveBeenCalled()
+  })
+
+  it('чужая смена дат пересчитывает ночи пустой таблицы', async () => {
+    const wrapper = await mounted(trip(TWO_NIGHTS))
+
+    // Сервер ночей не прислал — значит смотрим даты похода, а они новые.
+    mocks.getTrip.mockResolvedValue(
+      trip({
+        startsAt: '2026-11-05T00:00:00.000Z',
+        endsAt: '2026-11-08T00:00:00.000Z',
+      }),
+    )
+
+    liveHandler()({ scope: 'route', actorId: ANNA, at: '2026-11-19T10:00:02Z' })
+    await settle(350)
+
+    expect(mocks.getTrip).toHaveBeenCalledWith('1')
+    expect(titles(wrapper)).toEqual([
+      'Ночь 1 · 5 ноября',
+      'Ночь 2 · 6 ноября',
+      'Ночь 3 · 7 ноября',
+    ])
   })
 
   it('варианты идут в порядке заказчика, «в пути» — в конце', async () => {
