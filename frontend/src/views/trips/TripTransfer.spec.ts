@@ -3,6 +3,7 @@ import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { User } from '@/api/types'
+import { clearTransferDatesAlert, transferDatesAlert } from '@/composables/useTransferDatesAlert'
 import { useAuthStore } from '@/stores/auth'
 import type { Trip, TripTransfer, Vehicle } from '@/types/trips'
 import TripTransferView from '@/views/trips/TripTransfer.vue'
@@ -287,6 +288,9 @@ describe('TripTransfer', () => {
     setActivePinia(createPinia())
     useAuthStore().setAuth(makeUser(), 'token')
     vi.clearAllMocks()
+    // Тревога «даты сдвинулись» живёт в localStorage: без сброса она
+    // переехала бы из теста в тест.
+    clearTransferDatesAlert('1')
   })
 
   it('рисует две области и карточки в них', async () => {
@@ -375,6 +379,86 @@ describe('TripTransfer', () => {
     await flushPromises()
 
     expect(mocks.fetchTripTransfer).toHaveBeenCalledTimes(1)
+  })
+
+  it('смена дат поднимает тревогу: рейсы алые, «Проверил» её снимает', async () => {
+    const dated: Trip = {
+      ...TRIP,
+      startsAt: '2026-12-01T00:00:00.000Z',
+      endsAt: '2026-12-05T00:00:00.000Z',
+    }
+
+    const wrapper = await mountTransfer(makePlan(), [], dated)
+    expect(wrapper.find('[data-test="transfer-dates-alert"]').exists()).toBe(false)
+    expect(legCard(wrapper, '1')!.classes()).toContain('bg-surface')
+
+    // Правку дат увидели при открытой вкладке (SSE или своя правка):
+    // рейсы сервер сдвинул, но билеты покупались на прежние числа.
+    await wrapper.setProps({
+      trip: {
+        ...dated,
+        startsAt: '2026-12-03T00:00:00.000Z',
+        endsAt: '2026-12-07T00:00:00.000Z',
+      },
+    })
+    await flushPromises()
+
+    expect(transferDatesAlert('1')).toBe(true)
+    expect(wrapper.find('[data-test="transfer-dates-alert"]').text()).toContain(
+      'трансферы уже запланированы',
+    )
+
+    // «Туда» и «Обратно» — алым сразу: даже сдвинутые вместе с походом
+    // рейсы остаются купленными на старые числа.
+    expect(legCard(wrapper, '1')!.classes()).toContain('border-red-500')
+    expect(legCard(wrapper, '3')!.classes()).toContain('border-red-500')
+    expect(
+      legCard(wrapper, '1')!.find('[data-test="transfer-leg-dates-warning"]').text(),
+    ).toContain('проверь рейс')
+
+    await wrapper.find('[data-test="transfer-dates-alert-ack"]').trigger('click')
+
+    expect(transferDatesAlert('1')).toBe(false)
+    expect(wrapper.find('[data-test="transfer-dates-alert"]').exists()).toBe(false)
+    expect(legCard(wrapper, '1')!.classes()).not.toContain('border-red-500')
+  })
+
+  it('заброска вне новых дат подкрашена, рейсы в датах — нет', async () => {
+    const plan = makePlan()
+    plan.legs = [
+      // Заброска после нового конца похода: в даты не вписывается.
+      {
+        ...plan.legs[0]!,
+        id: 'a',
+        isStage: true,
+        mode: 'horses',
+        departsAt: new Date(2026, 11, 10, 9, 0).toISOString(),
+      },
+      // Обычный рейс внутри дат и без тревоги.
+      {
+        ...plan.legs[1]!,
+        id: 'b',
+        departsAt: new Date(2026, 11, 2, 9, 0).toISOString(),
+      },
+    ]
+
+    const dated: Trip = {
+      ...TRIP,
+      startsAt: new Date(2026, 11, 1, 8, 0).toISOString(),
+      endsAt: new Date(2026, 11, 5, 18, 0).toISOString(),
+    }
+
+    const wrapper = await mountTransfer(plan, [], dated)
+
+    expect(
+      legCard(wrapper, 'a')!.find('[data-test="transfer-leg-dates-warning"]').text(),
+    ).toContain('Вне новых дат')
+    expect(legCard(wrapper, 'a')!.classes()).toContain('border-red-500')
+
+    expect(
+      legCard(wrapper, 'b')!.find('[data-test="transfer-leg-dates-warning"]').exists(),
+    ).toBe(false)
+    expect(legCard(wrapper, 'b')!.classes()).not.toContain('border-red-500')
   })
 
   it('«едем все вместе» — только когда едут все участники', async () => {

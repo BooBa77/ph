@@ -14,6 +14,11 @@ import {
 } from '@/api/trips'
 import { createVehicle, fetchVehicles } from '@/api/vehicles'
 import DateTimePickerModal from '@/components/ui/DateTimePickerModal.vue'
+import {
+  armTransferDatesAlert,
+  clearTransferDatesAlert,
+  transferDatesAlert,
+} from '@/composables/useTransferDatesAlert'
 import { useAuthStore } from '@/stores/auth'
 import {
   TRANSFER_COMPENSATIONS,
@@ -214,9 +219,58 @@ const tripDatesKey = computed(
 )
 
 watch(tripDatesKey, () => {
+  /**
+   * Даты поменялись при открытой вкладке (SSE или своя правка в другой
+   * вкладке браузера) — тревога та же, что и от экрана правки: рейсы сервер
+   * сдвинул, а билеты покупались на прежние числа (19.11.2026).
+   */
+  armTransferDatesAlert(props.trip.id)
+
   if (legDraft.value !== null || isSaving.value) return
   void load()
 })
+
+// ───────────────── даты похода и тревога «рейсы проверить» ─────────────────
+
+/**
+ * Даты похода сдвигали, а рейсы ещё не перепроверяли (19.11.2026).
+ *
+ * Заказчик: «в Трансфере подкрасить алым трансферы: изменение старта,
+ * возвращения — сразу да». Рейсы «Туда» и «Обратно» сервер честно сдвигает
+ * вместе с началом похода, поэтому формально они снова в датах — но билет
+ * и договорённость о заброске покупались на прежние числа. Такое
+ * расхождение видно только по памяти устройства: `useTransferDatesAlert`.
+ */
+const datesAlert = computed(
+  () => props.trip.id !== '' && transferDatesAlert(props.trip.id),
+)
+
+/** День календаря: время в сутках не важно, как у `assertWithinTrip`. */
+function dayOf(iso: string): number {
+  const at = new Date(iso)
+  return new Date(at.getFullYear(), at.getMonth(), at.getDate()).getTime()
+}
+
+/**
+ * Эту карточку надо перепроверить после смены дат.
+ *
+ * - **Рейсы «Туда» и «Обратно»** — все, пока тревога поднята: даже если
+ *   старт стал раньше, купленный поезд от этого не переедет.
+ * - **Заброска** — только та, что не вписывается в новый диапазон похода:
+ *   это видно по данным, и тревога для неё не нужна.
+ */
+function needsDatesCheck(leg: TripTransferLeg): boolean {
+  if (!leg.isStage) return datesAlert.value
+  if (!props.trip.startsAt || !props.trip.endsAt) return false
+
+  const day = dayOf(leg.departsAt)
+  return day < dayOf(props.trip.startsAt) || day > dayOf(props.trip.endsAt)
+}
+
+/** «Проверил»: рейсы посмотрели, тревогу снимаем до следующих правок дат. */
+function dismissDatesAlert() {
+  clearTransferDatesAlert(props.trip.id)
+}
 
 /**
  * Одна обёртка на все действия: сервер отвечает вкладкой целиком.
@@ -945,6 +999,32 @@ const driverOptions = computed(() => {
       </p>
 
       <!--
+        Даты похода сдвинули, а рейсы уже были (19.11.2026): рейсы сдвинуты
+        следом, но билеты, места и договорённости о заброске покупались на
+        прежние числа. Показываем, с чего начать, и даём снять тревогу руками.
+      -->
+      <div
+        v-if="datesAlert && legs.length > 0"
+        class="flex flex-col gap-2 rounded-2xl border border-red-500 bg-red-50 p-3 text-sm text-red-900"
+        data-test="transfer-dates-alert"
+      >
+        <p>
+          {{ canEditTab
+            ? 'Ты изменил даты похода, а трансферы уже запланированы — проверь их: билеты, места и договорённости о заброске могли не пережить сдвиг.'
+            : 'Даты похода изменились, а трансферы уже запланированы — проверь свои билеты и договорённости.' }}
+        </p>
+
+        <button
+          type="button"
+          class="cursor-pointer self-start rounded-xl border border-red-600 px-3 py-1 text-sm text-red-600 transition-colors hover:bg-red-600 hover:text-white"
+          data-test="transfer-dates-alert-ack"
+          @click="dismissDatesAlert"
+        >
+          Проверил
+        </button>
+      </div>
+
+      <!--
         Три секции: рейсы к началу маршрута, заброска (бездорожье), рейсы
         домой. Этап заброски — такой же рейс, просто в своей секции.
       -->
@@ -967,7 +1047,10 @@ const driverOptions = computed(() => {
         <article
           v-for="leg in section.legs"
           :key="leg.id"
-          class="flex flex-col gap-2 rounded-xl border border-border bg-surface p-3"
+          class="flex flex-col gap-2 rounded-xl border p-3"
+          :class="
+            needsDatesCheck(leg) ? 'border-red-500 bg-red-50' : 'border-border bg-surface'
+          "
           data-test="transfer-leg"
         >
             <header class="flex items-start gap-2">
@@ -982,6 +1065,16 @@ const driverOptions = computed(() => {
 
                 <span class="text-xs text-muted" data-test="transfer-leg-summary">
                   {{ summaryText(leg) }}
+                </span>
+
+                <span
+                  v-if="needsDatesCheck(leg)"
+                  class="text-xs font-medium text-red-600"
+                  data-test="transfer-leg-dates-warning"
+                >
+                  {{ leg.isStage
+                    ? 'Вне новых дат похода — поправь время'
+                    : 'Даты похода изменились — проверь рейс' }}
                 </span>
               </div>
 

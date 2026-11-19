@@ -116,9 +116,9 @@ function makeRouter(): Router {
   })
 }
 
-async function mountTrip() {
+async function mountTrip(path = '/trips/1') {
   const router = makeRouter()
-  await router.push('/trips/1')
+  await router.push(path)
   await router.isReady()
 
   useAuthStore().setAuth(makeUser(), 'token')
@@ -199,6 +199,19 @@ describe('TripView и мобильное меню', () => {
     expect(items.find((item) => item.key === 'firstAid')?.available).toBe(true)
     expect(items.find((item) => item.key === 'finance')?.available).toBe(true)
     expect(items.find((item) => item.key === 'sport')?.available).toBe(false)
+  })
+
+  /**
+   * Правка дат возвращает организатора в «Трансфер» через `?tab=transfer`
+   * (19.11.2026): рейсы уже сдвинуты, но билеты надо перепроверить, и тревога
+   * живёт именно на этой вкладке.
+   */
+  it('адрес ?tab=transfer открывает «Трансфер», чужой код — «Гостевую»', async () => {
+    const opened = await mountTrip('/trips/1?tab=transfer')
+    expect(opened.wrapper.find('[data-test="transfer-stub"]').exists()).toBe(true)
+
+    const ignored = await mountTrip('/trips/1?tab=nonsense')
+    expect(ignored.wrapper.find('[data-test="guest-stub"]').exists()).toBe(true)
   })
 
   it('вкладка «Бухгалтерия» открывается и показывает свой экран', async () => {

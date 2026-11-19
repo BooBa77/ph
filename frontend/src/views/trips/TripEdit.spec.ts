@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import type { User } from '@/api/types'
+import DateTimePickerModal from '@/components/ui/DateTimePickerModal.vue'
+import { clearTransferDatesAlert, transferDatesAlert } from '@/composables/useTransferDatesAlert'
 import { useAuthStore } from '@/stores/auth'
 import type { Trip } from '@/types/trips'
 import TripEdit from '@/views/trips/TripEdit.vue'
@@ -21,12 +23,14 @@ const mocks = vi.hoisted(() => ({
   getTrip: vi.fn(),
   updateTrip: vi.fn(),
   listTripTypes: vi.fn(),
+  fetchTripTransfer: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
   getTrip: mocks.getTrip,
   updateTrip: mocks.updateTrip,
   listTripTypes: mocks.listTripTypes,
+  fetchTripTransfer: mocks.fetchTripTransfer,
 }))
 
 const ORGANIZER = 'u-org'
@@ -86,6 +90,7 @@ async function open(userId = ORGANIZER, trip: Trip = TRIP) {
   mocks.getTrip.mockResolvedValue(trip)
   mocks.updateTrip.mockResolvedValue(trip)
   mocks.listTripTypes.mockResolvedValue({ types: TOURISM, defaultTypeId: 19 })
+  mocks.fetchTripTransfer.mockResolvedValue({ canEdit: true, travelers: [], legs: [] })
 
   const router = createRouter({
     history: createMemoryHistory(),
@@ -106,9 +111,22 @@ async function open(userId = ORGANIZER, trip: Trip = TRIP) {
 describe('TripEdit', () => {
   enableAutoUnmount(afterEach)
 
+  /** Поставить дату и время: кнопка и модалка с «ОК», как в `CreateTrip`. */
+  async function setMoment(
+    wrapper: Awaited<ReturnType<typeof open>>['wrapper'],
+    field: 'starts-at' | 'ends-at',
+    value: string,
+  ) {
+    await wrapper.find(`[data-test="${field}"]`).trigger('click')
+    await wrapper.findComponent(DateTimePickerModal).vm.$emit('select', value)
+    await flushPromises()
+  }
+
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    // Тревога «даты сдвинулись» — в localStorage: между тестами её снимаем.
+    clearTransferDatesAlert('7')
   })
 
   it('форма заполнена текущими значениями похода', async () => {
@@ -212,5 +230,58 @@ describe('TripEdit', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="error"]').exists()).toBe(true)
+  })
+
+  // ─────────── смена дат и уже запланированные трансферы (19.11.2026) ───────────
+
+  const withNewDates: Trip = {
+    ...TRIP,
+    startsAt: '2027-05-07T01:00:00.000Z',
+    endsAt: '2027-05-11T10:00:00.000Z',
+  }
+
+  it('даты сдвинули, рейсы есть — ведём в «Трансфер» с тревогой', async () => {
+    const { wrapper, router } = await open()
+
+    mocks.updateTrip.mockResolvedValue(withNewDates)
+    mocks.fetchTripTransfer.mockResolvedValue({
+      canEdit: true,
+      travelers: [],
+      // Достаточно того, что рейс вообще есть: план читается ради ответа
+      // «предупреждать или нет», содержимое вкладке принесёт свой запрос.
+      legs: [{ id: '1' }],
+    })
+
+    await setMoment(wrapper, 'starts-at', '2027-05-07T09:00')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(transferDatesAlert('7')).toBe(true)
+    expect(router.currentRoute.value.name).toBe('trip')
+    expect(router.currentRoute.value.query.tab).toBe('transfer')
+  })
+
+  it('даты сдвинули, рейсов нет — обычное возвращение в поход', async () => {
+    const { wrapper, router } = await open()
+
+    mocks.updateTrip.mockResolvedValue(withNewDates)
+
+    await setMoment(wrapper, 'starts-at', '2027-05-07T09:00')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(transferDatesAlert('7')).toBe(false)
+    expect(router.currentRoute.value.name).toBe('trip')
+    expect(router.currentRoute.value.query.tab).toBeUndefined()
+  })
+
+  it('правка без дат трансферы не спрашивает', async () => {
+    const { wrapper } = await open()
+
+    await wrapper.find('[data-test="announcement"]').setValue('Перенесли на июнь')
+    await wrapper.find('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.fetchTripTransfer).not.toHaveBeenCalled()
   })
 })

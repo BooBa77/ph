@@ -3,10 +3,11 @@ import { computed, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
-import { getTrip, updateTrip } from '@/api/trips'
+import { fetchTripTransfer, getTrip, updateTrip } from '@/api/trips'
 import TripForm from '@/components/trips/TripForm.vue'
+import { armTransferDatesAlert } from '@/composables/useTransferDatesAlert'
 import { useAuthStore } from '@/stores/auth'
-import type { CreateTripRequest, Trip } from '@/types/trips'
+import type { CreateTripRequest, Trip, UpdateTripRequest } from '@/types/trips'
 import { buildTripPatch } from '@/utils/tripDiff'
 
 /**
@@ -74,7 +75,28 @@ async function submit(payload: CreateTripRequest) {
   submitError.value = null
 
   try {
-    const saved = await updateTrip(trip.value.id, buildTripPatch(trip.value, payload))
+    const patch = buildTripPatch(trip.value, payload)
+    const saved = await updateTrip(trip.value.id, patch)
+
+    /**
+     * Правка дат пересматривает весь план (19.11.2026). Заказчик: «при
+     * смещении дат стоит оценить, есть ли уже трансферы… уведомление
+     * организатору… и редирект на закладку „Трансфер“». Рейсы сервер сдвинет
+     * вместе с началом, но билеты, места и договорённости о заброске
+     * покупались на прежние числа — это нужно перепроверить глазами.
+     *
+     * Тревогу ставим, только если рейсы в самом деле есть: без них
+     * предупреждать не о чем, и человек спокойно возвращается в поход.
+     */
+    if (datesChanged(patch) && (await hasTransferLegs(saved.id))) {
+      armTransferDatesAlert(saved.id)
+      await router?.push({
+        name: 'trip',
+        params: { id: saved.id },
+        query: { tab: 'transfer' },
+      })
+      return
+    }
 
     // Возвращаемся в поход: он и есть результат правки, а отдельный экран
     // «сохранено» был бы ещё одним шагом ни за чем.
@@ -84,6 +106,27 @@ async function submit(payload: CreateTripRequest) {
     submitError.value = error instanceof ApiError ? error.message : 'Не удалось сохранить поход'
   } finally {
     isSubmitting.value = false
+  }
+}
+
+/** Даты в патче есть — значит человек их в самом деле сдвинул. */
+function datesChanged(patch: UpdateTripRequest): boolean {
+  return patch.startsAt !== undefined || patch.endsAt !== undefined
+}
+
+/**
+ * Уже запланированные рейсы: их придётся перепроверить.
+ *
+ * План читаем отдельным запросом — в ответе похода трансферов нет. Не
+ * получилось (сеть, отказ) — молчим: ложная тревога про несуществующие
+ * рейсы хуже, чем её отсутствие, а сама правка дат уже прошла.
+ */
+async function hasTransferLegs(id: string): Promise<boolean> {
+  try {
+    const plan = await fetchTripTransfer(id)
+    return plan.legs.length > 0
+  } catch {
+    return false
   }
 }
 </script>

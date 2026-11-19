@@ -141,6 +141,22 @@ const displayTabs = computed<{ code: TripTabCode; label: string; available: bool
   })),
 )
 
+/**
+ * Открыть вкладку из адреса: `?tab=transfer` (19.11.2026).
+ *
+ * Правка дат похода возвращает организатора не в «Гостевую», а в «Трансфер»:
+ * рейсы уже сдвинуты, но билеты и заброски надо перепроверить, и человек
+ * должен увидеть тревогу сразу (`useTransferDatesAlert`), а не искать вкладку
+ * руками. Чужие и неготовые коды игнорируем: адрес — просьба, а не приказ.
+ */
+function applyRequestedTab(): void {
+  const requested = route.query.tab
+  if (typeof requested !== 'string') return
+
+  const tab = displayTabs.value.find((item) => item.code === requested)
+  if (tab && tab.available) activeTab.value = tab.code
+}
+
 /** Править «Участников» — значит назначать роли: разбирает бэкенд по ролям. */
 const canManageRoles = computed(
   () =>
@@ -362,6 +378,10 @@ async function load(id: string) {
       { code: 'members', canEdit: false },
     ]
   }
+
+  // Когда вкладку просил адрес (`?tab=transfer` после правки дат), открываем
+  // именно её — но только теперь, когда список доступного известен.
+  applyRequestedTab()
 
   // Организатор — после похода и необязательной частью: без него страница
   // показывается, а «кто ведёт» просто не появляется.
