@@ -143,6 +143,31 @@ export async function pushExpenseOutbox(tripId: string): Promise<{
   view: TripFinance | null
   pending: ExpenseOutboxEntry[]
 } | null> {
+  // Отправку запускают два места сразу: `App.vue` по `online` и сама вкладка
+  // по возврату связи. Без общей задачи обе читали бы один снимок очереди
+  // и слали бы один и тот же чек дважды — идемпотентность это переживёт,
+  // но лишний запрос в поле никому не нужен. Живая проверка 19.11.2026
+  // поймала ровно это: два POST на один чек.
+  const running = inFlight.get(tripId)
+  if (running) return running
+
+  const task = pushExpenseOutboxOnce(tripId).finally(() => {
+    inFlight.delete(tripId)
+  })
+  inFlight.set(tripId, task)
+  return task
+}
+
+/** Общая задача отправки одного похода: одна на все вызовы. */
+const inFlight = new Map<
+  string,
+  Promise<{ view: TripFinance | null; pending: ExpenseOutboxEntry[] } | null>
+>()
+
+async function pushExpenseOutboxOnce(tripId: string): Promise<{
+  view: TripFinance | null
+  pending: ExpenseOutboxEntry[]
+} | null> {
   const snapshot = await readExpenseOutbox(tripId)
   const sendable = snapshot.filter((entry) => entry.error === undefined)
   if (sendable.length === 0) return null

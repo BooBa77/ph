@@ -180,6 +180,24 @@ describe('очередь офлайн-чеков', () => {
     expect(await readExpenseOutbox('7')).toHaveLength(1)
   })
 
+  it('параллельные отправки не дублируют запрос', async () => {
+    await queueExpense('7', cheque())
+    // Медленный ответ: вкладка и приложение успевают позвать отправку дважды.
+    mocks.syncTripExpenses.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+      return { ...view(), results: [{ clientId: 'c-1', status: 'accepted' }] }
+    })
+
+    const [first, second] = await Promise.all([
+      pushExpenseOutbox('7'),
+      pushExpenseOutbox('7'),
+    ])
+
+    expect(mocks.syncTripExpenses).toHaveBeenCalledTimes(1)
+    expect(first).toBe(second)
+    expect(await readExpenseOutbox('7')).toEqual([])
+  })
+
   it('чек можно убрать из очереди вручную', async () => {
     await queueExpense('7', cheque())
 
