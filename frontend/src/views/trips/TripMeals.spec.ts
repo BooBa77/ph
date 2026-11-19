@@ -634,20 +634,31 @@ describe('TripMeals', () => {
     expect(all().attributes('title')).toBe('Свернуть все приёмы')
   })
 
-  it('без «питаюсь отдельно» личных полей нет, общая раскладка на месте', async () => {
+  it('без «питаюсь отдельно» личные поля свёрнуты, а не спрятаны', async () => {
     currentPlan.eaters.people[0]!.eatsSeparately = false
 
     const wrapper = await mountMeals()
 
+    // Свёрнуто, а не спрятано: поля закрыты, но кнопки и свой чек-лист
+    // остаются, и человек может раскрыть их сам.
     expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="my-meal-dish-select-1-breakfast"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="my-checklist-toggle"]').exists()).toBe(false)
-    expect(wrapper.find('[data-test="my-products"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="my-checklist-toggle"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="my-meals-collapse-all-1-breakfast"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="my-products"]').exists()).toBe(true)
+
+    // «Питаюсь с общего» не запрет на личную еду: шеврон раскрывает поля.
+    await wrapper.find('[data-test="my-meal-add-toggle-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="my-meal-dish-select-1-breakfast"]').exists()).toBe(true)
+
     // Общая раскладка не зависит от личного флага.
     expect(wrapper.find('[data-test="meal-add"]').exists()).toBe(true)
   })
 
-  it('флаг «питаюсь отдельно» скрывает и раскрывает личные поля', async () => {
+  it('флаг «питаюсь отдельно» сворачивает и раскрывает личные поля', async () => {
     mocks.setMyStatus.mockImplementation(
       async (_tripId: string, _status: string, separate: boolean) => {
         currentPlan.eaters.people[0]!.eatsSeparately = separate
@@ -657,7 +668,7 @@ describe('TripMeals', () => {
     const wrapper = await mountMeals()
 
     // Свернули личные поля, потом сняли флаг и вернули его: включение
-    // показывает поля развёрнутыми, а не оставляет их свёрнутыми.
+    // разворачивает поля, а не оставляет их свёрнутыми.
     await wrapper.find('[data-test="my-meals-collapse-all-1-breakfast"]').trigger('click')
     await flushPromises()
     expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(false)
@@ -667,6 +678,9 @@ describe('TripMeals', () => {
 
     expect(mocks.setMyStatus).toHaveBeenLastCalledWith('7', 'going', false)
     expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(false)
+    // Интерфейс не исчезает: раскрыть поля можно и с общим питанием.
+    expect(wrapper.find('[data-test="my-meal-add-toggle-1-breakfast"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="my-checklist-toggle"]').exists()).toBe(true)
 
     await wrapper.find('[data-test="eats-separately"]').setValue(true)
     await flushPromises()
@@ -711,9 +725,12 @@ describe('TripMeals', () => {
     expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="my-meal-dish-select-1-breakfast"]').exists()).toBe(true)
 
-    // А общие формы — только у завхоза.
+    // А общие формы — только у завхоза и организатора: у рядового
+    // участника нет ни выбора общих блюд, ни добавления общих продуктов.
     expect(wrapper.find('[data-test="meal-add"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Блюда общие')
+    expect(wrapper.text()).not.toContain('Продукты общие')
   })
 
   it('личный продукт добавляется в приём', async () => {

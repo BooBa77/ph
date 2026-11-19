@@ -468,9 +468,12 @@ async function toggleSeparate() {
     return fetchMealPlan(props.trip.id)
   })
 
-  // Включили «питаюсь отдельно» — личные поля показываем развёрнутыми:
-  // иначе человек включил флаг и не увидел, где выбирать блюда.
-  if (me.value?.eatsSeparately === true) myEditHidden.value = {}
+  // Флаг — это «свернуть/развернуть», а не «спрятать»: ставим то же
+  // состояние, что дал бы клик по синему шеврону во всех плашках.
+  const separate = me.value?.eatsSeparately === true
+  myEditHidden.value = Object.fromEntries(
+    slotKeys.value.map((key) => [key, !separate]),
+  )
 }
 
 // ─── фасовка: пакеты и доли ───
@@ -1046,19 +1049,14 @@ function removePackage(pack: TripMealPackage): void {
  * и «приглашён» получают от сервера 400, и личный интерфейс просто
  * не появляется.
  *
- * **Флаг «питаюсь отдельно» теперь решает, видно ли личный слой**
- * (19.11.2026). Раньше считали, что флаг личным полям не нужен, — и человек,
- * который ест с общего, всё равно видел синие поля и не понимал, что из
- * этого его. Заказчик просил: переключил флаг — личные поля скрылись
- * или раскрылись. Данные при этом не трогаются: снял флаг — поля спрятались,
- * вернул — прежние блюда и продукты на месте.
+ * **Флаг «питаюсь отдельно» сворачивает и разворачивает личный слой**
+ * (19.11.2026, уточнено заказчиком). Это то же действие, что клик по синему
+ * шеврону, а **не прятание интерфейса**: кнопки сворачивания и «Список моих
+ * продуктов» остаются на месте, и человек, который ест с общего, может
+ * раскрыть свои поля и добавить себе личных продуктов. Снятый флаг просто
+ * оставляет их свёрнутыми.
  */
 const myPlan = ref<TripMealPlan | null>(null)
-
-/** Личный слой на экране: он есть и человек действительно ест отдельно. */
-const showMyPlan = computed(
-  () => myPlan.value !== null && me.value?.eatsSeparately === true,
-)
 
 const myDishDrafts = ref<Record<string, string>>({})
 const myLineDrafts = ref<
@@ -1073,11 +1071,15 @@ const myShoppingOpen = ref(false)
  *
  * Две независимые пары треугольников: свернуть свои поля не значит
  * свернуть чужие, и наоборот.
+ *
+ * Пока человек не трогал шеврон, состояние идёт за флагом «питаюсь
+ * отдельно»: ест с общего — свёрнуто, ест отдельно — раскрыто. Явный клик
+ * запоминается и флагом больше не перебивается до следующего переключения.
  */
 const myEditHidden = ref<Record<string, boolean>>({})
 
 function isMyEditHidden(key: string): boolean {
-  return myEditHidden.value[key] === true
+  return myEditHidden.value[key] ?? me.value?.eatsSeparately !== true
 }
 
 function toggleMyEdit(key: string): void {
@@ -1340,7 +1342,7 @@ function saveMyFoodWeight(event: Event): void {
  * кнопок и личная из двух), между ними зазор; лишний отступ съедал бы ширину.
  */
 const togglesPad = computed(() => {
-  const pairs = (props.canEdit ? 1 : 0) + (showMyPlan.value ? 1 : 0)
+  const pairs = (props.canEdit ? 1 : 0) + (myPlan.value ? 1 : 0)
 
   if (pairs === 0) return 'pr-2'
 
@@ -1439,7 +1441,7 @@ onMounted(() => {
 
             <!-- Личный список продуктов — рядом с флагом: своя закупка -->
             <button
-              v-if="showMyPlan"
+              v-if="myPlan"
               type="button"
               class="ml-auto cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
               data-test="my-checklist-toggle"
@@ -1547,7 +1549,7 @@ onMounted(() => {
                 с кнопкой, и развернуть приём было бы нечем.
               -->
               <div
-                v-if="canEdit || showMyPlan"
+                v-if="canEdit || myPlan"
                 class="absolute right-1.5 top-1.5 flex items-center gap-2"
                 data-test="meal-toggles"
               >
@@ -1703,7 +1705,7 @@ onMounted(() => {
                   </button>
                 </span>
 
-                <span v-if="showMyPlan" class="flex items-center gap-1">
+                <span v-if="myPlan" class="flex items-center gap-1">
                   <button
                     type="button"
                     class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-blue-300 text-blue-600 transition-colors hover:border-blue-500 hover:text-blue-700"
@@ -1845,7 +1847,7 @@ onMounted(() => {
                   </p>
 
                   <p
-                    v-if="showMyPlan && myMealWeight(day.index, kind) > 0"
+                    v-if="myMealWeight(day.index, kind) > 0"
                     class="text-xs text-blue-600"
                     data-test="my-meal-weight"
                   >
@@ -1880,7 +1882,7 @@ onMounted(() => {
                 <div class="flex flex-col gap-2 md:col-start-2">
                   <!-- 1. Мои блюда -->
                   <div
-                    v-if="showMyPlan && !isMyEditHidden(mealKey(day.index, kind))"
+                    v-if="myPlan && !isMyEditHidden(mealKey(day.index, kind))"
                     class="flex flex-col gap-1"
                     data-test="my-meal-dish-block"
                   >
@@ -1904,7 +1906,7 @@ onMounted(() => {
 
                   <!-- 2. Мои продукты -->
                   <div
-                    v-if="showMyPlan && !isMyEditHidden(mealKey(day.index, kind))"
+                    v-if="myPlan && !isMyEditHidden(mealKey(day.index, kind))"
                     class="flex flex-col gap-1"
                   >
                     <span class="text-xs uppercase tracking-wide text-blue-700">Продукты мои</span>
@@ -2341,7 +2343,7 @@ onMounted(() => {
           вес и контрольное взвешивание.
         -->
         <div
-          v-if="showMyPlan && myProductsWeight > 0"
+          v-if="myProductsWeight > 0"
           class="flex flex-col gap-2 rounded-xl border border-blue-300 bg-blue-50 p-3"
           data-test="my-products"
         >
