@@ -10,7 +10,15 @@ import {
   getTripFinance,
   setTripDepositStatus,
 } from '@/api/finance'
+import {
+  pendingForLedger,
+  pushExpenseOutbox,
+  readExpenseOutbox,
+  removeQueuedExpense,
+  type ExpenseOutboxEntry,
+} from '@/offline/expenseOutbox'
 import { useAuthStore } from '@/stores/auth'
+import { useOfflineStore } from '@/stores/offline'
 import {
   type CompensationOption,
   type CompensationSender,
@@ -70,6 +78,7 @@ import TripFinanceExpenseModal from '@/views/trips/TripFinanceExpenseModal.vue'
 const props = defineProps<{ tripId: string }>()
 
 const auth = useAuthStore()
+const offline = useOfflineStore()
 const meId = computed(() => auth.user?.id ?? '')
 
 const finance = ref<TripFinance | null>(null)
@@ -77,6 +86,16 @@ const isLoading = ref(true)
 const error = ref<string | null>(null)
 const actionError = ref<string | null>(null)
 const busyCompensation = ref<string | null>(null)
+
+/**
+ * Чеки, созданные без связи и ещё не доехавшие (19.11.2026).
+ *
+ * Живут в очереди устройства, а не в ответе сервера: показываем их в той же
+ * ленте, но с подписью «не отправлено» и черновыми долями. Балансы сервер
+ * их не считает — до синхронизации цифры в «Твоём балансе» не окончательные.
+ */
+const pendingExpenses = ref<ExpenseOutboxEntry[]>([])
+const queuedNotice = ref<string | null>(null)
 
 const expenseModalOpen = ref(false)
 const editingExpense = ref<TripExpense | null>(null)
@@ -101,9 +120,11 @@ async function load(): Promise<void> {
 
   try {
     const view = await getTripFinance(tripId)
+    const pending = await readExpenseOutbox(tripId)
     if (version !== viewVersion || tripId !== props.tripId) return
 
     finance.value = view
+    pendingExpenses.value = pending
   } catch (problem) {
     if (version !== viewVersion) return
 
@@ -112,9 +133,52 @@ async function load(): Promise<void> {
   } finally {
     if (version === viewVersion) isLoading.value = false
   }
+
+  // Очередь могла остаться с прошлого раза: связь есть — отправляем сразу.
+  if (!isLoading.value && !offline.isOffline) void flushQueuedExpenses()
 }
 
 watch(() => props.tripId, load, { immediate: true })
+
+/**
+ * Отправить очередь офлайн-чеков, когда связь вернулась (19.11.2026).
+ *
+ * Запускает не только вкладка: очередь уходит и на старте приложения
+ * (`App.vue`), потому что человек мог закрыть приложение с неотправленным
+ * чеком. Здесь — чтобы лента и балансы обновились без перезахода.
+ * Отказ сервера по отдельному чеку очередь уже разложила по причинам;
+ * обрыв запроса просто оставляет всё как есть до следующего `online`.
+ */
+async function flushQueuedExpenses(): Promise<void> {
+  if (isLoading.value) return
+
+  try {
+    const result = await pushExpenseOutbox(props.tripId)
+    if (result === null) return
+
+    if (result.view !== null) {
+      // Ответ мутации новее любого GET, начатого до него.
+      viewVersion += 1
+      finance.value = result.view
+      actionError.value = null
+    }
+
+    pendingExpenses.value = result.pending
+    queuedNotice.value =
+      result.pending.length === 0
+        ? 'Чеки отправлены — доли и балансы пересчитаны.'
+        : null
+  } catch {
+    // Связи нет или сервер недоступен: чеки остались в очереди.
+  }
+}
+
+watch(
+  () => offline.isOffline,
+  (offlineNow) => {
+    if (!offlineNow) void flushQueuedExpenses()
+  },
+)
 
 // ───────────────────────────── живые обновления (SSE) ─────────────────────────────
 
@@ -161,6 +225,7 @@ async function refreshQuietly(): Promise<void> {
     if (version !== viewVersion || tripId !== props.tripId || isLoading.value) return
 
     finance.value = view
+    pendingExpenses.value = await readExpenseOutbox(tripId)
     error.value = null
   } catch {
     // Молча — по той же причине.
@@ -190,6 +255,16 @@ const me = computed(() => finance.value?.me ?? null)
 
 /** Менять деньги может только идущий участник — так решил сервер. */
 const canSpend = computed(() => finance.value?.me.canSpend === true)
+
+/**
+ * Добавлять чек можно и без связи (19.11.2026).
+ *
+ * Офлайн-копия гасит `canSpend`, потому что сервер не подтвердил права
+ * (`offline/readOnly.ts`). Но чек без связи — разрешённое действие:
+ * он ложится в очередь, а права перепроверит сервер при отправке.
+ * Компенсации и залог офлайн по-прежнему недоступны — это банк.
+ */
+const canAddExpense = computed(() => canSpend.value || offline.isOffline)
 
 const suggestions = computed<CompensationOption[]>(
   () => finance.value?.me.suggestions ?? [],
@@ -342,7 +417,9 @@ async function markDeposit(
  */
 interface MoneyRowView {
   key: string
-  kind: 'expense' | 'compensation' | 'deposit' | 'depositReturn'
+  kind: 'expense' | 'compensation' | 'deposit' | 'depositReturn' | 'pendingExpense'
+  /** Ключ сортировки: дата траты или момент записи. */
+  at: string
   day: string
   who: string
   amountRub: number
@@ -356,6 +433,8 @@ interface MoneyRowView {
   compensation: TripCompensation | null
   forfeit: TripDepositForfeit | null
   returned: TripDepositReturn | null
+  /** Чек из очереди устройства: править его нельзя, только убрать. */
+  pending?: ExpenseOutboxEntry | null
 }
 
 /**
@@ -372,6 +451,7 @@ function toView(row: MoneyRow): MoneyRowView {
     return {
       key: row.key,
       kind: 'expense',
+      at: row.at,
       day: formatDay(row.at),
       who: row.expense.authorName,
       amountRub: row.expense.amountRub,
@@ -394,6 +474,7 @@ function toView(row: MoneyRow): MoneyRowView {
     return {
       key: row.key,
       kind: 'deposit',
+      at: row.at,
       day: formatDay(row.at),
       who: row.forfeit.sourceName,
       amountRub: row.forfeit.amountRub,
@@ -417,6 +498,7 @@ function toView(row: MoneyRow): MoneyRowView {
     return {
       key: row.key,
       kind: 'depositReturn',
+      at: row.at,
       day: formatDay(row.at),
       who: row.returned.sourceName,
       amountRub: row.returned.amountRub,
@@ -438,6 +520,7 @@ function toView(row: MoneyRow): MoneyRowView {
   return {
     key: row.key,
     kind: 'compensation',
+    at: row.at,
     day: formatDay(row.at),
     who: `${compensation.fromName} → ${compensation.toName}`,
     amountRub: compensation.amountRub,
@@ -457,9 +540,60 @@ function toView(row: MoneyRow): MoneyRowView {
   }
 }
 
-const rows = computed<MoneyRowView[]>(() =>
-  finance.value === null ? [] : movementRows(finance.value).map(toView),
-)
+/**
+ * Офлайн-чек в ленте: те же колонки, но действий правки нет.
+ *
+ * Сумма — настоящая (её человек ввёл), а доли — черновые: их посчитает
+ * сервер по составу на момент отправки. Подпись честно это говорит,
+ * а если сервер отказал — вместо неё причина отказа.
+ */
+function pendingToView(entry: ExpenseOutboxEntry): MoneyRowView {
+  const payer = entry.payerUserId
+  const member =
+    payer === undefined
+      ? undefined
+      : finance.value?.members.find((item) => item.userId === payer)
+  const who =
+    payer === undefined || payer === meId.value
+      ? 'Я'
+      : (member?.displayName ?? 'Плательщик')
+
+  return {
+    key: `pending-${entry.clientId}`,
+    kind: 'pendingExpense',
+    at: entry.spentAt,
+    day: formatDay(entry.spentAt),
+    who,
+    amountRub: entry.amountRub,
+    description: entry.description ?? 'на продукты',
+    caption: entry.error ?? 'доли уточнятся при отправке',
+    status: null,
+    canEdit: false,
+    canConfirm: false,
+    canCancel: false,
+    expense: null,
+    compensation: null,
+    forfeit: null,
+    returned: null,
+    pending: entry,
+  }
+}
+
+const rows = computed<MoneyRowView[]>(() => {
+  if (finance.value === null) return []
+
+  const server = movementRows(finance.value).map(toView)
+  const pending = pendingForLedger(
+    finance.value.expenses,
+    pendingExpenses.value,
+  ).map(pendingToView)
+
+  // Один список, свежие сверху: офлайн-чек встаёт на своё место по дате,
+  // а не отдельным блоком над лентой.
+  return [...server, ...pending].sort((left, right) =>
+    left.at < right.at ? 1 : left.at > right.at ? -1 : 0,
+  )
+})
 
 // ───────────────────────────── действия ─────────────────────────────
 
@@ -478,10 +612,31 @@ function applyView(view: TripFinance): void {
 }
 
 function openNewExpense(): void {
-  if (!canSpend.value) return
+  if (!canAddExpense.value) return
 
   editingExpense.value = null
   expenseModalOpen.value = true
+}
+
+/**
+ * Чек сохранён без связи (19.11.2026).
+ *
+ * Модалка уже закрывается сама; здесь — сразу показать чек в ленте
+ * и сказать словами, что он уйдёт при связи. Балансы при этом не двигаем:
+ * их считает сервер, а черновик на экране выдал бы себя за правду.
+ */
+function onQueued(entries: ExpenseOutboxEntry[]): void {
+  pendingExpenses.value = entries
+  queuedNotice.value =
+    'Чек сохранён на устройстве. Уйдёт, когда появится связь.'
+  expenseModalOpen.value = false
+  editingExpense.value = null
+}
+
+/** Убрать офлайн-чек из очереди: человек передумал или сервер отказал. */
+async function removePending(entry: ExpenseOutboxEntry): Promise<void> {
+  pendingExpenses.value = await removeQueuedExpense(props.tripId, entry.clientId)
+  if (pendingExpenses.value.length === 0) queuedNotice.value = null
 }
 
 function openEdit(row: MoneyRowView): void {
@@ -631,7 +786,7 @@ function cancelRow(row: MoneyRowView): void {
             <button
               type="button"
               class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-              :disabled="!canSpend"
+              :disabled="!canAddExpense"
               data-test="finance-add-expense"
               @click="openNewExpense"
             >
@@ -725,6 +880,19 @@ function cancelRow(row: MoneyRowView): void {
 
         <p v-if="actionError" class="text-sm text-red-600" data-test="finance-action-error">
           {{ actionError }}
+        </p>
+
+        <!--
+          Чек, сохранённый без связи (19.11.2026): сначала он живёт только
+          на устройстве. Говорим это словами, чтобы человек не искал его
+          в ленте у остальных и не считал балансы окончательными.
+        -->
+        <p
+          v-if="queuedNotice"
+          class="text-xs text-muted"
+          data-test="finance-queued-notice"
+        >
+          {{ queuedNotice }}
         </p>
 
         <!--
@@ -970,7 +1138,26 @@ function cancelRow(row: MoneyRowView): void {
                 не подтверждено
               </p>
 
+              <!-- Офлайн-чек ещё на устройстве: сервер его не видел. -->
+              <p
+                v-if="row.kind === 'pendingExpense'"
+                class="text-xs text-orange-700"
+                data-test="finance-pending"
+              >
+                не отправлено
+              </p>
+
               <div class="flex flex-wrap items-center justify-end gap-2">
+                <button
+                  v-if="row.pending"
+                  type="button"
+                  class="cursor-pointer rounded-none border border-[var(--theme-ink)] bg-transparent px-2 py-0.5 text-xs text-muted transition-colors hover:border-red-600 hover:text-red-600"
+                  data-test="finance-pending-remove"
+                  @click="row.pending && removePending(row.pending)"
+                >
+                  Убрать
+                </button>
+
                 <button
                   v-if="row.canEdit"
                   type="button"
@@ -1017,6 +1204,7 @@ function cancelRow(row: MoneyRowView): void {
         :members="finance.members"
         :expense="editingExpense"
         @saved="applyView"
+        @queued="onQueued"
         @close="expenseModalOpen = false"
       />
 

@@ -1,12 +1,17 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 
-import { ApiError } from '@/api/errors'
+import { ApiError, isNetworkProblem } from '@/api/errors'
 import {
   createTripExpense,
   deleteTripExpense,
   updateTripExpense,
 } from '@/api/finance'
+import {
+  newExpenseClientId,
+  queueExpense,
+  type ExpenseOutboxEntry,
+} from '@/offline/expenseOutbox'
 import {
   EXPENSE_SPLIT_LABELS,
   type ExpenseSplit,
@@ -56,10 +61,24 @@ const props = defineProps<{
 const emit = defineEmits<{
   /** Сервер вернул вкладку целиком — родитель заменяет состояние. */
   saved: [view: TripFinance]
+  /**
+   * Без связи чек лёг в очередь устройства (19.11.2026): родитель
+   * показывает его в ленте как «ждёт отправки» и запоминает очередь.
+   */
+  queued: [entries: ExpenseOutboxEntry[]]
   close: []
 }>()
 
 const isEdit = computed(() => props.expense !== null && props.expense !== undefined)
+
+/**
+ * Ключ идемпотентности нового чека (19.11.2026).
+ *
+ * UUID выдаётся один раз при открытии модалки: повторное нажатие после
+ * таймаута уйдёт с тем же ключом, и сервер не заведёт второй чек. При
+ * правке ключ не нужен — строка уже существует.
+ */
+const clientId = newExpenseClientId()
 
 const amount = ref(props.expense ? String(props.expense.amountRub) : '')
 const description = ref(props.expense?.description ?? '')
@@ -145,6 +164,32 @@ function messageOf(cause: unknown, fallback: string): string {
   return cause instanceof ApiError ? cause.message : fallback
 }
 
+/**
+ * Без связи чек не теряется: он ложится в очередь устройства.
+ *
+ * Заказчик: «создание расходных чеков должно быть доступно оффлайн
+ * (за наличку)». Правка и удаление офлайн по-прежнему не разрешены: строка
+ * уже на сервере, и две копии разошлись бы. Доли на экране — черновые,
+ * окончательные посчитает сервер при синхронизации.
+ */
+async function queueOffline(body: SaveTripExpenseInput): Promise<void> {
+  const entry: ExpenseOutboxEntry = {
+    clientId,
+    amountRub: body.amountRub,
+    split: body.split,
+    spentAt: body.spentAt ?? localToday(),
+    queuedAt: new Date().toISOString(),
+    ...(body.description === undefined ? {} : { description: body.description }),
+    ...(body.participantIds === undefined
+      ? {}
+      : { participantIds: body.participantIds }),
+    ...(body.payerUserId === undefined ? {} : { payerUserId: body.payerUserId }),
+  }
+
+  emit('queued', await queueExpense(props.tripId, entry))
+  emit('close')
+}
+
 async function save(): Promise<void> {
   if (isSaving.value || isDeleting.value) return
 
@@ -184,15 +229,27 @@ async function save(): Promise<void> {
     body.payerUserId = payerUserId.value
   }
 
+  const isNew = props.expense === null || props.expense === undefined
+  // Ключ идемпотентности — только у нового чека: правка уже существующей
+  // строки по ключу не ищется и второй раз не создаётся.
+  if (isNew) body.clientId = clientId
+
   isSaving.value = true
 
   try {
-    const view = props.expense
-      ? await updateTripExpense(props.tripId, props.expense.id, body)
-      : await createTripExpense(props.tripId, body)
+    const view = isNew
+      ? await createTripExpense(props.tripId, body)
+      : await updateTripExpense(props.tripId, props.expense!.id, body)
 
     emit('saved', view)
   } catch (problem) {
+    // Обрыв связи или офлайн — новый чек ждёт в очереди. Отказ сервера
+    // (400/403) по-прежнему показываем словами: это не «нет сети».
+    if (isNew && isNetworkProblem(problem)) {
+      await queueOffline(body)
+      return
+    }
+
     error.value = messageOf(problem, 'Не удалось сохранить расход')
   } finally {
     isSaving.value = false

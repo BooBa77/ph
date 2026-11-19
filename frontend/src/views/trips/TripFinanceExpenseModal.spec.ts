@@ -1,7 +1,7 @@
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { ApiError } from '@/api/errors'
+import { ApiError, OfflineError } from '@/api/errors'
 import type { FinanceMember, TripExpense, TripFinance } from '@/types/finance'
 import { localToday } from '@/utils/money'
 import TripFinanceExpenseModal from '@/views/trips/TripFinanceExpenseModal.vue'
@@ -172,6 +172,7 @@ describe('модалка расхода', () => {
       split: 'all',
       spentAt: localToday(),
       description: 'Продукты',
+      clientId: expect.any(String),
     })
     expect(wrapper.emitted('saved')?.[0]?.[0]).toEqual(next)
   })
@@ -211,6 +212,7 @@ describe('модалка расхода', () => {
       spentAt: localToday(),
       description: 'Ужин',
       participantIds: ['anna', 'boris'],
+      clientId: expect.any(String),
     })
   })
 
@@ -233,6 +235,7 @@ describe('модалка расхода', () => {
       spentAt: localToday(),
       description: 'Бензин',
       payerUserId: 'vitya',
+      clientId: expect.any(String),
     })
   })
 
@@ -290,5 +293,45 @@ describe('модалка расхода', () => {
       'В походе нет питающихся с общего — чек делить не на кого',
     )
     expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
+  /**
+   * Офлайн-чек (19.11.2026). Заказчик: «создание расходных чеков должно
+   * быть доступно оффлайн (за наличку)». Без связи чек не теряется и не
+   * показывается ошибкой — он ложится в очередь устройства.
+   */
+  it('без связи чек уходит в очередь, а не в ошибку', async () => {
+    const wrapper = mountModal()
+    mocks.createTripExpense.mockRejectedValue(new OfflineError())
+
+    await fill(wrapper, '800', 'Дрова')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="finance-expense-error"]').exists()).toBe(false)
+
+    const queued = wrapper.emitted('queued')?.[0]?.[0] as
+      | { amountRub: number; description?: string; spentAt: string }[]
+      | undefined
+
+    expect(queued).toHaveLength(1)
+    expect(queued?.[0]?.amountRub).toBe(800)
+    expect(queued?.[0]?.description).toBe('Дрова')
+    expect(queued?.[0]?.spentAt).toBe(localToday())
+    expect(wrapper.emitted('close')).toBeTruthy()
+    expect(wrapper.emitted('saved')).toBeUndefined()
+  })
+
+  it('правка расхода ключа идемпотентности не присылает', async () => {
+    const wrapper = mountModal(joinExpense())
+
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+
+    expect(mocks.updateTripExpense).toHaveBeenCalledWith(
+      '7',
+      'e1',
+      expect.not.objectContaining({ clientId: expect.anything() }),
+    )
   })
 })

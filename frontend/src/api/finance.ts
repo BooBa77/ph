@@ -3,7 +3,9 @@ import type {
   CreateTripCompensationInput,
   DepositDecision,
   SaveTripExpenseInput,
+  TripExpenseSyncEntry,
   TripFinance,
+  TripFinanceSync,
 } from '@/types/finance'
 
 /**
@@ -33,6 +35,24 @@ export async function createTripExpense(
   return apiFetch<TripFinance>(`/trips/${tripId}/finance/expenses`, {
     method: 'POST',
     body: JSON.stringify(data),
+  })
+}
+
+/**
+ * POST /api/trips/:id/finance/expenses/sync — прислать очередь офлайн-чеков
+ * (19.11.2026).
+ *
+ * Ответ — вкладка целиком плюс `results` по каждому ключу: принятые чеки
+ * очередь снимает, отклонённые оставляет с причиной. Пачка идемпотентна:
+ * повторная отправка того же ключа не создаёт второй чек.
+ */
+export async function syncTripExpenses(
+  tripId: string,
+  entries: TripExpenseSyncEntry[],
+): Promise<TripFinanceSync> {
+  return apiFetch<TripFinanceSync>(`/trips/${tripId}/finance/expenses/sync`, {
+    method: 'POST',
+    body: JSON.stringify({ entries }),
   })
 }
 

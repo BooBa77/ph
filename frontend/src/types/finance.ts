@@ -41,6 +41,12 @@ export interface TripExpense {
   shares: TripExpenseShare[]
   /** Править и удалять может только автор — решает сервер. */
   canEdit: boolean
+  /**
+   * UUID чека с устройства (19.11.2026). По нему экран узнаёт, что
+   * офлайн-чек уже доехал, и не рисует его второй раз. `null` — чек
+   * заведён онлайн без очереди.
+   */
+  clientId?: string | null
 }
 
 export type CompensationStatus = 'pending' | 'confirmed'
@@ -371,6 +377,35 @@ export interface SaveTripExpenseInput {
   spentAt?: string
   /** Кто заплатил; не передано — я. */
   payerUserId?: string
+  /**
+   * UUID чека с устройства — ключ идемпотентности (19.11.2026).
+   * Повторная отправка с тем же ключом не создаёт дубль.
+   */
+  clientId?: string
+}
+
+/**
+ * Чек в очереди устройства (19.11.2026).
+ *
+ * Это тело обычного создания расхода плюс обязательный `clientId`: без
+ * ключа синхронизация не отличила бы «ещё не отправляли» от «отправили,
+ * но ответ не дошёл». Доли на экране — черновые, их считает сервер.
+ */
+export interface TripExpenseSyncEntry extends SaveTripExpenseInput {
+  clientId: string
+}
+
+/** Итог одного чека в ответе синхронизации. */
+export interface TripExpenseSyncResult {
+  clientId: string
+  status: 'accepted' | 'rejected'
+  /** Почему чек не принят — только у `rejected`. */
+  message?: string
+}
+
+/** Ответ `POST …/finance/expenses/sync`: вкладка целиком и итоги по чекам. */
+export interface TripFinanceSync extends TripFinance {
+  results: TripExpenseSyncResult[]
 }
 
 /** Тело `POST /api/trips/:id/finance/compensations`. */

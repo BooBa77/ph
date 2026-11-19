@@ -1,6 +1,8 @@
 import { ApiProperty } from '@nestjs/swagger';
+import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
+  ArrayMinSize,
   ArrayUnique,
   IsArray,
   IsIn,
@@ -12,6 +14,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateNested,
 } from 'class-validator';
 
 import type { TripCompensation } from '../entities/trip-compensation.entity';
@@ -32,6 +35,9 @@ import {
 
 /** Потолок суммы — чтобы опечатка в лишний ноль не ломала арифметику. */
 const MAX_AMOUNT_RUB = 10_000_000;
+
+/** Сколько офлайн-чеков принимает сервер за одну синхронизацию. */
+export const MAX_EXPENSE_SYNC_ENTRIES = 50;
 
 /**
  * Тело `POST/PATCH /api/trips/:id/finance/expenses`.
@@ -111,6 +117,56 @@ export class SaveTripExpenseDto {
   @IsOptional()
   @IsUUID('all', { message: 'Плательщик должен быть человеком' })
   payerUserId?: string;
+
+  /**
+   * Ключ идемпотентности офлайн-чека (19.11.2026).
+   *
+   * UUID с устройства: чек, созданный без связи, повторно отправляется
+   * после обрыва, и сервер не должен завести его дважды. Онлайн-форма тоже
+   * присылает ключ: тогда повторная отправка после таймаута безопасна.
+   */
+  @ApiProperty({
+    description:
+      'UUID чека с устройства. Повторная отправка с тем же ключом не создаёт дубль',
+    example: '3f1c3f56-0d1e-4c4f-8b6a-4a7f1f0f2b11',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID('all', { message: 'Ключ чека должен быть UUID' })
+  clientId?: string;
+}
+
+/**
+ * Один чек из очереди устройства (19.11.2026).
+ *
+ * То же тело, что у обычного создания расхода, но `clientId` **обязателен**:
+ * без ключа синхронизация не смогла бы отличить «ещё не отправляли» от
+ * «отправили, но ответ не дошёл». Доли считает сервер по актуальному
+ * составу — локальный экран показывает их приблизительно.
+ */
+export class SyncTripExpenseDto extends SaveTripExpenseDto {
+  @ApiProperty({
+    description: 'UUID чека с устройства — ключ идемпотентности',
+    example: '3f1c3f56-0d1e-4c4f-8b6a-4a7f1f0f2b11',
+  })
+  @IsUUID('all', { message: 'Ключ чека должен быть UUID' })
+  declare clientId: string;
+}
+
+/** Тело `POST /api/trips/:id/finance/expenses/sync`. */
+export class SyncTripExpensesDto {
+  @ApiProperty({
+    description: 'Чеки, созданные на устройстве без связи',
+    type: () => [SyncTripExpenseDto],
+  })
+  @IsArray({ message: 'Пришли список чеков' })
+  @ArrayMinSize(1, { message: 'Список чеков пуст' })
+  @ArrayMaxSize(MAX_EXPENSE_SYNC_ENTRIES, {
+    message: `За один раз можно отправить не больше ${MAX_EXPENSE_SYNC_ENTRIES} чеков`,
+  })
+  @ValidateNested({ each: true })
+  @Type(() => SyncTripExpenseDto)
+  entries: SyncTripExpenseDto[];
 }
 
 /** Тело `POST /api/trips/:id/finance/compensations`. */
@@ -191,6 +247,14 @@ export class TripExpenseDto {
   @ApiProperty({ description: 'Может ли текущий человек править запись' })
   canEdit: boolean;
 
+  @ApiProperty({
+    description:
+      'UUID чека с устройства — по нему экран узнаёт, что офлайн-чек уже доехал. null у чека, созданного онлайн без очереди',
+    nullable: true,
+    required: false,
+  })
+  clientId: string | null;
+
   static from(expense: TripExpense, viewerId: string): TripExpenseDto {
     return {
       id: expense.id,
@@ -207,6 +271,7 @@ export class TripExpenseDto {
         amountRub: share.amountRub,
       })),
       canEdit: expense.authorUserId === viewerId,
+      clientId: expense.clientId ?? null,
     };
   }
 }
@@ -884,4 +949,38 @@ export class TripFinanceDto {
     type: [CompensationSenderDto],
   })
   managedSenders: CompensationSenderDto[];
+}
+
+/**
+ * Итог одного офлайн-чека в ответе синхронизации (19.11.2026).
+ *
+ * Пачка не бывает «всё или ничего»: один чек мог быть заведён на человека,
+ * который уже вышел из похода, — его надо оставить в очереди с объяснением,
+ * а остальные принять. Поэтому на каждый ключ свой итог.
+ *
+ * `accepted` — чек создан **или уже был** (повторная отправка).
+ * `rejected` — сервер отказал: `message` объясняет причину словами,
+ * и запись остаётся на устройстве, пока человек сам её не уберёт.
+ */
+export class TripExpenseSyncResultDto {
+  @ApiProperty({ description: 'Ключ чека с устройства' })
+  clientId: string;
+
+  @ApiProperty({ enum: ['accepted', 'rejected'] })
+  status: 'accepted' | 'rejected';
+
+  @ApiProperty({
+    description: 'Почему чек не принят — только у rejected',
+    required: false,
+  })
+  message?: string;
+}
+
+/** Ответ `POST …/finance/expenses/sync`: вкладка целиком плюс итоги по чекам. */
+export class TripFinanceSyncDto extends TripFinanceDto {
+  @ApiProperty({
+    description: 'Итог по каждому присланному чеку, в порядке отправки',
+    type: [TripExpenseSyncResultDto],
+  })
+  results: TripExpenseSyncResultDto[];
 }

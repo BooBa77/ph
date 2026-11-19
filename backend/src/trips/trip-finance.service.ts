@@ -5,7 +5,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, EntityManager, In, Not } from 'typeorm';
+import { DataSource, EntityManager, In, Not, QueryFailedError } from 'typeorm';
 
 import {
   CompensationOptionDto,
@@ -18,12 +18,15 @@ import {
   MyDepositDto,
   MyFinanceDto,
   SaveTripExpenseDto,
+  SyncTripExpensesDto,
   TripCompensationDto,
   TripDepositDto,
   TripDepositForfeitDto,
   TripDepositReturnDto,
   TripExpenseDto,
+  TripExpenseSyncResultDto,
   TripFinanceDto,
+  TripFinanceSyncDto,
 } from './dto/trip-finance.dto';
 import { TripCompensation } from './entities/trip-compensation.entity';
 import { TripDepositAdjustment } from './entities/trip-deposit-adjustment.entity';
@@ -61,6 +64,23 @@ import { UsersService } from '../users/users.service';
 /** Сегодняшняя дата строкой `ГГГГ-ММ-ДД` (сервер живёт в UTC). */
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/**
+ * Уникальный индекс `UQ_trip_expenses_client` сработал на вставке.
+ *
+ * Значит тот же чек уже создало параллельное устройство или повторный
+ * запрос, ответ которого не дошёл. Код 23505 — единственный признак,
+ * который даёт Postgres через TypeORM.
+ */
+function isClientDuplicate(problem: unknown): boolean {
+  if (!(problem instanceof QueryFailedError)) return false;
+
+  const driverError = (problem as QueryFailedError & {
+    driverError?: { code?: string };
+  }).driverError;
+
+  return driverError?.code === '23505';
 }
 
 /**
@@ -127,29 +147,93 @@ export class TripFinanceService {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
       await this.assertGoing(manager, String(trip.id), userId);
 
-      const payerId = dto.payerUserId ?? userId;
-      await this.assertCanActFor(manager, String(trip.id), userId, payerId);
-
-      const participants = await this.goingParticipants(manager, String(trip.id));
-      const shares = this.sharesFor(dto, participants);
-
-      const expense = manager.create(TripExpense, {
-        tripId: String(trip.id),
-        authorUserId: payerId,
-        amountRub: dto.amountRub,
-        description: this.descriptionFor(dto),
-        split: dto.split,
-        spentAt: dto.spentAt ?? todayIso(),
-      });
-      const saved = await manager.save(expense);
-
-      await this.saveShares(manager, saved.id, shares);
+      await this.insertExpense(manager, trip, userId, dto);
 
       return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
     return view;
+  }
+
+  /**
+   * Принять пачку офлайн-чеков (19.11.2026).
+   *
+   * Заказчик: «создание расходных чеков должно быть доступно оффлайн
+   * (за наличку)». Чек рождается на телефоне, лежит в очереди устройства
+   * и уезжает сюда, когда появится связь ([lifecycle.md](../../docs/ph/lifecycle.md) §3).
+   *
+   * **Почему пачка, а не по одному.** Очередь — одна точка отправки: три
+   * чека за день пути должны уехать одним запросом, а не тремя. Ответ —
+   * вкладка целиком, как у остальных денежных действий, чтобы экран сразу
+   * показал настоящие доли и балансы.
+   *
+   * **Почему не «всё или ничего».** Права проверяются один раз до пачки:
+   * если человек больше не идёт, весь запрос получает 403 и очередь
+   * остаётся на устройстве. Но отдельный чек мог быть заведён на человека,
+   * который уже вышел, — такой отклоняется с объяснением, а остальные
+   * принимаются. Иначе одна плохая запись держала бы очередь вечно.
+   *
+   * **Идемпотентность.** Ключ — `clientId` с устройства; чек с уже
+   * существующим ключом считается принятым и второй раз не создаётся.
+   * Повтор после обрыва на середине ответа безопасен, в том числе когда
+   * два устройства отправили одну и ту же очередь: гонку ловит уникальный
+   * индекс `UQ_trip_expenses_client` (код 23505 = «уже создан»).
+   */
+  async syncExpenses(
+    userId: string,
+    tripId: number,
+    dto: SyncTripExpensesDto,
+  ): Promise<TripFinanceSyncDto> {
+    // Права — до пачки: без этого «не иду» тонуло бы в отказах по каждому
+    // чеку, а очередь на устройстве не поняла бы, что виновата не запись.
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+    await this.assertGoing(this.dataSource.manager, String(trip.id), userId);
+
+    const results: TripExpenseSyncResultDto[] = [];
+    let created = false;
+
+    for (const entry of dto.entries) {
+      try {
+        const inserted = await this.dataSource.transaction(async (manager) =>
+          this.insertExpense(manager, trip, userId, entry),
+        );
+        created = created || inserted;
+        results.push({ clientId: entry.clientId, status: 'accepted' });
+      } catch (problem) {
+        if (isClientDuplicate(problem)) {
+          // Параллельная отправка того же чека уже создала строку.
+          results.push({ clientId: entry.clientId, status: 'accepted' });
+          continue;
+        }
+
+        if (
+          problem instanceof ForbiddenException ||
+          problem instanceof BadRequestException ||
+          problem instanceof ConflictException
+        ) {
+          results.push({
+            clientId: entry.clientId,
+            status: 'rejected',
+            message: problem.message,
+          });
+          continue;
+        }
+
+        throw problem;
+      }
+    }
+
+    const view = await this.buildView(
+      this.dataSource.manager,
+      trip,
+      userId,
+    );
+
+    // Сигнал — один на пачку: другие вкладки перечитают вкладку целиком.
+    if (created) this.events.emitFinance(String(tripId), userId);
+
+    return { ...view, results };
   }
 
   /** Поправить расход. Только автор — «строки с расходами правят авторы». */
@@ -1822,6 +1906,49 @@ export class TripFinanceService {
     if (dto.split === 'commonEaters') return 'на продукты';
 
     throw new BadRequestException('Опиши, за что расход');
+  }
+
+  /**
+   * Создать строку расхода и её доли; `true` — строка действительно новая.
+   *
+   * Общая часть онлайн-создания и синхронизации очереди (19.11.2026):
+   * правила одни и те же, и вторая копия разошлась бы с первой на первой
+   * правке. Уже существующий `clientId` — не ошибка, а повторная отправка:
+   * возвращаем `false`, чтобы синхронизация пометила чек принятым.
+   */
+  private async insertExpense(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+    dto: SaveTripExpenseDto,
+  ): Promise<boolean> {
+    if (dto.clientId !== undefined) {
+      const existing = await manager.findOne(TripExpense, {
+        where: { tripId: String(trip.id), clientId: dto.clientId },
+      });
+      if (existing) return false;
+    }
+
+    const payerId = dto.payerUserId ?? userId;
+    await this.assertCanActFor(manager, String(trip.id), userId, payerId);
+
+    const participants = await this.goingParticipants(manager, String(trip.id));
+    const shares = this.sharesFor(dto, participants);
+
+    const expense = manager.create(TripExpense, {
+      tripId: String(trip.id),
+      authorUserId: payerId,
+      amountRub: dto.amountRub,
+      description: this.descriptionFor(dto),
+      split: dto.split,
+      spentAt: dto.spentAt ?? todayIso(),
+      clientId: dto.clientId ?? null,
+    });
+    const saved = await manager.save(expense);
+
+    await this.saveShares(manager, saved.id, shares);
+
+    return true;
   }
 
   private async saveShares(

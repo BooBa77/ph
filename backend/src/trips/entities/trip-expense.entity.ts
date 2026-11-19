@@ -41,6 +41,7 @@ import { TripExpenseShare } from './trip-expense-share.entity';
  */
 @Entity('trip_expenses')
 @Index('IDX_trip_expenses_trip', ['tripId'])
+@Index('UQ_trip_expenses_client', ['tripId', 'clientId'], { unique: true })
 @Check('chk_trip_expenses_amount', `"amount_rub" > 0`)
 @Check(
   'chk_trip_expenses_description',
@@ -79,6 +80,16 @@ export class TripExpense {
 
   @Column({ type: 'varchar', length: 200 })
   description: string;
+
+  /**
+   * UUID с устройства — ключ идемпотентности офлайн-чека (19.11.2026).
+   *
+   * `NULL` у чека, заведённого онлайн без очереди. Уникален в пределах
+   * похода (`UQ_trip_expenses_client`): повторная отправка того же чека
+   * находит существующую строку и не создаёт вторую.
+   */
+  @Column({ name: 'client_id', type: 'uuid', nullable: true })
+  clientId: string | null;
 
   @Column({ type: 'varchar', length: 20, default: 'group' })
   split: ExpenseSplit;

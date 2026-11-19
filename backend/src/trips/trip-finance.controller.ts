@@ -20,8 +20,10 @@ import {
   CreateTripCompensationDto,
   SaveTripDepositDto,
   SaveTripExpenseDto,
+  SyncTripExpensesDto,
   TransferTripDepositDto,
   TripFinanceDto,
+  TripFinanceSyncDto,
 } from './dto/trip-finance.dto';
 import { TripFinanceService } from './trip-finance.service';
 
@@ -61,6 +63,29 @@ export class TripFinanceController {
     @Body() dto: SaveTripExpenseDto,
   ): Promise<TripFinanceDto> {
     return this.finance.createExpense(authUser.id, id, dto);
+  }
+
+  /**
+   * Пачка чеков из очереди устройства (19.11.2026).
+   *
+   * Отдельная ручка, а не N вызовов создания: без связи чеков может
+   * накопиться несколько, и каждый лишний запрос в поле — лишний шанс
+   * не доехать. Ответ — вкладка целиком плюс `results` по каждому ключу:
+   * принятый чек снимается с устройства, отклонённый остаётся с причиной.
+   *
+   * `200`, а не `201`: пачка может не создать ничего — все чеки уже
+   * доехали прошлым заходом, и это успех, а не новая запись.
+   */
+  @Post(':id/finance/expenses/sync')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Принять офлайн-чеки из очереди устройства' })
+  @ApiOkResponse({ type: TripFinanceSyncDto })
+  async syncExpenses(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SyncTripExpensesDto,
+  ): Promise<TripFinanceSyncDto> {
+    return this.finance.syncExpenses(authUser.id, id, dto);
   }
 
   @Patch(':id/finance/expenses/:expenseId')
