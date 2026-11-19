@@ -61,13 +61,13 @@ import {
  *
  * **Два слоя в одной плашке.** Общая еда похода и личная еда участника
  * живут в одном приёме: личные поля стоят над общими и отделены синим.
- * Правит каждый своё, читают оба слоя все идущие — флаг «питаюсь
- * отдельно» для личных полей не нужен.
+ * Читают оба слоя все идущие, правит каждый своё; личные поля видны,
+ * только пока человек ест отдельно (19.11.2026, `meals.md` §5.6).
  *
  * **Дни — из похода.** У решённого похода день имеет дату; у «Планирую»
- * — только номер. Края подрезаются по времени заезда/выезда: приехали
- * в 14:00 — завтрак первого дня уже не нужен (`meals.md` §5.4). Время
- * 00:00 — «не задано», тогда показываем все приёмы.
+ * — только номер. В каждом дне **все три приёма**, даже в день заезда
+ * и выезда: края не подрезаем (`meals.md` §5.4). Пусть завхоз сам решит,
+ * что заполнять, — а сдвиг начала похода не удаляет уже сделанную раскладку.
  */
 const props = defineProps<{ trip: Trip; canEdit?: boolean }>()
 
@@ -467,6 +467,10 @@ async function toggleSeparate() {
 
     return fetchMealPlan(props.trip.id)
   })
+
+  // Включили «питаюсь отдельно» — личные поля показываем развёрнутыми:
+  // иначе человек включил флаг и не увидел, где выбирать блюда.
+  if (me.value?.eatsSeparately === true) myEditHidden.value = {}
 }
 
 // ─── фасовка: пакеты и доли ───
@@ -1040,14 +1044,21 @@ function removePackage(pack: TripMealPackage): void {
  * Его видит и ведёт **идущий на 100%** (03.11.2026): заказчик — «добавлять
  * личные блюда и продукты могут только „100% иду“». «Пока не решил»
  * и «приглашён» получают от сервера 400, и личный интерфейс просто
- * не появляется — прятать его отдельным флагом не нужно. Общая раскладка
- * живёт по другому правилу: её ведёт завхоз с любым статусом готовности,
- * потому что право даёт роль, а не участие.
+ * не появляется.
  *
- * Флаг «питаюсь отдельно» личным полям не нужен: личные поля стоят
- * в тех же плашках приёма, только отдельным цветом.
+ * **Флаг «питаюсь отдельно» теперь решает, видно ли личный слой**
+ * (19.11.2026). Раньше считали, что флаг личным полям не нужен, — и человек,
+ * который ест с общего, всё равно видел синие поля и не понимал, что из
+ * этого его. Заказчик просил: переключил флаг — личные поля скрылись
+ * или раскрылись. Данные при этом не трогаются: снял флаг — поля спрятались,
+ * вернул — прежние блюда и продукты на месте.
  */
 const myPlan = ref<TripMealPlan | null>(null)
+
+/** Личный слой на экране: он есть и человек действительно ест отдельно. */
+const showMyPlan = computed(
+  () => myPlan.value !== null && me.value?.eatsSeparately === true,
+)
 
 const myDishDrafts = ref<Record<string, string>>({})
 const myLineDrafts = ref<
@@ -1329,7 +1340,7 @@ function saveMyFoodWeight(event: Event): void {
  * кнопок и личная из двух), между ними зазор; лишний отступ съедал бы ширину.
  */
 const togglesPad = computed(() => {
-  const pairs = (props.canEdit ? 1 : 0) + (myPlan.value ? 1 : 0)
+  const pairs = (props.canEdit ? 1 : 0) + (showMyPlan.value ? 1 : 0)
 
   if (pairs === 0) return 'pr-2'
 
@@ -1428,7 +1439,7 @@ onMounted(() => {
 
             <!-- Личный список продуктов — рядом с флагом: своя закупка -->
             <button
-              v-if="myPlan"
+              v-if="showMyPlan"
               type="button"
               class="ml-auto cursor-pointer rounded-lg bg-blue-600 px-3 py-1.5 text-xs font-medium text-white transition-opacity hover:opacity-90"
               data-test="my-checklist-toggle"
@@ -1536,7 +1547,7 @@ onMounted(() => {
                 с кнопкой, и развернуть приём было бы нечем.
               -->
               <div
-                v-if="canEdit || myPlan"
+                v-if="canEdit || showMyPlan"
                 class="absolute right-1.5 top-1.5 flex items-center gap-2"
                 data-test="meal-toggles"
               >
@@ -1692,7 +1703,7 @@ onMounted(() => {
                   </button>
                 </span>
 
-                <span v-if="myPlan" class="flex items-center gap-1">
+                <span v-if="showMyPlan" class="flex items-center gap-1">
                   <button
                     type="button"
                     class="flex h-5 w-5 cursor-pointer items-center justify-center rounded-md border border-blue-300 text-blue-600 transition-colors hover:border-blue-500 hover:text-blue-700"
@@ -1834,7 +1845,7 @@ onMounted(() => {
                   </p>
 
                   <p
-                    v-if="myMealWeight(day.index, kind) > 0"
+                    v-if="showMyPlan && myMealWeight(day.index, kind) > 0"
                     class="text-xs text-blue-600"
                     data-test="my-meal-weight"
                   >
@@ -1869,7 +1880,7 @@ onMounted(() => {
                 <div class="flex flex-col gap-2 md:col-start-2">
                   <!-- 1. Мои блюда -->
                   <div
-                    v-if="myPlan && !isMyEditHidden(mealKey(day.index, kind))"
+                    v-if="showMyPlan && !isMyEditHidden(mealKey(day.index, kind))"
                     class="flex flex-col gap-1"
                     data-test="my-meal-dish-block"
                   >
@@ -1893,7 +1904,7 @@ onMounted(() => {
 
                   <!-- 2. Мои продукты -->
                   <div
-                    v-if="myPlan && !isMyEditHidden(mealKey(day.index, kind))"
+                    v-if="showMyPlan && !isMyEditHidden(mealKey(day.index, kind))"
                     class="flex flex-col gap-1"
                   >
                     <span class="text-xs uppercase tracking-wide text-blue-700">Продукты мои</span>
@@ -2330,7 +2341,7 @@ onMounted(() => {
           вес и контрольное взвешивание.
         -->
         <div
-          v-if="myProductsWeight > 0"
+          v-if="showMyPlan && myProductsWeight > 0"
           class="flex flex-col gap-2 rounded-xl border border-blue-300 bg-blue-50 p-3"
           data-test="my-products"
         >

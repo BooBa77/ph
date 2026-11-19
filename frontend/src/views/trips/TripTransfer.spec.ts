@@ -506,6 +506,35 @@ describe('TripTransfer', () => {
     expect(wrapper.find('[data-test="transfer-leg-dialog"]').text()).toContain('Обратно')
   })
 
+  it('«Начало похода» ставит дату начала и не затирает выбранное время', async () => {
+    const trip: Trip = {
+      ...TRIP,
+      startsAt: new Date(2026, 10, 5, 5, 30).toISOString(),
+      endsAt: new Date(2026, 10, 7, 20, 0).toISOString(),
+    }
+    const wrapper = await mountTransfer(makePlan(), [], trip)
+
+    // У обратного рейса кнопки нет: там свой отсчёт.
+    await wrapper.find('[data-test="transfer-add-back"]').trigger('click')
+    expect(wrapper.find('[data-test="transfer-trip-start"]').exists()).toBe(false)
+    await wrapper.find('[data-test="transfer-leg-cancel"]').trigger('click')
+
+    await wrapper.find('[data-test="transfer-add-there"]').trigger('click')
+    await wrapper.find('[data-test="transfer-trip-start"]').trigger('click')
+
+    expect(wrapper.find('[data-test="transfer-departure-input"]').text()).toBe(
+      '2026-11-05 05:30',
+    )
+
+    // Выбранное время кнопка не затирает: меняется только дата.
+    await pickDeparture(wrapper, new Date(2026, 10, 6, 9, 15))
+    await wrapper.find('[data-test="transfer-trip-start"]').trigger('click')
+
+    expect(wrapper.find('[data-test="transfer-departure-input"]').text()).toBe(
+      '2026-11-05 09:15',
+    )
+  })
+
   it('точки и время обязательны, и без них запроса нет', async () => {
     const wrapper = await mountTransfer()
 

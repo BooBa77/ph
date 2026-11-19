@@ -209,29 +209,8 @@ const offlineCopy = computed(() =>
   trip.value ? offline.currentTripById(trip.value.id) : null,
 )
 
-/**
- * Есть ли копия похода (или она вот-вот появится).
- *
- * Считается не по «идёт сейчас»: группа, задержавшаяся в горах, должна
- * видеть, что копия у неё есть, даже когда по плану поход уже кончился.
- */
-const hasOfflineCopy = computed(
-  () => offlineCopy.value !== null || (trip.value !== null && isTripCacheable(trip.value)),
-)
-
 /** Когда поход сохраняли для офлайна: свежий прогрев важнее старой отметки. */
 const prefetchedAt = ref<number | null>(null)
-
-/**
- * Копию сверяли с сервером в этой сессии.
- *
- * Подпись «проверено сейчас» — это не украшение: без неё человек не знает,
- * устарела ли копия, которую он откроет в поле через день.
- */
-const isFresh = ref(false)
-
-/** Идёт сохранение копии — кнопка «Обновить» заблокирована. */
-const isPrefetching = ref(false)
 
 const savedAt = computed(() => prefetchedAt.value ?? offlineCopy.value?.cachedAt ?? null)
 
@@ -285,27 +264,8 @@ async function prepareOfflineCopy(next: Trip) {
       prefetchedAt.value = at
       await offline.markSaved(next.id, at)
     }
-
-    if (server !== null) isFresh.value = true
   } catch {
     // Прогрев — улучшение: не сохранилось, значит просто не будет офлайн-копии.
-  }
-}
-
-/** Ручное «Обновить»: тот же прогрев, но без десятиминутного ограничения. */
-async function refreshOfflineCopy() {
-  if (!trip.value || !offline.isOnline) return
-
-  isPrefetching.value = true
-  try {
-    const at = await prefetchTripCache(trip.value, true)
-    if (at !== null) {
-      prefetchedAt.value = at
-      isFresh.value = true
-      await offline.markSaved(trip.value.id, at)
-    }
-  } finally {
-    isPrefetching.value = false
   }
 }
 
@@ -740,37 +700,17 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
         </p>
 
         <!--
-          Офлайн-копия похода. Строка честно говорит, сохранены ли данные
-          на устройстве и когда их в последний раз сверяли с сервером:
-          человек в поле должен знать, откроется ли поход, когда пропадёт
-          связь, и насколько свежа будет эта копия.
+          Офлайн-копия похода. Пока связь есть, копия обновляется тихо:
+          человеку в поле важно, откроется ли поход без связи, а не когда
+          его сохраняли. Поэтому строка «Сохранён для офлайна… Обновить»
+          убрана (19.11.2026), а прогрев и сверка работают как раньше —
+          под капотом. В офлайне подпись остаётся: там она объясняет,
+          почему данные могут быть неполными.
         -->
         <p v-if="offline.isOffline" class="text-sm text-muted" data-test="trip-offline-note">
           Нет связи: поход открыт из сохранённой копии.
           <template v-if="savedAt"> Сохранено {{ savedText }}, могли быть изменения.</template>
           Изменения недоступны.
-        </p>
-
-        <p
-          v-else-if="hasOfflineCopy"
-          class="flex flex-wrap items-center gap-2 text-sm text-muted"
-          data-test="trip-offline-status"
-        >
-          <span v-if="savedAt">Сохранён для офлайна: {{ savedText }}</span>
-          <span v-else>Сохраняем для офлайна…</span>
-          <span v-if="isFresh" class="text-muted" data-test="trip-offline-fresh">
-            · проверено сейчас
-          </span>
-
-          <button
-            type="button"
-            class="cursor-pointer text-text underline transition-colors hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-            :disabled="isPrefetching"
-            data-test="trip-offline-refresh"
-            @click="refreshOfflineCopy"
-          >
-            {{ isPrefetching ? 'Сохраняем…' : 'Обновить' }}
-          </button>
         </p>
 
         <p v-if="actionError" class="text-sm text-red-600" data-test="trip-action-error">

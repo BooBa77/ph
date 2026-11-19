@@ -127,7 +127,9 @@ function plan(): TripMealPlan {
           isVegetarian: false,
           isVirtual: false,
           allergies: null,
-          eatsSeparately: false,
+          // Личные поля видны только тем, кто ест отдельно (19.11.2026),
+          // поэтому смотрящий — «отдельный»: так проверяется личный слой.
+          eatsSeparately: true,
         },
         {
           userId: MEMBER,
@@ -272,9 +274,9 @@ function checks(): TripMealCheck[] {
 /**
  * Личный слой участника: своё блюдо и свой продукт в завтраке первого дня.
  *
- * Он живёт в тех же плашках приёма, поэтому по умолчанию загружен: так
- * проверяются и личные строки, и карточка «Мои продукты», и то, что общие
- * тесты не ломаются от соседства.
+ * Он живёт в тех же плашках приёма и показывается, пока человек ест
+ * отдельно (19.11.2026): так проверяются и личные строки, и карточка
+ * «Мои продукты», и то, что общие тесты не ломаются от соседства.
  */
 function myPlan(): TripMealPlan {
   return {
@@ -632,14 +634,47 @@ describe('TripMeals', () => {
     expect(all().attributes('title')).toBe('Свернуть все приёмы')
   })
 
-  it('флаг «питаюсь отдельно» ставится через PATCH и перечитывает раскладку', async () => {
+  it('без «питаюсь отдельно» личных полей нет, общая раскладка на месте', async () => {
+    currentPlan.eaters.people[0]!.eatsSeparately = false
+
     const wrapper = await mountMeals()
+
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="my-meal-dish-select-1-breakfast"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="my-checklist-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="my-products"]').exists()).toBe(false)
+    // Общая раскладка не зависит от личного флага.
+    expect(wrapper.find('[data-test="meal-add"]').exists()).toBe(true)
+  })
+
+  it('флаг «питаюсь отдельно» скрывает и раскрывает личные поля', async () => {
+    mocks.setMyStatus.mockImplementation(
+      async (_tripId: string, _status: string, separate: boolean) => {
+        currentPlan.eaters.people[0]!.eatsSeparately = separate
+      },
+    )
+
+    const wrapper = await mountMeals()
+
+    // Свернули личные поля, потом сняли флаг и вернули его: включение
+    // показывает поля развёрнутыми, а не оставляет их свёрнутыми.
+    await wrapper.find('[data-test="my-meals-collapse-all-1-breakfast"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="eats-separately"]').setValue(false)
+    await flushPromises()
+
+    expect(mocks.setMyStatus).toHaveBeenLastCalledWith('7', 'going', false)
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(false)
 
     await wrapper.find('[data-test="eats-separately"]').setValue(true)
     await flushPromises()
 
-    expect(mocks.setMyStatus).toHaveBeenCalledWith('7', 'going', true)
-    expect(mocks.fetchMealPlan).toHaveBeenCalledTimes(2)
+    expect(mocks.setMyStatus).toHaveBeenLastCalledWith('7', 'going', true)
+    expect(mocks.fetchMealPlan).toHaveBeenCalledTimes(3)
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="my-meal-dish-select-1-breakfast"]').exists()).toBe(true)
   })
 
   it('питание человека без аккаунта отмечает участник похода', async () => {

@@ -593,6 +593,26 @@ function applyDeparture(value: string) {
 }
 
 /**
+ * «Начало похода» у поля отправления (19.11.2026).
+ *
+ * Рейс «Туда» и заброска почти всегда стартуют в дату начала похода,
+ * а листать календарь до неё — лишние касания: заказчик просил кнопку
+ * рядом с выбором даты. Дату берём из свойств похода, **время оставляем
+ * уже выбранное**; если время ещё не выбрано, подставляем время начала
+ * похода. Часы начала похода — не приговор рейсу: «выехали 20:00»
+ * не значит, что поезд пойдёт в 20:00, поэтому время не затираем.
+ */
+function applyTripStart(): void {
+  const draft = legDraft.value
+  if (draft === null || !props.trip.startsAt) return
+
+  const start = toLocalInput(props.trip.startsAt)
+  const time = draft.departsAt.slice(11) || start.slice(11)
+
+  draft.departsAt = `${start.slice(0, 10)}T${time}`
+}
+
+/**
  * Рамки выезда для поля времени.
  *
  * Те же правила, что проверяет сервер (400 «Дата раньше/позже…»), поэтому
@@ -1477,17 +1497,34 @@ const driverOptions = computed(() => {
             />
           </label>
 
-          <label class="flex flex-col gap-1 text-sm text-muted">
+          <div class="flex flex-col gap-1 text-sm text-muted">
             Время отправления
-            <button
-              type="button"
-              class="cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-left text-base text-text transition-colors focus:border-primary focus:outline-none"
-              data-test="transfer-departure-input"
-              @click="isPickingTime = true"
-            >
-              {{ legDraft.departsAt ? legDraft.departsAt.replace('T', ' ') : 'Выбери дату и время' }}
-            </button>
-          </label>
+            <div class="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                class="min-w-0 flex-1 cursor-pointer rounded-xl border border-border bg-field px-3 py-2 text-left text-base text-text transition-colors focus:border-primary focus:outline-none"
+                data-test="transfer-departure-input"
+                @click="isPickingTime = true"
+              >
+                {{ legDraft.departsAt ? legDraft.departsAt.replace('T', ' ') : 'Выбери дату и время' }}
+              </button>
+
+              <!--
+                Дата начала похода одной кнопкой (19.11.2026). Только для
+                «Туда»: у обратного рейса и заброски свой отсчёт, и кнопка
+                «Начало похода» там подставляла бы заведомо не то.
+              -->
+              <button
+                v-if="legDraft.direction === 'there' && !legDraft.isStage && trip.startsAt"
+                type="button"
+                class="cursor-pointer rounded-xl border border-border px-3 py-2 text-sm text-text transition-colors hover:border-primary"
+                data-test="transfer-trip-start"
+                @click="applyTripStart"
+              >
+                Начало похода
+              </button>
+            </div>
+          </div>
 
           <!-- «Наше ТС» — только тому, кому право вкладки дало флаг -->
           <template v-if="!selectedVehicle">
