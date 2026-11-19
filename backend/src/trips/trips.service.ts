@@ -1026,6 +1026,72 @@ export class TripsService {
     );
   }
 
+  /**
+   * Даты похода сдвинулись — ночи идут за ними (19.11.2026).
+   *
+   * Заказчик 19.11.2026: «в свойствах похода меняю даты, „Ночёвки“ вообще
+   * не реагируют». Причина была не в SSE: записанная ночь хранила дату
+   * навсегда, поэтому таблица показывала прежние числа даже после
+   * перезагрузки. Здесь ночи перенумеровываются от нового начала: дата
+   * меняется по номеру, лишние в конце удаляются, недостающие добавляются
+   * пустыми. Место, вариант и готовка у оставшихся ночей сохраняются —
+   * теряется только то, что оказалось за концом похода.
+   *
+   * Даты считаются по UTC, как `dayDistance` и `night_date`: дата похода
+   * приходит полуночью UTC, и смена часового пояса сервера таблицу
+   * не двигает. Дат нет (или конец раньше начала — это отбивает
+   * `assertDates`) — ночи не трогаем.
+   */
+  private async syncRouteNightDates(
+    manager: EntityManager,
+    tripId: string,
+    startsAt: Date | null,
+    endsAt: Date | null,
+  ): Promise<void> {
+    if (startsAt === null || endsAt === null) return;
+
+    const total = dayDistance(startsAt, endsAt);
+    if (total < 1) return;
+
+    const nights = await manager.find(TripRouteNight, {
+      where: { tripId },
+      order: { position: 'ASC', id: 'ASC' },
+    });
+
+    // Пустая таблица рисуется по датам на клиенте — записывать её незачем.
+    if (nights.length === 0) return;
+
+    const byPosition = new Map(nights.map((night) => [night.position, night]));
+    const start = Date.UTC(
+      startsAt.getUTCFullYear(),
+      startsAt.getUTCMonth(),
+      startsAt.getUTCDate(),
+    );
+
+    for (let position = 1; position <= total; position += 1) {
+      const date = new Date(start + (position - 1) * 86_400_000)
+        .toISOString()
+        .slice(0, 10);
+      const night = byPosition.get(position);
+
+      if (night === undefined) {
+        await manager.insert(TripRouteNight, {
+          tripId,
+          position,
+          nightDate: date,
+        });
+      } else if (night.nightDate !== date) {
+        await manager.update(TripRouteNight, { id: night.id }, { nightDate: date });
+      }
+    }
+
+    for (const night of nights) {
+      if (night.position > total) {
+        await manager.delete(TripRouteNight, { id: night.id });
+      }
+    }
+  }
+
   /** `null` и `undefined` — «даты нет»; строка — момент времени. */
   private toDate(value: string | null | undefined): Date | null {
     return value ? new Date(value) : null;
@@ -1506,6 +1572,12 @@ export class TripsService {
         const datesChanged =
           !sameInstant(previousStartsAt, startsAt) ||
           !sameInstant(previousEndsAt, endsAt);
+
+        // Дата ночи — производная от дат похода, а не вечная запись:
+        // иначе таблица показывала бы старые числа после каждой правки.
+        if (datesChanged) {
+          await this.syncRouteNightDates(manager, saved.id, startsAt, endsAt);
+        }
 
         const conflictText =
           status === 'decided' && (becameDecided || datesChanged)

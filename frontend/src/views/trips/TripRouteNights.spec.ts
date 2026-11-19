@@ -345,14 +345,14 @@ describe('плашки ночёвок', () => {
     expect((place.element as HTMLInputElement).value).toBe('Ольхон')
   })
 
-  it('своё событие `route` не перечитывается: ответ на `PUT` уже применён', async () => {
+  it('своё событие `route` тоже перечитывается: вторая вкладка не отстаёт', async () => {
     await mounted(trip(TWO_NIGHTS))
     mocks.fetchTripRoute.mockClear()
 
     liveHandler()({ scope: 'route', actorId: ME, at: '2026-11-19T10:00:01Z' })
     await settle(350)
 
-    expect(mocks.fetchTripRoute).not.toHaveBeenCalled()
+    expect(mocks.fetchTripRoute).toHaveBeenCalledTimes(1)
   })
 
   it('чужая смена дат пересчитывает ночи пустой таблицы', async () => {
