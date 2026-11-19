@@ -190,6 +190,15 @@ export class TripFinanceService {
     const trip = await this.trips.getVisibleTrip(userId, tripId);
     await this.assertGoing(this.dataSource.manager, String(trip.id), userId);
 
+    // Обязательность ключа проверяем здесь, а не декоратором: `@IsOptional`
+    // у поля в родительском DTO гасит любой `@IsDefined` в наследнике.
+    // Без ключа повторную отправку не отличить от нового чека.
+    if (dto.entries.some((entry) => !entry.clientId)) {
+      throw new BadRequestException(
+        'У чека из очереди должен быть ключ с устройства',
+      );
+    }
+
     const results: TripExpenseSyncResultDto[] = [];
     let created = false;
 

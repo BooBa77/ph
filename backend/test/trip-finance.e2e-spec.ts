@@ -39,6 +39,8 @@ describe('Бухгалтерия похода (e2e)', () => {
   let trip6: string;
   /** Залог v3: частичные переводы, «запас» и ушедшие с разным покрытием. */
   let trip7: string;
+  /** Очередь офлайн-чеков: пачка, повтор по `clientId`, отказ по одному чеку. */
+  let trip8: string;
   let virtualPersonId: string;
   let lastCode: string | null = null;
 
@@ -239,7 +241,7 @@ describe('Бухгалтерия похода (e2e)', () => {
     if (dataSource?.isInitialized) {
       // Расходы, доли и компенсации уходят каскадом вместе с походами.
       await dataSource.query('DELETE FROM trips WHERE id = ANY($1::bigint[])', [
-        [trip1, trip2, trip3, trip4, trip5, trip6, trip7].filter(Boolean),
+        [trip1, trip2, trip3, trip4, trip5, trip6, trip7, trip8].filter(Boolean),
       ]);
       // Человек без аккаунта ссылается на владельца — удаляем его первым.
       if (virtualPersonId) {
@@ -1866,6 +1868,213 @@ describe('Бухгалтерия похода (e2e)', () => {
         await setDecision(trip7, a, g, 'forfeited').expect(400);
         await setDecision(trip7, a, g, 'returned').expect(400);
       });
+    });
+  });
+
+  /**
+   * Очередь офлайн-чеков (19.11.2026, сессия 5).
+   *
+   * Здесь проверяется то, чего не видит юнит-тест: пачка чеков с устройства
+   * доезжает одной ручкой, повтор с тем же `clientId` не создаёт дубль,
+   * отказ по одному чеку не роняет остальные, а неидущий получает 403
+   * на всю очередь. Поход на пятерых: организатор и четверо идущих; один
+   * из них потом выходит — на нём проверяются отклонение и 403.
+   */
+  describe('синхронизация офлайн-чеков', () => {
+    interface SyncResult {
+      clientId: string;
+      status: 'accepted' | 'rejected';
+      message?: string;
+    }
+
+    interface ExpenseRow {
+      clientId: string | null;
+      amountRub: number;
+      shares: { userId: string; amountRub: number }[];
+    }
+
+    const sync = (
+      tripId: string,
+      person: Person,
+      entries: unknown[],
+      expected = 200,
+    ) =>
+      auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${tripId}/finance/expenses/sync`,
+        ),
+        person.token,
+      )
+        .send({ entries })
+        .expect(expected);
+
+    const resultsOf = (body: unknown) =>
+      (body as { results: SyncResult[] }).results;
+
+    const expensesWith = (body: unknown, clientId: string): ExpenseRow[] =>
+      (body as { expenses: ExpenseRow[] }).expenses.filter(
+        (item) => item.clientId === clientId,
+      );
+
+    const decline = (tripId: string, person: Person) =>
+      auth(
+        request(app.getHttpServer()).patch(
+          `/api/trips/${tripId}/participants/me`,
+        ),
+        person.token,
+      ).send({ status: 'declined' });
+
+    beforeAll(async () => {
+      trip8 = await createTrip('Бухгалтерия: офлайн-чеки');
+      for (const person of [b, c, d, g]) await addGoing(trip8, person);
+    });
+
+    it('пачка доезжает, а повтор с теми же ключами дублей не делает', async () => {
+      const events = app.get(TripEventsService);
+      const received: string[] = [];
+      const subscription = events
+        .stream(String(trip8))
+        .subscribe((event) => received.push(event.scope));
+
+      const first = '11111111-1111-4111-8111-111111111111';
+      const second = '22222222-2222-4222-8222-222222222222';
+      const entries = [
+        {
+          clientId: first,
+          amountRub: 1000,
+          split: 'all',
+          description: 'Продукты из очереди',
+          spentAt: '2026-11-18',
+        },
+        {
+          clientId: second,
+          amountRub: 400,
+          split: 'all',
+          description: 'Бензин из очереди',
+          spentAt: '2026-11-19',
+        },
+      ];
+
+      const accepted = await sync(trip8, b, entries);
+      const repeated = await sync(trip8, b, entries);
+
+      subscription.unsubscribe();
+
+      // `accepted` значит «создан или уже был» — повтор отвечает так же.
+      expect(resultsOf(accepted.body).map((item) => item.status)).toEqual([
+        'accepted',
+        'accepted',
+      ]);
+      expect(resultsOf(repeated.body).map((item) => item.status)).toEqual([
+        'accepted',
+        'accepted',
+      ]);
+
+      // Второй заход не завёл вторую строку на тот же ключ.
+      expect(expensesWith(repeated.body, first)).toHaveLength(1);
+      expect(expensesWith(repeated.body, second)).toHaveLength(1);
+
+      // Доли считает сервер по актуальному составу: 1000 на пятерых.
+      expect(expensesWith(repeated.body, first)[0]?.shares).toHaveLength(5);
+      expect(
+        expensesWith(repeated.body, first)[0]?.shares.map(
+          (share) => share.amountRub,
+        ),
+      ).toEqual([200, 200, 200, 200, 200]);
+
+      // Один сигнал на пачку; повтор ничего не создал — сигнала нет.
+      expect(received).toEqual(['finance']);
+    });
+
+    it('отклонённый чек не роняет пачку', async () => {
+      await decline(trip8, d).expect(200);
+
+      const rejected = '33333333-3333-4333-8333-333333333333';
+      const accepted = '44444444-4444-4444-8444-444444444444';
+
+      const response = await sync(trip8, b, [
+        {
+          clientId: rejected,
+          payerUserId: d.id,
+          amountRub: 100,
+          split: 'all',
+          description: 'Чек ушедшего',
+          spentAt: '2026-11-19',
+        },
+        {
+          clientId: accepted,
+          amountRub: 300,
+          split: 'all',
+          description: 'Бензин после выхода',
+          spentAt: '2026-11-19',
+        },
+      ]);
+
+      const results = resultsOf(response.body);
+
+      // У отказанного чека свой итог и причина, очередь из-за него не встаёт.
+      expect(results[0]).toMatchObject({
+        clientId: rejected,
+        status: 'rejected',
+      });
+      expect(results[0]?.message).toBeTruthy();
+      expect(results[1]).toEqual({ clientId: accepted, status: 'accepted' });
+
+      // Отклонённого чека в таблице нет, принятый — есть.
+      expect(expensesWith(response.body, rejected)).toEqual([]);
+      expect(expensesWith(response.body, accepted)).toHaveLength(1);
+    });
+
+    it('неидущий получает 403 на всю очередь, и ничего не создаётся', async () => {
+      const clientId = '55555555-5555-4555-8555-555555555555';
+
+      await sync(
+        trip8,
+        d,
+        [
+          {
+            clientId,
+            amountRub: 100,
+            split: 'all',
+            description: 'Чек после выхода',
+            spentAt: '2026-11-19',
+          },
+        ],
+        403,
+      );
+
+      const after = await view(trip8, b);
+      expect(expensesWith(after.body, clientId)).toEqual([]);
+    });
+
+    it('пустая пачка, чек без ключа и пачка больше 50 — 400', async () => {
+      await sync(trip8, b, [], 400);
+
+      await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip8}/finance/expenses/sync`,
+        ),
+        b.token,
+      )
+        .send({
+          entries: [
+            {
+              amountRub: 100,
+              split: 'all',
+              description: 'Без ключа',
+            },
+          ],
+        })
+        .expect(400);
+
+      const many = Array.from({ length: 51 }, (_, index) => ({
+        clientId: `${index.toString(16).padStart(8, '0')}-0000-4000-8000-000000000000`,
+        amountRub: 10,
+        split: 'all',
+        description: `Чек ${index + 1}`,
+      }));
+
+      await sync(trip8, b, many, 400);
     });
   });
 });
