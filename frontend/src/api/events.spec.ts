@@ -45,6 +45,20 @@ describe('parseSseFrame', () => {
     )
   })
 
+  it('понимает ночёвки, дневник и свойства похода', () => {
+    expect(parseSseFrame(frame(event({ scope: 'route' })))).toEqual(
+      event({ scope: 'route' }),
+    )
+    // `diary` тип знал с самого начала, а проверка его выбрасывала:
+    // подписка «Дневника» была мёртвой до 19.11.2026.
+    expect(parseSseFrame(frame(event({ scope: 'diary' })))).toEqual(
+      event({ scope: 'diary' }),
+    )
+    expect(parseSseFrame(frame(event({ scope: 'trip' })))).toEqual(
+      event({ scope: 'trip' }),
+    )
+  })
+
   it('пропускает heartbeat, retry и данные неизвестного вида', () => {    expect(parseSseFrame(': ping')).toBeNull()
     expect(parseSseFrame('retry: 3000')).toBeNull()
     // Чужое имя события не должно притворяться изменением снаряжения.

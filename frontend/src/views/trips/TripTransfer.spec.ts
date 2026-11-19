@@ -334,6 +334,49 @@ describe('TripTransfer', () => {
     expect(compensation).toContain('туда-обратно')
   })
 
+  // ─────────────── даты похода и план (19.11.2026) ───────────────
+
+  it('даты похода сдвинулись — план перечитывается', async () => {
+    const dated: Trip = {
+      ...TRIP,
+      startsAt: '2026-12-01T00:00:00.000Z',
+      endsAt: '2026-12-05T00:00:00.000Z',
+    }
+
+    const wrapper = await mountTransfer(makePlan(), [], dated)
+    expect(mocks.fetchTripTransfer).toHaveBeenCalledTimes(1)
+
+    // Шапка перечитала поход по SSE — вкладка видит новые даты и обновляет
+    // план: времена рейсов сервер уже сдвинул вместе с началом.
+    await wrapper.setProps({
+      trip: {
+        ...dated,
+        startsAt: '2026-12-05T00:00:00.000Z',
+        endsAt: '2026-12-09T00:00:00.000Z',
+      },
+    })
+    await flushPromises()
+
+    expect(mocks.fetchTripTransfer).toHaveBeenCalledTimes(2)
+  })
+
+  it('без смены дат план не перечитывается', async () => {
+    const dated: Trip = {
+      ...TRIP,
+      startsAt: '2026-12-01T00:00:00.000Z',
+      endsAt: '2026-12-05T00:00:00.000Z',
+    }
+
+    const wrapper = await mountTransfer(makePlan(), [], dated)
+
+    await wrapper.setProps({
+      trip: { ...dated, isRecruitmentClosed: true },
+    })
+    await flushPromises()
+
+    expect(mocks.fetchTripTransfer).toHaveBeenCalledTimes(1)
+  })
+
   it('«едем все вместе» — только когда едут все участники', async () => {
     // В автобусе один Пётр из трёх: «все вместе» было бы неправдой.
     const partial = await mountTransfer(makePlan())

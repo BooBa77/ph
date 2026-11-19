@@ -57,6 +57,7 @@ import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
 import { TripRouteNight } from './entities/trip-route-night.entity';
+import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
 import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { conflictMessage, removeConflictingGear } from '../gear/gear-uid';
@@ -1092,6 +1093,48 @@ export class TripsService {
     }
   }
 
+  /**
+   * Даты похода сдвинулись — рейсы «Трансфера» идут за ними (19.11.2026).
+   *
+   * Заказчик: «Трансфер не реагирует на изменения дат ровно как Ночёвки до
+   * правок». У рейса одно время — `departs_at`, абсолютный момент, и от дат
+   * похода он не пересчитывался: сдвинули поход на четыре дня — все рейсы
+   * остались на прежних числах, то есть вне похода. Хуже того, после этого
+   * их не даёт поправить `assertWithinTrip`: «рейс раньше начала похода».
+   *
+   * Сдвигаем **все** рейсы похода на ту же разницу календарных дней, на
+   * которую уехало начало. Часы не трогаем: автобус в шесть утра остаётся
+   * автобусом в шесть утра, а не переезжает вместе со временем старта
+   * (`dayDistance` считает дни, как у ночей). Рейсы не удаляем, даже если
+   * новый конец похода стал раньше: у рейса пассажиры, места и деньги,
+   * и молча стереть его значит стереть чужую работу — это отдельное решение
+   * заказчика, а не побочный эффект правки дат.
+   *
+   * Дат нет (или начало не менялось) — рейсы не трогаем.
+   */
+  private async syncTransferLegDates(
+    manager: EntityManager,
+    tripId: string,
+    previousStartsAt: Date | null,
+    startsAt: Date | null,
+  ): Promise<void> {
+    if (previousStartsAt === null || startsAt === null) return;
+
+    const shiftDays = dayDistance(previousStartsAt, startsAt);
+    if (shiftDays === 0) return;
+
+    // Один `UPDATE` на все рейсы: их у похода единицы, и построчный проход
+    // здесь только ради того, чтобы у каждого рейса была своя ошибка.
+    await manager
+      .createQueryBuilder()
+      .update(TripTransferLeg)
+      .set({
+        departsAt: () => `"departs_at" + ${shiftDays} * interval '1 day'`,
+      })
+      .where('"trip_id" = :tripId', { tripId })
+      .execute();
+  }
+
   /** `null` и `undefined` — «даты нет»; строка — момент времени. */
   private toDate(value: string | null | undefined): Date | null {
     return value ? new Date(value) : null;
@@ -1577,6 +1620,14 @@ export class TripsService {
         // иначе таблица показывала бы старые числа после каждой правки.
         if (datesChanged) {
           await this.syncRouteNightDates(manager, saved.id, startsAt, endsAt);
+          // Рейс «Трансфера» — тоже не вечная запись: его время едет вместе
+          // с началом похода, иначе рейс остаётся вне новых дат.
+          await this.syncTransferLegDates(
+            manager,
+            saved.id,
+            previousStartsAt,
+            startsAt,
+          );
         }
 
         const conflictText =
@@ -1640,6 +1691,14 @@ export class TripsService {
      * об этом не узнавала до перезагрузки.
      */
     if (datesChanged) this.events.emitRoute(String(id), userId);
+
+    /**
+     * Свойства похода для шапки страницы (19.11.2026): даты, видимость,
+     * набор, залог, название. Шапка — не вкладка, своего потока у неё нет,
+     * и без этого события подписи на других вкладках оставались прежними
+     * до перезахода в поход.
+     */
+    this.events.emitTrip(String(id), userId);
 
     return response;
   }

@@ -3,6 +3,7 @@ import { computed, onUnmounted, ref, watch, watchEffect } from 'vue'
 import { RouterLink, useRoute } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
+import { subscribeTripEvents } from '@/api/events'
 import {
   fetchTripCacheState,
   fetchTripTabs,
@@ -325,7 +326,12 @@ watchEffect(() => {
   })
 })
 
-onUnmounted(() => mobileMenu.clearContext())
+onUnmounted(() => {
+  mobileMenu.clearContext()
+  // Поток живёт, пока открыта страница похода: ушли — закрыли соединение.
+  stopLive?.()
+  stopLive = null
+})
 
 async function load(id: string) {
   isLoading.value = true
@@ -384,6 +390,70 @@ async function load(id: string) {
 
   // Поход открыт — сохраняем его копию для офлайна (если он идёт сейчас).
   if (trip.value) void prepareOfflineCopy(trip.value)
+
+  listenForTripChanges(id)
+}
+
+// ───────────────────────── свойства похода по SSE (19.11.2026) ─────────────────────────
+
+/**
+ * Живые свойства похода: даты, видимость, набор, залог.
+ *
+ * Заказчик: «по SSE не обновляются подписи свойства похода на всех
+ * вкладках». Шапка — не вкладка, а рамка над ними, и своего потока у неё
+ * не было: подписки жили только внутри вкладок и перечитывали свои данные.
+ * Поэтому «1 декабря — 5 декабря» и «Залог участия» на второй вкладке
+ * браузера оставались прежними до перезахода.
+ *
+ * Слушаем канал «Снаряжения» (`gear` по умолчанию): канал на бэкенде один
+ * на поход, а `scope` в кадре говорит, чьё это изменение. Подписка нужна
+ * только участнику — у гостя вкладок «Снаряжения» нет, и сервер ответил бы
+ * `403`, а клиент переподключался бы в пустоту.
+ */
+let stopLive: (() => void) | null = null
+
+/** Идёт перечитывание — второе событие подряд не гоняет второй запрос. */
+let isRefreshingTrip = false
+
+function listenForTripChanges(id: string) {
+  stopLive?.()
+  stopLive = null
+
+  const isParticipant = permissions.value.some(
+    (permission) => permission.code !== 'guest',
+  )
+  if (!isParticipant) return
+
+  stopLive = subscribeTripEvents(id, (event) => {
+    if (event.scope !== 'trip') return
+    void refreshTrip()
+  })
+}
+
+/**
+ * Перечитать свойства похода.
+ *
+ * Своё действие тоже повод: у одного человека бывает две вкладки, и даты
+ * чаще правят не в той, где открыта шапка. Пока идёт «Закрыть набор», своим
+ * ответом уже занят `trip` — тогда не перечитываем, чтобы не перетереть
+ * ответ более старым `GET`. И не подменяем поход, если за время запроса
+ * открыли другой: `id` сверяем после ответа.
+ */
+async function refreshTrip(): Promise<void> {
+  const current = trip.value
+  if (current === null || isRefreshingTrip || isTogglingRecruitment.value) return
+
+  isRefreshingTrip = true
+
+  try {
+    const fresh = await getTrip(current.id)
+    if (trip.value?.id === fresh.id) trip.value = fresh
+  } catch {
+    // Тихо: живые подписи — удобство, а не данные, и красить шапку
+    // в красное из-за них незачем.
+  } finally {
+    isRefreshingTrip = false
+  }
 }
 
 watch(

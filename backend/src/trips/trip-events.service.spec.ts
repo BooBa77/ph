@@ -102,6 +102,20 @@ describe('TripEventsService', () => {
     subscription.unsubscribe();
   });
 
+  it('событие свойств похода идёт своим scope «trip» (19.11.2026)', () => {
+    const service = new TripEventsService();
+    const received: TripEvent[] = [];
+
+    const subscription = service.stream('679').subscribe((event) => received.push(event));
+    service.emitTrip('679', 'user-8');
+
+    expect(received).toEqual([
+      { scope: 'trip', actorId: 'user-8', at: expect.any(String) },
+    ]);
+
+    subscription.unsubscribe();
+  });
+
   it('событие без подписчиков не падает и канал не создаёт', () => {
     const service = new TripEventsService();
 

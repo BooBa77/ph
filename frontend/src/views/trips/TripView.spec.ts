@@ -26,6 +26,11 @@ const mocks = vi.hoisted(() => ({
   updateTrip: vi.fn(),
   listParticipants: vi.fn(),
   setTripPresence: vi.fn(),
+  subscribeTripEvents: vi.fn(),
+}))
+
+vi.mock('@/api/events', () => ({
+  subscribeTripEvents: mocks.subscribeTripEvents,
 }))
 
 vi.mock('@/api/trips', async (importOriginal) => {
@@ -150,6 +155,7 @@ describe('TripView и мобильное меню', () => {
     mocks.getTrip.mockResolvedValue(TRIP)
     mocks.fetchTripTabs.mockResolvedValue(permissions())
     mocks.listParticipants.mockResolvedValue([])
+    mocks.subscribeTripEvents.mockReturnValue(vi.fn())
   })
 
   it('нижней полосы вкладок больше нет', async () => {
@@ -251,6 +257,65 @@ describe('TripView и мобильное меню', () => {
     wrapper.unmount()
 
     expect(useMobileMenuStore().context).toBeNull()
+  })
+
+  // ───────────────────── свойства похода по SSE (19.11.2026) ─────────────────────
+
+  it('шапка слушает поток похода и перечитывает свойства', async () => {
+    const { wrapper } = await mountTrip()
+
+    expect(mocks.subscribeTripEvents).toHaveBeenCalledWith('1', expect.any(Function))
+    expect(wrapper.text()).not.toContain('Залог участия')
+
+    // Сколько раз поход уже просили при открытии (копия для офлайна
+    // перечитывает его сама) — важно только, что событие добавило ровно один.
+    const loadsBefore = mocks.getTrip.mock.calls.length
+
+    // Чужая правка: поход подорожал и получил даты.
+    mocks.getTrip.mockResolvedValue({
+      ...TRIP,
+      startsAt: '2026-12-01T00:00:00.000Z',
+      endsAt: '2026-12-05T00:00:00.000Z',
+      depositRub: 200,
+    })
+
+    const onEvent = mocks.subscribeTripEvents.mock.calls[0]?.[1] as (event: {
+      scope: string
+      actorId: string
+      at: string
+    }) => void
+    onEvent({ scope: 'trip', actorId: 'u-2', at: '2026-11-19T03:00:00.000Z' })
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Залог участия: 200 ₽ с человека')
+    expect(wrapper.text()).toContain('5 декабря 2026 г.')
+    expect(mocks.getTrip.mock.calls.length).toBe(loadsBefore + 1)
+  })
+
+  it('событие вкладки шапку не перечитывает', async () => {
+    await mountTrip()
+
+    const loadsBefore = mocks.getTrip.mock.calls.length
+
+    const onEvent = mocks.subscribeTripEvents.mock.calls[0]?.[1] as (event: {
+      scope: string
+      actorId: string
+      at: string
+    }) => void
+    onEvent({ scope: 'gear', actorId: 'u-2', at: '2026-11-19T03:00:00.000Z' })
+    await flushPromises()
+
+    expect(mocks.getTrip.mock.calls.length).toBe(loadsBefore)
+  })
+
+  it('уходя со страницы, закрывает поток', async () => {
+    const stop = vi.fn()
+    mocks.subscribeTripEvents.mockReturnValue(stop)
+
+    const { wrapper } = await mountTrip()
+    wrapper.unmount()
+
+    expect(stop).toHaveBeenCalled()
   })
 
   // ───────────────────── присутствие (17.11.2026) ─────────────────────

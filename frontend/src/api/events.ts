@@ -31,8 +31,11 @@ import { useAuthStore } from '@/stores/auth'
  * хуже, чем лишний запрос раз в несколько секунд.
  */
 
-/** Что изменилось на вкладке: снаряжение, чек-листы, деньги, питание, дневник или ночёвки. */
-export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals' | 'diary' | 'route'
+/**
+ * Что изменилось: снаряжение, чек-листы, деньги, питание, дневник, ночёвки
+ * или свойства самого похода.
+ */
+export type TripEventScope = 'gear' | 'checklist' | 'finance' | 'meals' | 'diary' | 'route' | 'trip'
 
 /** Адрес потока: у «Снаряжения», «Бухгалтерии», «Питания» и «Дневника» свои контроллеры. */
 export type TripEventChannel = 'gear' | 'finance' | 'meals' | 'diary'
@@ -83,17 +86,30 @@ export function parseSseFrame(frame: string): TripEvent | null {
   }
 }
 
+/**
+ * Известный ли это scope.
+ *
+ * `diary` добавлен 19.11.2026: тип его знал, а проверка нет — кадры дневника
+ * молча выбрасывались, и подписка «Дневника» была мёртвой. `trip` —
+ * свойства похода для шапки страницы.
+ */
+const TRIP_EVENT_SCOPES: readonly TripEventScope[] = [
+  'gear',
+  'checklist',
+  'finance',
+  'meals',
+  'diary',
+  'route',
+  'trip',
+]
+
 function isTripEvent(value: unknown): value is TripEvent {
   if (typeof value !== 'object' || value === null) return false
 
   const event = value as Partial<TripEvent>
 
   return (
-    (event.scope === 'gear' ||
-      event.scope === 'checklist' ||
-      event.scope === 'finance' ||
-      event.scope === 'meals' ||
-      event.scope === 'route') &&
+    TRIP_EVENT_SCOPES.includes(event.scope as TripEventScope) &&
     typeof event.actorId === 'string' &&
     typeof event.at === 'string'
   )
