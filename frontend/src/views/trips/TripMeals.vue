@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import { ApiError } from '@/api/errors'
 import { listDishes } from '@/api/meals'
@@ -115,6 +115,107 @@ function lineDraft(key: string): {
   return lineDrafts.value[key]!
 }
 
+// ───────────────────────────── свёрнутые секции ─────────────────────────────
+
+/**
+ * Свёрнутость «Питания» на поход (19.11.2026).
+ *
+ * Заказчик: «наверное сохранение свёрнутости секций в Питание при переходе
+ * между закладками похода». Переключение закладок в `TripView` — это `v-if`:
+ * компонент вкладки размонтируется, и `ref` не доживает до следующего
+ * открытия. Поэтому состояние живёт в `localStorage` **на поход** — тем же
+ * приёмом, что в «Снаряжении» (06.11.2026) и «Аптечке»: ключ свой, чтобы
+ * «Питание» не разворачивало секции соседних вкладок, и у каждого похода
+ * своя раскладка.
+ *
+ * Храним всё одним объектом: свёрнутые общие плашки, свёрнутые личные
+ * (только то, что человек свернул сам), фасовку и две секции `<details>`
+ * («Раскладка», «Пакеты»). `true` везде значит «свёрнуто»; чего в объекте
+ * нет — состояние по умолчанию, как до этого шага: общие поля и обе секции
+ * развёрнуты, личные идут за флагом «питаюсь отдельно».
+ */
+const OPEN_STATE_PREFIX = 'ph.tripMeals.open'
+
+interface MealsOpenState {
+  /** Свёрнутые общие поля приёма: `mealKey(день, приём)` → true. */
+  shared: Record<string, boolean>
+  /** Свёрнутые личные поля приёма: только явный клик по синему шеврону. */
+  mine: Record<string, boolean>
+  /** Свёрнутая фасовка в строках раскладки. */
+  packs: boolean
+  /** Свёрнутые секции: `schedule` («Раскладка») и `packages` («Пакеты»). */
+  sections: Record<string, boolean>
+}
+
+function emptyOpenState(): MealsOpenState {
+  return { shared: {}, mine: {}, packs: false, sections: {} }
+}
+
+function openStateKey(tripId: string): string {
+  return `${OPEN_STATE_PREFIX}.${tripId}`
+}
+
+/** Только булевы значения: мусор в хранилище не должен ломать вкладку. */
+function readBooleans(value: unknown): Record<string, boolean> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return {}
+  }
+
+  const result: Record<string, boolean> = {}
+  for (const [key, flag] of Object.entries(value)) {
+    if (typeof flag === 'boolean') result[key] = flag
+  }
+
+  return result
+}
+
+function readOpenState(tripId: string): MealsOpenState {
+  try {
+    const raw = window.localStorage.getItem(openStateKey(tripId))
+    if (raw === null) return emptyOpenState()
+
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+      return emptyOpenState()
+    }
+
+    const state = parsed as Record<string, unknown>
+
+    return {
+      shared: readBooleans(state.shared),
+      mine: readBooleans(state.mine),
+      packs: state.packs === true,
+      sections: readBooleans(state.sections),
+    }
+  } catch {
+    // Мусор в localStorage — состояние по умолчанию, а не пустая вкладка.
+    return emptyOpenState()
+  }
+}
+
+const openState = ref<MealsOpenState>(emptyOpenState())
+
+/** Запомнить состояние: зовётся из каждого переключателя. */
+function persistOpenState(): void {
+  try {
+    window.localStorage.setItem(
+      openStateKey(props.trip.id),
+      JSON.stringify(openState.value),
+    )
+  } catch {
+    // Хранилище недоступно (приватный режим, квота) — память секций
+    // останется только до перезагрузки. Вкладку это не ломает.
+  }
+}
+
+watch(
+  () => props.trip.id,
+  (tripId) => {
+    openState.value = readOpenState(tripId)
+  },
+  { immediate: true },
+)
+
 /**
  * Свёрнутая плашка: «только результат».
  *
@@ -129,19 +230,40 @@ function lineDraft(key: string): {
  * что и в просмотре надо видеть. Теперь они остаются всегда.
  *
  * Выбор пакета в строках этим флагом не управляется — для него отдельная
- * кнопка «свернуть фасовку» (`packsHidden`).
+ * кнопка «свернуть фасовку» (`packs`).
  *
- * Состояние живёт в памяти вкладки: это режим просмотра на минуту, а не
- * настройка, которую надо запоминать между заходами.
+ * С 19.11.2026 свёрнутость запоминается на поход: ушёл на «Снаряжение»
+ * и вернулся — плашки стоят так, как их оставили.
  */
-const editHidden = ref<Record<string, boolean>>({})
-
 function isEditHidden(key: string): boolean {
-  return editHidden.value[key] === true
+  return openState.value.shared[key] === true
 }
 
 function toggleEdit(key: string): void {
-  editHidden.value[key] = !isEditHidden(key)
+  openState.value.shared = {
+    ...openState.value.shared,
+    [key]: !isEditHidden(key),
+  }
+  persistOpenState()
+}
+
+/**
+ * Секции `<details>`: «Раскладка» и «Пакеты».
+ *
+ * Первый раз обе развёрнуты — так было до этого шага; дальше помним выбор.
+ * Ключи совпадают с `data-test` секций, чтобы в отладке не искать перевод.
+ */
+function isSectionHidden(key: string): boolean {
+  return openState.value.sections[key] === true
+}
+
+/** `<details>` сообщил о свёртывании/развёртывании — запоминаем. */
+function onSectionToggle(key: string, event: Event): void {
+  const open = (event.target as HTMLDetailsElement).open
+  if (openState.value.sections[key] === !open) return
+
+  openState.value.sections = { ...openState.value.sections, [key]: !open }
+  persistOpenState()
 }
 
 /**
@@ -171,9 +293,10 @@ const allCollapsed = computed(
 function toggleAll(): void {
   const next = !allCollapsed.value
 
-  editHidden.value = Object.fromEntries(
+  openState.value.shared = Object.fromEntries(
     slotKeys.value.map((key) => [key, next]),
   )
+  persistOpenState()
 }
 
 /**
@@ -188,15 +311,17 @@ function toggleAll(): void {
  * Прячет **только выбор пакета в строках раскладки** и кнопку кулька:
  * блюда, продукты и вес остаются. Секцию «Пакеты» не трогает — у неё свой
  * `<details>`, это разные вещи.
+ *
+ * Флаг переживает переход между закладками вместе с остальной свёрнутостью
+ * (19.11.2026, `packs` в `openState`).
  */
-const packsHidden = ref(false)
-
 function isPacksHidden(): boolean {
-  return packsHidden.value
+  return openState.value.packs
 }
 
 function togglePacks(): void {
-  packsHidden.value = !packsHidden.value
+  openState.value.packs = !openState.value.packs
+  persistOpenState()
 }
 
 /** Кто из смотрящих — едок (для флага «питаюсь отдельно»). */
@@ -470,10 +595,13 @@ async function toggleSeparate() {
 
   // Флаг — это «свернуть/развернуть», а не «спрятать»: ставим то же
   // состояние, что дал бы клик по синему шеврону во всех плашках.
+  // Явное состояние запоминается, поэтому после перезахода флаг его
+  // не перебивает — до следующего переключения флага.
   const separate = me.value?.eatsSeparately === true
-  myEditHidden.value = Object.fromEntries(
+  openState.value.mine = Object.fromEntries(
     slotKeys.value.map((key) => [key, !separate]),
   )
+  persistOpenState()
 }
 
 // ─── фасовка: пакеты и доли ───
@@ -1074,16 +1202,21 @@ const myShoppingOpen = ref(false)
  *
  * Пока человек не трогал шеврон, состояние идёт за флагом «питаюсь
  * отдельно»: ест с общего — свёрнуто, ест отдельно — раскрыто. Явный клик
- * запоминается и флагом больше не перебивается до следующего переключения.
+ * запоминается (в `openState.mine`, то есть и между закладками) и флагом
+ * больше не перебивается до следующего переключения флага.
  */
-const myEditHidden = ref<Record<string, boolean>>({})
-
 function isMyEditHidden(key: string): boolean {
-  return myEditHidden.value[key] ?? me.value?.eatsSeparately !== true
+  const stored = openState.value.mine[key]
+
+  return typeof stored === 'boolean' ? stored : me.value?.eatsSeparately !== true
 }
 
 function toggleMyEdit(key: string): void {
-  myEditHidden.value[key] = !isMyEditHidden(key)
+  openState.value.mine = {
+    ...openState.value.mine,
+    [key]: !isMyEditHidden(key),
+  }
+  persistOpenState()
 }
 
 const allMyCollapsed = computed(
@@ -1096,9 +1229,10 @@ const allMyCollapsed = computed(
 function toggleAllMy(): void {
   const next = !allMyCollapsed.value
 
-  myEditHidden.value = Object.fromEntries(
+  openState.value.mine = Object.fromEntries(
     slotKeys.value.map((key) => [key, next]),
   )
+  persistOpenState()
 }
 
 function myMealOf(dayIndex: number, kind: TripMealKind): TripMeal | undefined {
@@ -1515,11 +1649,13 @@ onMounted(() => {
 
       <!-- Раскладка по дням. <details>: длинную раскладку хочется свернуть,
            не уходя со вкладки; содержимое остаётся на своих местах. Свой
-           желтоватый фон — чтобы переход к разделу читался глазами -->
+           желтоватый фон — чтобы переход к разделу читался глазами.
+           Свёрнутость помним на поход (19.11.2026) -->
       <details
-        open
+        :open="!isSectionHidden('schedule')"
         class="group flex flex-col gap-4 rounded-2xl border border-amber-300 bg-amber-100 p-3"
         data-test="schedule"
+        @toggle="onSectionToggle('schedule', $event)"
       >
         <summary class="cursor-pointer select-none text-sm text-amber-900">Раскладка</summary>
 
@@ -2328,11 +2464,13 @@ onMounted(() => {
       </details>
 
       <!-- Фасовка: пакеты. Свёртывается так же, как раскладка; свой
-           фиолетовый фон отличает её от раскладки -->
+           фиолетовый фон отличает её от раскладки. Свёрнутость помним
+           на поход (19.11.2026) -->
       <details
-        open
+        :open="!isSectionHidden('packages')"
         class="flex flex-col gap-3 rounded-2xl border border-violet-300 bg-violet-100 p-3"
         data-test="packages"
+        @toggle="onSectionToggle('packages', $event)"
       >
         <summary class="cursor-pointer select-none text-sm text-violet-900">Пакеты</summary>
 

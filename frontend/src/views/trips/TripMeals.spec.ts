@@ -387,6 +387,9 @@ describe('TripMeals', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    // Свёрнутость вкладки живёт в localStorage на поход: между тестами её
+    // надо снимать, иначе один тест начнёт за другого.
+    window.localStorage.clear()
     signIn()
 
     const current = plan()
@@ -1389,5 +1392,80 @@ describe('TripMeals', () => {
     // Содержимое осталось внутри своих секций.
     expect(sections[0]!.findAll('[data-test="meal-day"]')).toHaveLength(2)
     expect(sections[1]!.findAll('[data-test="package"]')).toHaveLength(2)
+  })
+
+  it('свёрнутость плашек, фасовки и секций переживает переход на другую закладку', async () => {
+    const wrapper = await mountMeals()
+
+    const detailsOf = (w: typeof wrapper, test: string) =>
+      w.get(`[data-test="${test}"]`).element as HTMLDetailsElement
+
+    await wrapper.find('[data-test="meal-add-toggle-1-breakfast"]').trigger('click')
+    await wrapper.find('[data-test="meal-pack-toggle-1-breakfast"]').trigger('click')
+    await flushPromises()
+
+    // Пользователь свернул «Раскладку» руками — как это делает браузер:
+    // меняет `open` у `<details>` и шлёт `toggle`.
+    detailsOf(wrapper, 'schedule').open = false
+    await wrapper.get('[data-test="schedule"]').trigger('toggle')
+
+    // `TripView` переключает закладки через `v-if`: компонент размонтируется
+    // и открывается заново — ровно это и проверяем.
+    wrapper.unmount()
+    const again = await mountMeals()
+
+    expect(again.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(false)
+    expect(
+      again.findAll('[data-test^="ing-pack"], [data-test^="alloc-pack"]'),
+    ).toHaveLength(0)
+    expect(detailsOf(again, 'schedule').open).toBe(false)
+    expect(detailsOf(again, 'packages').open).toBe(true)
+
+    // Состояние лежит на поход: у соседнего похода своя раскладка.
+    expect(
+      JSON.parse(window.localStorage.getItem('ph.tripMeals.open.7') ?? '{}'),
+    ).toMatchObject({
+      shared: { '1:breakfast': true },
+      packs: true,
+      sections: { schedule: true },
+    })
+  })
+
+  it('явно раскрытые личные поля переживают переход и не перебиваются флагом', async () => {
+    currentPlan.eaters.people[0]!.eatsSeparately = false
+
+    const wrapper = await mountMeals()
+
+    // Без флага личные поля свёрнуты — так и остаётся по умолчанию.
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="my-meal-add-toggle-1-breakfast"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[data-test="my-meal-add"]').exists()).toBe(true)
+
+    wrapper.unmount()
+    const again = await mountMeals()
+
+    // Раскрытое человеком остаётся раскрытым…
+    expect(again.find('[data-test="my-meal-add"]').exists()).toBe(true)
+    expect(
+      again.find('[data-test="my-meal-dish-select-1-breakfast"]').exists(),
+    ).toBe(true)
+    // …а нетронутые приёмы по-прежнему идут за флагом, то есть свёрнуты.
+    expect(again.find('[data-test="my-meal-dish-select-1-lunch"]').exists()).toBe(false)
+  })
+
+  it('мусор в localStorage — вкладка открывается в состоянии по умолчанию', async () => {
+    window.localStorage.setItem('ph.tripMeals.open.7', '{не json')
+
+    const wrapper = await mountMeals()
+
+    expect(wrapper.find('[data-test="meal-dish-select-1-breakfast"]').exists()).toBe(true)
+    expect(
+      (wrapper.get('[data-test="schedule"]').element as HTMLDetailsElement).open,
+    ).toBe(true)
+    expect(
+      (wrapper.get('[data-test="packages"]').element as HTMLDetailsElement).open,
+    ).toBe(true)
   })
 })
