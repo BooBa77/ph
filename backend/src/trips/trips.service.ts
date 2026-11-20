@@ -1119,30 +1119,6 @@ export class TripsService {
   }
 
   /**
-   * Факт: возвращение не может быть раньше выхода, и возвращение без выхода
-   * не бывает.
-   *
-   * Это те же условия, что в `chk_trips_actual_dates_order` и
-   * `chk_trips_actual_finish_needs_start`: снять только `actualFinishedAt`,
-   * оставив выход, — законно (передумали отмечать?), а вот записать
-   * возвращение, не записав выход, нельзя.
-   */
-  private assertActualDates(
-    actualStartedAt: Date | null,
-    actualFinishedAt: Date | null,
-  ): void {
-    if (actualFinishedAt === null) return;
-    if (actualStartedAt === null) {
-      throw new BadRequestException(
-        'Нельзя отметить возвращение, не отметив выход на маршрут',
-      );
-    }
-    if (actualFinishedAt < actualStartedAt) {
-      throw new BadRequestException('Возвращение раньше выхода на маршрут');
-    }
-  }
-
-  /**
    * Все переданные id активностей должны существовать.
    *
    * На `is_active` не смотрим: архивный тип в старом походе — норма,
@@ -1624,41 +1600,39 @@ export class TripsService {
         /**
          * Поход попадает в выходные, если его отрезок пересекает окно.
          *
-         * Начало берётся по факту, если он есть. Конец — тоже, а если конца
-         * нет, им считается начало: «поход без известного конца» — это не
-         * повод показать его в любые выходные до скончания века. Из этого
-         * правила следуют два разумных случая: поход, начинающийся
-         * в субботу (конца нет — значит он в этих выходных), и поход
-         * с пятницы по воскресенье (конец заходит в окно).
+         * Начало и конец — только плановые (`starts_at` / `ends_at`): факта
+         * в `trips` больше нет, его место заняли отметки присутствия
+         * (миграция 96). Если конца нет, им считается начало: «поход без
+         * известного конца» — это не повод показать его в любые выходные
+         * до скончания века. Из этого правила следуют два разумных случая:
+         * поход, начинающийся в субботу (конца нет — значит он в этих
+         * выходных), и поход с пятницы по воскресенье (конец заходит
+         * в окно).
          */
         return {
-          sql: `COALESCE(trip.actual_started_at, trip.starts_at) < :weekendEnd
-            AND COALESCE(
-                  COALESCE(trip.actual_finished_at, trip.ends_at),
-                  COALESCE(trip.actual_started_at, trip.starts_at)
-                ) >= :weekendStart`,
+          sql: `trip.starts_at < :weekendEnd
+            AND COALESCE(trip.ends_at, trip.starts_at) >= :weekendStart`,
           params: { weekendStart: start, weekendEnd: end },
         };
       }
       case 'upcoming':
         return {
-          sql: 'COALESCE(trip.actual_started_at, trip.starts_at) > now()',
+          sql: 'trip.starts_at > now()',
         };
       case 'ongoing':
         // Поход без известного конца, но с прошедшим началом, «идёт»:
         // не знать, когда вернутся, — не то же самое, что уже вернулись.
         return {
-          sql: `COALESCE(trip.actual_started_at, trip.starts_at) <= now()
-            AND (COALESCE(trip.actual_finished_at, trip.ends_at) IS NULL
-                 OR COALESCE(trip.actual_finished_at, trip.ends_at) >= now())`,
+          sql: `trip.starts_at <= now()
+            AND (trip.ends_at IS NULL OR trip.ends_at >= now())`,
         };
       case 'past':
         return {
-          sql: 'COALESCE(trip.actual_finished_at, trip.ends_at) < now()',
+          sql: 'trip.ends_at < now()',
         };
       case 'undated':
         return {
-          sql: 'trip.starts_at IS NULL AND trip.actual_started_at IS NULL',
+          sql: 'trip.starts_at IS NULL',
         };
     }
   }
@@ -1726,18 +1700,9 @@ export class TripsService {
           dto.startsAt !== undefined ? this.toDate(dto.startsAt) : trip.startsAt;
         const endsAt =
           dto.endsAt !== undefined ? this.toDate(dto.endsAt) : trip.endsAt;
-        const actualStartedAt =
-          dto.actualStartedAt !== undefined
-            ? this.toDate(dto.actualStartedAt)
-            : trip.actualStartedAt;
-        const actualFinishedAt =
-          dto.actualFinishedAt !== undefined
-            ? this.toDate(dto.actualFinishedAt)
-            : trip.actualFinishedAt;
 
         this.assertPriceRules(isCommercial, priceRub, priceNote);
         this.assertDates(status, startsAt, endsAt);
-        this.assertActualDates(actualStartedAt, actualFinishedAt);
 
         /**
          * Назад в «Мечту» нельзя: поход уже готовится, у него есть состав
@@ -1813,8 +1778,6 @@ export class TripsService {
         trip.status = status;
         trip.startsAt = startsAt;
         trip.endsAt = endsAt;
-        trip.actualStartedAt = actualStartedAt;
-        trip.actualFinishedAt = actualFinishedAt;
         trip.isCommercial = isCommercial;
         if (dto.isOfficial !== undefined) trip.isOfficial = dto.isOfficial;
         trip.priceRub = priceRub;

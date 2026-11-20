@@ -58,8 +58,6 @@ const BASE: Trip = {
   startsAt: '2027-05-05T00:00:00.000Z',
   endsAt: null,
   dateVariants: [],
-  actualStartedAt: null,
-  actualFinishedAt: null,
   isCommercial: false,
   isOfficial: false,
   openParticipation: true,

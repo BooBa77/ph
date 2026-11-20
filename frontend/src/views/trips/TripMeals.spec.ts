@@ -98,8 +98,6 @@ const TRIP: Trip = {
   startsAt: new Date(2027, 4, 5).toISOString(),
   endsAt: new Date(2027, 4, 6).toISOString(),
   dateVariants: [],
-  actualStartedAt: null,
-  actualFinishedAt: null,
   isCommercial: false,
   isOfficial: false,
   openParticipation: true,

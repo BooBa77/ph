@@ -25,7 +25,7 @@ import type { Trip } from '../trips/entities/trip.entity';
  * не занимают снаряжение. Занятость — только решённые (`decided`)
  * нескончавшиеся походы; `proposed` занимает, `declined` — нет». Поэтому
  * везде стоит `status = 'decided'`, `cancelled_at IS NULL` и
- * `COALESCE(actual_finished_at, ends_at) >= now()`.
+ * `ends_at >= now()`.
  *
  * **Уникальность — проверка в сервисе, а не индекс** (решение заказчика,
  * план §8). Окно гонки принято: в походе два-три человека и они нажимают
@@ -148,7 +148,7 @@ async function busyByUid(
        AND t.cancelled_at IS NULL
        AND t.starts_at IS NOT NULL
        AND t.ends_at IS NOT NULL
-       AND COALESCE(t.actual_finished_at, t.ends_at) >= now()
+       AND t.ends_at >= now()
        AND t.starts_at::date <= $4::date
        AND t.ends_at::date   >= $3::date
      ORDER BY gi.gear_uid, t.starts_at ASC
@@ -330,7 +330,7 @@ async function tripUses(
  *
  * - поход решённый и не отменённый — только он занимает снаряжение;
  * - у него есть даты — иначе пересечения не считается;
- * - он ещё не закончился (`COALESCE(actual_finished_at, ends_at) >= now()`).
+ * - он ещё не закончился (`ends_at >= now()`).
  *   Прошедший поход — история, и трогать её нельзя: «завершённые походы
  *   не занимают снаряжение».
  *
@@ -351,7 +351,7 @@ export async function removeConflictingGear(
        AND t.cancelled_at IS NULL
        AND t.starts_at IS NOT NULL
        AND t.ends_at IS NOT NULL
-       AND COALESCE(t.actual_finished_at, t.ends_at) >= now()
+       AND t.ends_at >= now()
     `,
     [trip.id],
   );
@@ -563,7 +563,7 @@ export async function busyCatalogForViewer(
        AND t.cancelled_at IS NULL
        AND t.starts_at IS NOT NULL
        AND t.ends_at IS NOT NULL
-       AND COALESCE(t.actual_finished_at, t.ends_at) >= now()
+       AND t.ends_at >= now()
        AND t.starts_at::date <= $4::date
        AND t.ends_at::date   >= $3::date
      ORDER BY gi.id, t.starts_at ASC

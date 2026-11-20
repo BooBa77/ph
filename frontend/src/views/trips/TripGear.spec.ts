@@ -153,8 +153,6 @@ function makeTrip(organizerUserId = ME): Trip {
     startsAt: '2026-10-29T00:00:00.000Z',
     endsAt: '2026-10-31T00:00:00.000Z',
     dateVariants: [],
-    actualStartedAt: null,
-    actualFinishedAt: null,
     isCommercial: false,
     isOfficial: false,
     openParticipation: true,

@@ -19,8 +19,6 @@ const TRIP = {
   goalObject: { id: '1', name: 'Витязь', type: 'скальник', url: null },
   startsAt: '2020-01-01T00:00:00.000Z',
   endsAt: null,
-  actualStartedAt: null,
-  actualFinishedAt: null,
   cancelledAt: null,
 } as Trip
 

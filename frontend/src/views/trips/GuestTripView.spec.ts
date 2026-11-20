@@ -36,8 +36,6 @@ function makeGuest(overrides: Partial<GuestTrip> = {}): GuestTrip {
     status: 'decided',
     startsAt: '2027-05-05T00:00:00.000Z',
     endsAt: '2027-05-09T00:00:00.000Z',
-    actualStartedAt: null,
-    actualFinishedAt: null,
     participants: [],
     isCommercial: true,
     priceRub: 5000,
@@ -178,19 +176,6 @@ describe('GuestTripView', () => {
     expect(list.text()).not.toContain('Организатор')
     expect(list.text()).toContain('Завхоз')
     expect(list.text()).toContain('Идёт')
-  })
-
-  it('фактические даты видны, если поход состоялся', async () => {
-    mocked.fetchGuestTrip.mockResolvedValue(
-      makeGuest({
-        actualStartedAt: '2027-05-05T09:00:00.000Z',
-        actualFinishedAt: '2027-05-09T18:00:00.000Z',
-      }),
-    )
-
-    const wrapper = await mountView()
-
-    expect(wrapper.find('[data-test="guest-actual-dates"]').text()).toContain('2027')
   })
 
   it('присутствие видно гостю: «на маршруте», «вернулся», «не отметился»', async () => {

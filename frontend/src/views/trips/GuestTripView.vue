@@ -11,7 +11,7 @@ import {
   type MentionLinks,
   type MentionNames,
 } from '@/utils/markdown'
-import { tripFrameParts, tripDatesText, formatTripDate } from '@/utils/tripDisplay'
+import { tripFrameParts, tripDatesText } from '@/utils/tripDisplay'
 import {
   PARTICIPANT_STATUS_LABELS,
   PRESENCE_STATUS_LABELS,
@@ -100,20 +100,6 @@ const datesText = computed(() => {
 const statusText = computed(() => (trip.value ? TRIP_STATUS_LABELS[trip.value.status] : ''))
 const frame = computed(() => (trip.value ? tripFrameParts(trip.value).join(' · ') : ''))
 
-/**
- * Фактические даты: их видят все, это часть анонса. Показываем, только
- * если поход действительно состоялся (или начался) — план и так выше.
- */
-const actualText = computed(() => {
-  const started = trip.value?.actualStartedAt
-  const finished = trip.value?.actualFinishedAt
-  if (!started) return ''
-
-  return finished
-    ? `${formatTripDate(started)} — ${formatTripDate(finished)}`
-    : formatTripDate(started)
-})
-
 const routeHtml = computed(() => markdownToHtml(trip.value?.routeText ?? '', names.value, links.value))
 const requirementsHtml = computed(() =>
   markdownToHtml(trip.value?.requirementsText ?? '', names.value, links.value),
@@ -195,13 +181,6 @@ onMounted(load)
         <div v-if="trip.isRecruitmentClosed">
           <dt class="text-xs text-muted">Набор</dt>
           <dd class="text-base font-semibold text-text">закрыт</dd>
-        </div>
-
-        <div v-if="actualText">
-          <dt class="text-xs text-muted">Факт</dt>
-          <dd class="text-base font-semibold text-text" data-test="guest-actual-dates">
-            {{ actualText }}
-          </dd>
         </div>
       </dl>
 

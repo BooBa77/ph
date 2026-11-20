@@ -447,8 +447,11 @@ describe('Вкладки и роли (e2e)', () => {
 
       // А состав и даты — часть анонса, с 21.10.2026 их видят все.
       expect(response.body).toHaveProperty('participants');
-      expect(response.body).toHaveProperty('actualStartedAt');
-      expect(response.body).toHaveProperty('actualFinishedAt');
+      // Фактических дат похода больше нет (миграция 96, 21.11.2026): их
+      // место заняли отметки присутствия и `completedAt`. Проверяем, что
+      // поля не вернулись, — как и с `meetingPlace` выше.
+      expect(response.body).not.toHaveProperty('actualStartedAt');
+      expect(response.body).not.toHaveProperty('actualFinishedAt');
 
       const participants = response.body.participants as Array<{
         userId: string;

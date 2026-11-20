@@ -185,7 +185,7 @@ export class FamilyGearService {
    * Живой поход, в котором стоит хоть один клон вещи.
    *
    * «Живой» — решённый (`decided`), не отменённый и ещё не закончившийся:
-   * `COALESCE(actual_finished_at, ends_at) >= now()`. Прошедшие походы
+   * `ends_at >= now()`. Прошедшие походы
    * не блокируют удаление (решение заказчика), предложение в планирующем
    * походе — тоже: поход ещё не решён.
    */
@@ -218,7 +218,7 @@ export class FamilyGearService {
          AND gi.owner_user_id = ANY($2::uuid[])
          AND t.status = 'decided'
          AND t.cancelled_at IS NULL
-         AND COALESCE(t.actual_finished_at, t.ends_at) >= now()
+         AND t.ends_at >= now()
        LIMIT 1
       `,
       [gearUid, ownerIds],

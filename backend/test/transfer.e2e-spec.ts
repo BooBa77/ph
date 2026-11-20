@@ -1508,11 +1508,9 @@ describe('Трансфер похода (e2e)', () => {
       .set('Authorization', `Bearer ${organizerToken}`)
       .expect(409);
 
-    // Вернулись — поход закрыт, и техника свободна.
+    // Поход завершён автором — техника свободна.
     await dataSource.query(
-      `UPDATE trips
-          SET actual_started_at = now(), actual_finished_at = now()
-        WHERE id = $1`,
+      `UPDATE trips SET completed_at = now() WHERE id = $1`,
       [closedTripId],
     );
 

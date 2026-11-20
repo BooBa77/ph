@@ -33,8 +33,6 @@ const BASE = {
   status: 'decided',
   startsAt: '2026-11-10T00:00:00.000Z',
   endsAt: '2026-11-20T00:00:00.000Z',
-  actualStartedAt: null,
-  actualFinishedAt: null,
   cancelledAt: null,
 } as Trip
 
@@ -62,15 +60,6 @@ describe('isTripCacheable', () => {
 
   it('закончившийся по плану не хранится', () => {
     expect(isTripCacheable({ ...BASE, endsAt: '2026-11-15T00:00:00.000Z' }, NOW)).toBe(false)
-  })
-
-  it('отметка возвращения важнее плана: поход завершён', () => {
-    expect(
-      isTripCacheable(
-        { ...BASE, actualFinishedAt: '2026-11-14T00:00:00.000Z' },
-        NOW,
-      ),
-    ).toBe(false)
   })
 
   it('завершённый автором поход не хранится (20.11.2026)', () => {

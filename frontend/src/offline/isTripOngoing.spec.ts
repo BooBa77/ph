@@ -20,8 +20,6 @@ function timing(overrides: Partial<TripTiming> = {}): TripTiming {
   return {
     startsAt: null,
     endsAt: null,
-    actualStartedAt: null,
-    actualFinishedAt: null,
     cancelledAt: null,
     ...overrides,
   }
@@ -66,33 +64,6 @@ describe('isTripOngoing', () => {
 
   it('начался и конца не знаем — идёт: «не вернулись» ≠ «вернулись»', () => {
     expect(isTripOngoing(timing({ startsAt: '2026-11-14T00:00:00+08:00' }), NOW)).toBe(true)
-  })
-
-  it('факт важнее плана: вышли раньше — поход уже идёт', () => {
-    expect(
-      isTripOngoing(
-        timing({
-          startsAt: '2026-12-01T00:00:00+08:00',
-          endsAt: '2026-12-05T00:00:00+08:00',
-          actualStartedAt: '2026-11-16T09:00:00+08:00',
-        }),
-        NOW,
-      ),
-    ).toBe(true)
-  })
-
-  it('факт важнее плана: вернулись — поход закончился, хотя план ещё идёт', () => {
-    expect(
-      isTripOngoing(
-        timing({
-          startsAt: '2026-11-14T00:00:00+08:00',
-          endsAt: '2026-11-20T00:00:00+08:00',
-          actualStartedAt: '2026-11-14T08:00:00+08:00',
-          actualFinishedAt: '2026-11-16T10:00:00+08:00',
-        }),
-        NOW,
-      ),
-    ).toBe(false)
   })
 
   it('отменённый поход текущим не считается', () => {

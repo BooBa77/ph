@@ -54,8 +54,6 @@ const BASE: Trip = {
   startsAt: '2020-01-01T00:00:00.000Z',
   endsAt: null,
   dateVariants: [],
-  actualStartedAt: null,
-  actualFinishedAt: null,
   isCommercial: false,
   isOfficial: false,
   openParticipation: true,
@@ -82,8 +80,8 @@ function offlineTrip(trip: Trip, cachedAt: number | null = null): OfflineTrip {
   return {
     id: trip.id,
     name: trip.goalObject?.name ?? 'Поход',
-    startsAt: trip.actualStartedAt ?? trip.startsAt,
-    endsAt: trip.actualFinishedAt ?? trip.endsAt,
+    startsAt: trip.startsAt,
+    endsAt: trip.endsAt,
     cachedAt,
     trip,
   }

@@ -30,7 +30,7 @@ import { GeoObject } from './geo-object.entity';
  * всё равно нужен: два похода на «Олхинское плато» в ленте неразличимы,
  * а коммерческому туру имя нужно по определению.
  *
- * ## Даты: три слоя, а не один
+ * ## Даты: два слоя плана, а факт — в присутствии
  *
  * Это самое неочевидное место в сущности, и путать слои нельзя.
  *
@@ -40,10 +40,15 @@ import { GeoObject } from './geo-object.entity';
  *    «решён»: одна дата вместо вариантов. По ним считается `ongoing`
  *    и `finished` и строится лента «кто идёт сейчас». Поэтому
  *    `status = 'decided'` без обеих дат запрещён CHECK-ом.
- * 3. **Факт** — `actual_started_at` и `actual_finished_at`. Заполняет
- *    организатор после похода; `NULL` значит «не отметили», а не «длился
- *    ноль дней». План при этом не затирается: «планировали 5–9, вышли
- *    6-го, вернулись 10-го» — это две разные правды, и обе нужны.
+ *
+ * **Фактических дат похода здесь нет** — слой `actual_started_at` /
+ * `actual_finished_at` удалён миграцией 96 (21.11.2026). «Вышли на маршрут»
+ * и «вернулись» — это отметки присутствия каждого участника
+ * (`trip_participants.started_at` / `returned_at`, миграция 89), а «поход
+ * состоялся» — `completed_at` (миграция 94). Отдельные даты похода на всю
+ * группу оказались лишней третьей правдой: у людей один и тот же поход
+ * заканчивается в разные дни, и присутствие уже отвечает на этот вопрос
+ * точнее. План при этом не затирается — даты решения остаются как были.
  *
  * Часы, а не дата: `timestamptz`. Выбор осознанный, и у него есть цена —
  * на многодневке, пересекающей часовые пояса, «когда вышли» зависит от
@@ -96,14 +101,6 @@ import { GeoObject } from './geo-object.entity';
 @Check(
   'chk_trips_dates_order',
   `"starts_at" IS NULL OR "ends_at" IS NULL OR "ends_at" >= "starts_at"`,
-)
-@Check(
-  'chk_trips_actual_dates_order',
-  `"actual_started_at" IS NULL OR "actual_finished_at" IS NULL OR "actual_finished_at" >= "actual_started_at"`,
-)
-@Check(
-  'chk_trips_actual_finish_needs_start',
-  `"actual_finished_at" IS NULL OR "actual_started_at" IS NOT NULL`,
 )
 @Check(
   'chk_trips_idea_not_cancelled',
@@ -260,13 +257,6 @@ export class Trip {
 
   @Column({ name: 'ends_at', type: 'timestamptz', nullable: true })
   endsAt: Date | null;
-
-  /** Факт: когда вышли на маршрут и когда с него вернулись. */
-  @Column({ name: 'actual_started_at', type: 'timestamptz', nullable: true })
-  actualStartedAt: Date | null;
-
-  @Column({ name: 'actual_finished_at', type: 'timestamptz', nullable: true })
-  actualFinishedAt: Date | null;
 
   /**
    * Поход завершён решением автора (20.11.2026).

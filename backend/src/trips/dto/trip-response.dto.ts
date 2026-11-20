@@ -186,18 +186,6 @@ export class TripResponseDto {
   endsAt: string | null;
 
   @ApiProperty({
-    description: 'Фактический выход на маршрут',
-    nullable: true,
-  })
-  actualStartedAt: string | null;
-
-  @ApiProperty({
-    description: 'Фактическое возвращение с маршрута',
-    nullable: true,
-  })
-  actualFinishedAt: string | null;
-
-  @ApiProperty({
     description:
       'Прогноз дат: варианты старта и продолжительность. Форме правки нужны, иначе смена готовности теряла бы введённое',
     type: () => [TripDateVariantDto],
@@ -307,8 +295,6 @@ export class TripResponseDto {
       status: trip.status,
       startsAt: trip.startsAt?.toISOString() ?? null,
       endsAt: trip.endsAt?.toISOString() ?? null,
-      actualStartedAt: trip.actualStartedAt?.toISOString() ?? null,
-      actualFinishedAt: trip.actualFinishedAt?.toISOString() ?? null,
       dateVariants: dateVariants.map((variant) =>
         TripDateVariantDto.from(variant),
       ),

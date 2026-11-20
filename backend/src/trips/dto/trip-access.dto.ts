@@ -118,18 +118,6 @@ export class GuestTripDto {
   endsAt: string | null;
 
   @ApiProperty({
-    description: 'Фактический выход на маршрут',
-    nullable: true,
-  })
-  actualStartedAt: string | null;
-
-  @ApiProperty({
-    description: 'Фактическое возвращение с маршрута',
-    nullable: true,
-  })
-  actualFinishedAt: string | null;
-
-  @ApiProperty({
     description:
       'Состав: кто идёт, с ролями и статусами. Виден и гостю — это важная часть анонса',
     type: () => [TripParticipantDto],
@@ -171,8 +159,6 @@ export class GuestTripDto {
       status: trip.status,
       startsAt: trip.startsAt?.toISOString() ?? null,
       endsAt: trip.endsAt?.toISOString() ?? null,
-      actualStartedAt: trip.actualStartedAt?.toISOString() ?? null,
-      actualFinishedAt: trip.actualFinishedAt?.toISOString() ?? null,
       participants,
       isCommercial: trip.isCommercial,
       priceRub: trip.priceRub,

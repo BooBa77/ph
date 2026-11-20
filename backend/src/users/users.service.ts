@@ -217,8 +217,8 @@ export class UsersService {
               count(*) FILTER (
                 WHERE p.status = 'going'
                   AND t.cancelled_at IS NULL
-                  AND COALESCE(t.actual_started_at, t.starts_at) IS NOT NULL
-                  AND COALESCE(t.actual_started_at, t.starts_at) <= now()
+                  AND t.starts_at IS NOT NULL
+                  AND t.starts_at <= now()
               )::int AS "startedTripsCount"
          FROM trip_participants p
          JOIN trips t ON t.id = p.trip_id
@@ -250,16 +250,16 @@ export class UsersService {
               p.user_id AS "userId",
               t.id AS "id",
               COALESCE(t.announcement, o.name, 'поход') AS "title",
-              COALESCE(t.actual_started_at, t.starts_at) AS "startedAt"
+              t.starts_at AS "startedAt"
          FROM trip_participants p
          JOIN trips t ON t.id = p.trip_id
          LEFT JOIN objects o ON o.id = t.goal_object_id
         WHERE p.user_id = ANY($1::uuid[])
           AND p.status = 'going'
           AND t.cancelled_at IS NULL
-          AND COALESCE(t.actual_started_at, t.starts_at) IS NOT NULL
-          AND COALESCE(t.actual_started_at, t.starts_at) <= now()
-        ORDER BY p.user_id, COALESCE(t.actual_started_at, t.starts_at) DESC`,
+          AND t.starts_at IS NOT NULL
+          AND t.starts_at <= now()
+        ORDER BY p.user_id, t.starts_at DESC`,
       [users.map((user) => user.id)],
     )) as Array<{
       userId: string;
@@ -370,8 +370,8 @@ export class UsersService {
                 COALESCE(t.announcement, o.name, 'поход') AS "tripName",
                 (p.status = 'going'
                  AND t.cancelled_at IS NULL
-                 AND COALESCE(t.actual_started_at, t.starts_at) IS NOT NULL
-                 AND COALESCE(t.actual_started_at, t.starts_at) <= now()) AS "started"
+                 AND t.starts_at IS NOT NULL
+                 AND t.starts_at <= now()) AS "started"
            FROM trip_participants p
            JOIN trips t ON t.id = p.trip_id
            LEFT JOIN objects o ON o.id = t.goal_object_id

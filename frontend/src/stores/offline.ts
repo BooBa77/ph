@@ -68,8 +68,8 @@ function toOfflineTrip(trip: Trip, cachedAt: number | null): OfflineTrip {
   return {
     id: trip.id,
     name: trip.goalObject?.name ?? 'Поход',
-    startsAt: trip.actualStartedAt ?? trip.startsAt,
-    endsAt: trip.actualFinishedAt ?? trip.endsAt,
+    startsAt: trip.startsAt,
+    endsAt: trip.endsAt,
     cachedAt,
     trip,
   }

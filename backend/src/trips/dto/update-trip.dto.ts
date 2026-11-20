@@ -140,33 +140,6 @@ export class UpdateTripDto {
   endsAt?: string | null;
 
   @ApiProperty({
-    description:
-      'Фактический выход на маршрут. Заполняется после похода, план не затирает',
-    example: '2027-05-06T01:30:00.000Z',
-    nullable: true,
-    required: false,
-  })
-  @IsOptional()
-  @IsISO8601(
-    {},
-    { message: 'Фактический выход должен быть датой в формате ISO 8601' },
-  )
-  actualStartedAt?: string | null;
-
-  @ApiProperty({
-    description: 'Фактическое возвращение с маршрута',
-    example: '2027-05-10T11:00:00.000Z',
-    nullable: true,
-    required: false,
-  })
-  @IsOptional()
-  @IsISO8601(
-    {},
-    { message: 'Фактическое возвращение должно быть датой в формате ISO 8601' },
-  )
-  actualFinishedAt?: string | null;
-
-  @ApiProperty({
     description: 'Набор закрыт: заявки не принимаются',
     required: false,
   })

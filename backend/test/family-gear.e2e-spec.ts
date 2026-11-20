@@ -391,11 +391,11 @@ describe('Семейный каталог: клоны вещи (e2e)', () => {
     ).expect(409);
     expect(blocked.body.message).toContain('Витязь');
 
-    // Поход закончился — вещь больше не занята, удаление разрешено.
+    // Поход закончился по датам — вещь больше не занята, удаление разрешено.
     await dataSource.query(
       `UPDATE trips
-          SET actual_started_at = now() - interval '2 days',
-              actual_finished_at = now() - interval '1 day'
+          SET starts_at = now() - interval '2 days',
+              ends_at = now() - interval '1 day'
         WHERE id = $1`,
       [tripId],
     );

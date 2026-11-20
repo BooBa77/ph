@@ -221,10 +221,6 @@ export interface UpdateTripRequest {
   status?: TripStatus
   startsAt?: string | null
   endsAt?: string | null
-  /** Факт: выход на маршрут. План не затирает — обе правды хранятся рядом. */
-  actualStartedAt?: string | null
-  /** Факт: возвращение с маршрута. */
-  actualFinishedAt?: string | null
   /** Набор закрыт: заявки не принимаются. */
   isRecruitmentClosed?: boolean
   isCommercial?: boolean
@@ -276,10 +272,6 @@ export interface Trip {
    * при сохранении.
    */
   dateVariants: TripDateVariantInput[]
-  /** Факт выхода на маршрут: он важнее плана — см. `TRIP_WHEN_VALUES`. */
-  actualStartedAt: string | null
-  /** Факт возвращения. */
-  actualFinishedAt: string | null
   isCommercial: boolean
   /** Официальный поход: зачётный выход по правилам. */
   isOfficial: boolean
@@ -482,8 +474,6 @@ export interface GuestTrip {
   status: TripStatus
   startsAt: string | null
   endsAt: string | null
-  actualStartedAt: string | null
-  actualFinishedAt: string | null
   /** Состав: кто идёт, с ролями и статусами. */
   participants: TripParticipant[]
   isCommercial: boolean

@@ -5,15 +5,15 @@
  * Поэтому правило одно и то же с фильтром `when=ongoing`
  * (`backend/src/trips/trips.service.ts`):
  *
- *   COALESCE(actual_started_at, starts_at) <= now()
- *   AND (COALESCE(actual_finished_at, ends_at) IS NULL
- *        OR COALESCE(actual_finished_at, ends_at) >= now())
+ *   starts_at <= now() AND (ends_at IS NULL OR ends_at >= now())
  *
- * Два следствия, которые легко потерять:
- *  - **факт важнее плана**: отметили выход — поход идёт, даже если по плану
- *    он ещё не начался;
- *  - **поход без конца и с прошедшим началом идёт**: «не знаем, когда
- *    вернутся» — это не «вернулись».
+ * Фактических дат похода больше нет (миграция 96, 21.11.2026): «вышли»
+ * и «вернулись» — это отметки присутствия конкретного человека, а не
+ * свойство похода. Здесь считается **план**: он у похода один.
+ *
+ * Следствие, которое легко потерять: **поход без конца и с прошедшим
+ * началом идёт** — «не знаем, когда вернутся» не то же самое, что
+ * «уже вернулись».
  *
  * Отменённый поход текущим не считается: в ленту отменённые не попадают,
  * и открывать его в офлайне незачем.
@@ -22,10 +22,7 @@
 import type { Trip } from '@/types/trips'
 
 /** Поля похода, которых хватает для решения. */
-export type TripTiming = Pick<
-  Trip,
-  'startsAt' | 'endsAt' | 'actualStartedAt' | 'actualFinishedAt' | 'cancelledAt'
->
+export type TripTiming = Pick<Trip, 'startsAt' | 'endsAt' | 'cancelledAt'>
 
 function toTime(value: string | null): number | null {
   if (!value) return null
@@ -33,14 +30,14 @@ function toTime(value: string | null): number | null {
   return Number.isFinite(time) ? time : null
 }
 
-/** Начало похода по правилу «факт, иначе план». */
+/** Начало похода по плану. */
 export function tripStartTime(trip: TripTiming): number | null {
-  return toTime(trip.actualStartedAt ?? trip.startsAt)
+  return toTime(trip.startsAt)
 }
 
-/** Конец похода по правилу «факт, иначе план». `null` — конца не знаем. */
+/** Конец похода по плану. `null` — конца не знаем. */
 export function tripEndTime(trip: TripTiming): number | null {
-  return toTime(trip.actualFinishedAt ?? trip.endsAt)
+  return toTime(trip.endsAt)
 }
 
 /**

@@ -117,8 +117,6 @@ function makeTrip(): Trip {
     startsAt: local(11, 14),
     endsAt: local(11, 18),
     dateVariants: [],
-    actualStartedAt: null,
-    actualFinishedAt: null,
     isCommercial: false,
     isOfficial: false,
     openParticipation: true,

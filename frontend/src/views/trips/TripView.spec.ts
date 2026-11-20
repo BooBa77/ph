@@ -63,8 +63,6 @@ const TRIP: Trip = {
   startsAt: null,
   endsAt: null,
   dateVariants: [],
-  actualStartedAt: null,
-  actualFinishedAt: null,
   isCommercial: false,
   isOfficial: false,
   openParticipation: true,

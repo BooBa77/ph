@@ -131,8 +131,8 @@ export class VehiclesService {
    * закрытого похода снимается, а сама карточка остаётся: поездка была,
    * и стирать её из истории из-за уборки каталога неправильно.
    *
-   * «Закрыт» здесь — тот же признак, что и везде: записан факт возвращения
-   * (`actual_finished_at`) или поход отменён (`cancelled_at`). Отдельного
+   * «Закрыт» здесь — тот же признак, что и везде: поход завершён автором
+   * (`completed_at`, миграция 94) или отменён (`cancelled_at`). Отдельного
    * статуса «завершён» у похода нет.
    */
   async remove(userId: string, id: number): Promise<void> {
@@ -155,7 +155,7 @@ export class VehiclesService {
       const openTrips = await manager.count(Trip, {
         where: {
           id: In(tripIds),
-          actualFinishedAt: IsNull(),
+          completedAt: IsNull(),
           cancelledAt: IsNull(),
         },
       });
