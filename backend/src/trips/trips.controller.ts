@@ -38,6 +38,7 @@ import {
   TripParticipantDto,
   UpdateMyStatusDto,
   UpdateParticipantDietDto,
+  UpdateParticipantStatusDto,
   UpdatePresenceDto,
 } from './dto/participant.dto';
 import {
@@ -312,6 +313,30 @@ export class TripsController {
     @Body() dto: UpdatePresenceDto,
   ): Promise<TripParticipantDto> {
     return this.tripsService.setPresence(
+      authUser.id,
+      id,
+      targetUserId,
+      dto.status,
+    );
+  }
+
+  /**
+   * Перевести участника в «иду» (20.11.2026).
+   *
+   * После старта человек сам в `going` не переходит: состав добирают
+   * организатор и соорганизатор. Оба случая — «добавили» и «перевели» —
+   * сразу дают отметку «на маршруте», автор — тот, кто перевёл.
+   */
+  @Patch(':id/participants/:userId/status')
+  @ApiOperation({ summary: 'Перевести участника в «иду»' })
+  @ApiOkResponse({ type: TripParticipantDto })
+  async setParticipantStatus(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('userId', ParseUUIDPipe) targetUserId: string,
+    @Body() dto: UpdateParticipantStatusDto,
+  ): Promise<TripParticipantDto> {
+    return this.tripsService.setParticipantStatus(
       authUser.id,
       id,
       targetUserId,

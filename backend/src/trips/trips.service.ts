@@ -65,6 +65,7 @@ import { conflictMessage, removeConflictingGear } from '../gear/gear-uid';
 import { TripGear } from '../gear/entities/trip-gear.entity';
 import { extractObjectIds } from './route-links';
 import {
+  COORGANIZER_ROLE_CODE,
   MEMBERS_TAB,
   NIGHTS_TAB,
   OFFICIAL_ONLY_TAB,
@@ -142,6 +143,46 @@ function statusText(status: ParticipantStatus): string {  switch (status) {
 /** Имя для системного сообщения: чужой профиль может быть уже удалён. */
 function displayNameOf(user: User | null | undefined): string {
   return user?.displayName ?? 'Участник';
+}
+
+/**
+ * Набор закрыт: поход уже начался по плановым датам (20.11.2026).
+ *
+ * Заказчик: «набор закрывается на старте, но организатор и соорганизатор
+ * могут добавить человека и после». Отдельного поля в базе нет — старт
+ * уже есть в `starts_at`, и второе «набор закрыт» разошлось бы с ним
+ * при первой же смене дат.
+ */
+function hasStarted(trip: Trip, now: Date = new Date()): boolean {
+  return trip.startsAt !== null && trip.startsAt.getTime() <= now.getTime();
+}
+
+/** Поход уже закончился по плановым датам. */
+function hasEnded(trip: Trip, now: Date = new Date()): boolean {
+  return trip.endsAt !== null && trip.endsAt.getTime() <= now.getTime();
+}
+
+/**
+ * Поставить человеку «на маршруте» без вопроса (20.11.2026).
+ *
+ * Заказчик: «оба случая сразу ставят „на маршруте“: статус плюс отметка
+ * присутствия, автор — организатор. Отдельного вопроса „он вышел
+ * на маршрут?“ не задаём». Автор — тот, кто добавил: `self` остаётся
+ * только за организатором, который перевёл в «иду» себя.
+ *
+ * Первый выход не переписывается: если отметка уже была, остаётся её
+ * время, а «вернулся» снимается — человек снова в поле, а не дома.
+ */
+function markOnRoute(
+  participant: TripParticipant,
+  authorUserId: string,
+  at: Date,
+): void {
+  participant.startedAt = participant.startedAt ?? at;
+  participant.returnedAt = null;
+  participant.presenceUpdatedBy = authorUserId;
+  participant.presenceSource =
+    authorUserId === participant.userId ? 'self' : 'other';
 }
 
 /**
@@ -1960,12 +2001,31 @@ export class TripsService {
         eatsSeparately !== undefined &&
         participant.eatsSeparately !== eatsSeparately;
 
+      /**
+       * После старта сам человек в «иду» не переводится (20.11.2026).
+       *
+       * Заказчик: «сам человек после старта в `going` не переводится — это
+       * делают только организатор или соорганизатор». До старта всё как
+       * раньше: приглашённый и «пока не решил» отвечают сами. Дверь
+       * закрывается здесь, на сервере: кнопка — не защита.
+       */
+      const becameGoing = statusChanged && status === 'going';
+
+      if (becameGoing) {
+        await this.assertCanBecomeGoing(manager, trip, userId);
+      }
+
       if (dietChanged) {
         participant.eatsSeparately = eatsSeparately as boolean;
       }
 
       if (statusChanged) {
         participant.status = status;
+        // Добавили или перевели в «иду» уже на маршруте — отметку ставим
+        // сразу, без отдельного вопроса: человек в поле.
+        if (becameGoing && hasStarted(trip)) {
+          markOnRoute(participant, userId, new Date());
+        }
       }
 
       if (statusChanged || dietChanged) {
@@ -2039,6 +2099,88 @@ export class TripsService {
     }
 
     return result.participant;
+  }
+
+  /**
+   * Перевести участника в «иду» — организатору или соорганизатору (20.11.2026).
+   *
+   * Зачем отдельная ручка: после старта человек **сам** в `going` не
+   * переходит (см. `assertCanBecomeGoing`), а «в пути как раз многое
+   * вспоминается»: тот, кто был `maybe` или вышел, может догнать группу.
+   * Заказчик: «перевод из maybe/declined в going — только организатор или
+   * соорганизатор», и оба случая сразу дают «на маршруте».
+   *
+   * Почему только `going`: ручка — не замена `updateMyStatus`, а одна
+   * дверь. Уйти из похода человек по-прежнему может сам (поздний отказ),
+   * «пока не решил» ставит себе сам, а `invited` — вообще состояние тикета:
+   * его закрывают ответом на приглашение или отказом, а не правкой статуса.
+   *
+   * Позднее присоединение не даёт долгов за прошлые закупки: доли прежних
+   * чеков не пересобираются, человек просто появляется в составе (решение
+   * 16.11.2026, §4.2).
+   */
+  async setParticipantStatus(
+    userId: string,
+    id: number,
+    targetUserId: string,
+    status: ParticipantStatus,
+  ): Promise<TripParticipantDto> {
+    const result = await this.dataSource.transaction(async (manager) => {
+      const trip = await this.findVisibleTrip(manager, userId, id);
+
+      if (!(await this.isOrganizerOrCoOrganizer(manager, trip, userId))) {
+        throw new ForbiddenException(
+          'Перевести человека в «иду» может организатор или соорганизатор',
+        );
+      }
+
+      const participant = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId: targetUserId },
+        relations: { user: true },
+      });
+      if (!participant) {
+        throw new NotFoundException('Такого участника нет в походе');
+      }
+      if (status !== 'going') {
+        throw new BadRequestException(
+          'Здесь можно только перевести человека в «иду»',
+        );
+      }
+      if (participant.status === 'going') {
+        throw new ConflictException('Этот человек уже идёт в походе');
+      }
+      if (participant.status === 'invited') {
+        throw new ConflictException(
+          'Человек ещё не ответил на приглашение: пусть ответит сам или закрой приглашение',
+        );
+      }
+
+      participant.status = 'going';
+      if (hasStarted(trip)) {
+        markOnRoute(participant, userId, new Date());
+      }
+      await manager.save(participant);
+
+      await this.postSystemMessage(
+        manager,
+        trip.id,
+        'trip_members',
+        `${displayNameOf(participant.user)}: ${statusText('going')}`,
+      );
+
+      return TripParticipantDto.from(
+        participant,
+        await this.loadRoles(manager, trip.id, targetUserId),
+        trip.organizerUserId,
+      );
+    });
+
+    // Состав едоков и балансов меняется вместе с участием — обе вкладки
+    // должны прочитать данные заново.
+    this.events.emitMeals(String(id), userId);
+    this.events.emitFinance(String(id), userId);
+
+    return result;
   }
 
   /**
@@ -2304,13 +2446,16 @@ export class TripsService {
 
       const user = await this.users.createVirtual(userId, dto, manager);
 
-      const participant = await manager.save(
-        manager.create(TripParticipant, {
-          tripId: trip.id,
-          userId: user.id,
-          status: 'going' as ParticipantStatus,
-        }),
-      );
+      const created = manager.create(TripParticipant, {
+        tripId: trip.id,
+        userId: user.id,
+        status: 'going' as ParticipantStatus,
+      });
+      // Человека добавили уже на маршруте — отметка ставится сразу, без
+      // отдельного вопроса (20.11.2026).
+      if (hasStarted(trip)) markOnRoute(created, userId, new Date());
+
+      const participant = await manager.save(created);
       participant.user = user;
 
       await this.postSystemMessage(
@@ -2361,13 +2506,15 @@ export class TripsService {
         );
       }
 
-      const participant = await manager.save(
-        manager.create(TripParticipant, {
-          tripId: trip.id,
-          userId: user.id,
-          status: 'going' as ParticipantStatus,
-        }),
-      );
+      const created = manager.create(TripParticipant, {
+        tripId: trip.id,
+        userId: user.id,
+        status: 'going' as ParticipantStatus,
+      });
+      // Добавили после старта — человек уже в поле, отметка сразу.
+      if (hasStarted(trip)) markOnRoute(created, userId, new Date());
+
+      const participant = await manager.save(created);
       participant.user = user;
 
       await this.postSystemMessage(
@@ -2400,6 +2547,13 @@ export class TripsService {
     userId: string,
   ): Promise<boolean> {
     if (trip.organizerUserId === userId) return true;
+
+    // Старт закрывает дверь для всех, кроме второго организатора: до
+    // старта — открытое участие, после — только роли (20.11.2026).
+    if (hasStarted(trip)) {
+      return this.isCoOrganizer(manager, trip, userId);
+    }
+
     // Поле есть у любого похода из базы; `undefined` — объект, собранный
     // в тесте или вызовом без полного набора колонок, и умолчание у него
     // то же, что в базе.
@@ -2422,6 +2576,59 @@ export class TripsService {
       trip.openParticipation === false
         ? 'Открытое участие выключено: людей без аккаунта заводит организатор'
         : 'Людей без аккаунта ведёт участник похода',
+    );
+  }
+
+  /**
+   * Организатор или соорганизатор: двери, открытые после старта только им.
+   *
+   * Организатор — всегда, и это правило кода, а не строка матрицы прав.
+   * Соорганизатор — по роли `coOrganizer`, пока он в составе: он равен
+   * организатору (решение 16.11.2026, п. 11).
+   */
+  private async isOrganizerOrCoOrganizer(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<boolean> {
+    if (trip.organizerUserId === userId) return true;
+    return this.isCoOrganizer(manager, trip, userId);
+  }
+
+  private async isCoOrganizer(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<boolean> {
+    const role = await manager.findOne(Role, {
+      where: { code: COORGANIZER_ROLE_CODE },
+    });
+    if (role === null) return false;
+
+    const row = await manager.findOne(TripParticipantRole, {
+      where: { tripId: trip.id, userId, roleId: role.id },
+    });
+    return row !== null;
+  }
+
+  /**
+   * Можно ли этому человеку стать «иду» после старта похода (20.11.2026).
+   *
+   * До старта — можно всем: это обычный ответ на приглашение. После старта
+   * состав добирают только организатор и соорганизатор, иначе вышедший
+   * «не иду» вернул бы себя в поход сам, а посторонний приписался бы
+   * к группе, которая уже в поле.
+   */
+  private async assertCanBecomeGoing(
+    manager: EntityManager,
+    trip: Trip,
+    actorUserId: string,
+  ): Promise<void> {
+    if (!hasStarted(trip)) return;
+    if (await this.isOrganizerOrCoOrganizer(manager, trip, actorUserId)) return;
+
+    throw new ConflictException(
+      'Поход уже начался: в «иду» переводит организатор или соорганизатор',
     );
   }
 
@@ -2459,6 +2666,12 @@ export class TripsService {
     userId: string,
   ): Promise<void> {
     if (await this.canBringPeople(manager, trip, userId)) return;
+
+    if (hasStarted(trip)) {
+      throw new ForbiddenException(
+        'Поход уже начался: приглашать может организатор или соорганизатор',
+      );
+    }
 
     throw new ForbiddenException(
       trip.openParticipation === false
@@ -2518,7 +2731,13 @@ export class TripsService {
   async listRequests(userId: string, id: number): Promise<TripRequestListDto> {
     const manager = this.dataSource.manager;
     const trip = await this.findVisibleTrip(manager, userId, id);
-    const isOrganizer = trip.organizerUserId === userId;
+    // Заявки решает организатор и, с 20.11.2026, соорганизатор: после
+    // старта состав добирают они вдвоём, значит и тикеты видят оба.
+    const isOrganizer = await this.isOrganizerOrCoOrganizer(
+      manager,
+      trip,
+      userId,
+    );
 
     const requests = await manager.find(TripMembershipRequest, {
       where: isOrganizer
@@ -2626,6 +2845,16 @@ export class TripsService {
       if (trip.isRecruitmentClosed) {
         throw new ConflictException('Набор в этот поход закрыт');
       }
+      /**
+       * Набор закрывается на старте (20.11.2026): «Хочу с вами» после
+       * начала похода не работает. Дверь для организатора и соорганизатора
+       * — не здесь, а в приглашении и в одобрении заявки.
+       */
+      if (hasStarted(trip)) {
+        throw new ConflictException(
+          'Поход уже начался — заявки не принимаются; в состав добавляет организатор',
+        );
+      }
 
       await this.assertFreeOfTicketAndParticipation(manager, trip, userId);
 
@@ -2658,11 +2887,22 @@ export class TripsService {
 
   /**
    * Принять: приглашённый отвечает «иду» или «пока не решил», организатор
-   * одобряет заявку.
+   * (или соорганизатор) одобряет заявку.
    *
    * Кто вправе — зависит от направления тикета, и это единственное место,
    * где направление определяет права: приглашение принимает тот, кого
-   * позвали, заявку одобряет тот, кого просили.
+   * позвали, заявку одобряет тот, кого просили. С 20.11.2026 заявку
+   * одобряет и соорганизатор: после старта состав добирают они вдвоём.
+   *
+   * **После старта «идёт» сразу даёт «на маршруте»** (20.11.2026):
+   * «оба случая сразу ставят „на маршруте“: статус плюс отметка
+   * присутствия, автор — организатор». Для приглашения автор — тот, кто
+   * позвал (`created_by_user_id`): человек ответил «иду», но в состав его
+   * позвал организатор.
+   *
+   * **После `ends_at` заявку подтвердить нельзя** (20.11.2026): поход
+   * закончился, состав — история. Сама заявка при этом не удаляется:
+   * «висят, организатор разбирается».
    */
   async acceptRequest(
     userId: string,
@@ -2684,29 +2924,49 @@ export class TripsService {
         throw new NotFoundException('Приглашение или заявка не найдены');
       }
 
-      const isOrganizer = trip.organizerUserId === userId;
+      const isOrganizer = await this.isOrganizerOrCoOrganizer(
+        manager,
+        trip,
+        userId,
+      );
       const isTarget = targetUserId === userId;
 
       if (request.direction === 'invite' ? !isTarget : !isOrganizer) {
         throw new ForbiddenException(
           request.direction === 'invite'
             ? 'Принять приглашение может только тот, кого пригласили'
-            : 'Одобрить заявку может только организатор',
+            : 'Одобрить заявку может только организатор или соорганизатор',
         );
       }
+
+      if (request.direction === 'apply' && hasEnded(trip)) {
+        throw new ConflictException(
+          'Поход уже закончился — подтвердить заявку нельзя',
+        );
+      }
+
+      const now = new Date();
+      const putOnRoute = status === 'going' && hasStarted(trip, now);
+      const presenceAuthor =
+        request.direction === 'invite'
+          ? (request.createdByUserId ?? trip.organizerUserId)
+          : userId;
 
       const participant = await manager.findOne(TripParticipant, {
         where: { tripId: trip.id, userId: targetUserId },
       });
       if (participant) {
         participant.status = status;
+        if (putOnRoute) markOnRoute(participant, presenceAuthor, now);
         await manager.save(participant);
       } else {
-        await manager.insert(TripParticipant, {
+        const created = manager.create(TripParticipant, {
           tripId: trip.id,
           userId: targetUserId,
           status,
         });
+        if (putOnRoute) markOnRoute(created, presenceAuthor, now);
+        await manager.insert(TripParticipant, created);
       }
 
       await manager.delete(TripMembershipRequest, {

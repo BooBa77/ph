@@ -248,6 +248,26 @@ export async function setTripPresence(
 }
 
 /**
+ * PATCH /api/trips/:id/participants/:userId/status — перевести в «иду»
+ * (20.11.2026).
+ *
+ * После старта человек сам в «иду» не переходит: состав добирают
+ * организатор и соорганизатор. Ручка берёт только `going` — уйти из похода
+ * человек по-прежнему может сам, «пока не решил» тоже ставит себе сам.
+ * Оба случая — «добавили» и «перевели» — сразу дают отметку «на маршруте».
+ */
+export async function setParticipantStatus(
+  tripId: string,
+  userId: string,
+  status: 'going',
+): Promise<TripParticipant> {
+  return apiFetch<TripParticipant>(`/trips/${tripId}/participants/${userId}/status`, {
+    method: 'PATCH',
+    body: JSON.stringify({ status }),
+  })
+}
+
+/**
  * PATCH /api/trips/:id/participants/:userId/diet — питание человека
  * без аккаунта (12.11.2026).
  *

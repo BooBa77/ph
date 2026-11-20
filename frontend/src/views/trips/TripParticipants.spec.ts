@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => ({
   listParticipants: vi.fn(),
   listRequests: vi.fn(),
   setMyStatus: vi.fn(),
+  setParticipantStatus: vi.fn(),
   setTripPresence: vi.fn(),
   removeParticipant: vi.fn(),
   createRequest: vi.fn(),
@@ -45,6 +46,7 @@ vi.mock('@/api/trips', () => ({
   listParticipants: mocks.listParticipants,
   listRequests: mocks.listRequests,
   setMyStatus: mocks.setMyStatus,
+  setParticipantStatus: mocks.setParticipantStatus,
   setTripPresence: mocks.setTripPresence,
   removeParticipant: mocks.removeParticipant,
   createRequest: mocks.createRequest,
@@ -168,6 +170,7 @@ describe('TripParticipants', () => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
     mocks.setMyStatus.mockResolvedValue(person())
+    mocks.setParticipantStatus.mockResolvedValue(person({ status: 'going' }))
     mocks.removeParticipant.mockResolvedValue(undefined)
     mocks.createRequest.mockResolvedValue(ticket())
     mocks.acceptRequest.mockResolvedValue(person())
@@ -239,6 +242,98 @@ describe('TripParticipants', () => {
     })
     expect(closed.find('[data-test="apply"]').exists()).toBe(false)
     expect(closed.find('[data-test="recruitment-closed"]').exists()).toBe(true)
+  })
+
+  /**
+   * Правила после старта (20.11.2026). Заказчик: «набор закрывается
+   * на старте, но организатор и соорганизатор могут добавить человека
+   * и после; сам человек после старта в going не переводится».
+   */
+  describe('после старта похода', () => {
+    const DAY = 24 * 60 * 60 * 1000
+    /** Поход начался вчера и ещё идёт. */
+    const LIVE: Trip = {
+      ...TRIP,
+      startsAt: new Date(Date.now() - DAY).toISOString(),
+      endsAt: new Date(Date.now() + 3 * DAY).toISOString(),
+    }
+    /** Поход закончился вчера — состав закрыт, тикеты остались. */
+    const OVER: Trip = {
+      ...TRIP,
+      startsAt: new Date(Date.now() - 5 * DAY).toISOString(),
+      endsAt: new Date(Date.now() - DAY).toISOString(),
+    }
+
+    it('посторонний не просится в поход: набор закрыт стартом', async () => {
+      signIn('u-stranger')
+      const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true })], [], LIVE)
+
+      expect(wrapper.find('[data-test="apply"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="recruitment-closed"]').text()).toContain(
+        'поход уже начался',
+      )
+    })
+
+    it('сам человек в «иду» не переводится — кнопка закрыта и объяснена', async () => {
+      signIn(ME)
+      const wrapper = await open(
+        [person({ userId: ORGANIZER, isOrganizer: true }), person({ status: 'maybe' })],
+        [],
+        LIVE,
+      )
+
+      expect(wrapper.find('[data-test="my-status-going"]').attributes('disabled')).toBeDefined()
+      expect(wrapper.find('[data-test="my-status-after-start"]').exists()).toBe(true)
+
+      // «Не иду» после старта остаётся свободным: поздний отказ — сразу.
+      expect(wrapper.find('[data-test="my-status-maybe"]').attributes('disabled')).toBeUndefined()
+    })
+
+    it('организатор переводит человека в «иду» — и тот сразу на маршруте', async () => {
+      signIn(ORGANIZER)
+      const wrapper = await open([
+        person({ userId: ORGANIZER, displayName: 'Я', isOrganizer: true }),
+        person({ userId: 'u-2', displayName: 'Второй', status: 'maybe' }),
+      ], [], LIVE)
+
+      await wrapper.find('[data-test="take-along-u-2"]').trigger('click')
+      await flushPromises()
+
+      expect(mocks.setParticipantStatus).toHaveBeenCalledWith('7', 'u-2', 'going')
+      // Список перечитывается: отметку присутствия поставил сервер.
+      expect(mocks.listParticipants).toHaveBeenCalledTimes(2)
+    })
+
+    it('после старта участник не приглашает и не заводит людей без аккаунта', async () => {
+      signIn(ME)
+      const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true }), person()], [], LIVE)
+
+      expect(wrapper.find('[data-test="invite-panel"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="virtual-panel"]').exists()).toBe(false)
+    })
+
+    it('организатор после старта приглашает и заводит людей без аккаунта', async () => {
+      signIn(ORGANIZER)
+      const wrapper = await open([
+        person({ userId: ORGANIZER, displayName: 'Я', isOrganizer: true }),
+      ], [], LIVE)
+
+      expect(wrapper.find('[data-test="invite-panel"]').exists()).toBe(true)
+      expect(wrapper.find('[data-test="virtual-panel"]').exists()).toBe(true)
+    })
+
+    it('заявки висят и после окончания похода, но подтвердить их нельзя', async () => {
+      signIn(ORGANIZER)
+      const wrapper = await open([
+        person({ userId: ORGANIZER, displayName: 'Я', isOrganizer: true }),
+      ], [ticket({ userId: 'u-1', displayName: 'Первый' })], OVER)
+
+      expect(wrapper.findAll('[data-test="applications"] li')).toHaveLength(1)
+      expect(wrapper.find('[data-test="accept-u-1"]').exists()).toBe(false)
+      expect(wrapper.find('[data-test="application-after-end"]').exists()).toBe(true)
+      // Отклонить можно: тикет живёт, пока организатор не разберётся.
+      expect(wrapper.find('[data-test="reject-u-1"]').exists()).toBe(true)
+    })
   })
 
   it('своя заявка видна, и её можно отозвать', async () => {

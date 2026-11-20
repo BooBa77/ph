@@ -16,6 +16,7 @@ import {
   removeParticipant,
   setMyStatus,
   setParticipantRoles,
+  setParticipantStatus,
   setTripPresence,
 } from '@/api/trips'
 import {
@@ -122,6 +123,19 @@ const me = computed(
   () => participants.value.find((person) => person.userId === auth.user?.id) ?? null,
 )
 
+/** Соорганизатор — по роли: после старта состав добирают он и организатор. */
+const isCoOrganizer = computed(() =>
+  (me.value?.roles ?? []).some((role) => role.code === 'coOrganizer'),
+)
+
+/**
+ * Кто добирает состав после старта (20.11.2026): организатор и соорганизатор.
+ *
+ * Проверка та же, что на сервере; здесь она нужна, чтобы не показывать
+ * кнопки, которые заведомо ответят 403.
+ */
+const canManagePeople = computed(() => isOrganizer.value || isCoOrganizer.value)
+
 // ───────────────────────────── присутствие (17.11.2026) ─────────────────────────────
 
 /**
@@ -190,6 +204,18 @@ function nextPresenceLabel(person: TripParticipant): string {
 const hasStarted = computed(
   () => props.trip.startsAt !== null && new Date(props.trip.startsAt).getTime() <= Date.now(),
 )
+
+/** Поход уже закончился по плану: заявку подтвердить нельзя (20.11.2026). */
+const hasEnded = computed(
+  () => props.trip.endsAt !== null && new Date(props.trip.endsAt).getTime() <= Date.now(),
+)
+
+/**
+ * Сам человек после старта в «иду» не переводится (20.11.2026): дверь
+ * открыта только организатору и соорганизатору. Сервер отвечает 409,
+ * кнопка просто не обещает лишнего.
+ */
+const canSetGoing = computed(() => !hasStarted.value || canManagePeople.value)
 
 /** Показывать ли присутствие в строке: до старта «не отметился» — шум. */
 function showPresence(person: TripParticipant): boolean {
@@ -274,14 +300,19 @@ async function markPresence(
  * открытое участие (13.11.2026, по умолчанию включено). Приглашённому рано:
  * он ещё не участник.
  *
+ * **После старта — только организатор и соорганизатор** (20.11.2026):
+ * набор закрыт, состав добирают они вдвоём.
+ *
  * Флаг — правило похода, а не роли: в одном походе «свои» приветствуются,
  * в другом организатор собирает состав сам. Права решает сервер и отвечает
  * 403; здесь мы просто не показываем секции, которые заведомо не сработают.
  */
 const canBringPeople = computed(
   () =>
-    isOrganizer.value ||
-    (props.trip.openParticipation !== false && me.value?.status === 'going'),
+    canManagePeople.value ||
+    (!hasStarted.value &&
+      props.trip.openParticipation !== false &&
+      me.value?.status === 'going'),
 )
 
 /** Моя заявка, если я её подавал и она ещё висит. */
@@ -289,7 +320,7 @@ const myRequest = computed(
   () => requests.value.find((request) => request.userId === auth.user?.id) ?? null,
 )
 
-/** Заявки — организатору: их он и решает. */
+/** Заявки решают организатор и соорганизатор: им и показываем. */
 const applications = computed(() => requests.value.filter((item) => item.direction === 'apply'))
 
 /**
@@ -535,6 +566,16 @@ const accept = (userId: string, status: 'going' | 'maybe') =>
 
 const closeTicket = (userId: string) => act(userId, () => deleteRequest(props.trip.id, userId))
 
+/**
+ * «Взять в поход» после старта (20.11.2026).
+ *
+ * Человек сам в «иду» уже не перейдёт, а догнать группу может: организатор
+ * или соорганизатор переводят его в `going`, и сервер сразу ставит
+ * «на маршруте» — отдельного вопроса про выход на маршрут нет.
+ */
+const takeAlong = (userId: string) =>
+  act(userId, () => setParticipantStatus(props.trip.id, userId, 'going'))
+
 const apply = () => act(auth.user?.id ?? null, () => createRequest(props.trip.id, { direction: 'apply' }))
 
 const remove = (userId: string) => act(userId, () => removeParticipant(props.trip.id, userId))
@@ -753,19 +794,26 @@ function invite(person: UserSearchResult) {
                 ? 'border-primary font-medium text-primary'
                 : 'border-border bg-field text-text hover:border-primary'
             "
-            :disabled="pendingUserId !== null"
+            :disabled="pendingUserId !== null || (value === 'going' && !canSetGoing)"
             :data-test="`my-status-${value}`"
             @click="changeMyStatus(value)"
           >
             {{ value === 'declined' ? 'Не иду' : PARTICIPANT_STATUS_LABELS[value] }}
           </button>
         </div>
+        <p
+          v-if="hasStarted && !canManagePeople && me.status !== 'going'"
+          class="text-xs text-muted"
+          data-test="my-status-after-start"
+        >
+          Поход уже начался: в «иду» переводит организатор или соорганизатор.
+        </p>
       </div>
 
       <!-- Заявка постороннего -->
       <div v-else-if="canApply" class="flex flex-col gap-2">
         <button
-          v-if="!trip.isRecruitmentClosed"
+          v-if="!trip.isRecruitmentClosed && !hasStarted"
           type="button"
           class="cursor-pointer self-start rounded-xl border border-primary bg-primary px-4 py-2 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
           :disabled="pendingUserId !== null"
@@ -775,7 +823,11 @@ function invite(person: UserSearchResult) {
           Хочу с вами
         </button>
         <p v-else class="text-sm text-muted" data-test="recruitment-closed">
-          Набор закрыт — заявки не принимаются.
+          {{
+            hasStarted
+              ? 'Набор закрыт: поход уже начался.'
+              : 'Набор закрыт — заявки не принимаются.'
+          }}
         </p>
       </div>
 
@@ -797,8 +849,9 @@ function invite(person: UserSearchResult) {
         </button>
       </div>
 
-      <!-- Заявки: решает организатор -->
-      <div v-if="isOrganizer && applications.length > 0" class="flex flex-col gap-2">
+      <!-- Заявки: решают организатор и соорганизатор. После окончания похода
+           заявка остаётся, но подтвердить её нельзя (20.11.2026) -->
+      <div v-if="canManagePeople && applications.length > 0" class="flex flex-col gap-2">
         <h3 class="text-sm text-muted">Заявки</h3>
 
         <ul class="flex flex-col gap-2" data-test="applications">
@@ -812,8 +865,16 @@ function invite(person: UserSearchResult) {
               {{ request.displayName }}
             </span>
 
-            <span class="flex flex-wrap gap-2">
+            <span class="flex flex-wrap items-center gap-2">
+              <span
+                v-if="hasEnded"
+                class="text-xs text-muted"
+                data-test="application-after-end"
+              >
+                Поход закончился — подтвердить нельзя
+              </span>
               <button
+                v-else
                 type="button"
                 class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
                 :disabled="pendingUserId !== null"
@@ -1140,6 +1201,28 @@ function invite(person: UserSearchResult) {
                   Снять
                 </button>
               </template>
+
+              <!--
+                После старта человек сам в «иду» не перейдёт, а догнать
+                группу может: организатор и соорганизатор переводят его
+                в состав, и он сразу «на маршруте» (20.11.2026).
+              -->
+              <button
+                v-if="
+                  canManagePeople &&
+                  hasStarted &&
+                  !person.isOrganizer &&
+                  person.status !== 'going' &&
+                  person.status !== 'invited'
+                "
+                type="button"
+                class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-60"
+                :disabled="pendingUserId !== null"
+                :data-test="`take-along-${person.userId}`"
+                @click="takeAlong(person.userId)"
+              >
+                Взять в поход
+              </button>
 
               <button
                 v-if="canManageRoles && !person.isVirtual"

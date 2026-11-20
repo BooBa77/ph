@@ -233,6 +233,24 @@ export class UpdateMyStatusDto {
 }
 
 /**
+ * Тело `PATCH /api/trips/:id/participants/:userId/status` — организатор
+ * или соорганизатор переводит человека в «иду» (20.11.2026).
+ *
+ * Только `going`: уйти из похода человек может сам (поздний отказ),
+ * «пока не решил» ставит себе сам, а `invited` — состояние тикета,
+ * которое закрывают ответом на приглашение, а не правкой статуса.
+ */
+export class UpdateParticipantStatusDto {
+  @ApiProperty({
+    description: 'Новый статус: только «иду»',
+    enum: ['going'],
+    example: 'going',
+  })
+  @IsIn(['going'], { message: 'Перевести можно только в «иду»' })
+  status: ParticipantStatus;
+}
+
+/**
  * Тело `PUT /api/trips/:id/presence/:userId` — отметка присутствия.
  *
  * Отмечает **любой идущий** участник: себе и любому другому, включая

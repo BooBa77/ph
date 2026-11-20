@@ -174,6 +174,13 @@ describe('Походы (e2e)', () => {
             AND (direct_a = ANY($1::uuid[]) OR direct_b = ANY($1::uuid[]))`,
         [[userId, strangerId, applicantId]],
       );
+      // Люди без аккаунта (20.11.2026): их заводит тест, и создатель держит
+      // их внешним ключом `FK_users_virtual_owner`. Походы уже удалены —
+      // участие ушло каскадом, остались только строки `users`.
+      await dataSource.query(
+        'DELETE FROM users WHERE virtual_owner_user_id = ANY($1::uuid[])',
+        [[userId, strangerId, applicantId]],
+      );
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
         [userId, strangerId, applicantId],
       ]);
@@ -1978,6 +1985,222 @@ describe('Походы (e2e)', () => {
         .get(`/api/trips/${tripId}/messages?kind=trip_guest&before=вчера`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(400);
+    });
+  });
+
+  /**
+   * Правила после старта (20.11.2026).
+   *
+   * Заказчик: «набор закрывается на старте, но организатор и соорганизатор
+   * могут добавить человека и после; сам человек после старта в `going`
+   * не переводится; оба случая сразу ставят „на маршруте“; заявки
+   * автоматически не удаляются». Даты считаются от «сейчас», а не от
+   * фиксированного года: проверяется именно граница старта.
+   */
+  describe('правила после старта', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+    const aliveTrip = () => ({
+      status: 'decided',
+      startsAt: new Date(Date.now() - DAY).toISOString(),
+      endsAt: new Date(Date.now() + 3 * DAY).toISOString(),
+    });
+
+    /** Участник из состава со всеми полями присутствия. */
+    const participantOf = async (tripId: string, personId: string) => {
+      const response = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/participants`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      return (
+        response.body.participants as Array<{
+          userId: string;
+          status: string;
+          presenceStatus: string;
+          presenceUpdatedByUserId: string | null;
+          presenceSource: string | null;
+        }>
+      ).find((item) => item.userId === personId);
+    };
+
+    it('набор закрыт стартом: заявка 409, приглашение участнику 403, организатор добавляет', async () => {
+      const created = await createTrip({
+        announcement: 'Набор закрыт стартом',
+        ...aliveTrip(),
+      });
+      const tripId = created.body.id as string;
+
+      // Посторонний «Хочу с вами» после старта уже не может.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ direction: 'apply' })
+        .expect(409);
+
+      // Организатор приглашает — это его дверь.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: applicantId })
+        .expect(201);
+
+      // Приглашённый отвечает «иду»: он уже в поле, отметка — от того,
+      // кто позвал, а не от него самого.
+      const accepted = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${applicantId}/accept`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ status: 'going' })
+        .expect(200);
+
+      expect(accepted.body.status).toBe('going');
+      expect(accepted.body.presenceStatus).toBe('route');
+      expect(accepted.body.presenceUpdatedByUserId).toBe(userId);
+      expect(accepted.body.presenceSource).toBe('other');
+
+      // Идущий участник после старта своих людей уже не приводит.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ direction: 'invite', userId: strangerId })
+        .expect(403);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/participants/virtual`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ displayName: 'Дядя Витя' })
+        .expect(403);
+
+      // Организатор заводит человека без аккаунта — тоже сразу на маршруте.
+      const virtual = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/participants/virtual`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ displayName: 'Дядя Витя' })
+        .expect(201);
+
+      expect(virtual.body.status).toBe('going');
+      expect(virtual.body.presenceStatus).toBe('route');
+      expect(virtual.body.presenceUpdatedByUserId).toBe(userId);
+      expect(virtual.body.presenceSource).toBe('other');
+    });
+
+    it('сам человек после старта в «иду» не переводится, организатор — может', async () => {
+      const created = await createTrip({
+        announcement: 'Перевод в иду после старта',
+        ...aliveTrip(),
+      });
+      const tripId = created.body.id as string;
+
+      // Приглашённый отвечает «пока не решил» — это его право.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: strangerId })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${strangerId}/accept`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ status: 'maybe' })
+        .expect(200);
+
+      // Сам — не может: дверь закрыта на сервере, а не кнопкой.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/me`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ status: 'going' })
+        .expect(409);
+
+      // И чужой идущий участник тоже не может: перевод — дело организатора.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/${strangerId}/status`)
+        .set('Authorization', `Bearer ${applicantToken}`)
+        .send({ status: 'going' })
+        .expect(403);
+
+      // Организатор переводит — и человек сразу «на маршруте».
+      const moved = await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/${strangerId}/status`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'going' })
+        .expect(200);
+
+      expect(moved.body.status).toBe('going');
+      expect(moved.body.presenceStatus).toBe('route');
+      expect(moved.body.presenceUpdatedByUserId).toBe(userId);
+      expect(moved.body.presenceSource).toBe('other');
+
+      const saved = await participantOf(tripId, strangerId);
+      expect(saved?.presenceStatus).toBe('route');
+
+      // Повтор — 409, «не иду» этой ручкой не ставится.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/${strangerId}/status`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'going' })
+        .expect(409);
+
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/${strangerId}/status`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'declined' })
+        .expect(400);
+
+      // Поздний отказ человек по-прежнему ставит себе сам.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/me`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ status: 'declined' })
+        .expect(200);
+    });
+
+    it('заявка остаётся после окончания похода, но подтвердить её нельзя', async () => {
+      // Заявку подают до старта: так она и висит, пока организатор
+      // не разберётся, — ровно случай из решения 20.11.2026.
+      const created = await createTrip({
+        announcement: 'Заявка через весь поход',
+        status: 'decided',
+        startsAt: new Date(Date.now() + DAY).toISOString(),
+        endsAt: new Date(Date.now() + 3 * DAY).toISOString(),
+      });
+      const tripId = created.body.id as string;
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ direction: 'apply' })
+        .expect(201);
+
+      // Поход прошёл, заявку так и не разобрали.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({
+          startsAt: new Date(Date.now() - 5 * DAY).toISOString(),
+          endsAt: new Date(Date.now() - DAY).toISOString(),
+        })
+        .expect(200);
+
+      const tickets = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      expect(
+        (tickets.body.requests as Array<{ userId: string }>).map(
+          (item) => item.userId,
+        ),
+      ).toContain(strangerId);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${strangerId}/accept`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'going' })
+        .expect(409);
+
+      // Онлайн-правки после старта открыты: поход живёт, пока не завершён.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ hasGuitar: true })
+        .expect(200);
     });
   });
 });
