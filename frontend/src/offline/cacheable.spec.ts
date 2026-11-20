@@ -7,10 +7,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
  * IndexedDB. Очередь дневника пуста по умолчанию — непустую очередь
  * проверяет отдельный тест.
  */
-const outbox = vi.hoisted(() => ({ entries: [] as unknown[] }))
+const outbox = vi.hoisted(() => ({
+  entries: [] as unknown[],
+  expenses: [] as unknown[],
+}))
 
 vi.mock('@/offline/diaryOutbox', () => ({
   readDiaryOutbox: async () => outbox.entries,
+}))
+
+vi.mock('@/offline/expenseOutbox', () => ({
+  readExpenseOutbox: async () => outbox.expenses,
 }))
 
 import {
@@ -65,15 +72,26 @@ describe('isTripCacheable', () => {
       ),
     ).toBe(false)
   })
+
+  it('завершённый автором поход не хранится (20.11.2026)', () => {
+    expect(
+      isTripCacheable(
+        { ...BASE, completedAt: '2026-11-16T00:00:00.000Z' },
+        NOW,
+      ),
+    ).toBe(false)
+  })
 })
 
 describe('shouldDropOfflineCopy', () => {
   beforeEach(() => {
     outbox.entries = []
+    outbox.expenses = []
   })
 
   afterEach(() => {
     outbox.entries = []
+    outbox.expenses = []
   })
 
   it('идущий поход не удаляется никогда', async () => {
@@ -99,6 +117,13 @@ describe('shouldDropOfflineCopy', () => {
 
     await expect(shouldDropOfflineCopy(ended, NOW)).resolves.toBe(false)
     await expect(keepOfflineCopy(ended, NOW)).resolves.toBe(true)
+  })
+
+  it('в очереди есть неотправленный чек — копию не трогаем (20.11.2026)', async () => {
+    const ended = { ...BASE, endsAt: '2026-11-01T00:00:00.000Z' }
+    outbox.expenses = [{ clientId: 'чек-в-поле' }]
+
+    await expect(shouldDropOfflineCopy(ended, NOW)).resolves.toBe(false)
   })
 
   it('отменённый поход удаляется сразу', async () => {

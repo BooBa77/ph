@@ -15,6 +15,7 @@
 
 import { tripEndTime, type TripTiming } from '@/offline/isTripOngoing'
 import { readDiaryOutbox } from '@/offline/diaryOutbox'
+import { readExpenseOutbox } from '@/offline/expenseOutbox'
 import type { Trip } from '@/types/trips'
 
 /**
@@ -31,17 +32,23 @@ export const KEEP_AFTER_END_MS = 7 * 24 * 60 * 60 * 1000
 
 /** Поля похода, которых хватает для решения о кеше. */
 export type TripCaching = TripTiming &
-  Pick<Trip, 'id' | 'status'>
+  Pick<Trip, 'id' | 'status' | 'completedAt'>
 
 /**
  * Поход попадает в кеш: решён, не отменён и ещё не закончился.
  *
  * Конец — по правилу «факт, иначе план» (`tripEndTime`): если возвращение
  * уже отметили, поход завершён независимо от плановой даты.
+ *
+ * Завершённый автором поход (`completedAt`) тоже не кешируем: он перестал
+ * быть рабочей зоной — править в нём нечего, кроме дневника и денег, а они
+ * требуют связи настолько, что копия ради них уже не нужна
+ * ([lifecycle.md](../../../docs/ph/lifecycle.md) §4.4).
  */
 export function isTripCacheable(trip: TripCaching, now: number = Date.now()): boolean {
   if (trip.status !== 'decided') return false
   if (trip.cancelledAt) return false
+  if (trip.completedAt) return false
 
   const end = tripEndTime(trip)
   return end === null || end >= now
@@ -57,6 +64,12 @@ export function isTripCacheable(trip: TripCaching, now: number = Date.now()): bo
  * Очередь дневника — единственная офлайн-запись, которая уже существует.
  * Непустая очередь значит «человек писал в поле, но не отправил»: стереть
  * копию вместе с очередью было бы потерей данных.
+ *
+ * С 19.11.2026 офлайн-записей две — ещё чеки (`expenseOutbox`, решение
+ * заказчика). Поэтому «очереди пусты» проверяется по обеим: недоотправленный
+ * чек в поле — такие же данные, как дневник, и терять его при уборке копии
+ * нельзя. Сама копия после завершения похода ждёт срока `KEEP_AFTER_END_MS`:
+ * «связь + срок истёк + возврат подтверждён + очереди пусты» (§4.4).
  */
 export async function shouldDropOfflineCopy(
   trip: Trip,
@@ -68,8 +81,11 @@ export async function shouldDropOfflineCopy(
   if (end === null) return false
   if (now - end <= KEEP_AFTER_END_MS) return false
 
-  const outbox = await readDiaryOutbox(trip.id)
-  return outbox.length === 0
+  const diary = await readDiaryOutbox(trip.id)
+  if (diary.length > 0) return false
+
+  const expenses = await readExpenseOutbox(trip.id)
+  return expenses.length === 0
 }
 
 /** Нужно ли оставить сохранённую копию, если сервер её больше не присылает. */

@@ -943,4 +943,40 @@ describe('TripParticipants', () => {
     // Снять ошибочную отметку по-прежнему можно: это не возвращение.
     expect(wrapper.find(`[data-test="presence-reset-${ME}"]`).exists()).toBe(true)
   })
+
+  /**
+   * Завершённый поход (20.11.2026): состав — история. Кнопки, которые
+   * заведомо получат 409, не рисуются, а перекличка остаётся: «это не
+   * содержимое, её собирают и после возвращения».
+   */
+  it('в завершённом походе состав не меняется, а присутствие ставится', async () => {
+    signIn(ORGANIZER)
+
+    const completed = {
+      ...TRIP,
+      startsAt: '2026-11-10T00:00:00.000Z',
+      endsAt: '2026-11-20T00:00:00.000Z',
+      completedAt: '2026-11-21T00:00:00.000Z',
+    }
+
+    const wrapper = await open(
+      [
+        person({ userId: ORGANIZER, displayName: 'Орг', isOrganizer: true }),
+        person({ userId: 'u-2', displayName: 'Марина', presenceStatus: 'returned' }),
+      ],
+      [],
+      completed,
+      true,
+    )
+
+    expect(wrapper.find('[data-test="participants-completed"]').exists()).toBe(true)
+    // Свой статус и управление составом закрыты.
+    expect(wrapper.find('[data-test="my-status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="remove-u-2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="take-along-u-2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="invite-panel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="virtual-panel"]').exists()).toBe(false)
+    // Перекличка остаётся: отметить присутствие можно и после завершения.
+    expect(wrapper.find(`[data-test="presence-mark-${ORGANIZER}"]`).exists()).toBe(true)
+  })
 })

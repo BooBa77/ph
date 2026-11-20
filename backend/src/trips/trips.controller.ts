@@ -251,6 +251,24 @@ export class TripsController {
     return this.tripsService.cancel(authUser.id, id);
   }
 
+  /**
+   * Завершить поход решением автора (20.11.2026).
+   *
+   * Отдельная ручка, а не поле в правке похода: завершение необратимо,
+   * у него свои условия (конец по датам и все идущие вернулись) и своя
+   * ошибка 409. После него правки закрываются — это не «ещё один PATCH».
+   */
+  @Post(':id/complete')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Завершить поход' })
+  @ApiOkResponse({ type: TripResponseDto })
+  async complete(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripResponseDto> {
+    return this.tripsService.complete(authUser.id, id);
+  }
+
   /** Снять отмену: «решили всё-таки идти». */
   @Delete(':id/cancel')
   @ApiOperation({ summary: 'Вернуть отменённый поход' })

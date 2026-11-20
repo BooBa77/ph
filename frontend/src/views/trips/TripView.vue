@@ -5,6 +5,7 @@ import { RouterLink, useRoute } from 'vue-router'
 import { ApiError } from '@/api/errors'
 import { subscribeTripEvents } from '@/api/events'
 import {
+  completeTrip,
   fetchTripCacheState,
   fetchTripTabs,
   getTrip,
@@ -201,8 +202,72 @@ const isOrganizer = computed(
  * В офлайне их нет: правка и закрытие набора — изменения, а изменения
  * без связи не уходят. Показать кнопку, которая заведомо не сработает,
  * хуже, чем не показать её.
+ *
+ * После завершения похода (20.11.2026) их тоже нет: поход — история,
+ * правка закрыта навсегда и даже автору. Кнопка на экране, которая
+ * заведомо получит 409, — тот же обман. Это проверяет шаблон
+ * (`canOrganize && !isCompleted`), а не сам флаг: он про роль и связь.
  */
 const canOrganize = computed(() => isOrganizer.value && offline.isOnline)
+
+// ───────────────────────── завершение похода (20.11.2026) ─────────────────────────
+
+/**
+ * Завершён ли поход. `null` — не завершён; отметку ставит сервер и снять
+ * её нельзя.
+ */
+const isCompleted = computed(() => Boolean(trip.value?.completedAt))
+
+/** Можно ли завершить поход — флаг считает сервер (только автор и условия). */
+const canComplete = computed(
+  () => trip.value?.canComplete === true && !isCompleted.value,
+)
+
+/**
+ * Ответ «Ещё остались правки» в этом входе.
+ *
+ * Вопрос повторяется при каждом входе, пока поход не завершён (заказчик),
+ * а кнопка «Завершить поход» появляется в разделе после этого ответа.
+ * Поэтому флаг живёт в памяти страницы, а не на сервере: сам ответ ничего
+ * не меняет, и второй колонки в базе он не стоит.
+ */
+const completionDismissed = ref(false)
+const isCompleting = ref(false)
+
+/** Вопрос «Поход состоялся?» — один раз за вход, и только автору. */
+const completionQuestion = computed(() => canComplete.value && !completionDismissed.value)
+
+/**
+ * «Да» на вопрос и кнопка «Завершить поход» — одно действие.
+ *
+ * Отмены нет (решение заказчика), поэтому ошибку показываем текстом,
+ * а поход перечитываем ответом сервера: после завершения меню и шапка
+ * должны сразу перестать предлагать правки.
+ */
+async function completeTripNow(): Promise<void> {
+  if (!trip.value || !canComplete.value) return
+
+  isCompleting.value = true
+  actionError.value = null
+
+  try {
+    trip.value = await completeTrip(trip.value.id)
+    completionDismissed.value = true
+
+    /**
+     * Права вкладок после завершения меняются, и их надо перечитать.
+     * Без этого меню и вкладки остаются с прежними `canEdit` до перезахода:
+     * у автора кнопки правки состава и «Редактировать» продолжали бы
+     * рисоваться, а сервер отвечал бы на них 409.
+     */
+    permissions.value = await fetchTripTabs(trip.value.id)
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось завершить поход'
+  } finally {
+    isCompleting.value = false
+  }
+}
 
 /** Сохранённая на устройстве копия этого похода. */
 const offlineCopy = computed(() =>
@@ -445,6 +510,10 @@ watch(
     activeTab.value = 'guest'
     actionError.value = null
     prefetchedAt.value = null
+    // «Вопрос при входе» возвращается на каждом входе в поход, а не на
+    // каждое перечитывание страницы: после «Ещё остались правки» карточка
+    // не должна всплывать заново из-за чужой правки состава.
+    completionDismissed.value = false
     if (typeof id === 'string') void load(id)
   },
   { immediate: true },
@@ -657,7 +726,7 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
             </p>
           </div>
 
-          <div v-if="canOrganize" class="flex flex-wrap items-center gap-2">
+          <div v-if="canOrganize && !isCompleted" class="flex flex-wrap items-center gap-2">
             <RouterLink
               :to="{ name: 'trip-edit', params: { id: trip.id } }"
               class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text no-underline transition-colors hover:border-primary"
@@ -676,6 +745,23 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
               {{ trip.isRecruitmentClosed ? 'Открыть набор' : 'Закрыть набор' }}
             </button>
           </div>
+
+          <!--
+            «Завершить поход» (20.11.2026) появляется в разделе после ответа
+            «Ещё остались правки»: вопрос при входе отложен, но решение
+            осталось за автором. Кнопка — то же действие, что «Да».
+          -->
+          <div v-if="canComplete && completionDismissed" class="flex flex-wrap items-center gap-2">
+            <button
+              type="button"
+              class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-2 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+              :disabled="isCompleting || !offline.isOnline"
+              data-test="complete-trip"
+              @click="completeTripNow"
+            >
+              Завершить поход
+            </button>
+          </div>
         </div>
 
         <p class="text-sm text-muted" data-test="trip-when">
@@ -683,6 +769,20 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
           <template v-if="trip.isCommercial"> · коммерческий</template>
           <template v-if="trip.isOfficial"> · официальный поход</template>
           <template v-if="trip.isRecruitmentClosed"> · набор закрыт</template>
+        </p>
+
+        <!--
+          Поход завершён (20.11.2026): «закрыто всё и навсегда, даже админу;
+          остаются „Дневник“ и „Бухгалтерия“». Вкладки видны — поход это
+          история, её читают; закрыта только правка, и решает это сервер.
+        -->
+        <p
+          v-if="isCompleted"
+          class="rounded-2xl border border-border bg-surface px-3 py-2 text-sm text-text"
+          data-test="trip-completed"
+        >
+          Поход завершён. Содержимое больше не меняется — дополняются «Дневник»
+          и «Бухгалтерия» (новые чеки и расчёты).
         </p>
 
         <!--
@@ -717,6 +817,52 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
           {{ actionError }}
         </p>
       </header>
+
+      <!--
+        Завершение похода (20.11.2026). Заказчик: «когда `ends_at` прошёл
+        и все идущие отметили „вернулся“, организатору (только автору)
+        приходит вопрос: „Все участники похода … благополучно вернулись.
+        Поход состоялся?“». «Да» завершает поход навсегда, «Ещё остались
+        правки» оставляет его открытым и возвращает вопрос при следующем
+        входе. Условия и авторство проверяет сервер (`canComplete`).
+      -->
+      <div
+        v-if="completionQuestion"
+        class="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-primary bg-surface p-4"
+        data-test="completion-question"
+      >
+        <div class="flex min-w-0 flex-col gap-1">
+          <p class="text-sm font-medium text-text" data-test="completion-question-text">
+            Все участники похода «{{ goalName }}» благополучно вернулись. Поход состоялся?
+          </p>
+          <p class="text-xs text-muted">
+            «Да» завершит поход: правки закроются, останутся «Дневник» и «Бухгалтерия».
+            «Ещё остались правки» оставит поход открытым и спросит снова при следующем входе.
+          </p>
+        </div>
+
+        <div class="flex flex-wrap gap-2">
+          <button
+            type="button"
+            class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            :disabled="isCompleting || !offline.isOnline"
+            data-test="completion-yes"
+            @click="completeTripNow"
+          >
+            Да
+          </button>
+
+          <button
+            type="button"
+            class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-50"
+            :disabled="isCompleting"
+            data-test="completion-later"
+            @click="completionDismissed = true"
+          >
+            Ещё остались правки
+          </button>
+        </div>
+      </div>
 
       <!--
         Присутствие (17.11.2026): «поход начался — ты стартанул?» и

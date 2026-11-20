@@ -43,6 +43,8 @@ describe('Бухгалтерия похода (e2e)', () => {
   let trip8: string;
   /** Ушедший и деньги: личное сообщение, автосогласие, закрытый расчёт. */
   let trip9: string;
+  /** Завершённый поход: прежние чеки — история, новые можно (20.11.2026). */
+  let trip10: string;
   let virtualPersonId: string;
   let lastCode: string | null = null;
 
@@ -243,7 +245,7 @@ describe('Бухгалтерия похода (e2e)', () => {
     if (dataSource?.isInitialized) {
       // Расходы, доли и компенсации уходят каскадом вместе с походами.
       await dataSource.query('DELETE FROM trips WHERE id = ANY($1::bigint[])', [
-        [trip1, trip2, trip3, trip4, trip5, trip6, trip7, trip8, trip9].filter(
+        [trip1, trip2, trip3, trip4, trip5, trip6, trip7, trip8, trip9, trip10].filter(
           Boolean,
         ),
       ]);
@@ -2323,6 +2325,87 @@ describe('Бухгалтерия похода (e2e)', () => {
       }));
 
       await sync(trip8, b, many, 400);
+    });
+  });
+
+  /**
+   * Завершённый поход (20.11.2026): расчёты ещё идут, а записи о тратах —
+   * история. Заказчик: «новые расходные чеки, доли, компенсации и судьба
+   * залогов… Прежние чеки не правятся и не удаляются».
+   */
+  describe('завершённый поход: новый чек можно, прежние не трогаем', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    it('старый чек не правится и не удаляется, новый создаётся', async () => {
+      const created = await createTrip('Бухгалтерия: завершённый поход');
+      trip10 = created;
+
+      // Поход прошёл по датам и все идущие вернулись — условия завершения.
+      await auth(
+        request(app.getHttpServer()).patch(`/api/trips/${trip10}`),
+        a.token,
+      )
+        .send({
+          status: 'decided',
+          startsAt: new Date(Date.now() - 5 * DAY).toISOString(),
+          endsAt: new Date(Date.now() - DAY).toISOString(),
+        })
+        .expect(200);
+
+      const old = await addExpense(trip10, a, {
+        amountRub: 600,
+        split: 'all',
+        description: 'Продукты до возвращения',
+      });
+      const oldId = old.body.expenses[0].id as string;
+
+      await auth(
+        request(app.getHttpServer()).put(`/api/trips/${trip10}/presence/${a.id}`),
+        a.token,
+      )
+        .send({ status: 'returned' })
+        .expect(200);
+
+      await auth(
+        request(app.getHttpServer()).post(`/api/trips/${trip10}/complete`),
+        a.token,
+      ).expect(200);
+
+      // Экран узнаёт, что править нельзя, из самого ответа вкладки.
+      const locked = await view(trip10, a);
+      const oldRow = locked.body.expenses.find(
+        (expense: { id: string }) => expense.id === oldId,
+      );
+      expect(oldRow.canEdit).toBe(false);
+
+      await auth(
+        request(app.getHttpServer()).patch(
+          `/api/trips/${trip10}/finance/expenses/${oldId}`,
+        ),
+        a.token,
+      )
+        .send({ amountRub: 1, split: 'all', description: 'Поправить' })
+        .expect(409);
+
+      await auth(
+        request(app.getHttpServer()).delete(
+          `/api/trips/${trip10}/finance/expenses/${oldId}`,
+        ),
+        a.token,
+      ).expect(409);
+
+      // Новый чек — можно: «заправились, покушали по дороге».
+      const fresh = await addExpense(trip10, a, {
+        amountRub: 350,
+        split: 'all',
+        description: 'Заправились на обратном пути',
+      });
+      expect(fresh.body.expenses).toHaveLength(2);
+      expect(
+        fresh.body.expenses.some(
+          (expense: { id: string }) => expense.id === oldId,
+        ),
+      ).toBe(true);
     });
   });
 });

@@ -136,6 +136,15 @@ const isCoOrganizer = computed(() =>
  */
 const canManagePeople = computed(() => isOrganizer.value || isCoOrganizer.value)
 
+/**
+ * Поход завершён (20.11.2026): состав — история, и менять его нельзя даже
+ * организатору. Присутствие при этом ставится: перекличка — не содержимое
+ * ([lifecycle.md](../../../docs/ph/lifecycle.md) §4.4). Флаги ниже гасят
+ * кнопки, которые заведомо получат 409: сам статус, «Взять в поход»,
+ * «Убрать», приглашение и людей без аккаунта.
+ */
+const isCompleted = computed(() => Boolean(props.trip.completedAt))
+
 // ───────────────────────────── присутствие (17.11.2026) ─────────────────────────────
 
 /**
@@ -309,10 +318,11 @@ async function markPresence(
  */
 const canBringPeople = computed(
   () =>
-    canManagePeople.value ||
-    (!hasStarted.value &&
-      props.trip.openParticipation !== false &&
-      me.value?.status === 'going'),
+    !isCompleted.value &&
+    (canManagePeople.value ||
+      (!hasStarted.value &&
+        props.trip.openParticipation !== false &&
+        me.value?.status === 'going')),
 )
 
 /** Моя заявка, если я её подавал и она ещё висит. */
@@ -776,9 +786,22 @@ function invite(person: UserSearchResult) {
         Нет связи: отметка уйдёт, когда появится сеть.
       </p>
 
+      <!--
+        Завершённый поход: состав заморожен (20.11.2026). Кнопки статуса
+        не рисуем — сервер ответит 409, а поход это уже история. Отметки
+        присутствия ниже остаются: перекличку собирают и после возвращения.
+      -->
+      <p
+        v-if="isCompleted"
+        class="text-sm text-muted"
+        data-test="participants-completed"
+      >
+        Поход завершён — состав больше не меняется. Отметки присутствия по-прежнему доступны.
+      </p>
+
       <!-- Мой статус. Приглашённому сначала нужно ответить на приглашение -->
       <div
-        v-if="me && me.status !== 'invited'"
+        v-else-if="me && me.status !== 'invited'"
         class="flex flex-col gap-2"
         data-test="my-status"
       >
@@ -1211,6 +1234,7 @@ function invite(person: UserSearchResult) {
                 v-if="
                   canManagePeople &&
                   hasStarted &&
+                  !isCompleted &&
                   !person.isOrganizer &&
                   person.status !== 'going' &&
                   person.status !== 'invited'
@@ -1236,7 +1260,7 @@ function invite(person: UserSearchResult) {
               </button>
 
               <button
-                v-if="isOrganizer && !person.isOrganizer"
+                v-if="isOrganizer && !isCompleted && !person.isOrganizer"
                 type="button"
                 class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
                 :disabled="pendingUserId !== null"

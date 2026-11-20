@@ -65,6 +65,7 @@ import { conflictMessage, removeConflictingGear } from '../gear/gear-uid';
 import { TripGear } from '../gear/entities/trip-gear.entity';
 import { extractObjectIds } from './route-links';
 import {
+  COMPLETED_EDITABLE_TABS,
   COORGANIZER_ROLE_CODE,
   MEMBERS_TAB,
   NIGHTS_TAB,
@@ -160,6 +161,30 @@ function hasStarted(trip: Trip, now: Date = new Date()): boolean {
 /** Поход уже закончился по плановым датам. */
 function hasEnded(trip: Trip, now: Date = new Date()): boolean {
   return trip.endsAt !== null && trip.endsAt.getTime() <= now.getTime();
+}
+
+/**
+ * Поход завершён — содержимое закрыто навсегда (20.11.2026).
+ *
+ * Заказчик: «После завершения закрыто всё и навсегда, даже админу:
+ * снаряжение, питание, трансфер, ночёвки, состав, даты, роли». Поэтому
+ * проверка стоит на всех изменяющих ручках похода, кроме «Дневника»,
+ * «Бухгалтерии» (в ней свои ограничения: новые чеки можно, правку
+ * прежних — нет) и присутствия: перекличка — не содержимое, её собирают
+ * и после возвращения ([lifecycle.md](../docs/ph/lifecycle.md) §4.4).
+ *
+ * **Права вкладок — не замена этой проверке.** `editableTabs` уже отдаёт
+ * после завершения только «Дневник» и «Бухгалтерию», но часть ручек
+ * (правка шапки, отмена, состав, тикеты) прав вкладок не спрашивает —
+ * у них своё правило «только организатор». Без этой проверки автор
+ * продолжал бы менять даты уже состоявшегося похода.
+ */
+function assertTripOpen(trip: Trip): void {
+  if (trip.completedAt === null) return;
+
+  throw new ConflictException(
+    'Поход завершён: здесь уже ничего не меняется. Открыты «Дневник» и «Бухгалтерия»',
+  );
 }
 
 /**
@@ -447,7 +472,55 @@ export class TripsService {
       order: { id: 'ASC' },
     });
 
-    return TripResponseDto.from(trip, dateVariants);
+    const response = TripResponseDto.from(trip, dateVariants);
+    // Вопрос «поход состоялся?» и кнопка «Завершить поход» показываются
+    // по одному флагу, а правило считает сервер: состав и присутствие
+    // фронту для этого не нужны.
+    response.canComplete = await this.isCompletionReady(
+      this.dataSource.manager,
+      trip,
+      userId,
+    );
+
+    return response;
+  }
+
+  /**
+   * Пора завершать поход: конец прошёл, все идущие отметили «вернулся»,
+   * поход не завершён (20.11.2026).
+   *
+   * Заказчик: «когда `ends_at` прошёл и все идущие отметили „вернулся“,
+   * организатору (только автору) приходит вопрос». Условие «все вернулись»
+   * нельзя выразить в DTO похода: присутствие живёт в составе, и второй
+   * запрос здесь дешевле, чем флаг в каждой строке списка походов.
+   *
+   * `going === 0` — не повод спрашивать: «все участники благополучно
+   * вернулись» о походе без идущих было бы неправдой. Автор — тот, кому
+   * вопрос вообще задают, поэтому проверка автора здесь же.
+   */
+  private async isCompletionReady(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<boolean> {
+    if (trip.completedAt !== null) return false;
+    if (trip.organizerUserId !== userId) return false;
+    if (!hasEnded(trip)) return false;
+
+    const going = await manager.count(TripParticipant, {
+      where: { tripId: trip.id, status: 'going' },
+    });
+    if (going === 0) return false;
+
+    const onRoute = await manager.count(TripParticipant, {
+      where: {
+        tripId: trip.id,
+        status: 'going',
+        returnedAt: IsNull(),
+      },
+    });
+
+    return onRoute === 0;
   }
 
   /**
@@ -827,8 +900,36 @@ export class TripsService {
    * в базе (организатор не должен зависеть от того, засеян ли справочник).
    * Остальным — объединение прав их ролей; матрица живёт в
    * `role_tab_permissions` и правится сидом.
+   *
+   * С 20.11.2026 у завершённого похода права сужаются до двух вкладок
+   * (`COMPLETED_EDITABLE_TABS`) для всех, включая организатора: правило
+   * стоит после матрицы, поэтому роли его не расширяют.
    */
   private async editableTabs(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<Set<TripTab>> {
+    const base = await this.tabsByRole(manager, trip, userId);
+
+    /**
+     * Завершённый поход правится только в двух разделах (20.11.2026):
+     * «Дневник» дополняется, «Бухгалтерия» считает деньги. Всё остальное —
+     * снаряжение, питание, трансфер, ночёвки, состав, даты, роли — история.
+     * Роли не расширяют этот список: закрыто даже автору и админу, поэтому
+     * фильтр стоит после матрицы, а не вместо неё.
+     */
+    if (trip.completedAt !== null) {
+      return new Set(
+        [...base].filter((tab) => COMPLETED_EDITABLE_TABS.includes(tab)),
+      );
+    }
+
+    return base;
+  }
+
+  /** Права на правку вкладок по ролям — без поправки на завершение. */
+  private async tabsByRole(
     manager: EntityManager,
     trip: Trip,
     userId: string,
@@ -1466,6 +1567,10 @@ export class TripsService {
       await this.dataSource.transaction(async (manager) => {
         const trip = await this.findOwnedTrip(manager, userId, id);
 
+        // Завершённый поход закрыт навсегда (20.11.2026): даты, шапка,
+        // видимость, залог и роли в нём уже не меняются.
+        assertTripOpen(trip);
+
         /**
          * Правила готовности (`tabs.md` §7) требуют знать, чем поход был:
          * из «Мечты» в «Планирую» достраивается состав и чаты, а обратно
@@ -1746,6 +1851,59 @@ export class TripsService {
     return response;
   }
 
+  /**
+   * Завершить поход — решением автора (20.11.2026).
+   *
+   * Заказчик: «Поход заканчивается решением автора, а не по дате». Условия
+   * сервер проверяет сам, а не верит кнопке: `ends_at` прошёл, все идущие
+   * отметили «вернулся», спрашивает и завершает только автор. Вопрос
+   * «Поход состоялся?» приходит при входе, а эта ручка — его ответ «Да»
+   * и кнопка «Завершить поход» после «Ещё остались правки».
+   *
+   * **Завершение необратимо** (заказчик: «отменить завершение нельзя»),
+   * поэтому повтор — не «уже так», а 409: молчаливое «ладно» скрыло бы
+   * от человека, что он давит на кнопку, которой больше нет.
+   *
+   * **Почему `completed_at`, а не `status`.** Стадия подготовки остаётся
+   * `decided`: завершённый поход — не другая стадия, а итог этой.
+   *
+   * Права вкладок после завершения считает `editableTabs`: остаются
+   * «Дневник» и «Бухгалтерия». Здесь их не дублируем — правило живёт
+   * в одном месте, иначе разошлось бы с меню.
+   */
+  async complete(userId: string, id: number): Promise<TripResponseDto> {
+    const response = await this.dataSource.transaction(async (manager) => {
+      const trip = await this.findOwnedTrip(manager, userId, id);
+
+      if (trip.completedAt !== null) {
+        throw new ConflictException(
+          'Поход уже завершён — отменить это нельзя',
+        );
+      }
+
+      if (!(await this.isCompletionReady(manager, trip, userId))) {
+        throw new ConflictException(
+          'Завершить поход можно, когда он закончился по датам и все идущие отметили возвращение',
+        );
+      }
+
+      trip.completedAt = new Date();
+      const saved = await manager.save(trip);
+
+      // Типы — не персистентное поле: без этого ответ был бы беднее,
+      // чем `GET /trips/:id`, и шапка потеряла бы подписи до перезахода.
+      await this.fillTypes(manager, [saved]);
+
+      return TripResponseDto.from(saved);
+    });
+
+    // Шапка на других вкладках перечитывает поход тем же событием,
+    // что и правка свойств: правки закрылись, меню и кнопки изменились.
+    this.events.emitTrip(String(id), userId);
+
+    return response;
+  }
+
   /** Отменить поход. Отмена — отдельная ось, статус она не затирает. */
   async cancel(userId: string, id: number): Promise<TripResponseDto> {
     return this.setCancelled(userId, id, true);
@@ -1775,6 +1933,10 @@ export class TripsService {
     const { response, gearChanged } = await this.dataSource.transaction(
       async (manager) => {
         const trip = await this.findOwnedTrip(manager, userId, id);
+
+        // Отменять и возвращать завершённый поход нельзя: завершение
+        // необратимо (20.11.2026).
+        assertTripOpen(trip);
 
         // Типы заполняем один раз, до всех выходов: поле не персистентное,
         // `save` его не тронет, поэтому и повторная отмена, и настоящая
@@ -1987,6 +2149,10 @@ export class TripsService {
         throw new NotFoundException('Ты не в составе этого похода');
       }
 
+      // После завершения состав — история: свой статус не меняется
+      // (20.11.2026). Присутствие — можно, оно отдельной ручкой.
+      assertTripOpen(trip);
+
       /**
        * Организатор может быть `declined` (17.11.2026).
        *
@@ -2133,6 +2299,8 @@ export class TripsService {
           'Перевести человека в «иду» может организатор или соорганизатор',
         );
       }
+
+      assertTripOpen(trip);
 
       const participant = await manager.findOne(TripParticipant, {
         where: { tripId: trip.id, userId: targetUserId },
@@ -2570,6 +2738,10 @@ export class TripsService {
     trip: Trip,
     userId: string,
   ): Promise<void> {
+    // Завершённый поход — история: состав в нём больше не меняется
+    // (20.11.2026), даже автору.
+    assertTripOpen(trip);
+
     if (await this.canBringPeople(manager, trip, userId)) return;
 
     throw new ForbiddenException(
@@ -2624,6 +2796,8 @@ export class TripsService {
     trip: Trip,
     actorUserId: string,
   ): Promise<void> {
+    assertTripOpen(trip);
+
     if (!hasStarted(trip)) return;
     if (await this.isOrganizerOrCoOrganizer(manager, trip, actorUserId)) return;
 
@@ -2645,6 +2819,8 @@ export class TripsService {
     trip: Trip,
     userId: string,
   ): Promise<void> {
+    assertTripOpen(trip);
+
     if (trip.organizerUserId === userId) return;
 
     const participant = await manager.findOne(TripParticipant, {
@@ -2665,6 +2841,8 @@ export class TripsService {
     trip: Trip,
     userId: string,
   ): Promise<void> {
+    assertTripOpen(trip);
+
     if (await this.canBringPeople(manager, trip, userId)) return;
 
     if (hasStarted(trip)) {
@@ -2779,6 +2957,9 @@ export class TripsService {
     return this.dataSource.transaction(async (manager) => {
       const trip = await this.findVisibleTrip(manager, userId, id);
       const isOrganizer = trip.organizerUserId === userId;
+
+      // Тикеты — часть состава: после завершения их не заводят (20.11.2026).
+      assertTripOpen(trip);
 
       if (dto.direction === 'invite') {
         await this.assertCanInvite(manager, trip, userId);
@@ -2924,6 +3105,10 @@ export class TripsService {
         throw new NotFoundException('Приглашение или заявка не найдены');
       }
 
+      // Завершённый поход — история: тикетов в нём больше не разбирают
+      // (20.11.2026). Присутствие ставить по-прежнему можно.
+      assertTripOpen(trip);
+
       const isOrganizer = await this.isOrganizerOrCoOrganizer(
         manager,
         trip,
@@ -3043,6 +3228,10 @@ export class TripsService {
           'Закрыть тикет может организатор, пригласивший или сам человек',
         );
       }
+
+      // Состав завершённого похода заморожен: отозвать приглашение или
+      // отказаться от него уже нельзя, заявки остались историей.
+      assertTripOpen(trip);
 
       const name = displayNameOf(request.user);
 

@@ -246,6 +246,27 @@ export class TripResponseDto {
   depositRub: number | null;
 
   @ApiProperty({
+    description:
+      'Когда поход завершён решением автора. null — не завершён. Отменить нельзя',
+    nullable: true,
+  })
+  completedAt: string | null;
+
+  /**
+   * Пора спросить автора «поход состоялся?» — и можно его завершить.
+   *
+   * Считается сервером на текущего зрителя: только автор, только после
+   * `ends_at`, только когда все идущие отметили «вернулся» и поход ещё
+   * не завершён. Фронт по этому флагу показывает и вопрос при входе,
+   * и кнопку «Завершить поход»; правило в двух местах не живёт.
+   */
+  @ApiProperty({
+    description: 'Можно ли завершить поход (условия выполнены, смотрит автор)',
+    example: false,
+  })
+  canComplete: boolean;
+
+  @ApiProperty({
     description: 'Когда поход отменён. null — не отменён',
     nullable: true,
   })
@@ -297,6 +318,10 @@ export class TripResponseDto {
       priceRub: trip.priceRub,
       priceNote: trip.priceNote,
       depositRub: trip.depositRub,
+      completedAt: trip.completedAt?.toISOString() ?? null,
+      // Правило «пора завершать» знает сервис (ему нужен состав), поэтому
+      // в чистом преобразовании флаг всегда false, а `findOne` его доставит.
+      canComplete: false,
       cancelledAt: trip.cancelledAt?.toISOString() ?? null,
       createdAt: trip.createdAt.toISOString(),
       updatedAt: trip.updatedAt.toISOString(),

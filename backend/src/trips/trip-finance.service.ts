@@ -282,6 +282,9 @@ export class TripFinanceService {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
       await this.assertGoing(manager, String(trip.id), userId);
 
+      // Завершённый поход: новые чеки можно, прежние — нельзя (20.11.2026).
+      this.assertExpenseEditable(trip);
+
       const expense = await manager.findOne(TripExpense, {
         where: { id: String(expenseId), tripId: String(trip.id) },
       });
@@ -333,6 +336,9 @@ export class TripFinanceService {
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
       await this.assertGoing(manager, String(trip.id), userId);
+
+      // Удаление тоже закрыто: «прежние чеки не правятся и не удаляются».
+      this.assertExpenseEditable(trip);
 
       const expense = await manager.findOne(TripExpense, {
         where: { id: String(expenseId), tripId: String(trip.id) },
@@ -807,6 +813,12 @@ export class TripFinanceService {
 
         // Расход человека без аккаунта правит тот, кто его ведёт.
         if (managedIds.has(expense.authorUserId)) dto.canEdit = true;
+
+        // После завершения похода прежние чеки не правятся и не удаляются
+        // (20.11.2026): расчёты ещё идут, а записи о тратах — история.
+        // Кнопки «Править»/«Удалить» экран рисует по этому флагу, поэтому
+        // снимаем его на сервере, а не надеемся на проверку при сохранении.
+        if (trip.completedAt !== null) dto.canEdit = false;
 
         return dto;
       }),
@@ -1900,6 +1912,23 @@ export class TripFinanceService {
     if (count === 0) {
       throw new ForbiddenException('Это доступно только участнику похода');
     }
+  }
+
+  /**
+   * Прежние чеки завершённого похода не правятся и не удаляются (20.11.2026).
+   *
+   * Заказчик: «Бухгалтерия — новые расходные чеки, доли, компенсации и
+   * судьба залогов, потому что расчёты ещё идут. Прежние чеки не правятся
+   * и не удаляются». Поэтому закрыты ровно две ручки — правка и удаление;
+   * создание (в том числе пачкой из офлайн-очереди), компенсации и залог
+   * работают, иначе после возвращения не закрыть расчёты.
+   */
+  private assertExpenseEditable(trip: Trip): void {
+    if (trip.completedAt === null) return;
+
+    throw new ConflictException(
+      'Поход завершён: прежние чеки не правятся и не удаляются. Добавить новый чек можно',
+    );
   }
 
   /** Деньги правит только идущий: приглашённый ещё не тратил. */

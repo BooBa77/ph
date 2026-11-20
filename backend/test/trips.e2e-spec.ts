@@ -2203,4 +2203,125 @@ describe('Походы (e2e)', () => {
         .expect(200);
     });
   });
+
+  /**
+   * Завершение похода (20.11.2026).
+   *
+   * Заказчик: «Поход заканчивается решением автора, а не по дате». Условия:
+   * `ends_at` прошёл, все идущие отметили «вернулся», спрашивают и завершают
+   * только автора. После этого закрыто всё, кроме «Дневника»
+   * и «Бухгалтерии»; присутствие по-прежнему отмечается.
+   */
+  describe('завершение похода', () => {
+    const DAY = 24 * 60 * 60 * 1000;
+
+    /** Поход, который по датам уже закончился: остаётся перекличка. */
+    const finishedTrip = () => ({
+      status: 'decided',
+      startsAt: new Date(Date.now() - 5 * DAY).toISOString(),
+      endsAt: new Date(Date.now() - DAY).toISOString(),
+    });
+
+    const readTrip = async (tripId: string, token: string) =>
+      request(app.getHttpServer())
+        .get(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+    const markPresence = (tripId: string, status: string) =>
+      request(app.getHttpServer())
+        .put(`/api/trips/${tripId}/presence/${userId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status })
+        .expect(200);
+
+    it('вопрос «поход состоялся?» — только автору и только когда все вернулись', async () => {
+      const created = await createTrip({
+        announcement: 'Пора завершать',
+        ...finishedTrip(),
+      });
+      const tripId = created.body.id as string;
+
+      // Конец прошёл, но я ещё на маршруте: завершать рано.
+      await markPresence(tripId, 'route');
+      expect((await readTrip(tripId, accessToken)).body.canComplete).toBe(false);
+
+      // Вернулся — условия выполнены.
+      await markPresence(tripId, 'returned');
+      expect((await readTrip(tripId, accessToken)).body.canComplete).toBe(true);
+
+      // Флаг личный: посторонний видит поход, но не вопрос.
+      expect((await readTrip(tripId, strangerToken)).body.canComplete).toBe(false);
+    });
+
+    it('«Да» закрывает поход: правки 409, вкладки — только дневник и деньги', async () => {
+      const created = await createTrip({
+        announcement: 'Закрываем поход',
+        ...finishedTrip(),
+      });
+      const tripId = created.body.id as string;
+
+      // Пока никто не отметил возвращение, завершить нельзя.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/complete`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+
+      // Чужому завершать нечего: поход его не.
+      await markPresence(tripId, 'returned');
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/complete`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .expect(403);
+
+      const completed = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/complete`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(completed.body.completedAt).not.toBeNull();
+
+      // Завершение необратимо и повторять его нечего.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/complete`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+
+      // Закрыто навсегда: и шапка, и состав.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ hasGuitar: true })
+        .expect(409);
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/me`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ status: 'declined' })
+        .expect(409);
+
+      // Вкладки видны все, править можно только две.
+      const tabs = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/tabs`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+      const editable = (
+        tabs.body.tabs as Array<{ code: string; canEdit: boolean }>
+      )
+        .filter((tab) => tab.canEdit)
+        .map((tab) => tab.code)
+        .sort();
+      expect(editable).toEqual(['diary', 'finance']);
+
+      // Присутствие — можно: перекличка не содержимое.
+      await markPresence(tripId, 'route');
+      await markPresence(tripId, 'returned');
+
+      // Бухгалтерия принимает новые чеки: расчёты ещё идут.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/finance/expenses`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ amountRub: 350, description: 'Заправились на обратном пути', split: 'all' })
+        .expect(201);
+    });
+  });
 });

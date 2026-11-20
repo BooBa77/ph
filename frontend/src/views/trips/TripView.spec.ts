@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
   getTrip: vi.fn(),
   fetchTripTabs: vi.fn(),
   updateTrip: vi.fn(),
+  completeTrip: vi.fn(),
   listParticipants: vi.fn(),
   setTripPresence: vi.fn(),
   subscribeTripEvents: vi.fn(),
@@ -40,6 +41,7 @@ vi.mock('@/api/trips', async (importOriginal) => {
     getTrip: mocks.getTrip,
     fetchTripTabs: mocks.fetchTripTabs,
     updateTrip: mocks.updateTrip,
+    completeTrip: mocks.completeTrip,
     listParticipants: mocks.listParticipants,
     setTripPresence: mocks.setTripPresence,
   }
@@ -455,5 +457,87 @@ describe('TripView и мобильное меню', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="presence-question"]').exists()).toBe(false)
+  })
+
+  // ───────────────────── завершение похода (20.11.2026) ─────────────────────
+
+  /** Поход, который закончился по датам и где все идущие уже вернулись. */
+  function readyToComplete(overrides: Partial<Trip> = {}): Trip {
+    return {
+      ...TRIP,
+      startsAt: daysFromNow(-5),
+      endsAt: daysFromNow(-1),
+      // Флаг считает сервер: только автор, все вернулись, поход не завершён.
+      canComplete: true,
+      completedAt: null,
+      ...overrides,
+    }
+  }
+
+  it('автору после конца похода приходит вопрос «поход состоялся?»', async () => {
+    mocks.getTrip.mockResolvedValue(readyToComplete())
+    mocks.listParticipants.mockResolvedValue([me({ presenceStatus: 'returned' })])
+
+    const { wrapper } = await mountTrip()
+
+    expect(wrapper.get('[data-test="completion-question-text"]').text()).toContain(
+      '«Витязь» благополучно вернулись. Поход состоялся?',
+    )
+    // Пока не ответили, кнопки в разделе нет: решение за вопросом.
+    expect(wrapper.find('[data-test="complete-trip"]').exists()).toBe(false)
+  })
+
+  it('«Да» завершает поход: правки закрываются, вопрос исчезает', async () => {
+    mocks.getTrip.mockResolvedValue(readyToComplete())
+    mocks.listParticipants.mockResolvedValue([me({ presenceStatus: 'returned' })])
+    mocks.completeTrip.mockResolvedValue(
+      readyToComplete({ canComplete: false, completedAt: daysFromNow(0) }),
+    )
+
+    const { wrapper } = await mountTrip()
+
+    await wrapper.get('[data-test="completion-yes"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.completeTrip).toHaveBeenCalledWith('1')
+    expect(wrapper.find('[data-test="completion-question"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="trip-completed"]').exists()).toBe(true)
+    // Поход закрыт — «Редактировать» и «Закрыть набор» больше не предлагаются.
+    expect(wrapper.find('[data-test="trip-edit-link"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="toggle-recruitment"]').exists()).toBe(false)
+  })
+
+  it('«Ещё остались правки» — вопрос отложен, кнопка «Завершить поход» в разделе', async () => {
+    mocks.getTrip.mockResolvedValue(readyToComplete())
+    mocks.listParticipants.mockResolvedValue([me({ presenceStatus: 'returned' })])
+
+    const { wrapper } = await mountTrip()
+    await wrapper.get('[data-test="completion-later"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="completion-question"]').exists()).toBe(false)
+
+    const button = wrapper.get('[data-test="complete-trip"]')
+    expect(button.text()).toBe('Завершить поход')
+
+    // Кнопка — то же действие, что «Да».
+    mocks.completeTrip.mockResolvedValue(
+      readyToComplete({ canComplete: false, completedAt: daysFromNow(0) }),
+    )
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(mocks.completeTrip).toHaveBeenCalledWith('1')
+    expect(wrapper.find('[data-test="trip-completed"]').exists()).toBe(true)
+  })
+
+  it('не автору вопрос не задаётся: флаг приходит с сервера', async () => {
+    mocks.getTrip.mockResolvedValue(readyToComplete({ canComplete: false }))
+    mocks.listParticipants.mockResolvedValue([me({ presenceStatus: 'returned' })])
+
+    const { wrapper } = await mountTrip()
+
+    expect(wrapper.find('[data-test="completion-question"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="complete-trip"]').exists()).toBe(false)
   })
 })

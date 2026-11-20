@@ -268,6 +268,22 @@ export class Trip {
   @Column({ name: 'actual_finished_at', type: 'timestamptz', nullable: true })
   actualFinishedAt: Date | null;
 
+  /**
+   * Поход завершён решением автора (20.11.2026).
+   *
+   * Заказчик: «поход заканчивается решением автора, а не по дате»
+   * ([lifecycle.md](../docs/ph/lifecycle.md) §4.4). `NULL` — не завершён.
+   * Отметка ставится один раз и не снимается: завершение необратимо.
+   *
+   * **Это не `status`.** Стадия подготовки (`idea | planning | decided`)
+   * остаётся прежней: завершение — итог похода, а не стадия его подготовки.
+   * После завершения закрывается всё содержимое, кроме «Дневника»
+   * и «Бухгалтерии»: правки похода, снаряжение, питание, трансфер, ночёвки,
+   * состав и роли — история, а не рабочая зона.
+   */
+  @Column({ name: 'completed_at', type: 'timestamptz', nullable: true })
+  completedAt: Date | null;
+
   @Column({ name: 'is_commercial', type: 'boolean', default: false })
   isCommercial: boolean;
 
