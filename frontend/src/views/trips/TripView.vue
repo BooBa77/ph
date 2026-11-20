@@ -191,13 +191,26 @@ const canEditGear = computed(
  * вкладка спрашивает права у своего ответа.
  */
 
-/** Править поход может только организатор. */
+/**
+ * Править поход может организатор **и соорганизатор** (20.11.2026).
+ *
+ * Заказчик: «соорганизатор равен организатору во всём, отличий ровно
+ * пять» ([lifecycle.md](../../../docs/ph/lifecycle.md) §4.5). Правка
+ * похода и дат — не отличие, поэтому кнопки шапки у него те же. Роль
+ * считаем по своей строке состава: сервер права вкладок уже отдал, но
+ * именно этот флаг гасит действия, которых нет у рядового участника.
+ */
 const isOrganizer = computed(
   () => trip.value !== null && trip.value.organizerUserId === auth.user?.id,
 )
 
+/** Соорганизатор — по роли `coOrganizer` в своей строке состава. */
+const isCoOrganizer = computed(() =>
+  (myParticipant.value?.roles ?? []).some((role) => role.code === 'coOrganizer'),
+)
+
 /**
- * Действия организатора в шапке.
+ * Действия организатора и соорганизатора в шапке.
  *
  * В офлайне их нет: правка и закрытие набора — изменения, а изменения
  * без связи не уходят. Показать кнопку, которая заведомо не сработает,
@@ -208,7 +221,9 @@ const isOrganizer = computed(
  * заведомо получит 409, — тот же обман. Это проверяет шаблон
  * (`canOrganize && !isCompleted`), а не сам флаг: он про роль и связь.
  */
-const canOrganize = computed(() => isOrganizer.value && offline.isOnline)
+const canOrganize = computed(
+  () => (isOrganizer.value || isCoOrganizer.value) && offline.isOnline,
+)
 
 // ───────────────────────── завершение похода (20.11.2026) ─────────────────────────
 
@@ -705,6 +720,21 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
               {{ goalName }}
             </h1>
 
+            <!--
+              Бейдж соорганизатора (20.11.2026). Заказчик: «кто соорганизатор,
+              видно бейджем „соорганизатор“ в „Участниках“ и в шапке похода».
+              В шапке он про смотрящего: «этот поход ведёшь ты наравне
+              с автором», и без него человек с правами организатора не
+              понимал, почему у него есть кнопки правки.
+            -->
+            <span
+              v-if="isCoOrganizer"
+              class="self-start rounded-full border border-primary px-2 py-0.5 text-xs text-primary"
+              data-test="trip-coorganizer-badge"
+            >
+              соорганизатор
+            </span>
+
             <p v-if="trip.announcement" class="text-sm text-text">
               {{ trip.announcement }}
             </p>
@@ -781,8 +811,7 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
           class="rounded-2xl border border-border bg-surface px-3 py-2 text-sm text-text"
           data-test="trip-completed"
         >
-          Поход завершён. Содержимое больше не меняется — дополняются «Дневник»
-          и «Бухгалтерия» (новые чеки и расчёты).
+          Поход завершён.
         </p>
 
         <!--
@@ -834,10 +863,6 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
         <div class="flex min-w-0 flex-col gap-1">
           <p class="text-sm font-medium text-text" data-test="completion-question-text">
             Все участники похода «{{ goalName }}» благополучно вернулись. Поход состоялся?
-          </p>
-          <p class="text-xs text-muted">
-            «Да» завершит поход: правки закроются, останутся «Дневник» и «Бухгалтерия».
-            «Ещё остались правки» оставит поход открытым и спросит снова при следующем входе.
           </p>
         </div>
 

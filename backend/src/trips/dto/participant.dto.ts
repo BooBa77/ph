@@ -64,7 +64,8 @@ export class TripParticipantDto {
   gender: UserGender;
 
   @ApiProperty({
-    description: 'Участие: invited, going, maybe, declined',
+    description:
+      'Участие: invited, going, maybe, helping, declined. helping — «помогаю, но не иду»',
     enum: PARTICIPANT_STATUSES,
     example: 'going',
   })

@@ -970,7 +970,8 @@ export class TripFinanceService {
       status === 'going' || status === 'maybe';
     const canManage =
       organizerRole === 'organizer' ||
-      (organizerRole === 'coOrganizer' && isActive(mine?.status));
+      (organizerRole === 'coOrganizer' &&
+        (isActive(mine?.status) || mine?.status === 'helping'));
 
     // Свой залог организатор не переводит: деньги у него самого. В расчёте
     // экрана это `selfHeld`, а не выдуманный перевод.
@@ -1117,10 +1118,15 @@ export class TripFinanceService {
   }
 
   /**
-   * Участники, с которыми работает залог: идущие, «пока думаю» и вышедшие.
+   * Участники, с которыми работает залог: идущие, «пока думаю»,
+   * помогающие и вышедшие.
    *
    * Вышедшие нужны с 17.11.2026: их залог уже у организатора, и решать его
    * судьбу — «Вернуть» или «Удержать» — тоже организатору.
+   *
+   * `helping` добавлен 20.11.2026 вместе с возвратом статуса: человек,
+   * который помогает, но не идёт, мог вложиться в закупки, и его деньги
+   * не должны исчезнуть из расчёта только потому, что он не едет.
    */
   private async loadDepositParticipants(
     manager: EntityManager,
@@ -1131,7 +1137,7 @@ export class TripFinanceService {
       // его нет — иначе «Ещё не ответил» висел бы в секции риска вечно.
       where: {
         tripId: String(trip.id),
-        status: In(['going', 'maybe', 'declined']),
+        status: In(['going', 'maybe', 'helping', 'declined']),
       },
       relations: {
         user: true,
@@ -1529,10 +1535,17 @@ export class TripFinanceService {
         where: { tripId: String(trip.id), userId },
         relations: { user: true },
       });
+      /**
+       * Судьбу залога решают организатор и соорганизатор. Соорганизатор —
+       * и в статусе `helping` (20.11.2026): роль не зависит от того, идёт
+       * он сам, а «помогаю, но не иду» — именно про такого человека.
+       */
       const canManage =
         role === 'organizer' ||
         (role === 'coOrganizer' &&
-          (actor?.status === 'going' || actor?.status === 'maybe'));
+          (actor?.status === 'going' ||
+            actor?.status === 'maybe' ||
+            actor?.status === 'helping'));
       if (!canManage) {
         throw new ForbiddenException('Судьбу залога решает организатор похода');
       }

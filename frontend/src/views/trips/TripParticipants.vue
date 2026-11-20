@@ -59,10 +59,11 @@ import type { Gender } from '@/api/types'
  * (его и не отдаёт бэкенд). Права решает сервер; интерфейс лишь не
  * показывает то, что заведомо не сработает.
  *
- * **Роли назначает организатор** (и соорганизатор — по праву на вкладку;
- * это решает бэкенд, сюда приходит `canManageRoles`). Сами участники
- * ролями не управляют даже своими: роль — обязательство перед походом,
- * а не нашивка (решение заказчика 21.10.2026).
+ * **Роли назначают организатор и соорганизатор** (20.11.2026: у
+ * соорганизатора право на вкладку «Участники» — правило кода, а не строка
+ * матрицы; это решает бэкенд, сюда приходит `canManageRoles`). Сами
+ * участники ролями не управляют даже своими: роль — обязательство перед
+ * походом, а не нашивка (решение заказчика 21.10.2026).
  *
  * **Люди без аккаунта (31.10.2026).** Организатор заводит человека, которого
  * нет на сайте («Дядя Витя»): строка `users` без входа, статус сразу «идёт».
@@ -99,8 +100,14 @@ const offline = useOfflineStore()
 /**
  * Свои варианты участия. «Не иду» подписано словами, а не статусом:
  * `declined` в кнопке читалось бы как системный код.
+ *
+ * `helping` — «помогаю, но не иду» (вернулся 20.11.2026): заказчик
+ * разрешил соорганизатору быть `helping` и `maybe`. Вторая кнопка из трёх
+ * здесь не потому, что так удобнее, а потому что это отдельное состояние:
+ * человек помогает с подготовкой, а в поле не едет
+ * ([lifecycle.md](../../../docs/ph/lifecycle.md) §4.5).
  */
-const MY_STATUSES: ParticipantStatus[] = ['going', 'maybe', 'declined']
+const MY_STATUSES: ParticipantStatus[] = ['going', 'maybe', 'helping', 'declined']
 
 const participants = ref<TripParticipant[]>([])
 const requests = ref<TripRequest[]>([])
@@ -110,11 +117,14 @@ const actionError = ref<string | null>(null)
 const pendingUserId = ref<string | null>(null)
 
 /**
- * Роли без «Организатора»: ниже есть подпись «организатор похода»,
- * и роль выводилась дважды — «Организатор · организатор похода».
+ * Роли без «Организатора» и без «Соорганизатора»: у обоих есть своя
+ * подпись и свой бейдж ниже, и роль выводилась дважды —
+ * «Организатор · организатор похода» (20.11.2026: то же у соорганизатора).
  */
 function extraRoles(person: TripParticipant): TripRole[] {
-  return person.roles.filter((role) => role.code !== 'organizer')
+  return person.roles.filter(
+    (role) => role.code !== 'organizer' && role.code !== 'coOrganizer',
+  )
 }
 
 const isOrganizer = computed(() => props.trip.organizerUserId === auth.user?.id)
@@ -127,6 +137,27 @@ const me = computed(
 const isCoOrganizer = computed(() =>
   (me.value?.roles ?? []).some((role) => role.code === 'coOrganizer'),
 )
+
+/** Этот человек — соорганизатор: бейдж в его строке состава (20.11.2026). */
+function isCoOrganizerOf(person: TripParticipant): boolean {
+  return person.roles.some((role) => role.code === 'coOrganizer')
+}
+
+/**
+ * Можно ли убрать человека из состава.
+ *
+ * Организатор — всегда (кроме автора похода), соорганизатор — тоже, но
+ * **не другого соорганизатора**: убрать его значило бы снять с него
+ * полномочия, а это решает только организатор (20.11.2026,
+ * [lifecycle.md](../../../docs/ph/lifecycle.md) §4.5). Сервер отвечает так
+ * же; здесь проверка, чтобы не предлагать кнопку, которая получит 403.
+ */
+function canRemovePerson(person: TripParticipant): boolean {
+  if (isCompleted.value || person.isOrganizer) return false
+  if (!isOrganizer.value && !isCoOrganizer.value) return false
+  if (isOrganizer.value) return true
+  return !isCoOrganizerOf(person)
+}
 
 /**
  * Кто добирает состав после старта (20.11.2026): организатор и соорганизатор.
@@ -1140,6 +1171,21 @@ function invite(person: UserSearchResult) {
                 <span class="flex flex-wrap items-center gap-1 text-sm text-text">
                   <span data-test="participant-name">{{ person.displayName }}</span>
 
+                  <!--
+                    Бейдж соорганизатора (20.11.2026). Отдельный, а не ролью:
+                    «Соорганизатор» в общем списке ролей терялся среди
+                    «Завхоз» и «Медик», а это второй организатор похода —
+                    он правит всё, что и автор, кроме пяти отличий
+                    ([lifecycle.md](../../../docs/ph/lifecycle.md) §4.5).
+                  -->
+                  <span
+                    v-if="isCoOrganizerOf(person)"
+                    class="rounded-full border border-primary px-2 py-0.5 text-xs text-primary"
+                    data-test="participant-coorganizer"
+                  >
+                    соорганизатор
+                  </span>
+
                   <!-- Роли — рядом с именем: «кто здесь завхоз» ищут по списку,
                        а не в подписи мелким шрифтом -->
                   <span
@@ -1260,7 +1306,7 @@ function invite(person: UserSearchResult) {
               </button>
 
               <button
-                v-if="isOrganizer && !isCompleted && !person.isOrganizer"
+                v-if="canRemovePerson(person)"
                 type="button"
                 class="cursor-pointer rounded-xl border border-border bg-field px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:opacity-60"
                 :disabled="pendingUserId !== null"

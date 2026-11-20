@@ -134,6 +134,8 @@ function statusText(status: ParticipantStatus): string {  switch (status) {
       return 'идёт';
     case 'maybe':
       return 'пока не решил';
+    case 'helping':
+      return 'помогает, но не идёт';
     case 'declined':
       return 'не идёт';
     case 'invited':
@@ -761,10 +763,11 @@ export class TripsService {
   /**
    * Назначить роли участнику: присланный список **заменяет** прежние.
    *
-   * Роли назначают организаторы (и соорганизаторы — через матрицу прав:
-   * проверяется право на вкладку «Участники»). Сами участники ролями
-   * не управляют, даже своими (решение заказчика 21.10.2026): роль —
-   * это обязательство перед походом, а не нашивка.
+   * Роли назначают организатор и соорганизатор (20.11.2026: права вкладки
+   * «Участники» у соорганизатора — правило кода в `tabsByRole`, а не строка
+   * матрицы). Сами участники ролями не управляют, даже своими (решение
+   * заказчика 21.10.2026): роль — это обязательство перед походом,
+   * а не нашивка.
    *
    * Организатор похода роль `organizer` сохраняет при любом теле, и выдать
    * её другому нельзя: она производная от `trips.organizer_user_id`,
@@ -796,6 +799,54 @@ export class TripsService {
 
       const codes = [...new Set(dto.roleCodes)];
       const isTargetOrganizer = participant.userId === trip.organizerUserId;
+
+      /**
+       * Полномочия снимает только организатор (20.11.2026).
+       *
+       * Заказчик: «организатор может снять роль соорганизатора;
+       * соорганизатор — ни с себя, ни с другого»
+       * ([lifecycle.md](../docs/ph/lifecycle.md) §4.5). Назначать других
+       * он может — а снимать нет, иначе «второй организатор» снимал бы
+       * с себя ограничения сам, и пять отличий превращались бы в ноль
+       * на первом же шаге.
+       *
+       * Проверяем присланный набор целиком: роль `coOrganizer` есть
+       * у цели сейчас, а в новом списке её нет.
+       */
+      const isActorOrganizer = trip.organizerUserId === userId;
+      if (!isActorOrganizer && !codes.includes(COORGANIZER_ROLE_CODE)) {
+        const targetRoles = await this.loadRoles(
+          manager,
+          trip.id,
+          targetUserId,
+        );
+        const wasCoOrganizer = targetRoles.some(
+          (role) => role.code === COORGANIZER_ROLE_CODE,
+        );
+
+        if (wasCoOrganizer) {
+          throw new ForbiddenException(
+            'Снять полномочия соорганизатора может только организатор похода',
+          );
+        }
+      }
+
+      /**
+       * Виртуальным соорганизатором не бывает (20.11.2026).
+       *
+       * Соорганизатор — второй организатор, он ведёт поход сам: отвечает
+       * за вкладки, набор и приглашения. У человека без аккаунта входа нет,
+       * и за него всё делал бы тот, кто его завёл, — то есть полномочий
+       * ни у кого не прибавилось бы, а в составе появилась бы строка
+       * «соорганизатор», которой некому соответствовать. Роль ему никто
+       * не выключит: в интерфейсе роли людям без аккаунта не предлагаются,
+       * здесь — проверка для API.
+       */
+      if (codes.includes(COORGANIZER_ROLE_CODE) && participant.user?.isVirtual) {
+        throw new BadRequestException(
+          'Соорганизатором может быть только человек с аккаунтом',
+        );
+      }
 
       if (codes.includes(ORGANIZER_ROLE_CODE) && !isTargetOrganizer) {
         throw new BadRequestException(
@@ -940,6 +991,27 @@ export class TripsService {
       where: { tripId: trip.id, userId },
     });
     if (!participant || participant.status === 'declined') return new Set();
+
+    /**
+     * Соорганизатор правит всё то же, что организатор (20.11.2026).
+     *
+     * Заказчик: «соорганизатор равен организатору во всём, отличий ровно
+     * пять» ([lifecycle.md](../docs/ph/lifecycle.md) §4.5). Отличия
+     * (не удаляет поход, не снимает полномочия, свой выход, не бывает
+     * виртуальным, может быть `helping`/`maybe`) проверяются там, где они
+     * есть, — а права вкладок у него **полные в коде**, а не в матрице
+     * ролей. Иначе прод без `seed:role-tabs` оставил бы соорганизатора
+     * бесправным: строка в `role_tab_permissions` — это данные, которых
+     * на проде может не быть, а роль `coOrganizer` его же и назначает.
+     *
+     * Вышедший (`declined`) прав не имеет — как и все: он уже не в походе,
+     * а роль за ним остаётся, пока организатор её не снимет, поэтому
+     * вернувшись в состав (его вернут организатор или соорганизатор) он
+     * получит права снова без повторного назначения.
+     */
+    if (await this.isCoOrganizer(manager, trip, userId)) {
+      return new Set(TRIP_TABS);
+    }
 
     const roleRows = await manager.find(TripParticipantRole, {
       where: { tripId: trip.id, userId },
@@ -1285,16 +1357,66 @@ export class TripsService {
   }
 
   /**
-   * Поход по id вместе с целью — для правок и отмены.
+   * Поход по id вместе с целью — для действий **автора похода**.
    *
-   * Организатор проверяется здесь же: правило одно на все изменяющие
-   * операции, и держать его в каждой по копии — способ однажды забыть.
-   * Постороннему публичный поход виден, но менять его нельзя, поэтому
-   * здесь именно **403, а не 404**: скрывать нечего, поход и так открыт.
+   * Проверка здесь же: правило одно на все изменяющие операции, и держать
+   * его в каждой по копии — способ однажды забыть. Постороннему публичный
+   * поход виден, но менять его нельзя, поэтому здесь именно **403, а не
+   * 404**: скрывать нечего, поход и так открыт.
+   *
+   * **Кто сюда ходит (20.11.2026).** Только те действия, которые за
+   * соорганизатором не идут: завершение похода — решение автора
+   * ([lifecycle.md](../docs/ph/lifecycle.md) §4.4) и удаление похода, если
+   * оно появится. Всё остальное — правка шапки и дат, отмена, состав —
+   * ходит в `findManagedTrip`: соорганизатор равен организатору во всём,
+   * кроме пяти отличий (§4.5).
    */
   private async findOwnedTrip(
     manager: EntityManager,
     userId: string,
+    id: number,
+  ): Promise<Trip> {
+    const trip = await this.loadTripForChange(manager, id);
+
+    if (trip.organizerUserId !== userId) {
+      throw new ForbiddenException(
+        'Это решение автора похода: его принимает только организатор',
+      );
+    }
+
+    return trip;
+  }
+
+  /**
+   * Поход по id вместе с целью — для действий организатора **и
+   * соорганизатора** (20.11.2026).
+   *
+   * Заказчик: «все проверки „только организатор“ переводятся на
+   * „организатор или соорганизатор“» ([lifecycle.md](../docs/ph/lifecycle.md)
+   * §4.5). Права вкладок для соорганизатора считает `tabsByRole` в коде,
+   * а не матрица ролей, — поэтому и здесь проверка идёт по роли, а не по
+   * `role_tab_permissions`: на проде без `seed:role-tabs` матрицы может
+   * не быть, а организатор похода быть не перестаёт.
+   */
+  private async findManagedTrip(
+    manager: EntityManager,
+    userId: string,
+    id: number,
+  ): Promise<Trip> {
+    const trip = await this.loadTripForChange(manager, id);
+
+    if (!(await this.isOrganizerOrCoOrganizer(manager, trip, userId))) {
+      throw new ForbiddenException(
+        'Менять поход может организатор или соорганизатор',
+      );
+    }
+
+    return trip;
+  }
+
+  /** Поход с целью или 404 — общая часть двух проверок выше. */
+  private async loadTripForChange(
+    manager: EntityManager,
     id: number,
   ): Promise<Trip> {
     const trip = await manager.findOne(Trip, {
@@ -1304,9 +1426,6 @@ export class TripsService {
 
     if (!trip) {
       throw new NotFoundException('Поход не найден');
-    }
-    if (trip.organizerUserId !== userId) {
-      throw new ForbiddenException('Менять поход может только организатор');
     }
 
     return trip;
@@ -1545,7 +1664,11 @@ export class TripsService {
   }
 
   /**
-   * Правка похода организатором.
+   * Правка похода организатором или соорганизатором (20.11.2026).
+   *
+   * Заказчик: «все проверки „только организатор“ переводятся на
+   * „организатор или соорганизатор“: правка похода и дат…». Отличие одно:
+   * удаления похода здесь нет — оно остаётся за автором (§4.5).
    *
    * Проверяются **итоговые** значения, а не тело запроса: поход уже может
    * быть коммерческим с ценой, а в `PATCH` прийти только `isCommercial:
@@ -1565,7 +1688,7 @@ export class TripsService {
   ): Promise<TripResponseDto> {
     const { response, gearChanged, depositChanged, datesChanged } =
       await this.dataSource.transaction(async (manager) => {
-        const trip = await this.findOwnedTrip(manager, userId, id);
+        const trip = await this.findManagedTrip(manager, userId, id);
 
         // Завершённый поход закрыт навсегда (20.11.2026): даты, шапка,
         // видимость, залог и роли в нём уже не меняются.
@@ -1932,7 +2055,7 @@ export class TripsService {
   ): Promise<TripResponseDto> {
     const { response, gearChanged } = await this.dataSource.transaction(
       async (manager) => {
-        const trip = await this.findOwnedTrip(manager, userId, id);
+        const trip = await this.findManagedTrip(manager, userId, id);
 
         // Отменять и возвращать завершённый поход нельзя: завершение
         // необратимо (20.11.2026).
@@ -2539,27 +2662,43 @@ export class TripsService {
   }
 
   /**
-   * Убрать человека из состава. Только организатор.
+   * Убрать человека из состава. Организатор или соорганизатор.
    *
    * Организатора убрать нельзя: он автор похода, и даже триггер в базе
    * это запрещает. Если поход не состоится — его отменяют, а не разбирают
    * по частям.
+   *
+   * **Соорганизатор у другого соорганизатора — 403 (20.11.2026).**
+   * Заказчик: «полномочия снимает только организатор; соорганизатор —
+   * ни с себя, ни с другого». Убрать второго соорганизатора из состава —
+   * это и есть снять с него полномочия, только другим способом: роль
+   * живёт на участии и уходит вместе с ним. Поэтому дверь закрыта здесь,
+   * а не только в `setParticipantRoles`.
    *
    * Тикет удаляется вместе с участием: приглашённый в составе **и** имеет
    * тикет, поэтому «убрать из состава» без удаления тикета оставило бы
    * висящее приглашение человеку, которого уже убрали.
    */
   async removeParticipant(
-    organizerUserId: string,
+    actorUserId: string,
     id: number,
     targetUserId: string,
   ): Promise<void> {
     await this.dataSource.transaction(async (manager) => {
-      const trip = await this.findOwnedTrip(manager, organizerUserId, id);
+      const trip = await this.findManagedTrip(manager, actorUserId, id);
 
       if (targetUserId === trip.organizerUserId) {
         throw new BadRequestException(
           'Организатора нельзя убрать из состава: он автор похода. Если поход не состоится — отмени его',
+        );
+      }
+
+      if (
+        trip.organizerUserId !== actorUserId &&
+        (await this.isCoOrganizer(manager, trip, targetUserId))
+      ) {
+        throw new ForbiddenException(
+          'Снять полномочия соорганизатора может только организатор похода',
         );
       }
 
@@ -2714,13 +2853,18 @@ export class TripsService {
     trip: Trip,
     userId: string,
   ): Promise<boolean> {
-    if (trip.organizerUserId === userId) return true;
+    /**
+     * Организатор и соорганизатор приводят людей всегда (20.11.2026):
+     * заказчик перевёл «только организатор» на «организатор или
+     * соорганизатор» — приглашения и набор в их числе. Раньше соорганизатор
+     * попадал сюда только после старта, и до старта с выключенным открытым
+     * участием он не мог позвать никого, хотя поход ведёт наравне.
+     */
+    if (await this.isOrganizerOrCoOrganizer(manager, trip, userId)) return true;
 
-    // Старт закрывает дверь для всех, кроме второго организатора: до
-    // старта — открытое участие, после — только роли (20.11.2026).
-    if (hasStarted(trip)) {
-      return this.isCoOrganizer(manager, trip, userId);
-    }
+    // После старта — только роли: открытое участие закрыто, добирают
+    // состав организатор и соорганизатор (20.11.2026).
+    if (hasStarted(trip)) return false;
 
     // Поле есть у любого похода из базы; `undefined` — объект, собранный
     // в тесте или вызовом без полного набора колонок, и умолчание у него
@@ -2746,19 +2890,25 @@ export class TripsService {
 
     throw new ForbiddenException(
       trip.openParticipation === false
-        ? 'Открытое участие выключено: людей без аккаунта заводит организатор'
+        ? 'Открытое участие выключено: людей без аккаунта заводят организатор и соорганизатор'
         : 'Людей без аккаунта ведёт участник похода',
     );
   }
 
   /**
-   * Организатор или соорганизатор: двери, открытые после старта только им.
+   * Организатор или соорганизатор: двери, открытые только им.
    *
    * Организатор — всегда, и это правило кода, а не строка матрицы прав.
    * Соорганизатор — по роли `coOrganizer`, пока он в составе: он равен
-   * организатору (решение 16.11.2026, п. 11).
+   * организатору (решения 16.11.2026 п. 11 и 20.11.2026,
+   * [lifecycle.md](../docs/ph/lifecycle.md) §4.5).
+   *
+   * **Метод публичный** (20.11.2026): то же правило нужно «Снаряжению» —
+   * вещь человеку без аккаунта добавляет не только автор похода. Держать
+   * вторую копию проверки в другом сервисе значило бы однажды разойтись
+   * с этой.
    */
-  private async isOrganizerOrCoOrganizer(
+  async isOrganizerOrCoOrganizer(
     manager: EntityManager,
     trip: Trip,
     userId: string,
@@ -2812,7 +2962,8 @@ export class TripsService {
    * Здесь открытое участие ни при чём: флаг отвечает за то, кого приводят
    * в поход, а не за то, кто отмечает «питается отдельно» человеку, который
    * в составе уже есть. Правило прежнее (12.11.2026): организатор или любой
-   * идущий участник.
+   * идущий участник; соорганизатор — всегда, даже если сам он `helping`
+   * или `maybe` (20.11.2026): роль не зависит от того, идёт он сам.
    */
   private async assertCanTendVirtuals(
     manager: EntityManager,
@@ -2821,7 +2972,7 @@ export class TripsService {
   ): Promise<void> {
     assertTripOpen(trip);
 
-    if (trip.organizerUserId === userId) return;
+    if (await this.isOrganizerOrCoOrganizer(manager, trip, userId)) return;
 
     const participant = await manager.findOne(TripParticipant, {
       where: { tripId: trip.id, userId },
@@ -3215,7 +3366,15 @@ export class TripsService {
         throw new NotFoundException('Приглашение или заявка не найдены');
       }
 
-      const isOrganizer = trip.organizerUserId === userId;
+      /**
+       * Закрыть тикет может организатор **или соорганизатор** (20.11.2026):
+       * отказ и отклонение заявки — такие же двери похода, как набор.
+       */
+      const isManager = await this.isOrganizerOrCoOrganizer(
+        manager,
+        trip,
+        userId,
+      );
       const isTarget = targetUserId === userId;
       /**
        * Приглашение может отозвать и тот, кто его завёл: с открытым участием
@@ -3223,9 +3382,9 @@ export class TripsService {
        * заявитель, и для него это то же `isTarget`.
        */
       const isCreator = request.createdByUserId === userId;
-      if (!isOrganizer && !isTarget && !isCreator) {
+      if (!isManager && !isTarget && !isCreator) {
         throw new ForbiddenException(
-          'Закрыть тикет может организатор, пригласивший или сам человек',
+          'Закрыть тикет может организатор, соорганизатор, пригласивший или сам человек',
         );
       }
 
@@ -3249,7 +3408,7 @@ export class TripsService {
           manager,
           trip.id,
           'trip_members',
-          isOrganizer || isCreator
+          isManager || isCreator
             ? `Приглашение для ${name} отозвано`
             : `${name} не идёт в поход`,
         );
@@ -3265,7 +3424,7 @@ export class TripsService {
         manager,
         trip.id,
         'trip_guest',
-        isOrganizer ? `Заявка от ${name} отклонена` : `${name} отозвал заявку`,
+        isManager ? `Заявка от ${name} отклонена` : `${name} отозвал заявку`,
       );
     });
   }

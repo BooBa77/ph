@@ -382,6 +382,62 @@ describe('TripParticipants', () => {
     expect(mocks.removeParticipant).toHaveBeenCalledWith('7', 'u-2')
   })
 
+  /**
+   * Соорганизатор (20.11.2026) — второй организатор похода.
+   *
+   * Заказчик: «соорганизатор равен организатору во всём, отличий ровно
+   * пять», и одно из них — «организатор может снять роль соорганизатора;
+   * соорганизатор — ни с себя, ни с другого». Поэтому кнопка «Убрать»
+   * у него есть у всех, кроме автора похода и других соорганизаторов
+   * (убрать соорганизатора — это и есть снять полномочия).
+   */
+  it('соорганизатор помечен бейджем и убирает участника, но не другого соорганизатора', async () => {
+    signIn(ME)
+    const CO = { code: 'coOrganizer', name: 'Соорганизатор' }
+    const wrapper = await open([
+      person({ userId: ORGANIZER, displayName: 'Автор', isOrganizer: true }),
+      person({ userId: ME, displayName: 'Я', roles: [CO] }),
+      person({ userId: 'u-2', displayName: 'Второй' }),
+      person({ userId: 'u-3', displayName: 'Третий', roles: [CO] }),
+    ])
+
+    // Бейдж — отдельный, а не ролью в общем списке: он должен читаться.
+    expect(wrapper.findAll('[data-test="participant-coorganizer"]')).toHaveLength(2)
+    // Роль соорганизатора второй раз не выводится — только бейдж.
+    expect(wrapper.find('[data-test="participants-list"]').text()).not.toContain(
+      'Соорганизатор',
+    )
+
+    expect(wrapper.find('[data-test="remove-u-2"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="remove-u-3"]').exists()).toBe(false)
+    expect(wrapper.find(`[data-test="remove-${ORGANIZER}"]`).exists()).toBe(false)
+
+    await wrapper.find('[data-test="remove-u-2"]').trigger('click')
+    await flushPromises()
+    expect(mocks.removeParticipant).toHaveBeenCalledWith('7', 'u-2')
+  })
+
+  /**
+   * `helping` вернулся 20.11.2026: «помогаю, но не иду» — отдельное
+   * состояние, и соорганизатор может быть в нём, а не только в `going`.
+   */
+  it('соорганизатор ставит себе «помогаю, но не иду»', async () => {
+    signIn(ME)
+    const wrapper = await open([
+      person({ userId: ORGANIZER, displayName: 'Автор', isOrganizer: true }),
+      person({
+        userId: ME,
+        status: 'maybe',
+        roles: [{ code: 'coOrganizer', name: 'Соорганизатор' }],
+      }),
+    ])
+
+    await wrapper.find('[data-test="my-status-helping"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMyStatus).toHaveBeenCalledWith('7', 'helping')
+  })
+
   it('приглашённый видит приглашение и отвечает на него', async () => {
     signIn(ME)
     const wrapper = await open([

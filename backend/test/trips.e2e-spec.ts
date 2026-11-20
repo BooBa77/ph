@@ -8,6 +8,7 @@ import { AppModule } from './../src/app.module';
 import { configureApp } from './../src/app.setup';
 import { EmailCodeService } from './../src/email/services/email-code.service';
 import { SmtpService } from './../src/email/services/smtp.service';
+import { COORGANIZER_ROLE_CODE } from './../src/trips/trip-tabs';
 import { ORGANIZER_ROLE_CODE } from './../src/trips/trip.types';
 
 /**
@@ -37,6 +38,9 @@ describe('Походы (e2e)', () => {
   let strangerId: string;
   let applicantToken: string;
   let applicantId: string;
+  /** Соорганизатор (20.11.2026) — четвёртый человек, роль ему даёт автор. */
+  let coorgToken: string;
+  let coorgId: string;
   let goalObjectId: string;
   /** Второй объект справочника: проверяем фильтр по упоминанию в маршруте. */
   let routeObjectId: string;
@@ -47,6 +51,7 @@ describe('Походы (e2e)', () => {
   const email = `trips-e2e-${Date.now()}@example.com`;
   const strangerEmail = `trips-e2e-viewer-${Date.now()}@example.com`;
   const applicantEmail = `trips-e2e-applicant-${Date.now()}@example.com`;
+  const coorgEmail = `trips-e2e-coorg-${Date.now()}@example.com`;
 
   /** Id походов, созданных тестом, — чтобы убрать их за собой. */
   const createdTripIds: string[] = [];
@@ -117,6 +122,18 @@ describe('Походы (e2e)', () => {
       [ORGANIZER_ROLE_CODE],
     );
 
+    /**
+     * Роль соорганизатора (20.11.2026) — тоже справочные данные: её заводит
+     * `seed:roles`, а тест не должен зависеть от того, залит ли сид.
+     * Матрицу прав вкладок тест не трогает намеренно: права соорганизатора
+     * с этого шага живут в коде (`tabsByRole`), и проверка «все вкладки»
+     * должна проходить и без единой строки `role_tab_permissions`.
+     */
+    await dataSource.query(
+      `INSERT INTO roles (code, name) VALUES ($1, 'Соорганизатор') ON CONFLICT (code) DO NOTHING`,
+      [COORGANIZER_ROLE_CODE],
+    );
+
     const emailCodeService = moduleFixture.get(EmailCodeService);
     const realCreateCode = emailCodeService.createCode.bind(emailCodeService);
     vi.spyOn(emailCodeService, 'createCode').mockImplementation((mail) => {
@@ -135,6 +152,10 @@ describe('Походы (e2e)', () => {
     const applicant = await login(applicantEmail);
     applicantToken = applicant.token;
     applicantId = applicant.id;
+
+    const coorg = await login(coorgEmail);
+    coorgToken = coorg.token;
+    coorgId = coorg.id;
   });
 
   afterAll(async () => {
@@ -143,7 +164,7 @@ describe('Походы (e2e)', () => {
       // и вариантами дат.
       await dataSource.query(
         'DELETE FROM trips WHERE organizer_user_id = ANY($1::uuid[])',
-        [[userId, strangerId, applicantId]],
+        [[userId, strangerId, applicantId, coorgId]],
       );
       await dataSource.query(
         'DELETE FROM calendar_activity_types WHERE id = $1',
@@ -165,24 +186,24 @@ describe('Походы (e2e)', () => {
       // Действия и личные диалоги — до пользователей: у действия внешний
       // ключ на адресата, а диалоги держат пару участников.
       await dataSource.query(
-        'DELETE FROM message_actions WHERE target_user_id = ANY($1::uuid[]) OR target_user_id = $2',
-        [[strangerId, applicantId], userId],
+        'DELETE FROM message_actions WHERE target_user_id = ANY($1::uuid[])',
+        [[strangerId, applicantId, coorgId, userId]],
       );
       await dataSource.query(
         `DELETE FROM conversations
           WHERE kind = 'direct'
             AND (direct_a = ANY($1::uuid[]) OR direct_b = ANY($1::uuid[]))`,
-        [[userId, strangerId, applicantId]],
+        [[userId, strangerId, applicantId, coorgId]],
       );
       // Люди без аккаунта (20.11.2026): их заводит тест, и создатель держит
       // их внешним ключом `FK_users_virtual_owner`. Походы уже удалены —
       // участие ушло каскадом, остались только строки `users`.
       await dataSource.query(
         'DELETE FROM users WHERE virtual_owner_user_id = ANY($1::uuid[])',
-        [[userId, strangerId, applicantId]],
+        [[userId, strangerId, applicantId, coorgId]],
       );
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
-        [userId, strangerId, applicantId],
+        [userId, strangerId, applicantId, coorgId],
       ]);
     }
     await app?.close();
@@ -2322,6 +2343,204 @@ describe('Походы (e2e)', () => {
         .set('Authorization', `Bearer ${accessToken}`)
         .send({ amountRub: 350, description: 'Заправились на обратном пути', split: 'all' })
         .expect(201);
+    });
+  });
+
+  /**
+   * Соорганизатор (20.11.2026).
+   *
+   * Заказчик: «соорганизатор равен организатору во всём, отличий ровно
+   * пять» ([lifecycle.md](../docs/ph/lifecycle.md) §4.5). Здесь проверяется
+   * каждая сторона равенства и каждое отличие, которое живёт на сервере:
+   * вкладки (правило кода, а не матрицы), правка шапки и дат, набор
+   * и тикеты, роли, запрет снимать полномочия, свой выход и `helping`,
+   * запрет виртуальных. Удаления похода в API нет вовсе, поэтому «не может
+   * удалить поход» проверяется там, где решение автора: завершение.
+   */
+  describe('соорганизатор', () => {
+    /**
+     * Поход «решён» и с датами: без конкретного числа вкладок всего две
+     * (`tabs.md` §7), и проверять права на десять было бы не на чем.
+     */
+    const fullTrip = () => {
+      const day = 24 * 60 * 60 * 1000;
+      return {
+        status: 'decided',
+        startsAt: new Date(Date.now() + 5 * day).toISOString(),
+        endsAt: new Date(Date.now() + 9 * day).toISOString(),
+      };
+    };
+
+    const tabsOf = async (tripId: string, token: string) => {
+      const response = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/tabs`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      return (response.body.tabs as Array<{ code: string; canEdit: boolean }>)
+        .filter((tab) => tab.canEdit)
+        .map((tab) => tab.code)
+        .sort();
+    };
+
+    const setRoles = (
+      tripId: string,
+      targetId: string,
+      roleCodes: string[],
+      token = accessToken,
+    ) =>
+      request(app.getHttpServer())
+        .put(`/api/trips/${tripId}/participants/${targetId}/roles`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ roleCodes });
+
+    /** Ввести человека в состав походом автора и назначить ему роль. */
+    const addWithRole = async (
+      tripId: string,
+      targetId: string,
+      targetToken: string,
+      roleCodes: string[],
+    ) => {
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: targetId })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${targetId}/accept`)
+        .set('Authorization', `Bearer ${targetToken}`)
+        .send({ status: 'going' })
+        .expect(200);
+
+      return setRoles(tripId, targetId, roleCodes).expect(200);
+    };
+
+    it('правит поход и все вкладки — права в коде, а не в матрице ролей', async () => {
+      const created = await createTrip({
+        announcement: 'Поход с соорганизатором',
+        ...fullTrip(),
+      });
+      const tripId = created.body.id as string;
+      await addWithRole(tripId, coorgId, coorgToken, [COORGANIZER_ROLE_CODE]);
+
+      // Правка шапки и дат — наравне с автором.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .send({ announcement: 'Правит соорганизатор', hasGuitar: true })
+        .expect(200);
+
+      // Все вкладки правимы: матрицу `role_tab_permissions` тест не заливал,
+      // значит права дал код (`tabsByRole`). «Выпуска» в списке нет —
+      // он есть только у официального похода (`OFFICIAL_ONLY_TAB`).
+      expect(await tabsOf(tripId, coorgToken)).toEqual([
+        'diary',
+        'finance',
+        'firstAid',
+        'gear',
+        'guest',
+        'meals',
+        'members',
+        'route',
+        'transfer',
+      ]);
+
+      // А это отличие: завершение похода — решение автора, не его.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/complete`)
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .expect(403);
+    });
+
+    it('набирает людей и закрывает тикеты, но не снимает полномочия', async () => {
+      const created = await createTrip({
+        announcement: 'Набор через соорганизатора',
+        ...fullTrip(),
+      });
+      const tripId = created.body.id as string;
+      await addWithRole(tripId, coorgId, coorgToken, [COORGANIZER_ROLE_CODE]);
+
+      // Приглашение — не отличие соорганизатора.
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .send({ direction: 'invite', userId: applicantId })
+        .expect(201);
+
+      // И отозвать приглашение он может.
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${tripId}/requests/${applicantId}`)
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .expect(204);
+
+      // Назначать других соорганизаторов — может.
+      await addWithRole(tripId, strangerId, strangerToken, [COORGANIZER_ROLE_CODE]);
+
+      // А снимать — нет: ни с себя, ни с другого.
+      await setRoles(tripId, coorgId, [], coorgToken).expect(403);
+      await setRoles(tripId, strangerId, [], coorgToken).expect(403);
+
+      // Убрать другого соорганизатора из состава — то же снятие полномочий.
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${tripId}/participants/${strangerId}`)
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .expect(403);
+
+      // Организатор полномочия снимает, и права уходят вместе с ролью.
+      await setRoles(tripId, coorgId, []).expect(200);
+      expect(await tabsOf(tripId, coorgToken)).toEqual([]);
+    });
+
+    it('может быть helping и выйти сам, но после выхода прав не имеет', async () => {
+      const created = await createTrip({
+        announcement: 'Помогаю, но не иду',
+        ...fullTrip(),
+      });
+      const tripId = created.body.id as string;
+      await addWithRole(tripId, coorgId, coorgToken, [COORGANIZER_ROLE_CODE]);
+
+      const helping = await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/me`)
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .send({ status: 'helping' })
+        .expect(200);
+
+      expect(helping.body.status).toBe('helping');
+
+      // Роль не зависит от того, идёт ли он сам: правит он по-прежнему всё
+      // (девять вкладок — «Выпуска» у обычного похода нет).
+      expect(await tabsOf(tripId, coorgToken)).toHaveLength(9);
+
+      // Свой выход разрешён — это одно из пяти отличий.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}/participants/me`)
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .send({ status: 'declined' })
+        .expect(200);
+
+      // А вышедший не правит ничего — как и любой другой: роль за ним
+      // осталась, вернут в состав — права вернутся.
+      expect(await tabsOf(tripId, coorgToken)).toEqual([]);
+    });
+
+    it('виртуальным соорганизатором не бывает', async () => {
+      const created = await createTrip({ announcement: 'Виртуальный не второй автор' });
+      const tripId = created.body.id as string;
+
+      const virtual = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/participants/virtual`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ displayName: 'Дядя Витя' })
+        .expect(201);
+
+      const denied = await setRoles(
+        tripId,
+        virtual.body.userId as string,
+        [COORGANIZER_ROLE_CODE],
+      ).expect(400);
+
+      expect(denied.body.message).toContain('только человек с аккаунтом');
     });
   });
 });

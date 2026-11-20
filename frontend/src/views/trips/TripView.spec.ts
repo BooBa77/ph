@@ -540,4 +540,38 @@ describe('TripView и мобильное меню', () => {
     expect(wrapper.find('[data-test="completion-question"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="complete-trip"]').exists()).toBe(false)
   })
+
+  // ──────────────────── соорганизатор (20.11.2026) ────────────────────
+
+  /**
+   * Соорганизатор равен организатору во всём, кроме пяти отличий
+   * ([lifecycle.md](../../../docs/ph/lifecycle.md) §4.5): правка похода
+   * и дат — не отличие, поэтому кнопки шапки у него те же. Бейдж в шапке
+   * нужен, чтобы человек понимал, почему у него есть эти кнопки.
+   */
+  it('соорганизатор видит бейдж в шапке и кнопки правки', async () => {
+    mocks.getTrip.mockResolvedValue({ ...TRIP, organizerUserId: 'u-org' })
+    mocks.listParticipants.mockResolvedValue([
+      me({
+        isOrganizer: false,
+        roles: [{ code: 'coOrganizer', name: 'Соорганизатор' }],
+      }),
+    ])
+
+    const { wrapper } = await mountTrip()
+
+    expect(wrapper.find('[data-test="trip-coorganizer-badge"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="trip-edit-link"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="toggle-recruitment"]').exists()).toBe(true)
+  })
+
+  it('рядовому участнику бейджа и кнопок правки не достаётся', async () => {
+    mocks.getTrip.mockResolvedValue({ ...TRIP, organizerUserId: 'u-org' })
+    mocks.listParticipants.mockResolvedValue([me({ isOrganizer: false })])
+
+    const { wrapper } = await mountTrip()
+
+    expect(wrapper.find('[data-test="trip-coorganizer-badge"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="trip-edit-link"]').exists()).toBe(false)
+  })
 })

@@ -557,16 +557,26 @@ export interface TripChat {
  * Участие в походе.
  *
  * `invited` — пригласили и человек ещё не ответил; `declined` — не идёт
- * по любой причине, включая «организую, но сам не пойду». Отдельного
- * «удалён из состава» нет: убранного человека в списке просто нет.
+ * по любой причине, включая «организую, но сам не пойду». `helping` —
+ * «помогаю, но не иду»: вернулся 20.11.2026, потому что соорганизатор
+ * может быть `helping` и `maybe` ([lifecycle.md](../../../docs/ph/lifecycle.md)
+ * §4.5). Отдельного «удалён из состава» нет: убранного человека в списке
+ * просто нет.
  */
-export const PARTICIPANT_STATUSES = ['invited', 'going', 'maybe', 'declined'] as const
+export const PARTICIPANT_STATUSES = [
+  'invited',
+  'going',
+  'maybe',
+  'helping',
+  'declined',
+] as const
 export type ParticipantStatus = (typeof PARTICIPANT_STATUSES)[number]
 
 export const PARTICIPANT_STATUS_LABELS: Record<ParticipantStatus, string> = {
   invited: 'Приглашён',
   going: 'Идёт',
   maybe: 'Пока не решил',
+  helping: 'Помогаю, но не иду',
   declined: 'Не идёт',
 }
 
