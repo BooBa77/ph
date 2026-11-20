@@ -22,6 +22,7 @@ import {
   SaveTripExpenseDto,
   SyncTripExpensesDto,
   TransferTripDepositDto,
+  TripDepartureDto,
   TripFinanceDto,
   TripFinanceSyncDto,
 } from './dto/trip-finance.dto';
@@ -54,8 +55,24 @@ export class TripFinanceController {
     return this.finance.getView(authUser.id, id);
   }
 
-  @Post(':id/finance/expenses')
-  @ApiOperation({ summary: 'Добавить расход' })
+  /**
+   * Уведомление при выходе (20.11.2026): что задействовано и что с деньгами.
+   *
+   * Отдельная ручка, а не кусок `GET /finance`: уйти из похода вправе любой
+   * участник, а «Бухгалтерия» ушедшему уже закрыта. Отдаём только то, что
+   * нужно для текста подтверждения, — ни балансов, ни чужих сумм.
+   */
+  @Get(':id/finance/departure')
+  @ApiOperation({ summary: 'Что человек видит перед выходом: снаряжение и деньги' })
+  @ApiOkResponse({ type: TripDepartureDto })
+  async departure(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripDepartureDto> {
+    return this.finance.departureInfo(authUser.id, id);
+  }
+
+  @Post(':id/finance/expenses')  @ApiOperation({ summary: 'Добавить расход' })
   @ApiOkResponse({ type: TripFinanceDto })
   async createExpense(
     @CurrentUser() authUser: AuthUser,

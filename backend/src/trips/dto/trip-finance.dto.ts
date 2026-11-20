@@ -904,6 +904,62 @@ export class TransferTripDepositDto {
 }
 
 
+/**
+ * Деньги ушедшего в уведомлении о выходе (20.11.2026).
+ *
+ * `holdRub = min(D, covered)` — сколько организатор может удержать;
+ * `refundRub = max(0, covered − D)` — сколько группа переведёт человеку
+ * сверх залога. Оба нуля означают «о деньгах не говорим».
+ */
+export class TripDepartureDepositDto {
+  @ApiProperty({ description: 'Сумма залога похода', example: 200 })
+  amountRub: number;
+
+  @ApiProperty({
+    description: 'Покрытие: оплаченные расходы плюс подтверждённые переводы залога',
+    example: 50,
+  })
+  coveredRub: number;
+
+  @ApiProperty({
+    description: 'Сколько может удержать организатор: min(залог, покрытие)',
+    example: 50,
+  })
+  holdRub: number;
+
+  @ApiProperty({
+    description: 'Сколько переведут сверх залога: max(0, покрытие − залог)',
+    example: 0,
+  })
+  refundRub: number;
+}
+
+/** Ответ `GET /api/trips/:id/finance/departure` — что человек видит перед выходом. */
+export class TripDepartureDto {
+  @ApiProperty({
+    description:
+      'Типы задействованного снаряжения: «взял», «несёт», «в палатке». Пустой массив — предупреждать не о чем',
+    type: [String],
+    example: ['Палатка', 'Топор'],
+  })
+  gearTypes: string[];
+
+  @ApiProperty({
+    description:
+      'Сколько человек вложил: оплаченные расходы плюс подтверждённые переводы залога. 0 — второй шаг уведомления не нужен',
+    example: 50,
+  })
+  coveredRub: number;
+
+  @ApiProperty({
+    description:
+      'Деньги ушедшего. null — залога нет; zero-покрытие означает «о деньгах не говорим»',
+    type: TripDepartureDepositDto,
+    nullable: true,
+  })
+  deposit: TripDepartureDepositDto | null;
+}
+
 /** Ответ `GET /api/trips/:id/finance` — вся вкладка одним запросом. */
 export class TripFinanceDto {
   @ApiProperty({ type: [TripExpenseDto] })

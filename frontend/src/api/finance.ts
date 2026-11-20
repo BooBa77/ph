@@ -3,6 +3,7 @@ import type {
   CreateTripCompensationInput,
   DepositDecision,
   SaveTripExpenseInput,
+  TripDeparture,
   TripExpenseSyncEntry,
   TripFinance,
   TripFinanceSync,
@@ -25,6 +26,17 @@ import type {
 /** GET /api/trips/:id/finance — расходы, компенсации, балансы и подсказки. */
 export async function getTripFinance(tripId: string): Promise<TripFinance> {
   return apiFetch<TripFinance>(`/trips/${tripId}/finance`)
+}
+
+/**
+ * GET /api/trips/:id/finance/departure — уведомление при выходе (20.11.2026).
+ *
+ * Отдельная ручка, потому что «Бухгалтерия» ушедшему уже закрыта, а перед
+ * уходом человеку нужно знать две вещи: что за ним закреплено и что
+ * с его деньгами. Отдаёт только это — ни балансов, ни чужих сумм.
+ */
+export async function getTripDeparture(tripId: string): Promise<TripDeparture> {
+  return apiFetch<TripDeparture>(`/trips/${tripId}/finance/departure`)
 }
 
 /** POST /api/trips/:id/finance/expenses — добавить расход (я — плательщик). */

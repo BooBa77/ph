@@ -2,6 +2,8 @@
 import { computed, onUnmounted, ref, watch } from 'vue'
 
 import { ApiError } from '@/api/errors'
+import { getTripDeparture } from '@/api/finance'
+import type { TripDeparture } from '@/types/finance'
 import {
   acceptRequest,
   addVirtualParticipant,
@@ -423,7 +425,110 @@ async function act(userId: string | null, action: () => Promise<unknown>) {
 }
 
 const changeMyStatus = (status: ParticipantStatus) =>
-  act(auth.user?.id ?? null, () => setMyStatus(props.trip.id, status))
+  status === 'declined' && me.value?.status !== 'declined'
+    ? openLeaveDialog()
+    : act(auth.user?.id ?? null, () => setMyStatus(props.trip.id, status))
+
+// ─────────────────── уведомление при выходе (20.11.2026) ───────────────────
+
+/**
+ * «Не иду» не срабатывает молча: сначала человек видит, что за ним
+ * закреплено, и что будет с его деньгами.
+ *
+ * Заказчик решил два шага: снаряжение, затем деньги. Второй шаг — только
+ * если человек что-то вложил (`coveredRub > 0`): при нуле он просто
+ * подтверждает выход, и про залог ему не говорят.
+ */
+const leaveOpen = ref(false)
+const leaveStep = ref<'gear' | 'money'>('gear')
+const leaveInfo = ref<TripDeparture | null>(null)
+const leaveError = ref<string | null>(null)
+const leaveLoading = ref(false)
+
+const leaveGearTypes = computed(() => leaveInfo.value?.gearTypes ?? [])
+
+const leaveNeedsMoney = computed(
+  () => (leaveInfo.value?.coveredRub ?? 0) > 0,
+)
+
+/**
+ * Первый шаг. Перечень — **типы** его снаряги в походе, а не названия
+ * вещей: «палатка, топор» понятнее списка из пяти позиций.
+ */
+const leaveGearText = computed(() =>
+  leaveGearTypes.value.length === 0
+    ? 'Ты уверен?'
+    : `Ты уверен? Твоё снаряжение (${leaveGearTypes.value.join(', ')}) будет исключено из снаряжения похода. Если ты что-то даёшь группе в поход, то останься в качестве наблюдателя.`,
+)
+
+/**
+ * Второй шаг — деньги. Текст зависит от залога и покрытия:
+ * `0 < covered <= D` — организатор решает, удержать ли покрытое;
+ * `covered > D` — плюс предупреждение, что остальное переведут.
+ * Без залога — только «расходы компенсируют участники».
+ */
+const leaveMoneyText = computed(() => {
+  const deposit = leaveInfo.value?.deposit ?? null
+  if (deposit === null) {
+    return 'Твои расходы будут компенсированы участниками похода, следи за сообщениями.'
+  }
+
+  const hold = `В походе установлен залог, удержать ли твою сумму ${deposit.holdRub} ₽, определяет организатор`
+  if (deposit.refundRub <= 0) return `${hold}.`
+
+  return `${hold}. Остальное, ${deposit.refundRub} ₽, будет переведено тебе от участников похода, следи за сообщениями.`
+})
+
+function openLeaveDialog(): void {
+  leaveOpen.value = true
+  leaveStep.value = 'gear'
+  leaveInfo.value = null
+  leaveError.value = null
+  void loadLeaveInfo()
+}
+
+/**
+ * Проверка идёт до вопроса о деньгах: без неё второй шаг не собрать.
+ * Ошибку показываем в самом диалоге — «не удалось проверить» не повод
+ * выходить молча, человек повторит нажатие.
+ */
+async function loadLeaveInfo(): Promise<void> {
+  leaveLoading.value = true
+  leaveError.value = null
+
+  try {
+    leaveInfo.value = await getTripDeparture(props.trip.id)
+  } catch (problem) {
+    leaveError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось проверить снаряжение и деньги — попробуй ещё раз'
+  } finally {
+    leaveLoading.value = false
+  }
+}
+
+/** «Да» на первом шаге: к деньгам, если они есть, иначе — выходим. */
+async function leaveNext(): Promise<void> {
+  if (leaveNeedsMoney.value) {
+    leaveStep.value = 'money'
+
+    return
+  }
+
+  await leaveConfirm()
+}
+
+async function leaveConfirm(): Promise<void> {
+  leaveOpen.value = false
+  await act(auth.user?.id ?? null, () =>
+    setMyStatus(props.trip.id, 'declined'),
+  )
+}
+
+function closeLeaveDialog(): void {
+  leaveOpen.value = false
+}
 
 const accept = (userId: string, status: 'going' | 'maybe') =>
   act(userId, () => acceptRequest(props.trip.id, userId, status))
@@ -1062,6 +1167,53 @@ function invite(person: UserSearchResult) {
         </ul>
       </div>
     </template>
+
+    <!-- Уведомление при выходе (20.11.2026): сначала снаряжение, потом
+         деньги. Второй шаг — только если человек что-то вложил -->
+    <div
+      v-if="leaveOpen"
+      class="fixed inset-0 z-40 flex items-center justify-center bg-black/30 p-4"
+      data-test="leave-dialog"
+    >
+      <div class="flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-surface p-4">
+        <h3 class="text-base font-medium text-text">
+          {{ leaveStep === 'money' ? 'Что с деньгами' : 'Выйти из похода?' }}
+        </h3>
+
+        <p v-if="leaveLoading" class="text-sm text-muted" data-test="leave-loading">
+          Проверяем снаряжение и деньги…
+        </p>
+
+        <p v-else-if="leaveError" class="text-sm text-red-600" data-test="leave-error">
+          {{ leaveError }}
+        </p>
+
+        <p v-else class="text-sm text-text" data-test="leave-text">
+          {{ leaveStep === 'money' ? leaveMoneyText : leaveGearText }}
+        </p>
+
+        <div class="flex justify-end gap-2">
+          <button
+            type="button"
+            class="cursor-pointer rounded-xl border border-border px-3 py-1.5 text-sm text-muted transition-colors hover:text-text"
+            data-test="leave-cancel"
+            @click="closeLeaveDialog"
+          >
+            Нет
+          </button>
+          <button
+            v-if="!leaveLoading && !leaveError"
+            type="button"
+            class="cursor-pointer rounded-xl border border-primary bg-primary px-3 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            :disabled="pendingUserId !== null"
+            data-test="leave-confirm"
+            @click="leaveStep === 'money' ? leaveConfirm() : leaveNext()"
+          >
+            {{ leaveStep === 'money' ? 'Да, выхожу' : 'Да' }}
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- Роли: диалог поверх вкладки. Роли назначает организатор (или
          соорганизатор — по праву на вкладку), сами участники ими

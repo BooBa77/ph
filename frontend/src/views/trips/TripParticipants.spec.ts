@@ -38,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   addVirtualParticipant: vi.fn(),
   updateVirtual: vi.fn(),
   removeVirtual: vi.fn(),
+  getTripDeparture: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
@@ -62,6 +63,10 @@ vi.mock('@/api/users', () => ({
   listMyVirtual: mocks.listMyVirtual,
   updateVirtual: mocks.updateVirtual,
   removeVirtual: mocks.removeVirtual,
+}))
+
+vi.mock('@/api/finance', () => ({
+  getTripDeparture: mocks.getTripDeparture,
 }))
 
 const ORGANIZER = 'u-org'
@@ -185,6 +190,12 @@ describe('TripParticipants', () => {
       createdAt: '2026-10-14T10:00:00.000Z',
     })
     mocks.removeVirtual.mockResolvedValue(undefined)
+    // Выход из похода спрашивает сервер о снаряжении и деньгах (20.11.2026).
+    mocks.getTripDeparture.mockResolvedValue({
+      gearTypes: [],
+      coveredRub: 0,
+      deposit: null,
+    })
   })
 
   it('показывает состав с ролями и статусами', async () => {
@@ -342,10 +353,129 @@ describe('TripParticipants', () => {
 
     const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true }), person()])
 
+    // «Не иду» сначала спрашивает подтверждение (20.11.2026), и только
+    // «Да» уходит в API — здесь падает уже сам запрос.
     await wrapper.find('[data-test="my-status-declined"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="leave-confirm"]').trigger('click')
     await flushPromises()
 
     expect(wrapper.find('[data-test="participants-action-error"]').exists()).toBe(true)
+  })
+
+  /**
+   * Уведомление при выходе (20.11.2026).
+   *
+   * Сначала снаряжение: если за человеком что-то закреплено, «Ты уверен?»
+   * превращается в предупреждение со списком типов. Деньги — второй шаг,
+   * и только у того, кто что-то вложил.
+   */
+  it('перед выходом спрашивает про снаряжение и не уходит без «Да»', async () => {
+    signIn(ME)
+    mocks.getTripDeparture.mockResolvedValue({
+      gearTypes: ['Палатка', 'Топор'],
+      coveredRub: 0,
+      deposit: null,
+    })
+
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true }), person()])
+
+    await wrapper.find('[data-test="my-status-declined"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="leave-dialog"]').exists()).toBe(true)
+    expect(mocks.getTripDeparture).toHaveBeenCalledWith('7')
+    expect(wrapper.find('[data-test="leave-text"]').text()).toBe(
+      'Ты уверен? Твоё снаряжение (Палатка, Топор) будет исключено из снаряжения похода. Если ты что-то даёшь группе в поход, то останься в качестве наблюдателя.',
+    )
+    // Пока не нажали «Да», статус не меняется.
+    expect(mocks.setMyStatus).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test="leave-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMyStatus).toHaveBeenCalledWith('7', 'declined')
+  })
+
+  it('без снаряжения спрашивает просто «Ты уверен?»', async () => {
+    signIn(ME)
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true }), person()])
+
+    await wrapper.find('[data-test="my-status-declined"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="leave-text"]').text()).toBe('Ты уверен?')
+  })
+
+  it('второй шаг — залог и остаток: удержание решает организатор', async () => {
+    signIn(ME)
+    mocks.getTripDeparture.mockResolvedValue({
+      gearTypes: [],
+      coveredRub: 250,
+      deposit: { amountRub: 200, coveredRub: 250, holdRub: 200, refundRub: 50 },
+    })
+
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true }), person()])
+
+    await wrapper.find('[data-test="my-status-declined"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="leave-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="leave-text"]').text()).toBe(
+      'В походе установлен залог, удержать ли твою сумму 200 ₽, определяет организатор. Остальное, 50 ₽, будет переведено тебе от участников похода, следи за сообщениями.',
+    )
+    expect(mocks.setMyStatus).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test="leave-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMyStatus).toHaveBeenCalledWith('7', 'declined')
+  })
+
+  it('без залога и с расходами — «расходы компенсируют участники»', async () => {
+    signIn(ME)
+    mocks.getTripDeparture.mockResolvedValue({
+      gearTypes: [],
+      coveredRub: 50,
+      deposit: null,
+    })
+
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true }), person()])
+
+    await wrapper.find('[data-test="my-status-declined"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="leave-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="leave-text"]').text()).toBe(
+      'Твои расходы будут компенсированы участниками похода, следи за сообщениями.',
+    )
+  })
+
+  it('без вложений второго шага нет: вышел сразу после снаряжения', async () => {
+    signIn(ME)
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true }), person()])
+
+    await wrapper.find('[data-test="my-status-declined"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="leave-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.setMyStatus).toHaveBeenCalledWith('7', 'declined')
+  })
+
+  it('«Нет» закрывает уведомление, статус остаётся прежним', async () => {
+    signIn(ME)
+    const wrapper = await open([person({ userId: ORGANIZER, isOrganizer: true }), person()])
+
+    await wrapper.find('[data-test="my-status-declined"]').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="leave-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="leave-dialog"]').exists()).toBe(false)
+    expect(mocks.setMyStatus).not.toHaveBeenCalled()
   })
 
   /**

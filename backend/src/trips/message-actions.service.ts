@@ -13,6 +13,8 @@ import {
 } from './dto/message-action.dto';
 import { Message } from './entities/message.entity';
 import { MessageAction } from './entities/message-action.entity';
+import { TripCompensation } from './entities/trip-compensation.entity';
+import { TripEventsService } from './trip-events.service';
 
 /**
  * Действия в сообщениях: «Да» / «Нет» и «посмотри ещё раз».
@@ -38,7 +40,10 @@ import { MessageAction } from './entities/message-action.entity';
  */
 @Injectable()
 export class MessageActionsService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly events: TripEventsService,
+  ) {}
 
   /** Ответ адресата: «получено» или «не получено». */
   async respond(
@@ -46,7 +51,9 @@ export class MessageActionsService {
     actionId: number,
     result: ActionAnswer,
   ): Promise<MessageActionDto> {
-    return this.dataSource.transaction(async (manager) => {
+    let confirmedTripId: string | null = null;
+
+    const dto = await this.dataSource.transaction(async (manager) => {
       // `FOR UPDATE`: два устройства могут нажать «Да» одновременно,
       // и без блокировки оба прочитали бы `pending`.
       const action = await this.lockAction(manager, actionId);
@@ -77,12 +84,32 @@ export class MessageActionsService {
       action.respondedAt = new Date();
       await manager.save(action);
 
+      /**
+       * Деньги двигает ответ в сообщении (20.11.2026).
+       *
+       * Компенсация ушедшему живёт строкой `trip_compensations`, а он сам
+       * вкладку уже не откроет — «Получено» он нажимает в личном сообщении.
+       * Поэтому «Да» закрывает связанный перевод по `payload.compensationId`
+       * (миграции нет: связь лежит в jsonb). «Нет» ничего не двигает:
+       * строка остаётся ожидающей, а автосогласие через 72 часа по ней
+       * отменяется — человек сказал, что деньги не дошли.
+       */
+      if (action.kind === 'money_received' && action.state === 'confirmed') {
+        confirmedTripId = await this.confirmLinkedCompensation(manager, action);
+      }
+
       return MessageActionDto.from(
         action,
         userId,
         await this.senderOf(manager, action.id),
       );
     });
+
+    if (confirmedTripId !== null) {
+      this.events.emitFinance(confirmedTripId, userId);
+    }
+
+    return dto;
   }
 
   /**
@@ -214,6 +241,35 @@ export class MessageActionsService {
         MessageActionDto.from(action, userId, userId),
       ),
     };
+  }
+
+  /**
+   * Закрыть компенсацию, которой касается ответ (20.11.2026).
+   *
+   * Связь лежит в `payload.compensationId`: отдельная колонка потребовала бы
+   * миграции, а видов действий со временем станет больше. `null` — действие
+   * не про компенсацию или строка уже подтверждена (повторное «Да»).
+   */
+  private async confirmLinkedCompensation(
+    manager: EntityManager,
+    action: MessageAction,
+  ): Promise<string | null> {
+    const raw = (action.payload as { compensationId?: unknown } | null)
+      ?.compensationId;
+    if (raw === undefined || raw === null) return null;
+
+    const compensation = await manager.findOne(TripCompensation, {
+      where: { id: String(raw) },
+      lock: { mode: 'pessimistic_write' },
+    });
+
+    if (!compensation || compensation.status !== 'pending') return null;
+
+    compensation.status = 'confirmed';
+    compensation.confirmedAt = new Date();
+    await manager.save(compensation);
+
+    return compensation.tripId;
   }
 
   /** Заблокировать действие на время перехода. */

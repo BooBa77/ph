@@ -342,6 +342,33 @@ export interface TripDepositReturn {
   shares: TripExpenseShare[]
 }
 
+/**
+ * Деньги ушедшего в уведомлении о выходе (20.11.2026).
+ *
+ * `holdRub = min(залог, покрытие)` — сколько может удержать организатор;
+ * `refundRub = max(0, покрытие − залог)` — сколько переведут человеку.
+ * Оба нуля — о деньгах в уведомлении не говорим.
+ */
+export interface TripDepartureDeposit {
+  amountRub: number
+  coveredRub: number
+  holdRub: number
+  refundRub: number
+}
+
+/**
+ * Ответ `GET /api/trips/:id/finance/departure` — уведомление при выходе.
+ *
+ * `gearTypes` — типы задействованного снаряжения: «взял», «несёт»,
+ * «в палатке». Пустой массив — предупреждать не о чем.
+ */
+export interface TripDeparture {
+  gearTypes: string[]
+  /** Вложено (расходы плюс подтверждённый залог). 0 — о деньгах не говорим. */
+  coveredRub: number
+  deposit: TripDepartureDeposit | null
+}
+
 /** Ответ `GET /api/trips/:id/finance` — вся вкладка одним запросом. */
 export interface TripFinance {
   expenses: TripExpense[]

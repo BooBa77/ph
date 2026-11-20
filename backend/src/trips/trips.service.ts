@@ -56,11 +56,13 @@ import { TripMembershipRequest } from './entities/trip-membership-request.entity
 import { TripParticipantRole } from './entities/trip-participant-role.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { TripRouteElement } from './entities/trip-route-element.entity';
+import { TripRouteLodger } from './entities/trip-route-lodger.entity';
 import { TripRouteNight } from './entities/trip-route-night.entity';
 import { TripTransferLeg } from './entities/trip-transfer-leg.entity';
 import { TripType } from './entities/trip-type.entity';
 import { Trip } from './entities/trip.entity';
 import { conflictMessage, removeConflictingGear } from '../gear/gear-uid';
+import { TripGear } from '../gear/entities/trip-gear.entity';
 import { extractObjectIds } from './route-links';
 import {
   MEMBERS_TAB,
@@ -1986,6 +1988,26 @@ export class TripsService {
         if (status !== 'going') {
           await this.releaseTransfers(manager, trip.id, userId);
         }
+
+        /**
+         * Вышел из похода — его снаряжение больше не за ним (20.11.2026).
+         *
+         * Уведомление при выходе обещает: «Твоё снаряжение будет исключено
+         * из снаряжения похода». Поэтому несущий освобождается (вещь
+         * остаётся в походе и ждёт нового), личный раздел «Взял» у него
+         * забирается, а место в палатке снимается — в поле он не едет.
+         */
+        if (status === 'declined') {
+          await manager.update(
+            TripGear,
+            { tripId: trip.id, assignedUserId: userId },
+            { assignedUserId: null, personalSectionId: null },
+          );
+          await manager.delete(TripRouteLodger, {
+            tripId: trip.id,
+            userId,
+          });
+        }
       }
 
       return {
@@ -1996,6 +2018,7 @@ export class TripsService {
         ),
         dietChanged,
         statusChanged,
+        left: statusChanged && status === 'declined',
       };
     });
 
@@ -2007,6 +2030,12 @@ export class TripsService {
       // Состав едоков и состав балансов меняются вместе с участием.
       this.events.emitMeals(String(id), userId);
       this.events.emitFinance(String(id), userId);
+    }
+    if (result.left) {
+      // Вещи освободились, места в палатках снялись — обе вкладки читают
+      // данные заново, иначе список показывал бы человека, которого нет.
+      this.events.emitGear(String(id), userId);
+      this.events.emitRoute(String(id), userId);
     }
 
     return result.participant;

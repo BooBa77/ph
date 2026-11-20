@@ -20,6 +20,7 @@ import {
   SaveTripExpenseDto,
   SyncTripExpensesDto,
   TripCompensationDto,
+  TripDepartureDto,
   TripDepositDto,
   TripDepositForfeitDto,
   TripDepositReturnDto,
@@ -28,6 +29,10 @@ import {
   TripFinanceDto,
   TripFinanceSyncDto,
 } from './dto/trip-finance.dto';
+import { Conversation } from './entities/conversation.entity';
+import { ConversationMember } from './entities/conversation-member.entity';
+import { Message } from './entities/message.entity';
+import { MessageAction } from './entities/message-action.entity';
 import { TripCompensation } from './entities/trip-compensation.entity';
 import { TripDepositAdjustment } from './entities/trip-deposit-adjustment.entity';
 import { TripDepositForfeit } from './entities/trip-deposit-forfeit.entity';
@@ -65,6 +70,15 @@ import { UsersService } from '../users/users.service';
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
 }
+
+/**
+ * Срок автосогласия компенсации ушедшему (20.11.2026).
+ *
+ * Заказчик: «три дня без ответа считаются согласием» — деньги в кругу
+ * друзей, а не в банке, и висящий перевод не должен держать расчёт
+ * месяцами. Срок живёт в одном месте: он же двигает `confirmed_at`.
+ */
+const AUTO_CONFIRM_MS = 72 * 60 * 60 * 1000;
 
 /**
  * Уникальный индекс `UQ_trip_expenses_client` сработал на вставке.
@@ -122,7 +136,19 @@ export class TripFinanceService {
     const trip = await this.trips.getVisibleTrip(userId, tripId);
     await this.assertParticipant(manager, String(trip.id), userId);
 
-    return this.buildView(manager, trip, userId);
+    // «Автосогласие через 72 часа» (20.11.2026) закрывается при чтении
+    // вкладки, а не кроном: отдельного планировщика в проекте нет, а баланс
+    // обязан сойтись в тот момент, когда его смотрят. Повторный вызов ничего
+    // не меняет — строки уже `confirmed`.
+    const settled = await this.settleExpiredCompensations(
+      manager,
+      String(trip.id),
+    );
+    const view = await this.buildView(manager, trip, userId);
+
+    if (settled) this.events.emitFinance(String(tripId), userId);
+
+    return view;
   }
 
   /**
@@ -368,9 +394,19 @@ export class TripFinanceService {
       }
 
       const participants = await this.goingParticipants(manager, String(trip.id));
-      if (!participants.some((item) => item.userId === toUserId)) {
-        throw new BadRequestException('Получатель не идёт в этом походе');
+
+      // Получателем может быть и ушедший (20.11.2026): «компенсировать
+      // можно любому, включая declined». Он потерял доступ к вкладке, но
+      // долг группы перед ним никуда не делся, и закрыть его — обязанность
+      // тех, кто остался. Приглашённому не переводят: он ещё не решил.
+      const recipient = await manager.findOne(TripParticipant, {
+        where: { tripId: String(trip.id), userId: toUserId },
+        relations: { user: true },
+      });
+      if (!recipient || recipient.status === 'invited') {
+        throw new BadRequestException('Получатель не участвует в этом походе');
       }
+      const recipientDeclined = recipient.status === 'declined';
 
       const { expenses, compensations } = await this.loadMoney(
         manager,
@@ -387,9 +423,11 @@ export class TripFinanceService {
       const myFamily = families.find((group) => group.includes(senderId)) ?? [
         senderId,
       ];
-      const targetFamily = families.find((group) =>
-        group.includes(toUserId),
-      ) ?? [toUserId];
+      // Ушедший платит сам за себя: его семья, если кто-то из родных идёт,
+      // считает свою кассу отдельно, а долг перед ушедшим — личный.
+      const targetFamily = recipientDeclined
+        ? [toUserId]
+        : (families.find((group) => group.includes(toUserId)) ?? [toUserId]);
 
       if (targetFamily.includes(senderId)) {
         throw new BadRequestException('Своей семье переводить не нужно');
@@ -420,7 +458,7 @@ export class TripFinanceService {
         );
       }
 
-      await manager.save(
+      const compensation = await manager.save(
         manager.create(TripCompensation, {
           tripId: String(trip.id),
           fromUserId: senderId,
@@ -434,6 +472,18 @@ export class TripFinanceService {
           confirmedAt: null,
         }),
       );
+
+      // Ушедший вкладку не откроет, поэтому о переводе ему сообщают личным
+      // сообщением (20.11.2026). Кнопка «Получено» живёт в самом сообщении,
+      // а если ответа нет 72 часа — перевод подтвердится сам.
+      if (recipientDeclined) {
+        await this.postCompensationMessage(
+          manager,
+          trip,
+          senderId,
+          compensation,
+        );
+      }
 
       return this.buildView(manager, trip, userId);
     });
@@ -582,6 +632,17 @@ export class TripFinanceService {
     const participants = await this.goingParticipants(manager, tripId);
     const memberIds = participants.map((item) => item.userId);
 
+    // Люди вне `going`: «пока думаю», «помогаю» и ушедшие. С 20.11.2026 они
+    // остаются видимыми и участниками расчётов, пока с ними не рассчитались
+    // в ноль. Их баланс считается и так (доли расходов хранятся по человеку),
+    // а вот получать компенсацию ушедший должен уметь — «компенсировать
+    // можно любому, включая declined» (finance.md §2.2).
+    const others = await manager.find(TripParticipant, {
+      where: { tripId, status: Not('going') },
+      relations: { user: true },
+      order: { createdAt: 'ASC', userId: 'ASC' },
+    });
+
     // 18.11.2026: перевод залога идёт через `trip_compensations`
     // (`kind = 'deposit'`), поэтому баланс уже считает его обычным
     // переводом: у отправителя плюс, у организатора минус — «теперь он
@@ -618,12 +679,27 @@ export class TripFinanceService {
     );
 
     const userById = new Map(
-      participants.map((participant) => [participant.userId, participant.user]),
+      [...participants, ...others].map((participant) => [
+        participant.userId,
+        participant.user,
+      ]),
     );
 
     // Семья — компонента связей; в походе важны только идущие, поэтому
     // группа фильтруется по составу, а порядок внутри неё — порядок состава.
     const families = await this.goingFamilies(manager, participants);
+
+    /**
+     * Семьи для подсказок компенсации: идущие плюс те, кто вне `going`, но
+     * кому ещё должны (ушедший с кредитом, «пока думаю» с долей). Вторые
+     * идут одиночками: их родные, если идут, уже в своей семье, а касса
+     * ушедшего считается по нему одному.
+     */
+    const familiesForCompensation: string[][] = [
+      ...families,
+      ...others.map((participant) => [participant.userId]),
+    ];
+
     const myFamily = families.find((group) => group.includes(viewerId)) ?? [
       viewerId,
     ];
@@ -647,22 +723,26 @@ export class TripFinanceService {
       families.find((group) => group.includes(userId)) ?? [userId];
 
     const optionsFor = (senderId: string): CompensationOptionDto[] =>
-      compensationOptions(senderId, remaining, families).map((option) => {
-        const people = option.userIds.map((userId) => userById.get(userId)!);
+      compensationOptions(senderId, remaining, familiesForCompensation).map(
+        (option) => {
+          const people = option.userIds.map(
+            (userId) => userById.get(userId)!,
+          );
 
-        return {
-          userIds: [...option.userIds],
-          displayName: joinNames(people.map((person) => person.displayName)),
-          amountRub: option.amountRub,
-          members: people.map((person) => ({
-            userId: person.id,
-            displayName: person.displayName,
-            gender: person.gender,
-            paymentDetails: person.paymentDetails,
-            paymentBank: person.paymentBank,
-          })),
-        };
-      });
+          return {
+            userIds: [...option.userIds],
+            displayName: joinNames(people.map((person) => person.displayName)),
+            amountRub: option.amountRub,
+            members: people.map((person) => ({
+              userId: person.id,
+              displayName: person.displayName,
+              gender: person.gender,
+              paymentDetails: person.paymentDetails,
+              paymentBank: person.paymentBank,
+            })),
+          };
+        },
+      );
 
     const suggestions = optionsFor(viewerId);
 
@@ -699,10 +779,9 @@ export class TripFinanceService {
       suggestions,
     };
 
-    const members: FinanceMemberDto[] = await this.visibleMembers(
-      manager,
-      tripId,
+    const members: FinanceMemberDto[] = this.membersView(
       participants,
+      others,
       balances,
       remaining,
       managedIds,
@@ -757,6 +836,8 @@ export class TripFinanceService {
         viewerId,
         expenses,
         compensations,
+        balances,
+        remaining,
       ),
       depositForfeits: this.buildDepositForfeits(forfeits),
       depositReturns: this.buildDepositReturns(adjustments),
@@ -792,6 +873,8 @@ export class TripFinanceService {
     viewerId: string,
     expenses: readonly TripExpense[],
     compensations: readonly TripCompensation[],
+    balances: ReadonlyMap<string, number>,
+    remaining: ReadonlyMap<string, number>,
   ): Promise<TripDepositDto | null> {
     if (trip.depositRub === null || trip.depositRub <= 0) return null;
 
@@ -844,6 +927,7 @@ export class TripFinanceService {
         viewerId,
         coverageOf(participant.userId),
         organizerRoles.has(participant.userId),
+        this.hasOpenMoney(participant.userId, balances, remaining),
       ),
     );
 
@@ -851,7 +935,16 @@ export class TripFinanceService {
     // хоть что-то покрыто (решать есть что), и идущие, которые не добрали
     // залог. Ушедший с нулём не показывается вовсе: ни денег, ни расходов,
     // решать нечего — заказчик просил его не упоминать.
-    const declined = rows.filter((row) => row.declined && row.coveredRub > 0);
+    //
+    // **С 20.11.2026 ушедший исчезает и тогда, когда с ним рассчитались
+    // в ноль** (переводы подтверждены или истекли 72 часа): деньги уже ушли,
+    // пересобирать нечего, «Удержать» недоступно.
+    const declined = rows.filter(
+      (row) =>
+        row.declined &&
+        row.coveredRub > 0 &&
+        this.hasOpenMoney(row.userId, balances, remaining),
+    );
     const uncovered = rows.filter(
       (row) => !row.declined && !organizerRoles.has(row.userId) && row.missingRub > 0,
     );
@@ -961,6 +1054,7 @@ export class TripFinanceService {
     viewerId: string,
     coverage: DepositCoverage,
     isOrganizer: boolean,
+    settleOpen: boolean,
   ): DepositParticipantDto {
     const isActive =
       participant.status === 'going' || participant.status === 'maybe';
@@ -999,8 +1093,14 @@ export class TripFinanceService {
       declined: participant.status === 'declined',
       hasPendingTransfer: coverage.pendingRub > 0,
       // Решать судьбу залога можно, только когда хоть что-то покрыто:
-      // ушедший с нулём в списке не показывается вовсе (v3).
-      canDecide: participant.status === 'declined' && coverage.coveredRub > 0,
+      // ушедший с нулём в списке не показывается вовсе (v3). С 20.11.2026
+      // к этому добавилось «расчёт не закрыт»: пока с ушедшим не
+      // рассчитались в ноль, флаг работает сколько угодно раз; после —
+      // деньги уже ушли, и удерживать нечего.
+      canDecide:
+        participant.status === 'declined' &&
+        coverage.coveredRub > 0 &&
+        settleOpen,
     };
   }
 
@@ -1469,6 +1569,30 @@ export class TripFinanceService {
         throw new BadRequestException('Залог не покрыт — решать нечего');
       }
 
+      // «Расчёт закрыт» (20.11.2026). Пока с ушедшим не сошлись в ноль,
+      // переключатель работает сколько угодно раз. Как только сошлись
+      // (переводы подтверждены или истекли 72 часа), деньги уже ушли,
+      // и «Удержать» нечего: кнопки на экране нет, но запрос можно послать
+      // руками — поэтому проверка живёт и на сервере.
+      const money = await this.loadMoney(manager, String(trip.id));
+      const going = await this.goingParticipants(manager, String(trip.id));
+      const goingIds = going.map((item) => item.userId);
+      const balances = balancesFromEntities(
+        money.expenses,
+        money.compensations,
+        goingIds,
+      );
+      const remaining = remainingFromEntities(
+        money.expenses,
+        money.compensations,
+        goingIds,
+      );
+      if (!this.hasOpenMoney(targetUserId, balances, remaining)) {
+        throw new ConflictException(
+          'С ушедшим уже рассчитались — удерживать нечего',
+        );
+      }
+
       // Залог больше не принадлежит ушедшему: его перевод удаляется при
       // любом решении. Возврат возвращает деньги, удержание оставляет их
       // в фонде — но строку «он заплатил» в обоих случаях заменяет решение.
@@ -1636,30 +1760,28 @@ export class TripFinanceService {
   }
 
   /**
-   * Кого экран показывает в балансах: идущие плюс вышедшие с ненулевым
-   * балансом (17.11.2026).
+   * Кого экран показывает в балансах: идущие плюс все остальные с ненулевым
+   * балансом (17.11.2026, уточнено 20.11.2026).
    *
    * Вышедший из похода остаётся в расчётах: у него могут быть доли расходов
    * и удержанный залог, и группа должна видеть и то и другое. `finance.md`
    * §2.2 говорит то же про долги ушедшего: «группа видит его баланс».
    * Нулевых вышедших не показываем — строка «Борис 0 ₽» ничего не добавляет,
    * а вкладку он уже не откроет (403).
+   *
+   * **С 20.11.2026 правило шире `declined`.** Человек, который перешёл из
+   * `going` в `maybe` или `helping`, тоже остаётся в балансах, пока с ним
+   * не рассчитались: его доля расходов никуда не делась. Рассчитались
+   * в ноль — строки нет, но движение средств помнит переводы.
    */
-  private async visibleMembers(
-    manager: EntityManager,
-    tripId: string,
+  private membersView(
     going: readonly TripParticipant[],
+    others: readonly TripParticipant[],
     balances: ReadonlyMap<string, number>,
     remaining: ReadonlyMap<string, number>,
     managedIds: ReadonlySet<string>,
-  ): Promise<FinanceMemberDto[]> {
-    const declined = await manager.find(TripParticipant, {
-      where: { tripId, status: 'declined' },
-      relations: { user: true },
-      order: { createdAt: 'ASC', userId: 'ASC' },
-    });
-
-    const withMoney = declined.filter(
+  ): FinanceMemberDto[] {
+    const withMoney = others.filter(
       (participant) => (balances.get(participant.userId) ?? 0) !== 0,
     );
 
@@ -1674,6 +1796,25 @@ export class TripFinanceService {
       paymentDetails: participant.user?.paymentDetails ?? null,
       paymentBank: participant.user?.paymentBank ?? null,
     }));
+  }
+
+  /**
+   * С человеком ещё не рассчитались? `false` — «расчёт закрыт» (20.11.2026).
+   *
+   * Закрыт он тогда, когда сошлись **оба** нуля: подтверждённый баланс
+   * (деньги уже переведены) и остаток с ожидающими переводами (в пути
+   * ничего не висит). Пока висит хотя бы ожидающий перевод, ушедший ещё
+   * в «Балансах»: исход перевода неизвестен.
+   */
+  private hasOpenMoney(
+    userId: string,
+    balances: ReadonlyMap<string, number>,
+    remaining: ReadonlyMap<string, number>,
+  ): boolean {
+    return (
+      (balances.get(userId) ?? 0) !== 0 ||
+      (remaining.get(userId) ?? 0) !== 0
+    );
   }
 
   /** Расходы с долями и именами плюс компенсации с людьми — два запроса. */
@@ -1974,5 +2115,233 @@ export class TripFinanceService {
     );
 
     if (rows.length > 0) await manager.save(rows);
+  }
+
+  // ─────────────────── ушедший и деньги (20.11.2026) ───────────────────
+
+  /**
+   * Что человек видит перед выходом из похода (20.11.2026).
+   *
+   * Уведомление двухшаговое: сначала снаряжение, потом деньги. Состав
+   * первого шага — **задействованное снаряжение**, а не весь рюкзак:
+   * «взял / несёт» — вещи похода, где он несущий, «в палатке» — место
+   * в палатке на маршруте. Эти вещи после выхода освобождаются: вещь
+   * остаётся в походе и ждёт нового несущего ([trips.service] `updateMyStatus`).
+   *
+   * Деньги — покрытие залога и остаток сверх него. `covered = 0` — о деньгах
+   * не говорим вовсе; `covered > D` — предупреждаем, что переведут остальное.
+   */
+  async departureInfo(
+    userId: string,
+    tripId: number,
+  ): Promise<TripDepartureDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+
+    const participant = await manager.findOne(TripParticipant, {
+      where: { tripId: String(trip.id), userId },
+    });
+    if (!participant) {
+      throw new NotFoundException('Ты не в составе этого похода');
+    }
+
+    const gearRows = (await manager.query(
+      `SELECT DISTINCT gt."name" AS "name"
+         FROM "trip_gear" tg
+         JOIN "gear_items" gi ON gi."id" = tg."gear_item_id"
+         JOIN "gear_types" gt ON gt."id" = gi."gear_type_id"
+        WHERE tg."trip_id" = $1
+          AND tg."assigned_user_id" = $2
+          AND tg."status" <> 'declined'
+        ORDER BY gt."name"`,
+      [String(trip.id), userId],
+    )) as Array<{ name: string }>;
+
+    // Место в палатке — не строка `trip_gear`: оно живёт отдельно и держит
+    // палатку по `tent_gear_id`. Тип берём у самой палатки, а не пишем
+    // «Палатка» строкой: справочник типов правится заказчиком.
+    const tentRows = (await manager.query(
+      `SELECT DISTINCT gt."name" AS "name"
+         FROM "trip_route_lodgers" l
+         JOIN "trip_gear" tg
+           ON tg."trip_id" = l."trip_id" AND tg."id" = l."tent_gear_id"
+         JOIN "gear_items" gi ON gi."id" = tg."gear_item_id"
+         JOIN "gear_types" gt ON gt."id" = gi."gear_type_id"
+        WHERE l."trip_id" = $1 AND l."user_id" = $2
+        ORDER BY gt."name"`,
+      [String(trip.id), userId],
+    )) as Array<{ name: string }>;
+
+    const gearTypes = [...new Set([...gearRows, ...tentRows].map((row) => row.name))];
+
+    const amountRub = trip.depositRub ?? 0;
+    let deposit: TripDepartureDto['deposit'] = null;
+    let coveredRub = 0;
+
+    if (amountRub > 0) {
+      const coverage = await this.depositCoverageOf(
+        manager,
+        String(trip.id),
+        amountRub,
+        userId,
+      );
+      coveredRub = coverage.coveredRub;
+      deposit = {
+        amountRub,
+        coveredRub: coverage.coveredRub,
+        holdRub: Math.min(amountRub, coverage.coveredRub),
+        refundRub: Math.max(0, coverage.coveredRub - amountRub),
+      };
+    } else {
+      // Залога нет, а вложения есть: второй шаг уведомления всё равно нужен
+      // («расходы компенсируют участники»). Считаем только оплаченные
+      // расходы — переводить залог без залога некуда.
+      const rows = (await manager.query(
+        `SELECT COALESCE(SUM("amount_rub"), 0)::int AS "invested"
+           FROM "trip_expenses"
+          WHERE "trip_id" = $1 AND "author_user_id" = $2`,
+        [String(trip.id), userId],
+      )) as Array<{ invested: number }>;
+      coveredRub = Number(rows[0]?.invested ?? 0);
+    }
+
+    return { gearTypes, coveredRub, deposit };
+  }
+
+  /**
+   * Личное сообщение о переводе ушедшему (20.11.2026).
+   *
+   * Вкладку «Бухгалтерия» он уже не откроет, поэтому подтверждение приходит
+   * в личный диалог: сообщение с кнопками «Да / Нет», общее состояние
+   * действия — в `message_actions`. Ссылка на компенсацию лежит в `payload`
+   * (схему не меняем, миграции нет): по ней ответ закроет тот же перевод.
+   *
+   * Чат создаётся, если его ещё нет: пара хранится отсортированной, как
+   * в `ConversationsService.openDirect`.
+   */
+  private async postCompensationMessage(
+    manager: EntityManager,
+    trip: Trip,
+    senderId: string,
+    compensation: TripCompensation,
+  ): Promise<void> {
+    const [a, b] = [senderId, compensation.toUserId].sort();
+
+    let conversation = await manager.findOne(Conversation, {
+      where: { kind: 'direct', directA: a, directB: b },
+    });
+
+    if (!conversation) {
+      conversation = await manager.save(
+        manager.create(Conversation, {
+          kind: 'direct',
+          directA: a,
+          directB: b,
+        }),
+      );
+      await manager.insert(ConversationMember, [
+        { conversationId: conversation.id, userId: a },
+        { conversationId: conversation.id, userId: b },
+      ]);
+    } else {
+      // Диалог мог быть создан раньше без строк состава — чиним, как в
+      // `openDirect`: доступ к личному диалогу — это и есть состав.
+      for (const memberId of [a, b]) {
+        await manager
+          .createQueryBuilder()
+          .insert()
+          .into(ConversationMember)
+          .values({ conversationId: conversation.id, userId: memberId })
+          .orIgnore()
+          .execute();
+      }
+    }
+
+    const action = await manager.save(
+      manager.create(MessageAction, {
+        kind: 'money_received',
+        targetUserId: compensation.toUserId,
+        payload: {
+          tripId: String(trip.id),
+          compensationId: compensation.id,
+          amountRub: compensation.amountRub,
+          fromUserId: senderId,
+        },
+        state: 'pending',
+      }),
+    );
+
+    await manager.insert(Message, {
+      conversationId: conversation.id,
+      senderId,
+      body: `Поход «${trip.announcement ?? 'поход'}»: тебе перевели ${compensation.amountRub} ₽ — подтверди получение.`,
+      actionId: action.id,
+    });
+  }
+
+  /**
+   * Автосогласие через 72 часа (20.11.2026).
+   *
+   * Проверяется при чтении вкладки, а не кроном: планировщика в проекте нет,
+   * а расчёт обязан сойтись тогда, когда на него смотрят. Подтверждается
+   * только перевод **ушедшему** — идущий подтверждает сам, у него для этого
+   * есть кнопка «Получено».
+   *
+   * Ответ «не получено» (`disputed`) автосогласие отменяет: человек уже
+   * сказал, что денег нет, и молча подтверждать за него нельзя — строка
+   * остаётся `pending`, пока отправитель не разберётся.
+   *
+   * `true` — что-то подтвердилось, и вызывающему стоит разослать SSE.
+   */
+  private async settleExpiredCompensations(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<boolean> {
+    const pending = await manager.find(TripCompensation, {
+      where: { tripId, status: 'pending', kind: 'compensation' },
+    });
+    if (pending.length === 0) return false;
+
+    const declined = await manager.find(TripParticipant, {
+      where: { tripId, status: 'declined' },
+    });
+    const declinedIds = new Set(declined.map((row) => row.userId));
+    const deadline = Date.now() - AUTO_CONFIRM_MS;
+    let settled = false;
+
+    for (const row of pending) {
+      if (!declinedIds.has(row.toUserId)) continue;
+      if (row.createdAt.getTime() > deadline) continue;
+
+      const actions = (await manager.query(
+        `SELECT "id", "state" FROM "message_actions"
+          WHERE "kind" = 'money_received'
+            AND "payload"->>'compensationId' = $1
+          ORDER BY "id" DESC
+          LIMIT 1`,
+        [String(row.id)],
+      )) as Array<{ id: string; state: string }>;
+
+      if (actions[0]?.state === 'disputed') continue;
+
+      // Время подтверждения — конец срока, а не «сейчас»: дата в ленте
+      // должна объяснять, когда расчёт закрылся, а не когда его посмотрели.
+      row.status = 'confirmed';
+      row.confirmedAt = new Date(row.createdAt.getTime() + AUTO_CONFIRM_MS);
+      await manager.save(row);
+
+      if (actions[0] !== undefined) {
+        await manager.query(
+          `UPDATE "message_actions"
+              SET "state" = 'confirmed', "responded_at" = now(), "updated_at" = now()
+            WHERE "id" = $1`,
+          [actions[0].id],
+        );
+      }
+
+      settled = true;
+    }
+
+    return settled;
   }
 }

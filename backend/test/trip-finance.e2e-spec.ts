@@ -41,6 +41,8 @@ describe('Бухгалтерия похода (e2e)', () => {
   let trip7: string;
   /** Очередь офлайн-чеков: пачка, повтор по `clientId`, отказ по одному чеку. */
   let trip8: string;
+  /** Ушедший и деньги: личное сообщение, автосогласие, закрытый расчёт. */
+  let trip9: string;
   let virtualPersonId: string;
   let lastCode: string | null = null;
 
@@ -241,8 +243,26 @@ describe('Бухгалтерия похода (e2e)', () => {
     if (dataSource?.isInitialized) {
       // Расходы, доли и компенсации уходят каскадом вместе с походами.
       await dataSource.query('DELETE FROM trips WHERE id = ANY($1::bigint[])', [
-        [trip1, trip2, trip3, trip4, trip5, trip6, trip7, trip8].filter(Boolean),
+        [trip1, trip2, trip3, trip4, trip5, trip6, trip7, trip8, trip9].filter(
+          Boolean,
+        ),
       ]);
+      // Личные сообщения о компенсациях живут вне похода: диалог не уходит
+      // каскадом от `trips`, а FK действий и сообщений держат людей.
+      // Чистим до пользователей, иначе удаление падает на `FK_messages_sender`.
+      const userIds = [a, b, c, d, e, g]
+        .filter(Boolean)
+        .map((person) => person.id);
+      await dataSource.query(
+        `DELETE FROM message_actions WHERE "target_user_id" = ANY($1::uuid[])`,
+        [userIds],
+      );
+      await dataSource.query(
+        `DELETE FROM conversations
+          WHERE "kind" = 'direct'
+            AND ("direct_a" = ANY($1::uuid[]) OR "direct_b" = ANY($1::uuid[]))`,
+        [userIds],
+      );
       // Человек без аккаунта ссылается на владельца — удаляем его первым.
       if (virtualPersonId) {
         await dataSource.query('DELETE FROM users WHERE id = $1', [
@@ -1831,27 +1851,18 @@ describe('Бухгалтерия похода (e2e)', () => {
         });
       });
 
-      it('D вложил 50 и вышел: решать есть что, удержание — на покрытую часть', async () => {
+      it('D вложил 50 и вышел в ноль — расчёт закрыт, удержание недоступно', async () => {
         await decline(trip7, d).expect(200);
 
+        // 20.11.2026: D оплатил ровно свою долю (баланс 0), поэтому
+        // с ним рассчитались сразу. Секция риска его больше не показывает,
+        // а решение по залогу сервер отклоняет: деньги уже ушли.
         const before = await view(trip7, a);
-        expect(riskOf(before.body, d)).toMatchObject({
-          status: 'pending',
-          declined: true,
-          coveredRub: 50,
-          canDecide: true,
-        });
+        expect(riskOf(before.body, d)).toBeUndefined();
+        expect(balanceOf(before.body, d)).toBe(0);
 
-        const forfeited = await setDecision(trip7, a, d, 'forfeited').expect(200);
-
-        // Удерживается покрытая часть (50), а не вся сумма залога: больше
-        // у D ничего нет.
-        expect(forfeited.body.depositForfeits).toHaveLength(1);
-        expect(forfeited.body.depositForfeits[0]).toMatchObject({
-          sourceUserId: d.id,
-          amountRub: 50,
-        });
-        expect(balanceOf(forfeited.body, d)).toBe(0);
+        await setDecision(trip7, a, d, 'forfeited').expect(409);
+        await setDecision(trip7, a, d, 'returned').expect(409);
       });
 
       it('G вышел с нулём — в секции его нет', async () => {
@@ -1859,15 +1870,252 @@ describe('Бухгалтерия похода (e2e)', () => {
 
         const after = await view(trip7, a);
 
-        // Остался только D с решённым залогом.
-        expect(
-          depositOf(after.body).participants.map((item) => item.userId),
-        ).toEqual([d.id]);
+        // Ушедших с закрытым расчётом (D и G) в секции риска нет вовсе.
+        expect(depositOf(after.body).participants).toEqual([]);
         expect(riskOf(after.body, g)).toBeUndefined();
 
+        // У G покрытия нет — решать нечего, это прежнее правило.
         await setDecision(trip7, a, g, 'forfeited').expect(400);
         await setDecision(trip7, a, g, 'returned').expect(400);
       });
+    });
+  });
+
+  /**
+   * Ушедший и деньги (20.11.2026).
+   *
+   * Ушедший виден в «Балансах» и секции риска, пока с ним не рассчитались.
+   * Компенсация ему уходит **личным сообщением** с кнопкой, потому что
+   * «Бухгалтерия» ему уже закрыта; без ответа она подтверждается через
+   * 72 часа. После расчёта строки нет, а «Удержать» отвечает 409.
+   *
+   * Поход на четверых: D оплатил общий стол 200 ₽ (доля 50), поэтому ему
+   * должны 150. Он выходит — и группа закрывает долг тремя переводами
+   * по 50: один подтверждает он сам в сообщении, два «дозревают» по сроку.
+   */
+  describe('ушедший: личное сообщение, автосогласие и закрытый расчёт', () => {
+    interface CompensationRow {
+      id: string;
+      kind: string;
+      status: string;
+      fromUserId: string;
+      toUserId: string;
+      amountRub: number;
+    }
+
+    const compensationsOf = (body: unknown) =>
+      (body as { compensations: CompensationRow[] }).compensations;
+
+    const memberOf = (body: unknown, person: Person) =>
+      (
+        body as {
+          members: { userId: string; balanceRub: number }[];
+        }
+      ).members.find((member) => member.userId === person.id);
+
+    const riskOf = (body: unknown, person: Person) =>
+      (
+        body as {
+          deposit: {
+            participants: { userId: string; coveredRub: number; canDecide: boolean }[];
+          };
+        }
+      ).deposit.participants.find((row) => row.userId === person.id);
+
+    const balanceOf = (body: unknown, person: Person): number =>
+      memberOf(body, person)?.balanceRub ?? 0;
+
+    const decline = (tripId: string, person: Person) =>
+      auth(
+        request(app.getHttpServer()).patch(
+          `/api/trips/${tripId}/participants/me`,
+        ),
+        person.token,
+      ).send({ status: 'declined' });
+
+    const toMaybe = (tripId: string, person: Person) =>
+      auth(
+        request(app.getHttpServer()).patch(
+          `/api/trips/${tripId}/participants/me`,
+        ),
+        person.token,
+      ).send({ status: 'maybe' });
+
+    const compensate = (
+      tripId: string,
+      person: Person,
+      toUserId: string,
+      amountRub: number,
+    ) =>
+      auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${tripId}/finance/compensations`,
+        ),
+        person.token,
+      ).send({ toUserId, amountRub });
+
+    const setDecision = (
+      tripId: string,
+      person: Person,
+      target: Person,
+      status: string,
+    ) =>
+      auth(
+        request(app.getHttpServer()).put(
+          `/api/trips/${tripId}/finance/deposit/${target.id}`,
+        ),
+        person.token,
+      ).send({ status });
+
+    beforeAll(async () => {
+      trip9 = await createTrip('Ушедший: расчёт и автосогласие');
+      for (const person of [b, c, d]) await addGoing(trip9, person);
+
+      await auth(
+        request(app.getHttpServer()).patch(`/api/trips/${trip9}`),
+        a.token,
+      )
+        .send({ depositRub: 200 })
+        .expect(200);
+
+      // D оплатил общий стол на четверых: доли по 50, ему должны 150.
+      await addExpense(trip9, d, {
+        amountRub: 200,
+        split: 'all',
+        description: 'Общий стол',
+        spentAt: '2026-11-20',
+      });
+
+      await decline(trip9, d).expect(200);
+    });
+
+    it('перед выходом отдаёт снаряжение и деньги', async () => {
+      const response = await auth(
+        request(app.getHttpServer()).get(
+          `/api/trips/${trip9}/finance/departure`,
+        ),
+        d.token,
+      ).expect(200);
+
+      expect(response.body).toMatchObject({
+        gearTypes: [],
+        coveredRub: 200,
+        deposit: {
+          amountRub: 200,
+          coveredRub: 200,
+          holdRub: 200,
+          refundRub: 0,
+        },
+      });
+    });
+
+    it('пока не рассчитались, ушедший в балансах и секции риска', async () => {
+      const response = await view(trip9, a);
+
+      expect(memberOf(response.body, d)).toMatchObject({ balanceRub: 150 });
+      expect(riskOf(response.body, d)).toMatchObject({
+        declined: true,
+        coveredRub: 200,
+        canDecide: true,
+      });
+    });
+
+    it('перевод ушедшему рождает личное сообщение с действием', async () => {
+      const response = await compensate(trip9, b, d.id, 50).expect(201);
+      const [row] = compensationsOf(response.body);
+
+      expect(row).toMatchObject({
+        kind: 'compensation',
+        status: 'pending',
+        toUserId: d.id,
+        amountRub: 50,
+      });
+
+      const actions = (await dataSource.query(
+        `SELECT "id", "kind", "target_user_id", "state"
+           FROM "message_actions"
+          WHERE "payload"->>'compensationId' = $1`,
+        [String(row!.id)],
+      )) as Array<{ id: string; kind: string; target_user_id: string; state: string }>;
+
+      expect(actions).toHaveLength(1);
+      expect(actions[0]).toMatchObject({
+        kind: 'money_received',
+        target_user_id: d.id,
+        state: 'pending',
+      });
+
+      const messages = (await dataSource.query(
+        `SELECT "body" FROM "messages" WHERE "action_id" = $1`,
+        [actions[0]!.id],
+      )) as Array<{ body: string }>;
+
+      expect(messages[0]?.body).toContain('перевели 50 ₽');
+      expect(messages[0]?.body).toContain('подтверди получение');
+    });
+
+    it('«Получено» в личном сообщении закрывает перевод', async () => {
+      const pending = compensationsOf((await view(trip9, b)).body)[0]!;
+      const [action] = (await dataSource.query(
+        `SELECT "id" FROM "message_actions" WHERE "payload"->>'compensationId' = $1`,
+        [String(pending.id)],
+      )) as Array<{ id: string }>;
+
+      await auth(
+        request(app.getHttpServer()).post(
+          `/api/message-actions/${action!.id}/respond`,
+        ),
+        d.token,
+      )
+        .send({ result: 'confirmed' })
+        .expect(200);
+
+      const after = await view(trip9, a);
+      expect(compensationsOf(after.body)[0]).toMatchObject({
+        status: 'confirmed',
+      });
+      expect(balanceOf(after.body, b)).toBe(0);
+      expect(balanceOf(after.body, d)).toBe(100);
+    });
+
+    it('«пока думаю» с ненулевым балансом остаётся в балансах', async () => {
+      // C расплачивается, пока ещё идёт, и только потом переходит в maybe.
+      await compensate(trip9, c, d.id, 50).expect(201);
+      await toMaybe(trip9, c).expect(200);
+
+      const response = await view(trip9, a);
+      expect(memberOf(response.body, c)).toMatchObject({ balanceRub: -50 });
+    });
+
+    it('через 72 часа переводы подтверждаются сами, ушедший исчезает', async () => {
+      await compensate(trip9, a, d.id, 50).expect(201);
+
+      // Оба ожидающих перевода «вчерашние»: возраст больше 72 часов.
+      await dataSource.query(
+        `UPDATE "trip_compensations"
+            SET "created_at" = now() - interval '73 hours'
+          WHERE "trip_id" = $1 AND "status" = 'pending'`,
+        [trip9],
+      );
+
+      const settled = await view(trip9, a);
+
+      expect(
+        compensationsOf(settled.body).every(
+          (item) => item.status === 'confirmed',
+        ),
+      ).toBe(true);
+      expect(balanceOf(settled.body, d)).toBe(0);
+      // Рассчитались в ноль — ушедшего нет ни в «Балансах», ни в «Залогах».
+      expect(memberOf(settled.body, d)).toBeUndefined();
+      expect(riskOf(settled.body, d)).toBeUndefined();
+      // C в «пока думаю» и в нуле — строки тоже нет.
+      expect(memberOf(settled.body, c)).toBeUndefined();
+    });
+
+    it('«Удержать» ушедшему с закрытым расчётом недоступно', async () => {
+      await setDecision(trip9, a, d, 'forfeited').expect(409);
+      await setDecision(trip9, a, d, 'returned').expect(409);
     });
   });
 
