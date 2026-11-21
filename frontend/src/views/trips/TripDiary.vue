@@ -20,7 +20,7 @@ import { useOfflineStore } from '@/stores/offline'
 import type { TripDiaryEntry } from '@/types/diary'
 import type { Trip, TripParticipant } from '@/types/trips'
 import { markdownToHtml, userToken } from '@/utils/markdown'
-import { tripDayNumber } from '@/utils/tripDay'
+import { tripDayNumber, tripDayText } from '@/utils/tripDay'
 
 /**
  * Вкладка «Дневник» (16.11.2026).
@@ -47,9 +47,9 @@ import { tripDayNumber } from '@/utils/tripDay'
  *   в очередь (`offline/diaryOutbox.ts`) и уходит, когда появляется связь;
  *   в шапке видно «Не отправлено: N». Это единственная вкладка, где
  *   офлайн разрешает правку: дневник в поле и нужен.
- * - **день похода считается по факту.** Вышли раньше плана — день 1
- *   наступил по факту (`utils/tripDay.ts`); до старта номера нет, и кнопка
- *   выключена, а не подставляет отрицательное число.
+ * - **день похода считается по плану.** Начало — `starts_at` (фактических
+ *   дат в походе нет, миграция 96); до старта номер дня не подставляется,
+ *   а кнопка отсчитывает оставшееся: «До старта 3 дня» (`utils/tripDay.ts`).
  */
 const props = defineProps<{ trip: Trip }>()
 
@@ -74,8 +74,22 @@ const confirmDeleteId = ref<string | null>(null)
 const listEl = ref<HTMLElement | null>(null)
 const editor = ref<InstanceType<typeof MarkdownEditor> | null>(null)
 
-/** Номер дня похода на сегодня; `null` — поход ещё не начался. */
-const dayNumber = computed(() => tripDayNumber(props.trip))
+/**
+ * Подпись кнопки дня на сейчас: «День 3» в походе, «До старта 3 дня» до него.
+ *
+ * `nowAt` тикает раз в минуту, иначе страница, открытая в подготовке,
+ * показывала бы вчерашний отсчёт до перезагрузки, а в момент старта кнопка
+ * не переключилась бы на номер дня.
+ */
+const nowAt = ref(new Date())
+const dayText = computed(() => tripDayText(props.trip, nowAt.value))
+const dayTitle = computed(() => {
+  if (dayText.value !== null) return `Вставить «${dayText.value}»`
+
+  return props.trip.cancelledAt
+    ? 'Поход отменён — дня похода нет'
+    : 'У похода нет даты начала'
+})
 
 /** Подписи и адреса упоминаний: без них `[[user:ID]]` показался бы uuid. */
 const mentionNames = computed<Record<string, string>>(() =>
@@ -357,8 +371,11 @@ function insertDate(): void {
 }
 
 function insertDay(): void {
-  if (dayNumber.value === null) return
-  editor.value?.insertText(`День ${dayNumber.value}`)
+  // Считаем заново на момент нажатия: тик раз в минуту мог не успеть
+  // переключить подпись ровно в полночь или в момент старта похода.
+  const text = tripDayText(props.trip, new Date())
+  if (text === null) return
+  editor.value?.insertText(text)
 }
 
 // ─────────────────────────── разное ───────────────────────────
@@ -414,6 +431,13 @@ function onVisibility(): void {
 
 let unsubscribe: () => void = () => {}
 
+/**
+ * Часы кнопки дня: полночь меняет номер, старт похода — подпись.
+ * Минуты хватает: и то и другое человек замечает на следующей записи,
+ * а лишние перерисовки в ленте дневника не нужны.
+ */
+let dayClock: ReturnType<typeof setInterval> | undefined
+
 onMounted(() => {
   void load().then(() => {
     if (offline.isOnline) void flush()
@@ -422,11 +446,16 @@ onMounted(() => {
 
   unsubscribe = subscribeTripEvents(props.trip.id, onTripEvent, 'diary')
   document.addEventListener('visibilitychange', onVisibility)
+
+  dayClock = setInterval(() => {
+    nowAt.value = new Date()
+  }, 60_000)
 })
 
 onUnmounted(() => {
   unsubscribe()
   document.removeEventListener('visibilitychange', onVisibility)
+  if (dayClock) clearInterval(dayClock)
 })
 
 watch(
@@ -581,7 +610,7 @@ watch(
     <form class="flex flex-col gap-2 border-t border-border px-4 py-3" @submit.prevent="addEntry">
       <!--
         Кнопки вставок: текст ставится в курсор, а не в конец записи.
-        «День N» выключен до старта похода — номера ещё нет.
+        До старта «День N» не выключен, а отсчитывает: «До старта 3 дня».
       -->
       <div class="flex flex-wrap items-center gap-1.5">
         <button
@@ -605,16 +634,12 @@ watch(
         <button
           type="button"
           class="cursor-pointer rounded-lg border border-border bg-field px-2 py-1 text-xs text-text transition-colors hover:border-primary hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="dayNumber === null"
-          :title="
-            dayNumber === null
-              ? 'Поход ещё не начался — номера дня нет'
-              : `Вставить «День ${dayNumber}»`
-          "
+          :disabled="dayText === null"
+          :title="dayTitle"
           data-test="diary-insert-day"
           @click="insertDay"
         >
-          {{ dayNumber === null ? 'День похода' : `День ${dayNumber}` }}
+          {{ dayText ?? 'День похода' }}
         </button>
       </div>
 

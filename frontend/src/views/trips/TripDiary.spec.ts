@@ -298,7 +298,7 @@ describe('вкладка «Дневник»', () => {
     ).toMatch(/\d{2}\.\d{2}\.\d{4}/)
   })
 
-  it('до старта похода кнопка дня выключена', async () => {
+  it('до старта кнопка дня вставляет обратный отсчёт', async () => {
     const wrapper = mount(TripDiaryView, {
       props: {
         trip: { ...makeTrip(), startsAt: local(12, 20) },
@@ -310,10 +310,42 @@ describe('вкладка «Дневник»', () => {
     })
     await flushPromises()
 
+    const button = wrapper.get('[data-test="diary-insert-day"]')
+    const label = button.text()
+
+    /**
+     * Точное число дней зависит от дня прогона, поэтому здесь проверяется
+     * форма подписи и то, что она попадает в текст. Само правило и
+     * согласование слова «день» — в `utils/tripDay.spec.ts`.
+     */
+    expect(label).toMatch(/^До старта \d+ (день|дня|дней)$/)
+    expect((button.element as HTMLButtonElement).disabled).toBe(false)
+    expect(button.attributes('title')).toBe(`Вставить «${label}»`)
+
+    await button.trigger('click')
+    await flushPromises()
+
     expect(
-      (wrapper.get('[data-test="diary-insert-day"]').element as HTMLButtonElement)
-        .disabled,
-    ).toBe(true)
+      wrapper.findComponent(MarkdownEditorStub).props('modelValue'),
+    ).toContain(label)
+  })
+
+  it('у отменённого похода кнопка дня выключена', async () => {
+    const wrapper = mount(TripDiaryView, {
+      props: {
+        trip: { ...makeTrip(), cancelledAt: local(11, 20) },
+      },
+      global: {
+        stubs: { MarkdownEditor: MarkdownEditorStub },
+        plugins: [createPinia()],
+      },
+    })
+    await flushPromises()
+
+    const button = wrapper.get('[data-test="diary-insert-day"]')
+
+    expect((button.element as HTMLButtonElement).disabled).toBe(true)
+    expect(button.attributes('title')).toBe('Поход отменён — дня похода нет')
   })
 
   it('упоминание участника показывается именем и ведёт в профиль', async () => {
