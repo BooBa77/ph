@@ -295,7 +295,7 @@ describe('секция «Альманах»', () => {
     )
   })
 
-  it('правка своего воспоминания не меняет место вставки', async () => {
+  it('правка своего воспоминания — через «Дописать», место не меняется', async () => {
     mocks.updateAlmanacEntry.mockResolvedValue(makeAlmanac())
 
     const wrapper = await mountAlmanac(
@@ -303,12 +303,45 @@ describe('секция «Альманах»', () => {
     )
 
     await toggle(wrapper)
-    await wrapper.get('[data-test="almanac-edit"]').trigger('click')
+    await wrapper.get('[data-test="almanac-place"]').setValue('day:2')
+    await wrapper.get('[data-test="almanac-write"]').trigger('click')
     await typeInModal(wrapper, 'Дописал.')
     await wrapper.get('[data-test="almanac-memory-save"]').trigger('click')
     await flushPromises()
 
     expect(mocks.updateAlmanacEntry).toHaveBeenCalledWith('679', 'm-mine', 'Дописал.')
+  })
+
+  it('из ленты ничего не правится: чужое админ только удаляет', async () => {
+    const wrapper = await mountAlmanac(
+      makeAlmanac({
+        canManage: true,
+        entries: [
+          memoryEntry({ id: 'm-other', canEdit: false, canDelete: true }),
+          diaryEntry({ id: 'd-other', canDelete: true }),
+        ],
+      }),
+    )
+
+    await toggle(wrapper)
+
+    // Ни «Править», ни карандаша: в ленте только чтение и «Удалить».
+    expect(wrapper.find('[data-test="almanac-edit"]').exists()).toBe(false)
+    expect(wrapper.text()).not.toContain('Править')
+    expect(wrapper.findAll('[data-test="almanac-delete"]')).toHaveLength(2)
+  })
+
+  it('в заголовке секции нет счётчика записей и авторов', async () => {
+    const wrapper = await mountAlmanac(
+      makeAlmanac({ entries: [diaryEntry(), memoryEntry()] }),
+    )
+
+    const title = wrapper.get('summary').text()
+
+    expect(title).toContain('Альманах')
+    expect(title).not.toContain('записи')
+    expect(title).not.toContain('автор')
+    expect(wrapper.find('[data-test="almanac-count"]').exists()).toBe(false)
   })
 
   it('ошибка загрузки объясняется словами', async () => {

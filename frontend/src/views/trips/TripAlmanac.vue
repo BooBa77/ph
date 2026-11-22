@@ -33,7 +33,7 @@ import TripAlmanacMemoryModal from '@/views/trips/TripAlmanacMemoryModal.vue'
  *
  * - **Секция, а не вкладка.** Свёрнутость — `<details>`, состояние — в
  *   `localStorage` на поход, как у «Снаряжения» и «Аптечки».
- * - **Читать — без кнопок.** Инструменты («Править», «Удалить», выбор места
+ * - **Читать — без кнопок.** Инструменты («Удалить», выбор места
  *   и «Написать») прячутся кнопкой «⋯» в заголовке.
  * - **Права приходят с сервера.** `canWrite` — участник может писать
  *   воспоминания, `canManage` — организатор может удалять любую строку.
@@ -149,39 +149,12 @@ onMounted(() => {
 
 const canWrite = computed(() => almanac.value?.canWrite ?? false)
 const canManage = computed(() => almanac.value?.canManage ?? false)
+
+/**
+ * Есть ли что показывать. Число записей в заголовке не выводим: заказчик
+ * попросил убрать счётчик, а пустое состояние проверяется по списку.
+ */
 const entryCount = computed(() => almanac.value?.entries.length ?? 0)
-
-const authorCount = computed(
-  () => new Set((almanac.value?.entries ?? []).map((entry) => entry.author.userId)).size,
-)
-
-const countText = computed(() => {
-  if (entryCount.value === 0) return ''
-  return `${entryCount.value} ${entriesWord(entryCount.value)}`
-})
-
-function entriesWord(count: number): string {
-  const tail = count % 100
-  if (tail >= 11 && tail <= 14) return 'записей'
-  const last = count % 10
-  if (last === 1) return 'запись'
-  if (last >= 2 && last <= 4) return 'записи'
-  return 'записей'
-}
-
-const authorsText = computed(() =>
-  authorCount.value === 0
-    ? ''
-    : `${authorCount.value} ${authorsWord(authorCount.value)}`,
-)
-
-function authorsWord(count: number): string {
-  const last = count % 10
-  if (count % 100 >= 11 && count % 100 <= 14) return 'авторов'
-  if (last === 1) return 'автор'
-  if (last >= 2 && last <= 4) return 'автора'
-  return 'авторов'
-}
 
 // ───────────────────────────── дни и группы ─────────────────────────────
 
@@ -409,20 +382,6 @@ function openMemory(): void {
     : { entryId: null, place: selectedPlace(), body: '' }
 }
 
-function openEdit(entry: AlmanacEntry): void {
-  actionError.value = null
-  modalError.value = null
-
-  modal.value = {
-    entryId: entry.id,
-    place: {
-      placement: entry.placement ?? 'after',
-      dayIndex: entry.dayIndex ?? undefined,
-    },
-    body: entry.body,
-  }
-}
-
 function closeModal(): void {
   if (isSaving.value) return
   modal.value = null
@@ -498,12 +457,7 @@ function entryTime(iso: string): string {
     <summary
       class="relative cursor-pointer select-none px-4 py-3 text-sm font-medium text-text"
     >
-      <span class="inline-block max-w-full truncate align-bottom">
-        Альманах
-        <span v-if="countText" class="ml-1 text-xs font-normal text-muted" data-test="almanac-count">
-          {{ countText }}<template v-if="authorsText"> · {{ authorsText }}</template>
-        </span>
-      </span>
+      <span class="inline-block max-w-full truncate align-bottom">Альманах</span>
 
       <button
         v-if="almanac && (canWrite || canManage)"
@@ -618,17 +572,13 @@ function entryTime(iso: string): string {
                   {{ entryTime(entry.createdAt) }}
                 </span>
 
+                <!--
+                  Из ленты ничего не правится: чужую запись админ не
+                  редактирует (только удаляет), а своё воспоминание человек
+                  дописывает кнопкой «Дописать» в инструментах — там же, где
+                  выбирал место. Дневниковая строка правится в дневнике.
+                -->
                 <span class="ml-auto flex shrink-0 gap-2">
-                  <button
-                    v-if="entry.canEdit && !toolsHidden"
-                    type="button"
-                    class="cursor-pointer text-xs text-primary underline transition-colors hover:text-text"
-                    data-test="almanac-edit"
-                    @click="openEdit(entry)"
-                  >
-                    Править
-                  </button>
-
                   <button
                     v-if="entry.canDelete && !toolsHidden"
                     type="button"
