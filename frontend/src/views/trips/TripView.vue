@@ -24,7 +24,6 @@ import { useOfflineStore } from '@/stores/offline'
 import { applyPresence } from '@/utils/presence'
 import { formatRub } from '@/utils/money'
 import GuestTripView from '@/views/trips/GuestTripView.vue'
-import TripAlmanac from '@/views/trips/TripAlmanac.vue'
 import TripDiary from '@/views/trips/TripDiary.vue'
 import TripFinance from '@/views/trips/TripFinance.vue'
 import TripFirstAid from '@/views/trips/TripFirstAid.vue'
@@ -126,7 +125,6 @@ const IMPLEMENTED: TripTabCode[] = [
   'firstAid',
   'finance',
   'diary',
-  'almanac',
 ]
 
 const permissions = ref<TripTabPermission[]>([])
@@ -592,16 +590,13 @@ const myParticipant = ref<TripParticipant | null>(null)
  *
  * Своя строка состава грузится отдельным запросом и приходит позже вкладок;
  * чтобы «Залог участия» не мигал, считаем участником и по набору вкладок:
- * гостю бэкенд отдаёт только «Гостевую» — и «Альманах» завершённого похода
- * (22.11.2026). Второй код в счёт не идёт: гость им не становится.
+ * гостю бэкенд отдаёт только «Гостевую». С 22.11.2026 второй вкладки
+ * у гостя нет: альманах — секция «Гостевой», а не отдельная вкладка.
  */
 const isTripParticipant = computed(
   () =>
     myParticipant.value !== null ||
-    permissions.value.some(
-      (permission) =>
-        permission.code !== 'guest' && permission.code !== 'almanac',
-    ),
+    permissions.value.some((permission) => permission.code !== 'guest'),
 )
 const presenceDismissed = ref(false)
 const isMarkingPresence = ref(false)
@@ -1022,21 +1017,10 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
 
       <TripDiary v-else-if="activeTab === 'diary'" :trip="trip" />
 
-      <!--
-        «Альманах» (22.11.2026) — вкладка завершённого похода, и её видит
-        и гость. Собирает организатор или соорганизатор: у них кнопка,
-        остальные видят уже собранный текст.
-      -->
-      <TripAlmanac
-        v-else-if="activeTab === 'almanac'"
-        :trip="trip"
-        :can-assemble="isOrganizer || isCoOrganizer"
-      />
-
       <p v-else class="text-sm text-muted" data-test="tab-soon">
         Вкладка «{{ displayTabs.find((item) => item.code === activeTab)?.label }}» ещё не готова:
         сейчас работают «Гостевая», «Участники», «Ночёвки», «Питание», «Трансфер»,
-        «Снаряжение», «Аптечка», «Бухгалтерия», «Дневник» и «Альманах».
+        «Снаряжение», «Аптечка», «Бухгалтерия» и «Дневник».
       </p>
 
       <!--

@@ -12,6 +12,7 @@ import { MessageAction } from './entities/message-action.entity';
 import { Role } from './entities/role.entity';
 import { RoleTabPermission } from './entities/role-tab-permission.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
+import { TripAlmanacEntry } from './entities/trip-almanac-entry.entity';
 import { TripDiaryEntry } from './entities/trip-diary-entry.entity';
 import { TripMealAllocation } from './entities/trip-meal-allocation.entity';
 import { TripProduct } from './entities/trip-product.entity';
@@ -50,6 +51,7 @@ import { TripFinanceEventsController } from './trip-finance-events.controller';
 import { TripFinanceService } from './trip-finance.service';
 import { TripDiaryController } from './trip-diary.controller';
 import { TripDiaryEventsController } from './trip-diary-events.controller';
+import { TripAlmanacService } from './trip-almanac.service';
 import { TripDiaryService } from './trip-diary.service';
 import { TripMyMealsController } from './trip-my-meals.controller';
 import { TripRouteController } from './trip-route.controller';
@@ -89,6 +91,7 @@ import { ObjectsService } from './objects.service';
       Trip,
       TripDateVariant,
       TripDiaryEntry,
+      TripAlmanacEntry,
       TripMeal,
       TripMealDish,
       TripMealLine,
@@ -149,6 +152,7 @@ import { ObjectsService } from './objects.service';
     TripEventsService,
     TripFinanceService,
     TripDiaryService,
+    TripAlmanacService,
     TripMealsService,
     TripRouteService,
     TripTransferService,
@@ -162,6 +166,7 @@ import { ObjectsService } from './objects.service';
     TripEventsService,
     TripFinanceService,
     TripDiaryService,
+    TripAlmanacService,
     TripMealsService,
     TripRouteService,
     TripTransferService,

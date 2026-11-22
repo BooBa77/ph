@@ -43,7 +43,6 @@ const ALL_TABS = [
   'firstAid',
   'finance',
   'diary',
-  'almanac',
 ];
 
 /**

@@ -1,225 +1,323 @@
-import { createPinia, setActivePinia } from 'pinia'
 import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils'
+import { defineComponent, h } from 'vue'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { ApiError } from '@/api/errors'
-import type { Trip } from '@/types/trips'
 import TripAlmanacView from '@/views/trips/TripAlmanac.vue'
 
 /**
- * Вкладка «Альманах» (22.11.2026).
+ * Секция «Альманах» в «Гостевой» (22.11.2026).
  *
  * Проверяем решения заказчика, а не вёрстку:
  *
- * 1. Собирает организатор (и соорганизатор) — кнопкой «Собрать альманах»;
- * 2. в альманах попадают только помеченные записи (сервер их уже отфильтровал);
- * 3. формат — хронология по дате с разделителями «День N · дата», записи
- *    с автором и markdown;
- * 4. записи не правятся: на экране нет ни «Править», ни «Удалить»;
- * 5. упоминания `[[user:ID]]` — ссылки на профиль.
+ * 1. это секция «Гостевой», свёрнутая и помнящая состояние;
+ * 2. группа «До похода» — после допоходных дневников, «День N» — после
+ *    дневников этого дня, «После похода» — в самом конце;
+ * 3. воспоминание идёт после дневников дня и без времени;
+ * 4. инструменты скрываются кнопкой «⋯»;
+ * 5. удалять строки может только организатор (`canDelete` с сервера);
+ * 6. на день — одна своя запись, кнопка открывает её на дописывание.
  */
 const mocks = vi.hoisted(() => ({
   getTripAlmanac: vi.fn(),
+  createAlmanacEntry: vi.fn(),
+  updateAlmanacEntry: vi.fn(),
+  deleteAlmanacEntry: vi.fn(),
   push: vi.fn(),
 }))
 
 vi.mock('@/api/diary', () => ({
   getTripAlmanac: mocks.getTripAlmanac,
+  createAlmanacEntry: mocks.createAlmanacEntry,
+  updateAlmanacEntry: mocks.updateAlmanacEntry,
+  deleteAlmanacEntry: mocks.deleteAlmanacEntry,
 }))
 
 vi.mock('vue-router', () => ({
   useRouter: () => ({ push: mocks.push }),
 }))
 
+/** Редактор подменяем: у настоящего contenteditable-механика на Range. */
+const MarkdownEditorStub = defineComponent({
+  name: 'MarkdownEditor',
+  props: {
+    modelValue: { type: String, default: '' },
+  },
+  emits: ['update:modelValue'],
+  setup() {
+    return () => h('div', { 'data-test': 'md-editor' })
+  },
+})
+
+const mountOptions = { global: { stubs: { MarkdownEditor: MarkdownEditorStub } } }
+
+/** Набрать текст в инструменте-чате. */
+async function typeInModal(
+  wrapper: ReturnType<typeof mount>,
+  text: string,
+): Promise<void> {
+  wrapper.findComponent(MarkdownEditorStub).vm.$emit('update:modelValue', text)
+  await flushPromises()
+}
+
 function local(day: number, hours = 10): string {
   return new Date(2026, 10, day, hours).toISOString()
 }
 
-function makeTrip(): Trip {
+function makeTrip() {
   return {
     id: '679',
-    organizerUserId: 'org-1',
-    goalObjectId: '10',
-    goalObject: { id: '10', name: 'Витязь', type: 'скальник', url: null },
-    announcement: null,
-    routeText: '',
-    requirementsText: null,
-    hasGuitar: false,
-    visibility: 'public',
-    isRecruitmentClosed: false,
-    activityTypeIds: [],
-    status: 'decided',
     startsAt: local(14),
     endsAt: local(18),
-    dateVariants: [],
-    isCommercial: false,
-    isOfficial: false,
-    openParticipation: true,
-    priceRub: null,
-    priceNote: null,
     cancelledAt: null,
-    completedAt: local(18, 20),
-    createdAt: local(1),
-    updatedAt: local(1),
   }
 }
 
-function almanacEntry(overrides: Record<string, unknown> = {}) {
+function diaryEntry(overrides: Record<string, unknown> = {}) {
   return {
-    id: 'e-1',
+    id: 'd-1',
+    kind: 'diary',
     body: 'Дошли до озера.',
     createdAt: local(16, 12),
+    updatedAt: null,
+    placement: null,
+    dayIndex: null,
     author: { userId: 'u-1', displayName: 'Анна', avatarUrl: null },
+    canEdit: false,
+    canDelete: false,
     ...overrides,
   }
 }
 
-async function mountAlmanac(canAssemble = false) {
+function memoryEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    id: 'm-1',
+    kind: 'memory',
+    body: 'Вечером был самый красивый закат.',
+    createdAt: local(16, 20),
+    updatedAt: local(16, 20),
+    placement: 'day',
+    dayIndex: 2,
+    author: { userId: 'u-2', displayName: 'Борис', avatarUrl: null },
+    canEdit: false,
+    canDelete: false,
+    ...overrides,
+  }
+}
+
+function makeAlmanac(overrides: Record<string, unknown> = {}) {
+  return {
+    tripId: '679',
+    completedAt: local(18, 20),
+    canWrite: true,
+    canManage: false,
+    entries: [],
+    ...overrides,
+  }
+}
+
+async function mountAlmanac(almanac = makeAlmanac()) {
+  mocks.getTripAlmanac.mockResolvedValue(almanac)
+
   const wrapper = mount(TripAlmanacView, {
-    props: { trip: makeTrip(), canAssemble },
-    global: { plugins: [createPinia()] },
+    props: { trip: makeTrip() },
+    ...mountOptions,
   })
   await flushPromises()
 
   return wrapper
 }
 
-describe('вкладка «Альманах»', () => {
-  enableAutoUnmount(afterEach)
+/** `<details>` в jsdom не переключается кликом — ставим open сами. */
+async function toggle(wrapper: ReturnType<typeof mount>): Promise<void> {
+  const section = wrapper.get('[data-test="trip-almanac"]')
+  ;(section.element as HTMLDetailsElement).open = true
+  await section.trigger('toggle')
+  await flushPromises()
+}
 
+enableAutoUnmount(afterEach)
+
+describe('секция «Альманах»', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    setActivePinia(createPinia())
+    window.localStorage.clear()
   })
 
-  it('участник видит альманах сразу, без кнопки сборки', async () => {
-    mocks.getTripAlmanac.mockResolvedValue({
-      tripId: '679',
-      completedAt: local(18, 20),
-      entries: [
-        almanacEntry(),
-        almanacEntry({
-          id: 'e-2',
-          body: 'Второй день: ветер.',
-          createdAt: local(17, 9),
-          author: { userId: 'u-2', displayName: 'Борис', avatarUrl: null },
-        }),
-      ],
-    })
+  it('свёрнутая секция «Гостевой» помнит состояние на поход', async () => {
+    const wrapper = await mountAlmanac()
 
-    const wrapper = await mountAlmanac(false)
+    expect(wrapper.get('[data-test="trip-almanac"]').element.hasAttribute('open')).toBe(false)
 
-    expect(mocks.getTripAlmanac).toHaveBeenCalledWith('679')
-    expect(wrapper.find('[data-test="almanac-assemble"]').exists()).toBe(false)
+    await toggle(wrapper)
 
-    // Хронология по дате: 14 ноября — старт, значит 16-е и 17-е — дни 3 и 4.
-    const days = wrapper.findAll('[data-test="almanac-day"]').map((day) => day.text())
-    expect(days).toHaveLength(2)
-    expect(days[0]).toContain('День 3 ·')
-    expect(days[1]).toContain('День 4 ·')
+    expect(
+      JSON.parse(window.localStorage.getItem('ph.tripGuestView.open.679') ?? '{}'),
+    ).toMatchObject({ almanac: true })
 
-    expect(wrapper.findAll('[data-test="almanac-entry"]')).toHaveLength(2)
-    expect(wrapper.get('[data-test="almanac-author"]').text()).toBe('Анна')
-    expect(wrapper.get('[data-test="almanac-entry-body"]').text()).toContain(
-      'Дошли до озера.',
-    )
-  })
-
-  it('организатор собирает альманах кнопкой', async () => {
-    mocks.getTripAlmanac.mockResolvedValue({
-      tripId: '679',
-      completedAt: local(18, 20),
-      entries: [almanacEntry()],
-    })
-
-    const wrapper = await mountAlmanac(true)
-
-    // До нажатия — приглашение, а не пустой экран и не запрос.
-    expect(mocks.getTripAlmanac).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-test="almanac-idle"]').exists()).toBe(true)
-
-    const button = wrapper.get('[data-test="almanac-assemble"]')
-    expect(button.text()).toBe('Собрать альманах')
-
-    await button.trigger('click')
+    const again = mount(TripAlmanacView, { props: { trip: makeTrip() }, ...mountOptions })
     await flushPromises()
 
-    expect(mocks.getTripAlmanac).toHaveBeenCalledTimes(1)
-    expect(wrapper.findAll('[data-test="almanac-entry"]')).toHaveLength(1)
-    // Пересобрать можно: автор мог снять пометку уже после первого раза.
-    expect(wrapper.get('[data-test="almanac-assemble"]').text()).toBe(
-      'Собрать заново',
+    expect(again.get('[data-test="trip-almanac"]').element.hasAttribute('open')).toBe(true)
+  })
+
+  it('группы: «До похода», дни похода и «После похода»', async () => {
+    const wrapper = await mountAlmanac(
+      makeAlmanac({
+        entries: [
+          diaryEntry({ id: 'd-before', body: 'Закупили крупу.', createdAt: local(10, 12) }),
+          diaryEntry({ id: 'd-day2', body: 'День на озере.', createdAt: local(15, 12) }),
+          memoryEntry({ id: 'm-after', placement: 'after', dayIndex: null, body: 'Спасибо всем!' }),
+        ],
+      }),
+    )
+
+    await toggle(wrapper)
+    const days = wrapper.findAll('[data-test="almanac-day"]').map((day) => day.text())
+
+    expect(days[0]).toContain('До похода')
+    expect(days[1]).toContain('День 2')
+    expect(days[days.length - 1]).toContain('После похода')
+  })
+
+  it('воспоминание — после дневника дня и без времени', async () => {
+    const wrapper = await mountAlmanac(
+      makeAlmanac({
+        entries: [
+          memoryEntry({ id: 'm-day2', body: 'Моё воспоминание.' }),
+          diaryEntry({ id: 'd-day2', body: 'Дневниковая запись.', createdAt: local(15, 9) }),
+        ],
+      }),
+    )
+
+    await toggle(wrapper)
+    const bodies = wrapper.findAll('[data-test="almanac-entry-body"]').map((row) => row.text())
+
+    expect(bodies[0]).toContain('Дневниковая запись')
+    expect(bodies[1]).toContain('Моё воспоминание')
+    // Время есть только у дневниковой строки.
+    expect(wrapper.findAll('[data-test="almanac-entry-time"]')).toHaveLength(1)
+  })
+
+  it('инструменты скрываются кнопкой «⋯»: читать можно без кнопок', async () => {
+    const wrapper = await mountAlmanac(
+      makeAlmanac({
+        entries: [memoryEntry({ canDelete: true })],
+      }),
+    )
+
+    await toggle(wrapper)
+    expect(wrapper.find('[data-test="almanac-compose"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="almanac-delete"]').exists()).toBe(true)
+
+    await wrapper.get('[data-test="almanac-tools-toggle"]').trigger('click')
+
+    expect(wrapper.find('[data-test="almanac-compose"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="almanac-delete"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="almanac-entry-body"]').exists()).toBe(true)
+  })
+
+  it('гостю инструментов нет: только чтение', async () => {
+    const wrapper = await mountAlmanac(
+      makeAlmanac({
+        canWrite: false,
+        canManage: false,
+        entries: [memoryEntry({ canDelete: false })],
+      }),
+    )
+
+    await toggle(wrapper)
+
+    expect(wrapper.find('[data-test="almanac-tools-toggle"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="almanac-compose"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="almanac-delete"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="almanac-entry-body"]').exists()).toBe(true)
+  })
+
+  it('организатор удаляет строку в два нажатия', async () => {
+    const removed = makeAlmanac({ canManage: true, entries: [] })
+    mocks.deleteAlmanacEntry.mockResolvedValue(removed)
+
+    const wrapper = await mountAlmanac(
+      makeAlmanac({ canManage: true, entries: [memoryEntry({ canDelete: true })] }),
+    )
+
+    await toggle(wrapper)
+    const button = wrapper.get('[data-test="almanac-delete"]')
+
+    expect(button.text()).toBe('Удалить')
+    await button.trigger('click')
+    expect(button.text()).toBe('Точно?')
+    expect(mocks.deleteAlmanacEntry).not.toHaveBeenCalled()
+
+    await wrapper.get('[data-test="almanac-delete"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.deleteAlmanacEntry).toHaveBeenCalledWith('679', 'm-1')
+  })
+
+  it('на день одна своя запись: кнопка «Дописать», а не вторая запись', async () => {
+    const wrapper = await mountAlmanac(
+      makeAlmanac({
+        entries: [memoryEntry({ id: 'm-mine', canEdit: true, author: { userId: 'me', displayName: 'Я', avatarUrl: null } })],
+      }),
+    )
+
+    await toggle(wrapper)
+    await wrapper.get('[data-test="almanac-place"]').setValue('day:2')
+
+    expect(wrapper.get('[data-test="almanac-write"]').text()).toBe('Дописать')
+  })
+
+  it('создание: место выбрано снаружи, в инструменте-чате дня нет', async () => {
+    mocks.createAlmanacEntry.mockResolvedValue(
+      makeAlmanac({ entries: [memoryEntry({ canEdit: true })] }),
+    )
+
+    const wrapper = await mountAlmanac()
+    await toggle(wrapper)
+
+    await wrapper.get('[data-test="almanac-place"]').setValue('day:3')
+    await wrapper.get('[data-test="almanac-write"]').trigger('click')
+
+    const modal = wrapper.get('[data-test="almanac-memory-modal"]')
+    expect(modal.text()).not.toContain('День 3')
+    expect(modal.text()).toContain('Воспоминание')
+
+    await typeInModal(wrapper, 'Было холодно, но красиво.')
+    await modal.get('[data-test="almanac-memory-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.createAlmanacEntry).toHaveBeenCalledWith(
+      '679',
+      { placement: 'day', dayIndex: 3 },
+      'Было холодно, но красиво.',
     )
   })
 
-  it('до завершения похода показывает ответ сервера', async () => {
-    mocks.getTripAlmanac.mockRejectedValue(
-      new ApiError(409, 'Альманах собирается после завершения похода'),
+  it('правка своего воспоминания не меняет место вставки', async () => {
+    mocks.updateAlmanacEntry.mockResolvedValue(makeAlmanac())
+
+    const wrapper = await mountAlmanac(
+      makeAlmanac({ entries: [memoryEntry({ id: 'm-mine', canEdit: true })] }),
     )
 
-    const wrapper = await mountAlmanac(false)
+    await toggle(wrapper)
+    await wrapper.get('[data-test="almanac-edit"]').trigger('click')
+    await typeInModal(wrapper, 'Дописал.')
+    await wrapper.get('[data-test="almanac-memory-save"]').trigger('click')
+    await flushPromises()
 
-    expect(wrapper.get('[data-test="almanac-error"]').text()).toContain(
-      'после завершения похода',
-    )
-    expect(wrapper.find('[data-test="almanac-entry"]').exists()).toBe(false)
+    expect(mocks.updateAlmanacEntry).toHaveBeenCalledWith('679', 'm-mine', 'Дописал.')
   })
 
-  it('пустой альманах объясняет, почему записей нет', async () => {
-    mocks.getTripAlmanac.mockResolvedValue({
-      tripId: '679',
-      completedAt: local(18, 20),
-      entries: [],
-    })
+  it('ошибка загрузки объясняется словами', async () => {
+    mocks.getTripAlmanac.mockRejectedValue(new ApiError(409, 'Альманах собирается после завершения похода'))
 
-    const wrapper = await mountAlmanac(false)
+    const wrapper = mount(TripAlmanacView, { props: { trip: makeTrip() }, ...mountOptions })
+    await flushPromises()
 
-    expect(wrapper.get('[data-test="almanac-empty"]').text()).toContain(
-      'не пометили',
-    )
-  })
-
-  it('записи не правятся: на экране нет кнопок правки и удаления', async () => {
-    mocks.getTripAlmanac.mockResolvedValue({
-      tripId: '679',
-      completedAt: local(18, 20),
-      entries: [almanacEntry()],
-    })
-
-    const wrapper = await mountAlmanac(false)
-
-    expect(wrapper.text()).not.toContain('Править')
-    expect(wrapper.text()).not.toContain('Удалить')
-  })
-
-  it('упоминание [[user:ID]] ведёт на профиль', async () => {
-    mocks.getTripAlmanac.mockResolvedValue({
-      tripId: '679',
-      completedAt: local(18, 20),
-      entries: [
-        almanacEntry({
-          body: 'Шли с [[user:u-2]] весь день.',
-          author: { userId: 'u-1', displayName: 'Анна', avatarUrl: null },
-        }),
-        almanacEntry({
-          id: 'e-2',
-          body: 'Отвечаю.',
-          createdAt: local(16, 13),
-          author: { userId: 'u-2', displayName: 'Борис', avatarUrl: null },
-        }),
-      ],
-    })
-
-    const wrapper = await mountAlmanac(false)
-    const link = wrapper.get('[data-test="almanac-entry-body"] a[data-user-id]')
-
-    expect(link.text()).toBe('Борис')
-    expect(link.attributes('href')).toBe('/people/u-2')
-
-    await link.trigger('click')
-    expect(mocks.push).toHaveBeenCalledWith({
-      name: 'person',
-      params: { id: 'u-2' },
-    })
+    await toggle(wrapper)
+    expect(wrapper.get('[data-test="almanac-error"]').text()).toContain('после завершения')
   })
 })

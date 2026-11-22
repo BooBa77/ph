@@ -19,12 +19,20 @@ vi.mock('@/api/trips', () => ({
   sendTripMessage: vi.fn(),
 }))
 vi.mock('@/api/objects', () => ({ listObjectsByIds: vi.fn() }))
+vi.mock('@/api/diary', () => ({
+  getTripAlmanac: vi.fn(),
+  createAlmanacEntry: vi.fn(),
+  updateAlmanacEntry: vi.fn(),
+  deleteAlmanacEntry: vi.fn(),
+}))
 
 import * as api from '@/api/trips'
 import * as objects from '@/api/objects'
+import * as diary from '@/api/diary'
 
 const mocked = vi.mocked(api)
 const mockedObjects = vi.mocked(objects)
+const mockedDiary = vi.mocked(diary)
 
 function makeGuest(overrides: Partial<GuestTrip> = {}): GuestTrip {
   return {
@@ -36,6 +44,8 @@ function makeGuest(overrides: Partial<GuestTrip> = {}): GuestTrip {
     status: 'decided',
     startsAt: '2027-05-05T00:00:00.000Z',
     endsAt: '2027-05-09T00:00:00.000Z',
+    completedAt: null,
+    cancelledAt: null,
     participants: [],
     isCommercial: true,
     priceRub: 5000,
@@ -56,9 +66,17 @@ async function mountView(): Promise<ReturnType<typeof mount>> {
 describe('GuestTripView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.localStorage.clear()
     mocked.fetchGuestTrip.mockResolvedValue(makeGuest())
     mocked.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
     mockedObjects.listObjectsByIds.mockResolvedValue([])
+    mockedDiary.getTripAlmanac.mockResolvedValue({
+      tripId: '7',
+      completedAt: '2026-11-18T10:00:00.000Z',
+      canWrite: false,
+      canManage: false,
+      entries: [],
+    })
   })
 
   it('показывает обзор: цель, даты, статус, рамку, маршрут и требования', async () => {
@@ -238,5 +256,41 @@ describe('GuestTripView', () => {
     const wrapper = await mountView()
 
     expect(wrapper.find('[data-test="guest-error"]').text()).toContain('закрыт')
+  })
+
+  /**
+   * Решение заказчика 22.11.2026: «обе секции „гостевой чат“ и „Альманах“
+   * сделать сворачиваемыми, как Снаряжение и Питание. Гостевая должна
+   * помнить состояние при переходах между закладками».
+   */
+  it('гостевой чат — свёрнутая секция, состояние помнится между заходами', async () => {
+    const first = await mountView()
+    const section = first.get('[data-test="guest-chat-section"]')
+
+    expect(section.element.hasAttribute('open')).toBe(false)
+
+    await section.get('summary').trigger('click')
+    // Клик по summary — нативное поведение браузера; в jsdom ставим open сами.
+    ;(section.element as HTMLDetailsElement).open = true
+    await section.trigger('toggle')
+    expect(JSON.parse(window.localStorage.getItem('ph.tripGuestView.open.7') ?? '{}')).toMatchObject({
+      chat: true,
+    })
+
+    const second = await mountView()
+    expect(second.get('[data-test="guest-chat-section"]').element.hasAttribute('open')).toBe(true)
+  })
+
+  it('альманах — секция «Гостевой» и только у завершённого похода', async () => {
+    const planned = await mountView()
+    expect(planned.find('[data-test="trip-almanac"]').exists()).toBe(false)
+
+    mocked.fetchGuestTrip.mockResolvedValue(
+      makeGuest({ completedAt: '2026-11-18T10:00:00.000Z' }),
+    )
+
+    const completed = await mountView()
+    expect(completed.find('[data-test="trip-almanac"]').exists()).toBe(true)
+    expect(mockedDiary.getTripAlmanac).toHaveBeenCalledWith('7')
   })
 })

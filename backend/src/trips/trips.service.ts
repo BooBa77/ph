@@ -65,7 +65,6 @@ import { conflictMessage, removeConflictingGear } from '../gear/gear-uid';
 import { TripGear } from '../gear/entities/trip-gear.entity';
 import { extractObjectIds } from './route-links';
 import {
-  ALMANAC_TAB,
   COMPLETED_EDITABLE_TABS,
   COORGANIZER_ROLE_CODE,
   MEMBERS_TAB,
@@ -566,21 +565,11 @@ export class TripsService {
 
     if (!isParticipant) {
       /**
-       * Гость видит «Гостевую» и — у завершённого похода — «Альманах»
-       * (22.11.2026). Заказчик: «вкладка «Альманах» — видна всем, кто видит
-       * поход». Это единственное исключение из правила «гостю — только
-       * Гостевая»: альманах состоит из записей, которые авторы сами
-       * разрешили включить, чужих дневников он не открывает.
-       *
-       * До завершения вкладки нет: собирать ещё нечего, а пустой раздел
-       * обещал бы текст, которого не будет.
+       * Гость видит только «Гостевую» (21.10.2026). Альманах больше
+       * не отдельная вкладка (22.11.2026): он — секция «Гостевой», и гость
+       * читает его там же, куда и так имеет доступ.
        */
-      const guestTabs: TripTab[] =
-        trip.completedAt !== null ? ['guest', ALMANAC_TAB] : ['guest'];
-
-      return {
-        tabs: guestTabs.map((code) => ({ code, canEdit: false })),
-      };
+      return { tabs: [{ code: 'guest', canEdit: false }] };
     }
 
     const editable = await this.editableTabs(manager, trip, userId);
@@ -617,8 +606,7 @@ export class TripsService {
       tabs: TRIP_TABS.filter(
         (code) =>
           (code !== OFFICIAL_ONLY_TAB || trip.isOfficial) &&
-          (code !== NIGHTS_TAB || hasNights) &&
-          (code !== ALMANAC_TAB || trip.completedAt !== null),
+          (code !== NIGHTS_TAB || hasNights),
       ).map((code) => ({ code, canEdit: editable.has(code) })),
     };
   }

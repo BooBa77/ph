@@ -31,10 +31,13 @@ import { SmtpService } from './../src/email/services/smtp.service';
  *    и на синхронизацию; отказавшийся от участия — тоже.
  * 6. **Мусор отвергается словами**: пустая запись, правка раньше
  *    создания, не-UUID.
- * 7. **Альманах собирается после завершения из помеченных записей**
- *    (22.11.2026). До завершения — 409; в него не попадает запись с
- *    снятой пометкой; старый клиент без поля пометку не переключает;
- *    видит альманах и гость завершённого похода.
+ * 7. **Альманах — секция «Гостевой», а не вкладка** (22.11.2026).
+ *    Собирается после завершения из помеченных записей и воспоминаний
+ *    участников; до завершения — 409; запись со снятой пометкой исчезает;
+ *    старый клиент без поля пометку не переключает; видит альманах и гость
+ *    завершённого похода; воспоминание живёт в своём слоте (одно на день)
+ *    и правится без смены места; удаляет строки только организатор;
+ *    после возвращения дневник не пополняется.
  *
  * Поход, состав и участники заводятся напрямую в базе: правила походов
  * проверены в `trips.e2e-spec.ts`, здесь важно поведение дневника.
@@ -78,7 +81,7 @@ describe('Дневник похода (e2e)', () => {
   }
 
   function call(
-    method: 'get' | 'post',
+    method: 'get' | 'post' | 'put' | 'delete',
     path: string,
     token: string,
     body?: unknown,
@@ -106,6 +109,35 @@ describe('Дневник похода (e2e)', () => {
 
   function almanac(token: string, id: string = almanacTripId) {
     return call('get', `/api/trips/${id}/almanac`, token);
+  }
+
+  /** Создать воспоминание в слоте: до похода, день N или в конце. */
+  function createMemory(
+    token: string,
+    place: { placement: string; dayIndex?: number },
+    body: string,
+  ) {
+    return call('post', `/api/trips/${almanacTripId}/almanac/entries`, token, {
+      ...place,
+      body,
+    });
+  }
+
+  function editMemory(token: string, entryId: string, body: string) {
+    return call(
+      'put',
+      `/api/trips/${almanacTripId}/almanac/entries/${entryId}`,
+      token,
+      { body },
+    );
+  }
+
+  function deleteMemory(token: string, entryId: string) {
+    return call(
+      'delete',
+      `/api/trips/${almanacTripId}/almanac/entries/${entryId}`,
+      token,
+    );
   }
 
   /** Запись в том виде, в каком её пришлёт устройство. */
@@ -509,15 +541,26 @@ describe('Дневник похода (e2e)', () => {
     );
   });
 
-  it('вкладку «Альманах» видит гость завершённого похода', async () => {
+  it('вкладку «Альманах» больше нет: гость видит только «Гостевую»', async () => {
     const completed = await call(
       'get',
       `/api/trips/${almanacTripId}/tabs`,
       strangerToken,
     ).expect(200);
+    // С 22.11.2026 альманах — секция «Гостевой», отдельной вкладки нет.
     expect(completed.body.tabs.map((tab: { code: string }) => tab.code)).toEqual(
-      ['guest', 'almanac'],
+      ['guest'],
     );
+
+    // И у участника завершённого похода списка вкладок без «almanac».
+    const participant = await call(
+      'get',
+      `/api/trips/${almanacTripId}/tabs`,
+      memberToken,
+    ).expect(200);
+    expect(
+      participant.body.tabs.map((tab: { code: string }) => tab.code),
+    ).not.toContain('almanac');
 
     // А до завершения вкладки нет — собирать ещё нечего.
     const running = await call(
@@ -528,5 +571,152 @@ describe('Дневник похода (e2e)', () => {
     expect(running.body.tabs.map((tab: { code: string }) => tab.code)).toEqual([
       'guest',
     ]);
+  });
+
+  it('воспоминание встаёт в выбранный слот и правится без смены места', async () => {
+    const created = await createMemory(
+      organizerToken,
+      { placement: 'day', dayIndex: 2 },
+      'Второй день: ветер и озеро.',
+    ).expect(200);
+
+    const memory = created.body.entries.find(
+      (row: { kind: string; placement: string | null; dayIndex: number | null }) =>
+        row.kind === 'memory' && row.placement === 'day' && row.dayIndex === 2,
+    );
+
+    expect(memory).toMatchObject({
+      body: 'Второй день: ветер и озеро.',
+      canEdit: true,
+    });
+
+    // На день — одна запись: повтор в тот же слот отвергается словами.
+    const duplicate = await createMemory(
+      organizerToken,
+      { placement: 'day', dayIndex: 2 },
+      'Ещё одно воспоминание того же дня.',
+    ).expect(409);
+    expect(duplicate.body.message).toContain('уже есть');
+
+    const edited = await editMemory(
+      organizerToken,
+      memory.id,
+      'Второй день: дописал вечер.',
+    ).expect(200);
+
+    const after = edited.body.entries.find(
+      (row: { id: string }) => row.id === memory.id,
+    );
+    expect(after).toMatchObject({
+      body: 'Второй день: дописал вечер.',
+      placement: 'day',
+      dayIndex: 2,
+    });
+  });
+
+  it('удаляет строки только организатор, и слот освобождается', async () => {
+    const created = await createMemory(
+      organizerToken,
+      { placement: 'after' },
+      'Спасибо всем — было здорово.',
+    ).expect(200);
+    const memory = created.body.entries.find(
+      (row: { kind: string; placement: string | null }) =>
+        row.kind === 'memory' && row.placement === 'after',
+    );
+
+    // Участник строку удалить не может — даже свою.
+    const own = await createMemory(
+      memberToken,
+      { placement: 'before' },
+      'До похода собирались у Анны.',
+    ).expect(200);
+    const ownMemory = own.body.entries.find(
+      (row: { kind: string; placement: string | null }) =>
+        row.kind === 'memory' && row.placement === 'before',
+    );
+    await deleteMemory(memberToken, ownMemory.id).expect(403);
+
+    // Организатор удаляет воспоминание участника.
+    await deleteMemory(organizerToken, ownMemory.id).expect(200);
+    const afterDelete = await almanac(organizerToken).expect(200);
+    expect(
+      afterDelete.body.entries.some(
+        (row: { id: string }) => row.id === ownMemory.id,
+      ),
+    ).toBe(false);
+
+    // Слот свободен — участник может написать заново.
+    await createMemory(memberToken, { placement: 'before' }, 'Написал заново.').expect(
+      200,
+    );
+
+    await deleteMemory(organizerToken, memory.id).expect(200);
+  });
+
+  it('удаление дневниковой строки снимает пометку, а не стирает дневник', async () => {
+    const created = entry({
+      body: 'Строка, которую организатор уберёт.',
+      createdAt: '2026-11-16T07:00:00.000Z',
+      updatedAt: '2026-11-16T07:00:00.000Z',
+      sharedWithTrip: true,
+    });
+    await syncOn(almanacTripId, organizerToken, [created]).expect(200);
+
+    await deleteMemory(organizerToken, created.id as string).expect(200);
+
+    const after = await almanac(organizerToken).expect(200);
+    expect(
+      after.body.entries.some((row: { id: string }) => row.id === created.id),
+    ).toBe(false);
+
+    // Текст остался в личном дневнике, снята только пометка.
+    const diary = await call(
+      'get',
+      `/api/trips/${almanacTripId}/diary`,
+      organizerToken,
+    ).expect(200);
+    expect(
+      diary.body.entries.find((row: { id: string }) => row.id === created.id),
+    ).toMatchObject({ body: 'Строка, которую организатор уберёт.', sharedWithTrip: false });
+  });
+
+  it('после возвращения дневник не пополняется', async () => {
+    const now = new Date().toISOString();
+    const fresh = entry({ body: 'Запись после возвращения.', createdAt: now, updatedAt: now });
+
+    const response = await syncOn(almanacTripId, organizerToken, [fresh]).expect(400);
+    expect(response.body.message).toContain('воспоминание');
+
+    // Полевая запись, написанная до завершения, доезжает и после него
+    // (офлайн-очередь из похода).
+    const field = entry({
+      body: 'Полевая запись из похода.',
+      createdAt: '2026-11-16T08:00:00.000Z',
+      updatedAt: '2026-11-16T08:00:00.000Z',
+    });
+    await syncOn(almanacTripId, organizerToken, [field]).expect(200);
+  });
+
+  it('о правке альманаха приходит одно непрочитанное личное сообщение', async () => {
+    const conversations = async () =>
+      (
+        await call('get', '/api/conversations', memberToken).expect(200)
+      ).body.conversations.find(
+        (row: { peer: { id: string } | null }) => row.peer?.id === organizerId,
+      )?.unreadCount ?? 0;
+
+    // Первое воспоминание — уведомление может прийти, если его ещё нет.
+    await createMemory(organizerToken, { placement: 'day', dayIndex: 4 }, 'День четвёртый.').expect(
+      200,
+    );
+    const first = await conversations();
+    expect(first).toBeGreaterThan(0);
+
+    // Второе — «такое непрочитанное уже есть», новое не шлём.
+    await createMemory(organizerToken, { placement: 'day', dayIndex: 5 }, 'День пятый.').expect(
+      200,
+    );
+    expect(await conversations()).toBe(first);
   });
 });

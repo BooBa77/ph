@@ -74,6 +74,45 @@ export function tripDayText(
 }
 
 /**
+ * Сколько дней в походе по плану — для альманаха (22.11.2026).
+ *
+ * Альманах режется на группы «День N · дата», и `N` кончается последним
+ * днём похода. Считаем календарные дни между началом и концом: поход
+ * с 14 по 18 ноября — это пять дней. `null` — дат нет или конец раньше
+ * начала (в кривой записи честнее не показывать дни вовсе).
+ */
+export function tripDayCount(
+  trip: TripDayTiming & { endsAt: string | null },
+): number | null {
+  const start = tripStartDate(trip)
+  if (!start || !trip.endsAt) return null
+
+  const end = new Date(trip.endsAt)
+  if (Number.isNaN(end.getTime())) return null
+
+  const days = calendarDaysBetween(start, end)
+  return days < 0 ? null : days + 1
+}
+
+/**
+ * Дата дня похода: первый день — дата старта, дальше по календарю.
+ *
+ * Нужна подписи «День 3 · 16 ноября 2026». Считается прибавлением суток
+ * к локальной полуночи старта, поэтому переход на летнее время не съезжает
+ * на день (то же правило, что у номера дня).
+ */
+export function tripDayDate(trip: TripDayTiming, day: number): Date | null {
+  const start = tripStartDate(trip)
+  if (!start || day < 1) return null
+
+  return new Date(
+    start.getFullYear(),
+    start.getMonth(),
+    start.getDate() + (day - 1),
+  )
+}
+
+/**
  * Разница календарных дат в днях: `at` минус `start`.
  *
  * `Date.UTC` от местных компонент, а не разность моментов времени: иначе

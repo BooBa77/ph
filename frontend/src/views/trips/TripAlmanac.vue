@@ -2,48 +2,128 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
-import { getTripAlmanac } from '@/api/diary'
+import {
+  createAlmanacEntry,
+  deleteAlmanacEntry,
+  getTripAlmanac,
+  updateAlmanacEntry,
+} from '@/api/diary'
 import { ApiError } from '@/api/errors'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
-import type { AlmanacEntry, TripAlmanac } from '@/types/diary'
-import type { Trip } from '@/types/trips'
+import type {
+  AlmanacEntry,
+  AlmanacEntryPlace,
+  TripAlmanac,
+} from '@/types/diary'
 import { markdownToHtml, userToken } from '@/utils/markdown'
-import { tripDayNumber } from '@/utils/tripDay'
+import { tripDayCount, tripDayDate, tripDayNumber } from '@/utils/tripDay'
+import TripAlmanacMemoryModal from '@/views/trips/TripAlmanacMemoryModal.vue'
 
 /**
- * «Альманах» похода — общий текст из записей, которые авторы разрешили
- * включить (22.11.2026).
+ * «Альманах» — секция «Гостевой» (22.11.2026).
  *
- * Заказчик: «собирает организатор или соорганизатор кнопкой «Собрать
- * альманах» после завершения похода»; «в альманах попадают только записи,
- * помеченные автором «можно в альманах»»; «формат: хронология по дате,
- * разделители «День N · дата», записи с автором, markdown; записи
- * не правятся».
+ * Заказчик: «Всё таки не будем создавать отдельную вкладку Альманах. Сделаем
+ * это секцией в Гостевой»; «Чтобы было читабельно, обе секции „гостевой чат“
+ * и „Альманах“ сделать сворачиваемыми, как Снаряжение и Питание. Гостевая
+ * должна помнить состояние при переходах между закладками»; «Нужна кнопка
+ * отображения инструментов редактирования альманаха, чтобы можно было
+ * приятно читать без кнопок „удалить“ и „редактировать“».
  *
  * Отсюда устройство экрана:
  *
- * - **Сборка — действие организатора.** У него вкладка начинается
- *   с кнопки; остальные (участники и гости) видят готовый текст сразу:
- *   им собирать нечего, а ждать нажатия чужой кнопки незачем.
- * - **Записи только читаются.** Ни правки, ни удаления здесь нет: альманах —
- *   компиляция, а не документ с соавторами; поправить свою строку автор
- *   может в своём дневнике.
- * - **День считается на устройстве.** `tripDayNumber` берёт дату старта
- *   по часовому поясу смотрящего — сервер отдаёт моменты времени, а не
- *   календарные дни.
- * - **Упоминания `[[user:ID]]` — ссылки на профиль.** Имена берём у авторов
- *   альманаха: у гостя списка участников нет (он закрыт), а токен чужого
- *   человека всё равно должен открывать профиль, а не показывать UUID.
+ * - **Секция, а не вкладка.** Свёрнутость — `<details>`, состояние — в
+ *   `localStorage` на поход, как у «Снаряжения» и «Аптечки».
+ * - **Читать — без кнопок.** Инструменты («Править», «Удалить», выбор места
+ *   и «Написать») прячутся кнопкой «⋯» в заголовке.
+ * - **Права приходят с сервера.** `canWrite` — участник может писать
+ *   воспоминания, `canManage` — организатор может удалять любую строку.
+ *   Экран не повторяет правила.
+ * - **Место вставки — выбор участника.** «До похода» — после допоходных
+ *   записей дневников, «День N» — после дневников этого дня, «В конце» —
+ *   итоговое воспоминание. Внутри инструмента-чата дня нет: место выбрано
+ *   здесь, кнопкой.
+ * - **Одна запись на день.** Если своё воспоминание в слоте уже есть,
+ *   кнопка открывает его на дописывание, а не создаёт второе.
+ * - **День дневниковой записи считает экран** по часовому поясу смотрящего
+ *   (`tripDayNumber`), поэтому у дневниковых строк нет `dayIndex`.
  */
-const props = defineProps<{ trip: Trip; canAssemble: boolean }>()
+const props = defineProps<{
+  trip: {
+    id: string
+    startsAt: string | null
+    endsAt: string | null
+    cancelledAt: string | null
+  }
+}>()
 
 const router = useRouter()
 
 const almanac = ref<TripAlmanac | null>(null)
 const isLoading = ref(false)
 const error = ref<string | null>(null)
+const actionError = ref<string | null>(null)
 
-/** Собрать (или пересобрать) альманах: это и есть кнопка организатора. */
+/** Инструменты скрыты по умолчанию? Нет: сначала их видно, «⋯» убирает. */
+const toolsHidden = ref(false)
+
+// ───────────────────────────── свёрнутая секция ─────────────────────────────
+
+const OPEN_STATE_PREFIX = 'ph.tripGuestView.open'
+
+function openStateKey(tripId: string): string {
+  return `${OPEN_STATE_PREFIX}.${tripId}`
+}
+
+const isOpen = ref(false)
+
+function readOpenState(tripId: string): Record<string, boolean> {
+  try {
+    const raw = window.localStorage.getItem(openStateKey(tripId))
+    if (raw === null) return {}
+
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+
+    const result: Record<string, boolean> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'boolean') result[key] = value
+    }
+
+    return result
+  } catch {
+    // Мусор в localStorage — свёрнутая секция, а не пустая «Гостевая».
+    return {}
+  }
+}
+
+/**
+ * Записать только свой ключ, не затерев соседний.
+ *
+ * «Гостевой чат» и «Альманах» — две секции одной страницы, и каждая пишет
+ * свою свёрнутость. Если писать прочитанное целиком, вторая секция потеряет
+ * состояние первой, а требование заказчика — помнить обе.
+ */
+function writeOpenState(tripId: string, key: string, open: boolean): void {
+  try {
+    const next = { ...readOpenState(tripId), [key]: open }
+    window.localStorage.setItem(openStateKey(tripId), JSON.stringify(next))
+  } catch {
+    // Хранилище недоступно — память секции до перезагрузки. Секция живёт.
+  }
+}
+
+function applyOpenState(tripId: string): void {
+  isOpen.value = readOpenState(tripId).almanac === true
+}
+
+function onToggle(event: Event): void {
+  const open = (event.target as HTMLDetailsElement).open
+  isOpen.value = open
+  writeOpenState(props.trip.id, 'almanac', open)
+}
+
+// ───────────────────────────── данные ─────────────────────────────
+
 async function load(): Promise<void> {
   if (isLoading.value) return
 
@@ -56,28 +136,28 @@ async function load(): Promise<void> {
     error.value =
       problem instanceof ApiError
         ? problem.message
-        : 'Не удалось собрать альманах. Попробуй ещё раз.'
+        : 'Не удалось открыть альманах. Попробуй ещё раз.'
   } finally {
     isLoading.value = false
   }
 }
 
 onMounted(() => {
-  // Организатор собирает сам — кнопкой. Остальным собирать нечего.
-  if (!props.canAssemble) void load()
+  applyOpenState(props.trip.id)
+  void load()
 })
 
+const canWrite = computed(() => almanac.value?.canWrite ?? false)
+const canManage = computed(() => almanac.value?.canManage ?? false)
 const entryCount = computed(() => almanac.value?.entries.length ?? 0)
 
-/** Сколько человек написали в альманах — подпись под заголовком. */
 const authorCount = computed(
   () => new Set((almanac.value?.entries ?? []).map((entry) => entry.author.userId)).size,
 )
 
 const countText = computed(() => {
-  const entries = `${entryCount.value} ${entriesWord(entryCount.value)}`
-  if (authorCount.value === 0) return ''
-  return `${entries} · ${authorCount.value} ${authorsWord(authorCount.value)}`
+  if (entryCount.value === 0) return ''
+  return `${entryCount.value} ${entriesWord(entryCount.value)}`
 })
 
 function entriesWord(count: number): string {
@@ -89,6 +169,12 @@ function entriesWord(count: number): string {
   return 'записей'
 }
 
+const authorsText = computed(() =>
+  authorCount.value === 0
+    ? ''
+    : `${authorCount.value} ${authorsWord(authorCount.value)}`,
+)
+
 function authorsWord(count: number): string {
   const last = count % 10
   if (count % 100 >= 11 && count % 100 <= 14) return 'авторов'
@@ -97,12 +183,126 @@ function authorsWord(count: number): string {
   return 'авторов'
 }
 
+// ───────────────────────────── дни и группы ─────────────────────────────
+
+const dayCount = computed(() => {
+  const stored = tripDayCount(props.trip)
+  if (stored !== null) return stored
+
+  // Дат нет (или конец раньше начала) — показываем столько дней, сколько
+  // встретилось в записях: прятать уже написанное хуже, чем показать
+  // непронумерованный день.
+  let max = 0
+  for (const entry of almanac.value?.entries ?? []) {
+    const day = dayOf(entry)
+    if (day !== null && day > max) max = day
+  }
+
+  return max
+})
+
+/** Номер дня строки: у воспоминания — свой, у дневника — по местному времени. */
+function dayOf(entry: AlmanacEntry): number | null {
+  if (entry.kind === 'memory') {
+    return entry.placement === 'day' ? (entry.dayIndex ?? null) : null
+  }
+
+  return tripDayNumber(props.trip, new Date(entry.createdAt))
+}
+
+interface AlmanacGroup {
+  key: string
+  title: string
+  entries: AlmanacEntry[]
+}
+
 /**
- * Токены упоминаний для рендера: имя автора и ссылка на его профиль.
+ * Группы альманаха: «До похода», дни похода, «После похода».
  *
- * Одного имени мало: `markdownToHtml` показывает голый UUID, если токена
- * нет в словаре, — а в общем тексте это выглядело бы поломкой.
+ * Порядок внутри группы — как просил заказчик: сначала все дневники
+ * на этот день, потом воспоминания. Пустые группы не рисуются: место
+ * вставки выбирается кнопкой, а не прокруткой пустых дней.
  */
+const groups = computed<AlmanacGroup[]>(() => {
+  const before: AlmanacEntry[] = []
+  const after: AlmanacEntry[] = []
+  const days = new Map<number, AlmanacEntry[]>()
+
+  const last = dayCount.value
+  const isKnownDay = (day: number): boolean => day >= 1 && day <= last
+
+  for (const entry of almanac.value?.entries ?? []) {
+    if (entry.kind === 'memory') {
+      if (entry.placement === 'before') before.push(entry)
+      else if (entry.placement === 'after') after.push(entry)
+      else {
+        const day = entry.dayIndex ?? 1
+        days.set(day, [...(days.get(day) ?? []), entry])
+      }
+      continue
+    }
+
+    const day = dayOf(entry)
+
+    if (day === null) before.push(entry)
+    else if (!isKnownDay(day)) after.push(entry)
+    else days.set(day, [...(days.get(day) ?? []), entry])
+  }
+
+  /**
+   * Внутри дня — дневники первыми, воспоминания после (решение заказчика:
+   * «сообщение вставляется после всех дневников на эту дату и под другими
+   * возможными воспоминаниями участников»). В каждой части — по времени
+   * создания: хроника читается сверху вниз.
+   */
+  const ordered = (list: AlmanacEntry[]): AlmanacEntry[] =>
+    [...list].sort((a, b) => {
+      if (a.kind !== b.kind) return a.kind === 'diary' ? -1 : 1
+      return a.createdAt.localeCompare(b.createdAt)
+    })
+
+  const result: AlmanacGroup[] = []
+
+  if (before.length > 0) {
+    result.push({ key: 'before', title: 'До похода', entries: ordered(before) })
+  }
+
+  for (let day = 1; day <= last; day += 1) {
+    const entries = days.get(day)
+    if (!entries || entries.length === 0) continue
+
+    result.push({
+      key: `day-${day}`,
+      title: dayTitle(day),
+      entries: ordered(entries),
+    })
+  }
+
+  if (after.length > 0) {
+    result.push({ key: 'after', title: 'После похода', entries: ordered(after) })
+  }
+
+  return result
+})
+
+/** «День 3 · 16 ноября 2026»: без «г.» — в общем тексте это канцелярит. */
+function dayTitle(day: number): string {
+  const date = tripDayDate(props.trip, day)
+  if (date === null) return `День ${day}`
+
+  const dateText = date
+    .toLocaleDateString('ru-RU', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+    })
+    .replace(/\s*г\.$/, '')
+
+  return `День ${day} · ${dateText}`
+}
+
+// ───────────────────────────── упоминания ─────────────────────────────
+
 const mentionNames = computed<Record<string, string>>(() =>
   Object.fromEntries(
     (almanac.value?.entries ?? []).map((entry) => [
@@ -121,54 +321,8 @@ const mentionLinks = computed<Record<string, string>>(() =>
   ),
 )
 
-/** Хронология по календарным дням: разделитель «День N · дата». */
-const groups = computed(() => {
-  const result: Array<{
-    key: string
-    title: string
-    entries: AlmanacEntry[]
-  }> = []
-
-  for (const entry of almanac.value?.entries ?? []) {
-    const date = new Date(entry.createdAt)
-    const key = `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`
-    const last = result[result.length - 1]
-
-    if (!last || last.key !== key) {
-      const day = tripDayNumber(props.trip, date)
-      const dateText = date
-        .toLocaleDateString('ru-RU', {
-          day: 'numeric',
-          month: 'long',
-          year: 'numeric',
-        })
-        // «15 ноября 2026 г.» → «15 ноября 2026»: сокращение «г.» в общем
-        // тексте читается как канцелярит, а год и так виден.
-        .replace(/\s*г\.$/, '')
-      result.push({
-        key,
-        // До старта номера дня нет: записи, сделанные в подготовке, — тоже
-        // часть альманаха, и врать им «День 1» нельзя.
-        title: day === null ? `До старта · ${dateText}` : `День ${day} · ${dateText}`,
-        entries: [entry],
-      })
-    } else {
-      last.entries.push(entry)
-    }
-  }
-
-  return result
-})
-
 function bodyHtml(entry: AlmanacEntry): string {
   return markdownToHtml(entry.body, mentionNames.value, mentionLinks.value)
-}
-
-function entryTime(iso: string): string {
-  return new Date(iso).toLocaleTimeString('ru-RU', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })
 }
 
 /** Ссылка на профиль внутри markdown — через роутер, без перезагрузки. */
@@ -181,112 +335,331 @@ function onEntryClick(event: MouseEvent): void {
   event.preventDefault()
   void router.push({ name: 'person', params: { id: target.dataset.userId } })
 }
+
+// ───────────────────────────── выбор места и запись ─────────────────────────────
+
+/** Значение выбора: `before`, `day:N` или `after`. */
+const place = ref('before')
+
+const placeOptions = computed(() => {
+  const options: Array<{ value: string; label: string }> = [
+    { value: 'before', label: 'До похода' },
+  ]
+
+  const last = dayCount.value
+  for (let day = 1; day <= last; day += 1) {
+    const mine = myMemory('day', day)
+    options.push({
+      value: `day:${day}`,
+      label: `${dayTitle(day)}${mine ? ' · уже есть' : ''}`,
+    })
+  }
+
+  options.push({ value: 'after', label: 'В конце — итоговое' })
+
+  return options
+})
+
+/** Моё воспоминание в слоте: на день — одно, «до» и «после» — тоже. */
+function myMemory(placement: 'before' | 'day' | 'after', day?: number): AlmanacEntry | null {
+  return (
+    almanac.value?.entries.find(
+      (entry) =>
+        entry.kind === 'memory' &&
+        entry.canEdit &&
+        entry.placement === placement &&
+        (placement !== 'day' || entry.dayIndex === day),
+    ) ?? null
+  )
+}
+
+function selectedPlace(): AlmanacEntryPlace {
+  if (place.value.startsWith('day:')) {
+    return { placement: 'day', dayIndex: Number(place.value.slice(4)) }
+  }
+
+  return { placement: place.value as 'before' | 'after' }
+}
+
+const selectedMemory = computed<AlmanacEntry | null>(() => {
+  const target = selectedPlace()
+  return myMemory(target.placement, target.dayIndex)
+})
+
+// ───────────────────────────── модалка-чат ─────────────────────────────
+
+const modal = ref<
+  | {
+      entryId: string | null
+      place: AlmanacEntryPlace
+      body: string
+    }
+  | null
+>(null)
+const isSaving = ref(false)
+const modalError = ref<string | null>(null)
+
+function openMemory(): void {
+  actionError.value = null
+  modalError.value = null
+
+  const existing = selectedMemory.value
+  modal.value = existing
+    ? { entryId: existing.id, place: selectedPlace(), body: existing.body }
+    : { entryId: null, place: selectedPlace(), body: '' }
+}
+
+function openEdit(entry: AlmanacEntry): void {
+  actionError.value = null
+  modalError.value = null
+
+  modal.value = {
+    entryId: entry.id,
+    place: {
+      placement: entry.placement ?? 'after',
+      dayIndex: entry.dayIndex ?? undefined,
+    },
+    body: entry.body,
+  }
+}
+
+function closeModal(): void {
+  if (isSaving.value) return
+  modal.value = null
+  modalError.value = null
+}
+
+async function saveMemory(body: string): Promise<void> {
+  const target = modal.value
+  if (!target || isSaving.value) return
+
+  isSaving.value = true
+  modalError.value = null
+
+  try {
+    almanac.value = target.entryId
+      ? await updateAlmanacEntry(props.trip.id, target.entryId, body)
+      : await createAlmanacEntry(props.trip.id, target.place, body)
+    modal.value = null
+  } catch (problem) {
+    modalError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось сохранить воспоминание. Попробуй ещё раз.'
+  } finally {
+    isSaving.value = false
+  }
+}
+
+// ───────────────────────────── удаление ─────────────────────────────
+
+/** Удаление в два нажатия, как в дневнике: запись исчезает сразу и навсегда. */
+const confirmDeleteId = ref<string | null>(null)
+const isDeleting = ref(false)
+
+async function removeEntry(entry: AlmanacEntry): Promise<void> {
+  if (confirmDeleteId.value !== entry.id) {
+    confirmDeleteId.value = entry.id
+    return
+  }
+
+  confirmDeleteId.value = null
+  isDeleting.value = true
+  actionError.value = null
+
+  try {
+    almanac.value = await deleteAlmanacEntry(props.trip.id, entry.id)
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось удалить запись альманаха'
+  } finally {
+    isDeleting.value = false
+  }
+}
+
+/** «14:05» — только у дневниковых строк: у воспоминаний времени нет. */
+function entryTime(iso: string): string {
+  return new Date(iso).toLocaleTimeString('ru-RU', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
 </script>
 
 <template>
-  <section
-    class="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-surface"
+  <details
+    :open="isOpen"
+    class="rounded-2xl border border-border bg-surface"
     data-test="trip-almanac"
+    @toggle="onToggle"
   >
-    <header class="flex flex-wrap items-start justify-between gap-2 border-b border-border px-4 py-3">
-      <div class="flex min-w-0 flex-col gap-0.5">
-        <h2 class="text-sm font-medium text-text">Альманах похода</h2>
-        <p class="text-xs text-muted" data-test="almanac-note">
-          Общий текст из записей, которые авторы разрешили включить. Чужих
-          дневников здесь нет и не будет.
-        </p>
-        <p v-if="entryCount > 0" class="text-xs text-muted" data-test="almanac-count">
-          {{ countText }}
-        </p>
-      </div>
+    <summary
+      class="relative cursor-pointer select-none px-4 py-3 text-sm font-medium text-text"
+    >
+      <span class="inline-block max-w-full truncate align-bottom">
+        Альманах
+        <span v-if="countText" class="ml-1 text-xs font-normal text-muted" data-test="almanac-count">
+          {{ countText }}<template v-if="authorsText"> · {{ authorsText }}</template>
+        </span>
+      </span>
 
       <button
-        v-if="canAssemble"
+        v-if="almanac && (canWrite || canManage)"
         type="button"
-        class="cursor-pointer rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
-        :disabled="isLoading"
-        data-test="almanac-assemble"
-        @click="load"
+        class="absolute right-3 top-1/2 -translate-y-1/2 cursor-pointer rounded-lg border border-border bg-white px-1.5 py-0.5 text-xs text-muted transition-colors hover:border-primary hover:text-text"
+        :aria-expanded="!toolsHidden"
+        :aria-label="toolsHidden ? 'Показать инструменты' : 'Скрыть инструменты'"
+        :title="toolsHidden ? 'Показать инструменты' : 'Скрыть инструменты'"
+        data-test="almanac-tools-toggle"
+        @click.prevent.stop="toolsHidden = !toolsHidden"
       >
-        {{ almanac === null ? 'Собрать альманах' : 'Собрать заново' }}
+        ⋯
       </button>
-    </header>
+    </summary>
 
-    <p v-if="error" class="px-4 py-3 text-sm text-muted" data-test="almanac-error">
-      {{ error }}
-    </p>
+    <div class="flex flex-col gap-4 border-t border-border px-4 py-4">
+      <p v-if="error" class="text-sm text-muted" data-test="almanac-error">{{ error }}</p>
 
-    <p
-      v-if="isLoading"
-      class="px-4 py-3 text-sm text-muted"
-      data-test="almanac-loading"
-    >
-      Собираем альманах…
-    </p>
+      <p v-else-if="isLoading" class="text-sm text-muted" data-test="almanac-loading">
+        Открываем альманах…
+      </p>
 
-    <!--
-      Организатор до нажатия кнопки видит объяснение, а не пустоту:
-      «собрать» — его действие, и оно должно быть понятным.
-    -->
-    <p
-      v-else-if="almanac === null && !error"
-      class="px-4 py-10 text-center text-sm text-muted"
-      data-test="almanac-idle"
-    >
-      Нажми «Собрать альманах» — записи, помеченные «в альманах», встанут
-      в хронологию по дням похода.
-    </p>
+      <template v-else-if="almanac">
+        <!--
+          Инструменты: выбор места и кнопка «Написать». Скрываются «⋯» —
+          читать альманах приятнее без кнопок.
+        -->
+        <div
+          v-if="canWrite && !toolsHidden"
+          class="flex flex-col gap-2 sm:flex-row sm:items-center"
+          data-test="almanac-compose"
+        >
+          <label class="flex min-w-0 flex-1 flex-col gap-1 text-xs text-muted">
+            Место вставки
+            <select
+              v-model="place"
+              class="w-full rounded-xl border border-border bg-field px-3 py-2 text-sm text-text transition-colors focus:border-primary focus:outline-none"
+              data-test="almanac-place"
+            >
+              <option v-for="option in placeOptions" :key="option.value" :value="option.value">
+                {{ option.label }}
+              </option>
+            </select>
+          </label>
 
-    <p
-      v-else-if="almanac !== null && entryCount === 0"
-      class="px-4 py-10 text-center text-sm text-muted"
-      data-test="almanac-empty"
-    >
-      В альманах пока не попала ни одна запись: авторы не пометили их
-      «можно в альманах». Пометка стоит у записи в дневнике.
-    </p>
-
-    <div
-      v-else-if="almanac !== null"
-      class="flex flex-col gap-6 px-4 py-4"
-      data-test="almanac-days"
-      @click="onEntryClick"
-    >
-      <section v-for="group in groups" :key="group.key" class="flex min-w-0 flex-col gap-3">
-        <!-- Разделитель дня: «День N · дата» (решение заказчика) -->
-        <div class="flex items-center gap-2 text-xs text-muted" data-test="almanac-day">
-          <span class="h-px flex-1 bg-border" />
-          <span class="shrink-0">{{ group.title }}</span>
-          <span class="h-px flex-1 bg-border" />
+          <button
+            type="button"
+            class="cursor-pointer self-end rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50 sm:self-auto"
+            :disabled="isSaving"
+            data-test="almanac-write"
+            @click="openMemory"
+          >
+            {{ selectedMemory ? 'Дописать' : 'Написать' }}
+          </button>
         </div>
 
-        <article
-          v-for="entry in group.entries"
-          :key="entry.id"
-          class="flex min-w-0 flex-col gap-1"
-          data-test="almanac-entry"
-        >
-          <div class="flex min-w-0 flex-wrap items-center gap-2">
-            <UserAvatar
-              :src="entry.author.avatarUrl"
-              :alt="entry.author.displayName"
-              :size="24"
-            />
-            <span class="min-w-0 truncate text-sm font-medium text-text" data-test="almanac-author">
-              {{ entry.author.displayName }}
-            </span>
-            <span class="text-[11px] text-muted" data-test="almanac-entry-time">
-              {{ entryTime(entry.createdAt) }}
-            </span>
-          </div>
+        <p v-if="actionError" class="text-sm text-red-600" data-test="almanac-action-error">
+          {{ actionError }}
+        </p>
 
-          <div
-            class="min-w-0 break-words text-sm leading-relaxed text-text"
-            data-test="almanac-entry-body"
-            v-html="bodyHtml(entry)"
-          />
-        </article>
-      </section>
+        <p
+          v-if="entryCount === 0"
+          class="py-6 text-center text-sm text-muted"
+          data-test="almanac-empty"
+        >
+          Пока пусто. Сюда попадают записи дневников с пометкой «в альманах»
+          и воспоминания участников.
+        </p>
+
+        <div
+          v-else
+          class="flex flex-col gap-6"
+          data-test="almanac-days"
+          @click="onEntryClick"
+        >
+          <section
+            v-for="group in groups"
+            :key="group.key"
+            class="flex min-w-0 flex-col gap-3"
+          >
+            <div class="flex items-center gap-2 text-xs text-muted" data-test="almanac-day">
+              <span class="h-px flex-1 bg-border" />
+              <span class="shrink-0">{{ group.title }}</span>
+              <span class="h-px flex-1 bg-border" />
+            </div>
+
+            <article
+              v-for="entry in group.entries"
+              :key="entry.id"
+              class="flex min-w-0 flex-col gap-1"
+              data-test="almanac-entry"
+            >
+              <div class="flex min-w-0 flex-wrap items-center gap-2">
+                <UserAvatar
+                  :src="entry.author.avatarUrl"
+                  :alt="entry.author.displayName"
+                  :size="24"
+                />
+                <span class="min-w-0 truncate text-sm font-medium text-text" data-test="almanac-author">
+                  {{ entry.author.displayName }}
+                </span>
+                <!--
+                  Время — только у дневниковой строки. Воспоминание — это
+                  «как вспомнилось», а не хроника дня; заказчик просил
+                  формат «участник, сообщение, без времени».
+                -->
+                <span
+                  v-if="entry.kind === 'diary'"
+                  class="text-[11px] text-muted"
+                  data-test="almanac-entry-time"
+                >
+                  {{ entryTime(entry.createdAt) }}
+                </span>
+
+                <span class="ml-auto flex shrink-0 gap-2">
+                  <button
+                    v-if="entry.canEdit && !toolsHidden"
+                    type="button"
+                    class="cursor-pointer text-xs text-primary underline transition-colors hover:text-text"
+                    data-test="almanac-edit"
+                    @click="openEdit(entry)"
+                  >
+                    Править
+                  </button>
+
+                  <button
+                    v-if="entry.canDelete && !toolsHidden"
+                    type="button"
+                    class="cursor-pointer text-xs text-muted underline transition-colors hover:text-red-600"
+                    :disabled="isDeleting"
+                    data-test="almanac-delete"
+                    @click="removeEntry(entry)"
+                  >
+                    {{ confirmDeleteId === entry.id ? 'Точно?' : 'Удалить' }}
+                  </button>
+                </span>
+              </div>
+
+              <div
+                class="min-w-0 break-words text-sm leading-relaxed text-text"
+                data-test="almanac-entry-body"
+                v-html="bodyHtml(entry)"
+              />
+            </article>
+          </section>
+        </div>
+      </template>
     </div>
-  </section>
+
+    <TripAlmanacMemoryModal
+      v-if="modal"
+      :initial-body="modal.body"
+      :busy="isSaving"
+      :error="modalError"
+      @save="saveMemory"
+      @close="closeModal"
+    />
+  </details>
 </template>

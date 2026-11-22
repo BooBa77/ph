@@ -123,6 +123,7 @@ function makeTrip(): Trip {
     priceRub: null,
     priceNote: null,
     cancelledAt: null,
+    completedAt: null,
     createdAt: local(11, 1),
     updatedAt: local(11, 1),
   }
@@ -489,5 +490,30 @@ describe('вкладка «Дневник»', () => {
     expect(wrapper.get('[data-test="diary-almanac-count"]').text()).toContain(
       'войдёт 0 записей',
     )
+  })
+
+  /**
+   * Решение заказчика 22.11.2026: «Дневник вообще для хранения полевых
+   * записей… Записи после возвращения — это уже воспоминания и их будем
+   * создавать в Гостевая/Альманах».
+   */
+  it('после возвращения дневник не пополняется — подсказка вместо формы', async () => {
+    mocks.getTripDiary.mockResolvedValue({ entries: [entry()] })
+
+    const wrapper = mount(TripDiaryView, {
+      props: { trip: { ...makeTrip(), completedAt: local(11, 20) } },
+      global: {
+        stubs: { MarkdownEditor: MarkdownEditorStub },
+        plugins: [createPinia()],
+      },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="diary-send"]').exists()).toBe(false)
+    expect(wrapper.get('[data-test="diary-completed-hint"]').text()).toContain(
+      'Альманах',
+    )
+    // Старые полевые записи по-прежнему правятся.
+    expect(wrapper.find('[data-test="diary-entry"]').exists()).toBe(true)
   })
 })

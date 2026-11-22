@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 import { listObjectsByIds } from '@/api/objects'
 import { fetchGuestTrip } from '@/api/trips'
@@ -21,6 +21,7 @@ import {
   type TripParticipant,
   type TripRole,
 } from '@/types/trips'
+import TripAlmanac from '@/views/trips/TripAlmanac.vue'
 import TripChat from '@/views/trips/TripChat.vue'
 
 /**
@@ -37,6 +38,69 @@ import TripChat from '@/views/trips/TripChat.vue'
  * решается здесь и в `utils/tripDisplay.ts`, а не удалением из базы.
  */
 const props = defineProps<{ tripId: string }>()
+
+/**
+ * Свёрнутые секции «Гостевой»: чат и альманах (22.11.2026).
+ *
+ * Заказчик: «Чтобы было читабельно, обе секции „гостевой чат“ и „Альманах“
+ * сделать сворачиваемыми, как Снаряжение и Питание. Гостевая должна помнить
+ * состояние при переходах между закладками». Тот же приём, что в
+ * «Снаряжении»: состояние — в `localStorage` на поход.
+ *
+ * Ключ у чата и альманаха общий (`ph.tripGuestView.open`), значения —
+ * разные (`chat`, `almanac`): секции пишут только свой ключ, объединяя
+ * с прочитанным, иначе вторая секция затирала бы состояние первой.
+ */
+const OPEN_STATE_PREFIX = 'ph.tripGuestView.open'
+
+const chatOpen = ref(false)
+
+function openStateKey(tripId: string): string {
+  return `${OPEN_STATE_PREFIX}.${tripId}`
+}
+
+function readOpenState(tripId: string): Record<string, boolean> {
+  try {
+    const raw = window.localStorage.getItem(openStateKey(tripId))
+    if (raw === null) return {}
+
+    const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return {}
+
+    const result: Record<string, boolean> = {}
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === 'boolean') result[key] = value
+    }
+
+    return result
+  } catch {
+    // Мусор в localStorage — свёрнутые секции, а не пустая «Гостевая».
+    return {}
+  }
+}
+
+function writeOpenState(tripId: string, key: string, open: boolean): void {
+  try {
+    const next = { ...readOpenState(tripId), [key]: open }
+    window.localStorage.setItem(openStateKey(tripId), JSON.stringify(next))
+  } catch {
+    // Хранилище недоступно — память секции до перезагрузки. Вкладка живёт.
+  }
+}
+
+function onChatToggle(event: Event): void {
+  const open = (event.target as HTMLDetailsElement).open
+  chatOpen.value = open
+  writeOpenState(props.tripId, 'chat', open)
+}
+
+watch(
+  () => props.tripId,
+  (tripId) => {
+    chatOpen.value = readOpenState(tripId).chat === true
+  },
+  { immediate: true },
+)
 
 const trip = ref<GuestTrip | null>(null)
 const isLoading = ref(true)
@@ -232,8 +296,31 @@ onMounted(load)
         />
       </div>
 
-      <!-- Гостевой чат — часть «Гостевой», отдельной вкладки «Чаты» нет. -->
-      <TripChat :trip-id="trip.id" kind="trip_guest" />
+      <!--
+        Гостевой чат — часть «Гостевой», отдельной вкладки «Чаты» нет.
+        С 22.11.2026 он свёрнут в секцию: страница обзора иначе начинается
+        с чужих сообщений, а не с похода.
+      -->
+      <details
+        :open="chatOpen"
+        class="rounded-2xl border border-border bg-surface"
+        data-test="guest-chat-section"
+        @toggle="onChatToggle"
+      >
+        <summary class="cursor-pointer select-none px-4 py-3 text-sm font-medium text-text">
+          Гостевой чат
+        </summary>
+
+        <div class="border-t border-border px-4 py-4">
+          <TripChat :trip-id="trip.id" kind="trip_guest" />
+        </div>
+      </details>
+
+      <!--
+        Альманах — тоже секция «Гостевой» (решение заказчика 22.11.2026).
+        Появляется после завершения похода: до него собирать ещё нечего.
+      -->
+      <TripAlmanac v-if="trip.completedAt" :trip="trip" />
     </template>
   </section>
 </template>

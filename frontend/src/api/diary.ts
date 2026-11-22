@@ -1,5 +1,10 @@
 import { apiFetch } from '@/api/client'
-import type { DiarySyncEntry, TripAlmanac, TripDiary } from '@/types/diary'
+import type {
+  AlmanacEntryPlace,
+  DiarySyncEntry,
+  TripAlmanac,
+  TripDiary,
+} from '@/types/diary'
 
 /**
  * Дневник похода: личные записи (16.11.2026) и альманах (22.11.2026).
@@ -34,7 +39,7 @@ export function syncTripDiary(
 }
 
 /**
- * Альманах похода — то, что авторы разрешили включить.
+ * Альманах похода: записи дневников с пометкой и воспоминания участников.
  *
  * В кеш не кладётся: это общий текст, который меняется, когда кто-то
  * снимает пометку, и показывать вчерашнюю сборку значило бы врать.
@@ -42,4 +47,48 @@ export function syncTripDiary(
  */
 export function getTripAlmanac(tripId: string): Promise<TripAlmanac> {
   return apiFetch<TripAlmanac>(`/trips/${tripId}/almanac`)
+}
+
+/**
+ * Создать воспоминание: место вставки выбрал человек, текст — в теле.
+ *
+ * Ответ — альманах целиком: после вставки экран не должен собирать правду
+ * из двух источников, а у нового воспоминания id выдаёт сервер.
+ */
+export function createAlmanacEntry(
+  tripId: string,
+  place: AlmanacEntryPlace,
+  body: string,
+): Promise<TripAlmanac> {
+  return apiFetch<TripAlmanac>(`/trips/${tripId}/almanac/entries`, {
+    method: 'POST',
+    body: JSON.stringify({ ...place, body }),
+  })
+}
+
+/** Дописать своё воспоминание: место вставки не передаётся и не меняется. */
+export function updateAlmanacEntry(
+  tripId: string,
+  entryId: string,
+  body: string,
+): Promise<TripAlmanac> {
+  return apiFetch<TripAlmanac>(`/trips/${tripId}/almanac/entries/${entryId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ body }),
+  })
+}
+
+/**
+ * Убрать строку альманаха — право организатора.
+ *
+ * Запись дневника при этом остаётся в личном дневнике: снимается только
+ * пометка «в альманах». Воспоминание удаляется совсем, и слот освобождается.
+ */
+export function deleteAlmanacEntry(
+  tripId: string,
+  entryId: string,
+): Promise<TripAlmanac> {
+  return apiFetch<TripAlmanac>(`/trips/${tripId}/almanac/entries/${entryId}`, {
+    method: 'DELETE',
+  })
 }

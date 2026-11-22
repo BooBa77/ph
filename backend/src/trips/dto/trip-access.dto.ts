@@ -117,6 +117,20 @@ export class GuestTripDto {
   @ApiProperty({ description: 'Конец по решению организатора', nullable: true })
   endsAt: string | null;
 
+  /**
+   * Поход завершён — тогда в «Гостевой» появляется секция «Альманах».
+   *
+   * Поле нужно гостю и участнику, чтобы решить, рисовать ли секцию:
+   * до завершения альманаха нет, и раздел не должен обещать текст,
+   * которого ещё не будет.
+   */
+  @ApiProperty({ description: 'Когда поход завершён', nullable: true })
+  completedAt: string | null;
+
+  /** Поход отменён: номер дня не считается, альманаха не будет. */
+  @ApiProperty({ description: 'Когда поход отменён', nullable: true })
+  cancelledAt: string | null;
+
   @ApiProperty({
     description:
       'Состав: кто идёт, с ролями и статусами. Виден и гостю — это важная часть анонса',
@@ -159,6 +173,8 @@ export class GuestTripDto {
       status: trip.status,
       startsAt: trip.startsAt?.toISOString() ?? null,
       endsAt: trip.endsAt?.toISOString() ?? null,
+      completedAt: trip.completedAt?.toISOString() ?? null,
+      cancelledAt: trip.cancelledAt?.toISOString() ?? null,
       participants,
       isCommercial: trip.isCommercial,
       priceRub: trip.priceRub,

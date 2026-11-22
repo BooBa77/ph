@@ -84,7 +84,6 @@ const ALL_TABS: TripTabCode[] = [
   'firstAid',
   'finance',
   'diary',
-  'almanac',
 ]
 
 const permissions = (): TripTabPermission[] => ALL_TABS.map((code) => ({ code, canEdit: false }))

@@ -119,6 +119,9 @@ const mentionOptions = computed(() =>
 
 const pendingCount = computed(() => pending.value.length)
 
+/** Поход завершён: новые записи — это уже воспоминания для альманаха. */
+const isCompleted = computed(() => props.trip.completedAt != null)
+
 /**
  * Сколько моих записей войдёт в альманах (22.11.2026).
  *
@@ -681,7 +684,24 @@ watch(
       {{ syncError }}
     </p>
 
-    <form class="flex flex-col gap-2 border-t border-border px-4 py-3" @submit.prevent="addEntry">
+    <!--
+      После возвращения дневник не пополняется (22.11.2026). Заказчик:
+      «Дневник вообще для хранения полевых записей и доступ ему оставляем
+      для редактирования созданных в походе записей. Записи после
+      возвращения — это уже воспоминания и их будем создавать
+      в Гостевая/Альманах». Сервер держит то же правило, а подсказка
+      объясняет, куда идти, вместо кнопки, которая вернёт ошибку.
+    -->
+    <p
+      v-if="isCompleted"
+      class="border-t border-border px-4 py-3 text-xs text-muted"
+      data-test="diary-completed-hint"
+    >
+      Поход завершён: дневник хранит полевые записи, их можно править.
+      Новые воспоминания пишутся в «Гостевой» → «Альманах».
+    </p>
+
+    <form v-else class="flex flex-col gap-2 border-t border-border px-4 py-3" @submit.prevent="addEntry">
       <!--
         Кнопки вставок: текст ставится в курсор, а не в конец записи.
         До старта «День N» не выключен, а отсчитывает: «До старта 3 дня».

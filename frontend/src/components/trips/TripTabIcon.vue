@@ -96,14 +96,6 @@ const shared = computed(() => SHARED[props.name as keyof typeof SHARED] ?? null)
       <path d="M12 3.54V20.46" />
     </template>
 
-    <!-- Альманах: раскрытая книга (22.11.2026). Страницы — две дуги от
-         корешка, чтобы в 16 px читалась книга, а не «две папки» -->
-    <template v-else-if="name === 'almanac'">
-      <path d="M12 6.6C10.1 5.2 7.6 4.6 4.6 4.6V18C7.6 18 10.1 18.6 12 20" />
-      <path d="M12 6.6C13.9 5.2 16.4 4.6 19.4 4.6V18C16.4 18 13.9 18.6 12 20" />
-      <path d="M12 6.6V20" />
-    </template>
-
     <!-- Дневник: листок с загнутым углом и двумя строками -->
     <template v-else>
       <path d="M6 4.4H13.6L18 8.8V19.6H6Z" />
