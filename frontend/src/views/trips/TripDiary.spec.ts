@@ -187,6 +187,9 @@ describe('вкладка «Дневник»', () => {
             body: row.body,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
+            // Сервер 22.11.2026 всегда отдаёт согласие на альманах; запись
+            // без поля в тесте — это старый клиент, и умолчание — «можно».
+            sharedWithTrip: row.sharedWithTrip ?? true,
           })),
       }),
     )
@@ -446,5 +449,45 @@ describe('вкладка «Дневник»', () => {
     await flushPromises()
 
     expect(mocks.getTripDiary).not.toHaveBeenCalled()
+  })
+
+  it('пометка «в альманах» стоит по умолчанию у каждой записи', async () => {
+    mocks.getTripDiary.mockResolvedValue({
+      entries: [entry(), entry({ id: '4c1f3a84-2222-4222-8222-222222222222' })],
+    })
+
+    const wrapper = await mountDiary()
+
+    const boxes = wrapper.findAll<HTMLInputElement>('[data-test="diary-shared"]')
+    expect(boxes).toHaveLength(2)
+    expect(boxes.every((box) => box.element.checked)).toBe(true)
+    // Заказчик: «автор видит, сколько его записей войдёт».
+    expect(wrapper.get('[data-test="diary-almanac-count"]').text()).toContain(
+      'войдёт 2 записи',
+    )
+  })
+
+  it('снятая пометка уходит на сервер и уменьшает счётчик', async () => {
+    mocks.getTripDiary.mockResolvedValue({ entries: [entry()] })
+
+    const wrapper = await mountDiary()
+    expect(wrapper.get('[data-test="diary-almanac-count"]').text()).toContain(
+      'войдёт 1 запись',
+    )
+
+    await wrapper.get('[data-test="diary-shared"]').setValue(false)
+    await flushPromises()
+
+    // Пометка — такая же правка записи, как текст: уходит синхронизацией.
+    expect(mocks.syncTripDiary).toHaveBeenCalledWith(
+      '679',
+      [expect.objectContaining({ sharedWithTrip: false })],
+    )
+    expect(
+      wrapper.get<HTMLInputElement>('[data-test="diary-shared"]').element.checked,
+    ).toBe(false)
+    expect(wrapper.get('[data-test="diary-almanac-count"]').text()).toContain(
+      'войдёт 0 записей',
+    )
   })
 })

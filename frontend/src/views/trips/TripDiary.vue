@@ -119,6 +119,28 @@ const mentionOptions = computed(() =>
 
 const pendingCount = computed(() => pending.value.length)
 
+/**
+ * Сколько моих записей войдёт в альманах (22.11.2026).
+ *
+ * Заказчик: «автор видит, сколько его записей войдёт; чужих записей
+ * не видит никто». Считаем по уже склеенному списку (сервер + очередь),
+ * поэтому счётчик честен и без связи. Записи без поля (копия, сохранённая
+ * до обновления) считаются включёнными — это и есть умолчание заказчика.
+ */
+const sharedCount = computed(
+  () => entries.value.filter((entry) => entry.sharedWithTrip !== false).length,
+)
+
+/** «1 запись / 2 записи / 5 записей» — для счётчика в шапке. */
+function entriesWord(count: number): string {
+  const tail = count % 100
+  if (tail >= 11 && tail <= 14) return 'записей'
+  const last = count % 10
+  if (last === 1) return 'запись'
+  if (last >= 2 && last <= 4) return 'записи'
+  return 'записей'
+}
+
 const syncStatus = computed(() => {
   if (isSending.value) return 'Отправляем…'
   if (pendingCount.value > 0) {
@@ -285,6 +307,9 @@ async function addEntry(): Promise<void> {
     createdAt: now,
     updatedAt: now,
     deletedAt: null,
+    // Новая запись помечена «можно в альманах» — умолчание заказчика
+    // 22.11.2026. Снять пометку автор может сразу после записи.
+    sharedWithTrip: true,
   })
 
   draft.value = ''
@@ -313,9 +338,33 @@ async function saveEdit(entry: TripDiaryEntry): Promise<void> {
     createdAt: entry.createdAt,
     updatedAt: new Date().toISOString(),
     deletedAt: null,
+    // Правка текста не трогает согласие: это разные решения, и снимать
+    // пометку молча нельзя.
+    sharedWithTrip: entry.sharedWithTrip !== false,
   })
 
   cancelEdit()
+  void flush()
+}
+
+/**
+ * Переключить «можно в альманах» (22.11.2026).
+ *
+ * Заказчик: «по умолчанию пометка включена»; «автор видит, сколько его
+ * записей войдёт». Переключение — такая же правка записи, как текст:
+ * оно идёт через ту же очередь, работает без связи и уважает правило
+ * «побеждает более поздняя правка».
+ */
+async function toggleShared(entry: TripDiaryEntry): Promise<void> {
+  await remember({
+    id: entry.id,
+    body: entry.body,
+    createdAt: entry.createdAt,
+    updatedAt: new Date().toISOString(),
+    deletedAt: null,
+    sharedWithTrip: entry.sharedWithTrip === false,
+  })
+
   void flush()
 }
 
@@ -341,6 +390,7 @@ async function removeEntry(entry: TripDiaryEntry): Promise<void> {
     createdAt: entry.createdAt,
     updatedAt: now,
     deletedAt: now,
+    sharedWithTrip: entry.sharedWithTrip !== false,
   })
 
   if (editingId.value === entry.id) cancelEdit()
@@ -488,6 +538,14 @@ watch(
         <p class="text-xs text-muted" data-test="diary-private-note">
           Личные записи: их видишь только ты. У каждого участника свой дневник.
         </p>
+        <!--
+          Счётчик альманаха (22.11.2026). Заказчик: «автор видит, сколько
+          его записей войдёт». Чужих записей здесь нет и быть не может —
+          дневник личный, — поэтому счётчик считается по своим же записям.
+        -->
+        <p class="text-xs text-muted" data-test="diary-almanac-count">
+          В альманах войдёт {{ sharedCount }} {{ entriesWord(sharedCount) }}.
+        </p>
       </div>
 
       <p v-if="syncStatus" class="text-xs text-muted" data-test="diary-sync-status">
@@ -577,7 +635,23 @@ watch(
             />
           </div>
 
-          <div class="flex items-center gap-2 text-[11px] text-muted">
+          <div class="flex flex-wrap items-center gap-2 text-[11px] text-muted">
+            <!--
+              Пометка «можно в альманах» (22.11.2026). Живёт у записи,
+              а не у дневника: человек решает отдельно по каждой строке.
+              По умолчанию включена — это умолчание заказчика.
+            -->
+            <label class="flex cursor-pointer items-center gap-1">
+              <input
+                type="checkbox"
+                class="h-3.5 w-3.5 cursor-pointer accent-[var(--theme-primary)]"
+                :checked="entry.sharedWithTrip !== false"
+                data-test="diary-shared"
+                @change="toggleShared(entry)"
+              />
+              <span>в альманах</span>
+            </label>
+
             <button
               v-if="editingId !== entry.id"
               type="button"

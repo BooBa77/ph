@@ -13,15 +13,23 @@ import { ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import { SyncTripDiaryDto, TripDiaryDto } from './dto/trip-diary.dto';
+import { TripAlmanacDto } from './dto/trip-almanac.dto';
 import { TripDiaryService } from './trip-diary.service';
 
 /**
- * «Дневник» похода — личные записи участника (16.11.2026).
+ * «Дневник» похода — личные записи участника (16.11.2026) и альманах
+ * из помеченных записей после завершения похода (22.11.2026).
  *
- * Две ручки и обе отвечают вкладкой целиком:
+ * Две ручки дневника, обе отвечают вкладкой целиком:
  *
  * - `GET /trips/:id/diary` — мои записи; чужих здесь не бывает;
- * - `POST /trips/:id/diary/sync` — пачка изменений с устройства.
+ * - `POST /trips/:id/diary/sync` — пачка изменений с устройства;
+ *
+ * и одна ручка альманаха:
+ *
+ * - `GET /trips/:id/almanac` — общий текст похода после его завершения;
+ *   до завершения — `409`, посторонним вход закрыт правилом видимости
+ *   похода (`getVisibleTrip`), а после завершения его видит и гость.
  *
  * **Почему синхронизация, а не `POST`/`PATCH`/`DELETE`.** В офлайне
  * на устройстве нет ни id с сервера, ни гарантии порядка: запись могли
@@ -46,6 +54,22 @@ export class TripDiaryController {
     @Param('id', ParseIntPipe) id: number,
   ): Promise<TripDiaryDto> {
     return this.diary.getDiary(authUser.id, id);
+  }
+
+  /**
+   * Альманах похода: помеченные авторами записи, хронологией.
+   *
+   * `409` до завершения похода — это не ошибка прав, а порядок: собирать
+   * ещё нечего. Сами записи автор помечает в своём дневнике.
+   */
+  @Get(':id/almanac')
+  @ApiOperation({ summary: 'Альманах похода: записи, разрешённые авторами' })
+  @ApiOkResponse({ type: TripAlmanacDto })
+  async getAlmanac(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripAlmanacDto> {
+    return this.diary.getAlmanac(authUser.id, id);
   }
 
   /**

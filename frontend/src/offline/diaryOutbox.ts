@@ -40,8 +40,16 @@ export function diaryOutboxKey(tripId: string): string {
 /** Сколько записей принимает сервер за один запрос (как `MAX_DIARY_SYNC_ENTRIES`). */
 const SYNC_BATCH = 200
 
-/** Состояние записи в очереди: всё, что нужно серверу. */
-export type DiaryOutboxEntry = Required<DiarySyncEntry>
+/**
+ * Состояние записи в очереди: всё, что нужно серверу.
+ *
+ * Пометка «в альманах» необязательна: в очереди, сохранённой до 22.11.2026,
+ * её нет, и такая запись не должна ни потеряться при чтении, ни вернуть
+ * согласие, снятое автором. Отсутствие поля сервер читает как «как было».
+ */
+export type DiaryOutboxEntry = Required<Omit<DiarySyncEntry, 'sharedWithTrip'>> & {
+  sharedWithTrip?: boolean
+}
 
 /**
  * Прочитать очередь похода.
@@ -144,6 +152,11 @@ export function mergeDiaryEntries(
       body: change.body,
       createdAt: change.createdAt,
       updatedAt: change.updatedAt,
+      // Пометку из офлайн-очереди показываем сразу: без неё серверная
+      // версия осталась бы с прежним согласием, а человек видел бы
+      // «в альманах» там, где он его только что снял.
+      sharedWithTrip:
+        change.sharedWithTrip ?? current?.sharedWithTrip ?? true,
     })
   }
 
@@ -245,6 +258,8 @@ function isOutboxEntry(value: unknown): value is DiaryOutboxEntry {
     typeof entry.body === 'string' &&
     typeof entry.createdAt === 'string' &&
     typeof entry.updatedAt === 'string' &&
-    (entry.deletedAt === null || typeof entry.deletedAt === 'string')
+    (entry.deletedAt === null || typeof entry.deletedAt === 'string') &&
+    (entry.sharedWithTrip === undefined ||
+      typeof entry.sharedWithTrip === 'boolean')
   )
 }

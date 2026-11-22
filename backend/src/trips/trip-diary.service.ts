@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
 } from '@nestjs/common';
@@ -9,6 +10,8 @@ import { TripDiaryEntry } from './entities/trip-diary-entry.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import type { DiarySyncEntryDto, SyncTripDiaryDto } from './dto/trip-diary.dto';
 import { TripDiaryDto } from './dto/trip-diary.dto';
+import type { AlmanacEntryDto } from './dto/trip-almanac.dto';
+import { TripAlmanacDto } from './dto/trip-almanac.dto';
 import { TripEventsService } from './trip-events.service';
 import { isValidDiaryTimes } from './trip-diary.types';
 import { TripsService } from './trips.service';
@@ -98,6 +101,75 @@ export class TripDiaryService {
     await this.assertParticipant(this.dataSource.manager, trip.id, userId);
   }
 
+  /**
+   * Альманах похода: записи, которые авторы разрешили включить (22.11.2026).
+   *
+   * Заказчик: «собирает организатор или соорганизатор кнопкой «Собрать
+   * альманах» после завершения похода»; «в альманах попадают только записи,
+   * помеченные автором «можно в альманах»»; «записи не правятся».
+   *
+   * Отсюда три правила:
+   *
+   * 1. **Только после завершения** — иначе `409`: пока поход идёт, записи
+   *    ещё пишутся, и «собранный» текст устарел бы к вечеру.
+   * 2. **Только помеченные** — дневник остаётся личным, и сервер не отдаёт
+   *    чужих записей даже организатору; в общий текст попадает лишь то,
+   *    что автор пометил сам.
+   * 3. **Видят все, кто видит поход** (решение заказчика 22.11.2026), —
+   *    включая гостя. Это единственное место, где общий текст выходит
+   *    за правило «гостю — только Гостевая»: чужих дневников он не открывает.
+   *
+   * Сборка идёт на чтении, без таблицы-снимка: пометку автор снимает
+   * в любой момент, и альманах обязан это уважать. Порядок — хронология
+   * по времени записи; разделители «День N · дата» расставляет экран
+   * в часовом поясе смотрящего (`utils/tripDay.ts`).
+   */
+  async getAlmanac(userId: string, tripId: number): Promise<TripAlmanacDto> {
+    const trip = await this.trips.getVisibleTrip(userId, tripId);
+
+    if (trip.completedAt === null) {
+      throw new ConflictException(
+        'Альманах собирается после завершения похода',
+      );
+    }
+
+    /**
+     * Один запрос с `JOIN`: автор нужен у каждой записи, и походный дневник
+     * у небольшой группы — это десятки строк, а не тысячи, но `relations`
+     * здесь всё равно дал бы N+1 на подгрузке пользователя у записи.
+     */
+    const rows = await this.dataSource.manager.query(
+      `SELECT e.id,
+              e.body,
+              e.created_at AS "createdAt",
+              e.user_id    AS "userId",
+              u.display_name AS "displayName",
+              u.avatar_url   AS "avatarUrl"
+         FROM trip_diary_entries e
+         JOIN users u ON u.id = e.user_id
+        WHERE e.trip_id = $1
+          AND e.shared_with_trip
+          AND e.deleted_at IS NULL
+        ORDER BY e.created_at ASC, e.id ASC`,
+      [trip.id],
+    );
+
+    const entries: AlmanacEntryDto[] = (rows as Array<Record<string, unknown>>).map(
+      (row) => ({
+        id: row.id as string,
+        body: row.body as string,
+        createdAt: new Date(row.createdAt as string | Date).toISOString(),
+        author: {
+          userId: row.userId as string,
+          displayName: (row.displayName as string | null) ?? 'Неизвестный',
+          avatarUrl: (row.avatarUrl as string | null) ?? null,
+        },
+      }),
+    );
+
+    return TripAlmanacDto.from(trip, entries);
+  }
+
   /** Запись с проверенными временами и очищенным текстом. */
   private prepareEntry(entry: DiarySyncEntryDto): {
     id: string;
@@ -105,6 +177,7 @@ export class TripDiaryService {
     createdAt: Date;
     updatedAt: Date;
     deletedAt: Date | null;
+    sharedWithTrip: boolean | undefined;
   } {
     const createdAt = new Date(entry.createdAt);
     const updatedAt = new Date(entry.updatedAt);
@@ -123,9 +196,18 @@ export class TripDiaryService {
       throw new BadRequestException('Запись дневника не может быть пустой');
     }
 
-    return { id: entry.id, body, createdAt, updatedAt, deletedAt };
+    // Пометка «в альманах» может не прийти: устройство с прежней версией
+    // приложения держит в офлайн-очереди запись без неё. `undefined` значит
+    // «как было» — решает это `COALESCE` в `upsert`, а не этот метод.
+    return {
+      id: entry.id,
+      body,
+      createdAt,
+      updatedAt,
+      deletedAt,
+      sharedWithTrip: entry.sharedWithTrip,
+    };
   }
-
   /**
    * Вставить или обновить запись по правилу «позже — значит главнее».
    *
@@ -142,16 +224,32 @@ export class TripDiaryService {
       createdAt: Date;
       updatedAt: Date;
       deletedAt: Date | null;
+      sharedWithTrip: boolean | undefined;
     },
   ): Promise<void> {
+    /**
+     * `COALESCE` у пометки «в альманах» — не украшение.
+     *
+     * Синхронизация присылает запись целиком, и присланное `false` обязано
+     * снимать согласие. Но старая версия приложения поля не знает вовсе;
+     * `NULL` в этом месте значит «как было»: иначе правка текста с телефона
+     * с необновлённой копией молча вернула бы пометку, которую автор снял
+     * на другом устройстве. Для новой записи «как было» — это `true`,
+     * решение заказчика 22.11.2026.
+     */
     await manager.query(
       `INSERT INTO trip_diary_entries
-         (id, trip_id, user_id, body, created_at, updated_at, deleted_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+         (id, trip_id, user_id, body, created_at, updated_at, deleted_at,
+          shared_with_trip)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::boolean, true))
        ON CONFLICT (id) DO UPDATE
          SET body = EXCLUDED.body,
              updated_at = EXCLUDED.updated_at,
-             deleted_at = EXCLUDED.deleted_at
+             deleted_at = EXCLUDED.deleted_at,
+             shared_with_trip = COALESCE(
+               $8::boolean,
+               trip_diary_entries.shared_with_trip
+             )
        WHERE trip_diary_entries.trip_id = EXCLUDED.trip_id
          AND trip_diary_entries.user_id = EXCLUDED.user_id
          AND EXCLUDED.updated_at > trip_diary_entries.updated_at`,
@@ -163,6 +261,7 @@ export class TripDiaryService {
         entry.createdAt,
         entry.updatedAt,
         entry.deletedAt,
+        entry.sharedWithTrip ?? null,
       ],
     );
   }

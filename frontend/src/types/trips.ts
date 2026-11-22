@@ -425,6 +425,7 @@ export const TRIP_TABS = [
   'firstAid',
   'finance',
   'diary',
+  'almanac',
 ] as const
 
 export type TripTabCode = (typeof TRIP_TABS)[number]
@@ -450,6 +451,7 @@ export const TRIP_TAB_LABELS: Record<TripTabCode, string> = {
   firstAid: 'Аптечка',
   finance: 'Бухгалтерия',
   diary: 'Дневник',
+  almanac: 'Альманах',
 }
 
 /** Вкладка с правом правки: считает бэкенд по ролям и организатору. */

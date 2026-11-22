@@ -16,6 +16,15 @@ export interface TripDiaryEntry {
   body: string
   createdAt: string
   updatedAt: string
+  /**
+   * Можно ли записи попасть в альманах (22.11.2026).
+   *
+   * По умолчанию — да (решение заказчика). Поле может отсутствовать
+   * в копии, сохранённой до обновления: тогда пометка считается включённой
+   * (`!== false`), иначе старый офлайн-кеш молча спрятал бы записи
+   * из альманаха.
+   */
+  sharedWithTrip?: boolean
 }
 
 /** Ответ сервера: только мои записи, старые сверху. */
@@ -29,6 +38,9 @@ export interface TripDiary {
  * `deletedAt` — могильник: удаление в офлайне тоже событие, и сервер
  * должен узнать о нём не меньше, чем о новой записи. Без него старая
  * копия на втором устройстве воскресила бы удалённое.
+ *
+ * `sharedWithTrip` необязателен на проводе: устройство с прежней версией
+ * приложения его не присылает, и сервер читает отсутствие как «как было».
  */
 export interface DiarySyncEntry {
   id: string
@@ -36,4 +48,31 @@ export interface DiarySyncEntry {
   createdAt: string
   updatedAt: string
   deletedAt?: string | null
+  sharedWithTrip?: boolean
+}
+
+/**
+ * Запись альманаха: запись дневника с автором (22.11.2026).
+ *
+ * Заказчик: «формат: хронология по дате, разделители «День N · дата»,
+ * записи с автором, markdown; записи не правятся». Автор приходит
+ * с сервера, потому что дневник отдаёт только свои записи, а состав
+ * участников знает имена, но не то, кто какую строку написал.
+ */
+export interface AlmanacEntry {
+  id: string
+  body: string
+  createdAt: string
+  author: {
+    userId: string
+    displayName: string
+    avatarUrl: string | null
+  }
+}
+
+/** Альманах похода: только помеченные авторами записи, старые сверху. */
+export interface TripAlmanac {
+  tripId: string
+  completedAt: string
+  entries: AlmanacEntry[]
 }

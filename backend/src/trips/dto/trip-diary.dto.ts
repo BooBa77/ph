@@ -3,6 +3,7 @@ import { Type } from 'class-transformer';
 import {
   ArrayMaxSize,
   IsArray,
+  IsBoolean,
   IsDateString,
   IsOptional,
   IsString,
@@ -36,12 +37,20 @@ export class TripDiaryEntryDto {
   @ApiProperty({ description: 'Когда запись правили (ISO)', example: '2026-11-16T03:25:00.000Z' })
   updatedAt: string;
 
+  @ApiProperty({
+    description:
+      'Можно ли этой записи попасть в альманах. По умолчанию — да (решение заказчика 22.11.2026)',
+    example: true,
+  })
+  sharedWithTrip: boolean;
+
   static from(entry: TripDiaryEntry): TripDiaryEntryDto {
     return {
       id: entry.id,
       body: entry.body,
       createdAt: entry.createdAt.toISOString(),
       updatedAt: entry.updatedAt.toISOString(),
+      sharedWithTrip: entry.sharedWithTrip,
     };
   }
 }
@@ -95,6 +104,23 @@ export class DiarySyncEntryDto {
   @IsOptional()
   @IsDateString({}, { message: 'Дата удаления записи — ISO 8601' })
   deletedAt?: string | null;
+
+  /**
+   * Согласие на альманах (22.11.2026).
+   *
+   * Поле **необязательное**, и это не поблажка: устройство могло обновиться
+   * не сразу, а в его офлайн-очереди лежит запись без пометки. Отсутствие
+   * поля сервер читает как «как было» (`COALESCE` в `upsert`), поэтому старая
+   * копия не переключит согласие молча ни в одну сторону. Новые записи
+   * получают `true` — по умолчанию заказчика.
+   */
+  @ApiProperty({
+    description: 'Можно ли записи попасть в альманах (по умолчанию — да)',
+    required: false,
+  })
+  @IsOptional()
+  @IsBoolean({ message: 'Пометка «в альманах» — boolean' })
+  sharedWithTrip?: boolean;
 }
 
 /**
