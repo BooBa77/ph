@@ -1,9 +1,20 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsUUID } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  IsInt,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Matches,
+  Max,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 
 import type { Conversation } from '../entities/conversation.entity';
 import type { Message } from '../entities/message.entity';
-import { TripMessageDto } from './message.dto';
+import { CHAT_TITLES, TripMessageDto } from './message.dto';
 
 /** Кто собеседник в личном диалоге. */
 export class ConversationPeerDto {
@@ -58,20 +69,54 @@ export class ConversationDto {
   unreadCount: number;
 
   /**
-   * Подпись чата похода. Личные подписываются именем собеседника — оно
-   * приходит в `peer`, а не строкой: по нему ещё рисуется аватарка.
+   * Название похода для чата похода. null — личный диалог.
    *
-   * Подписи вкладок здесь тоже есть: чат «Питания», «Трансфера» и «Ночёвок»
-   * попадает в общий список диалогов, и без своей строки он назывался бы
-   * «Диалог».
+   * Без него лента писала бы «Чат бухгалтерии» и не говорила, какого
+   * похода; название лежит в `trips.announcement`, а если он пуст —
+   * в цели похода, как в остальных экранах.
+   */
+  @ApiProperty({
+    description: 'Название похода. null — личный диалог',
+    example: 'Витязь',
+    nullable: true,
+  })
+  tripTitle: string | null;
+
+  /**
+   * Заглушены ли уведомления по этому диалогу.
+   *
+   * Отдельный флаг, а не только `mutedAt`: клиенту нужно решение
+   * «показывать строку или нет», а не время, когда её выключили.
+   */
+  @ApiProperty({ description: 'Уведомления по диалогу заглушены', example: false })
+  muted: boolean;
+
+  /**
+   * Когда собеседник последний раз читал личный диалог.
+   *
+   * Отметка «прочитано» ставится не на каждое сообщение: хранится одна
+   * метка на диалог, и «прочитано» получают все мои сообщения, созданные
+   * до неё. `null` — собеседник диалог ещё не открывал.
+   */
+  @ApiProperty({
+    description: 'Когда собеседник читал диалог. null — не открывал',
+    nullable: true,
+  })
+  peerLastReadAt: string | null;
+
+  /**
+   * Подпись чата: имя собеседника или название чата похода.
+   *
+   * Личные подписываются именем собеседника — оно приходит в `peer`, а не
+   * строкой: по нему ещё рисуется аватарка. Названия чатов похода берутся
+   * из `CHAT_TITLES` — того же словаря, что у `GET /trips/:id/chats`:
+   * отдельная копия здесь уже приводила к «Диалогу» вместо «Чата
+   * снаряжения» (23.11.2026).
    */
   static titleOf(conversation: Conversation, peerName: string | null): string {
-    if (conversation.kind === 'trip_guest') return 'Гостевой чат';
-    if (conversation.kind === 'trip_members') return 'Чат участников';
-    if (conversation.kind === 'trip_meals') return 'Чат питания';
-    if (conversation.kind === 'trip_transfer') return 'Чат трансфера';
-    if (conversation.kind === 'trip_route') return 'Чат табора';
-    return peerName ?? 'Диалог';
+    const tripTitle = (CHAT_TITLES as Record<string, string>)[conversation.kind]
+
+    return tripTitle ?? peerName ?? 'Диалог'
   }
 
   static from(
@@ -81,6 +126,12 @@ export class ConversationDto {
       lastMessage: Message | null;
       unreadCount: number;
       viewerId: string;
+      /** Название похода для чатов похода, null — личный диалог. */
+      tripTitle?: string | null;
+      /** Заглушены ли уведомления у этого человека. */
+      muted?: boolean;
+      /** Когда собеседник последний раз читал диалог. */
+      peerLastReadAt?: Date | null;
     },
   ): ConversationDto {
     return {
@@ -93,6 +144,9 @@ export class ConversationDto {
         ? TripMessageDto.from(options.lastMessage, options.viewerId)
         : null,
       unreadCount: options.unreadCount,
+      tripTitle: options.tripTitle ?? null,
+      muted: options.muted === true,
+      peerLastReadAt: options.peerLastReadAt?.toISOString() ?? null,
     };
   }
 }
@@ -110,4 +164,56 @@ export class OpenDirectDto {
   })
   @IsUUID('4', { message: 'Нужен корректный UUID собеседника' })
   userId: string;
+}
+
+/**
+ * Параметры `GET /api/conversations/:id/messages`.
+ *
+ * Курсор `before` и размер страницы — те же, что у чатов похода: лента
+ * правой колонки читает тем же кодом и листает историю так же. `kind` здесь
+ * не нужен: диалог уже выбран id, в отличие от `GET /trips/:id/messages`.
+ */
+export class ConversationMessageQueryDto {
+  @ApiProperty({
+    description: 'Сколько сообщений вернуть',
+    example: 50,
+    default: 50,
+    maximum: 100,
+    required: false,
+  })
+  @IsOptional()
+  @Type(() => Number)
+  @IsInt({ message: 'Размер страницы должен быть целым числом' })
+  @Min(1, { message: 'Размер страницы — от 1 до 100' })
+  @Max(100, { message: 'Размер страницы — от 1 до 100' })
+  limit?: number;
+
+  @ApiProperty({
+    description: 'Id сообщения, до которого листаем (не включая его)',
+    example: '120',
+    required: false,
+  })
+  @IsOptional()
+  @Matches(/^\d+$/, { message: 'Курсор должен быть id сообщения' })
+  before?: string;
+}
+
+/**
+ * Тело `POST /api/conversations/:id/messages`.
+ *
+ * Только текст: вид чата уже известен по id диалога, а вложение или
+ * действие вешает сервер, а не клиент.
+ */
+export class SendConversationMessageDto {
+  @ApiProperty({
+    description:
+      'Текст: markdown (GFM). Санитайз — при рендере, в базе лежит исходник',
+    example: 'Буду к восьми',
+    minLength: 1,
+    maxLength: 4000,
+  })
+  @IsString({ message: 'Сообщение должно быть строкой' })
+  @MinLength(1, { message: 'Сообщение не может быть пустым' })
+  @MaxLength(4000, { message: 'Сообщение не должно превышать 4000 символов' })
+  body: string;
 }

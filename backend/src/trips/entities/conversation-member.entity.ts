@@ -51,6 +51,17 @@ export class ConversationMember {
   @Column({ name: 'last_read_at', type: 'timestamptz', nullable: true })
   lastReadAt: Date | null;
 
+  /**
+   * Когда человек заглушил уведомления по диалогу (23.11.2026).
+   *
+   * `NULL` — уведомлять, и это состояние по умолчанию: строки состава
+   * у чатов похода ленивые, их может не быть вовсе. Заглушенный диалог
+   * не попадает в правую колонку, но непрочитанное в самом чате остаётся:
+   * галочка гасит напоминание, а не сообщения.
+   */
+  @Column({ name: 'muted_at', type: 'timestamptz', nullable: true })
+  mutedAt: Date | null;
+
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt: Date;
 }

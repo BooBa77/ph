@@ -1,12 +1,14 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
   Param,
   ParseIntPipe,
   Post,
+  Query,
 } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 
@@ -16,8 +18,11 @@ import { ConversationsService } from './conversations.service';
 import {
   ConversationDto,
   ConversationListDto,
+  ConversationMessageQueryDto,
   OpenDirectDto,
+  SendConversationMessageDto,
 } from './dto/conversation.dto';
+import { TripMessageDto, TripMessageListDto } from './dto/message.dto';
 
 /**
  * Диалоги человека: чаты походов и личные в одном списке.
@@ -70,5 +75,61 @@ export class ConversationsController {
     @Param('id', ParseIntPipe) id: number,
   ): Promise<void> {
     return this.conversationsService.markRead(authUser.id, id);
+  }
+
+  /**
+   * Сообщения диалога — страница в хронологическом порядке.
+   *
+   * Курсор `before` — id самого старого сообщения, которое уже есть
+   * у клиента: лента дочитывает историю вверх.
+   */
+  @Get(':id/messages')
+  @ApiOperation({ summary: 'Сообщения диалога' })
+  @ApiOkResponse({ type: TripMessageListDto })
+  async listMessages(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Query() query: ConversationMessageQueryDto,
+  ): Promise<TripMessageListDto> {
+    return this.conversationsService.listMessages(authUser.id, id, query);
+  }
+
+  /** Отправить сообщение в диалог. Текст — markdown, санитайз при рендере. */
+  @Post(':id/messages')
+  @ApiOperation({ summary: 'Отправить сообщение в диалог' })
+  @ApiCreatedResponse({ type: TripMessageDto })
+  async sendMessage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: SendConversationMessageDto,
+  ): Promise<TripMessageDto> {
+    return this.conversationsService.sendMessage(authUser.id, id, dto);
+  }
+
+  /**
+   * Заглушить уведомления по диалогу.
+   *
+   * Галочка в ленте и под чатом похода делает одно и то же: диалог
+   * перестаёт попадать в ленту. Непрочитанное в самом чате остаётся.
+   */
+  @Post(':id/mute')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Заглушить уведомления по диалогу' })
+  async mute(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<void> {
+    return this.conversationsService.setMuted(authUser.id, id, true);
+  }
+
+  /** Вернуть уведомления по диалогу — «возможность вернуть есть». */
+  @Delete(':id/mute')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Вернуть уведомления по диалогу' })
+  async unmute(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<void> {
+    return this.conversationsService.setMuted(authUser.id, id, false);
   }
 }

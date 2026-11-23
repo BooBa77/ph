@@ -4,6 +4,7 @@ import { RouterView, useRoute } from 'vue-router'
 
 import AppHeader from '@/components/layout/AppHeader.vue'
 import MobileMenu from '@/components/layout/MobileMenu.vue'
+import RightRail from '@/components/layout/RightRail.vue'
 import SeasonDecor from '@/components/layout/SeasonDecor.vue'
 import SiteSidebar from '@/components/layout/SiteSidebar.vue'
 import OfflineBanner from '@/components/offline/OfflineBanner.vue'
@@ -156,9 +157,13 @@ watch(
 
   <!--
     Общий каркас страниц: меню слева (на мобиле меню живёт в гамбургере
-    шапки, а эта колонка скрыта) и содержимое. Меню одно на всё приложение:
-    раньше разделы жили только внутри личного кабинета, и на главной меню
-    не было вовсе, а второе меню рядом с первым путало бы.
+    шапки, а эта колонка скрыта), содержимое и **правая колонка сообщений**
+    (23.11.2026).
+
+    Правая колонка от `xl`: до 1280 три колонки не влезают, и она уступает
+    место содержимому. Ширина контейнера выросла с `max-w-5xl` до 1400 px
+    ровно ради неё: на экране 1440 контент остался прежним (≈790 px против
+    768), а пустые поля по краям заняла колонка.
 
     Классы каркаса включаются только вместе с шапкой: на странице входа
     (`hideHeader`) остаётся голая обёртка, а сама форма центрируется своими
@@ -168,7 +173,7 @@ watch(
   <div
     :class="
       showHeader
-        ? 'mx-auto flex max-w-5xl flex-col gap-4 px-4 py-6 md:flex-row md:items-start md:gap-8 md:py-8'
+        ? 'mx-auto flex max-w-[1400px] flex-col gap-4 px-4 py-6 md:flex-row md:items-start md:gap-8 md:py-8'
         : ''
     "
   >
@@ -177,6 +182,9 @@ watch(
     <div class="min-w-0 flex-1">
       <RouterView />
     </div>
+
+    <!-- Лента сообщений: только для вошедшего и только от `xl`. -->
+    <RightRail v-if="showHeader && auth.user" />
   </div>
 
   <!--

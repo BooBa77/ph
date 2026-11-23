@@ -9,14 +9,24 @@ import { DataSource, EntityManager, In, Not } from 'typeorm';
 import {
   ConversationDto,
   ConversationListDto,
+  ConversationMessageQueryDto,
   ConversationPeerDto,
   type OpenDirectDto,
+  type SendConversationMessageDto,
 } from './dto/conversation.dto';
+import {
+  TripMessageDto,
+  type TripMessageListDto,
+} from './dto/message.dto';
 import { Conversation } from './entities/conversation.entity';
 import { ConversationMember } from './entities/conversation-member.entity';
 import { Message } from './entities/message.entity';
+import { Trip } from './entities/trip.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { User } from '../users/entities/user.entity';
+
+/** Сколько сообщений диалога отдаём по умолчанию — как у чатов похода. */
+const DEFAULT_CONVERSATION_PAGE_SIZE = 50;
 
 /**
  * Диалоги человека: походные чаты и личные — в одном списке.
@@ -70,6 +80,10 @@ export class ConversationsService {
       );
     }
 
+    // Названия походов одним запросом: «Чат бухгалтерии» без названия
+    // похода не говорит, куда идти.
+    const tripTitles = await this.tripTitlesOf(manager, conversations);
+
     const dtos: ConversationDto[] = [];
 
     for (const conversation of conversations) {
@@ -79,20 +93,40 @@ export class ConversationsService {
 
       const lastMessage = await manager.findOne(Message, {
         where: { conversationId: conversation.id },
-        relations: { sender: true },
+        // `action` нужен ленте: по нему рисуются кнопки «Подтверждаю».
+        relations: { sender: true, action: true },
         order: { id: 'DESC' },
       });
+
+      /**
+       * Отсчёт непрочитанного для чата, который ни разу не открывали.
+       *
+       * `last_read_at` пуст, а строки состава у чатов похода ленивые:
+       * «всё непрочитано» показало бы всю историю похода — на старом
+       * походе это сотни сообщений и бейдж «312». Считаем с момента,
+       * когда человек попал в состав: до него он этих сообщений не видел.
+       */
+      const since =
+        member?.lastReadAt ??
+        participation.find((row) => row.tripId === conversation.tripId)
+          ?.createdAt ??
+        null;
 
       const unreadCount = await this.countUnread(
         manager,
         conversation.id,
         userId,
-        member?.lastReadAt ?? null,
+        since,
       );
 
       const peer =
         conversation.kind === 'direct'
           ? await this.peerOf(manager, conversation, userId)
+          : null;
+
+      const peerLastReadAt =
+        conversation.kind === 'direct'
+          ? await this.peerReadAt(manager, conversation, peer?.id ?? null)
           : null;
 
       dtos.push(
@@ -101,6 +135,11 @@ export class ConversationsService {
           lastMessage,
           unreadCount,
           viewerId: userId,
+          tripTitle: conversation.tripId
+            ? (tripTitles.get(conversation.tripId) ?? null)
+            : null,
+          muted: Boolean(member?.mutedAt),
+          peerLastReadAt,
         }),
       );
     }
@@ -194,6 +233,184 @@ export class ConversationsService {
         lastReadAt: new Date(),
       });
     });
+  }
+
+  /**
+   * Сообщения диалога страницей — от старых к новым.
+   *
+   * Тот же курсор и то же правило, что у чатов похода: листаем по `id`,
+   * потому что две записи с одинаковым `created_at` — обычное дело,
+   * и страница на дате либо зациклилась бы, либо теряла сообщения.
+   * В ответе порядок хронологический: лента читается сверху вниз.
+   */
+  async listMessages(
+    userId: string,
+    conversationId: number,
+    query: ConversationMessageQueryDto,
+  ): Promise<TripMessageListDto> {
+    const manager = this.dataSource.manager;
+    const conversation = await this.accessible(
+      manager,
+      userId,
+      conversationId,
+    );
+    const limit = query.limit ?? DEFAULT_CONVERSATION_PAGE_SIZE;
+
+    const qb = manager
+      .createQueryBuilder(Message, 'message')
+      .leftJoinAndSelect('message.sender', 'sender')
+      .leftJoinAndSelect('message.action', 'action')
+      .where('message.conversationId = :conversationId', {
+        conversationId: conversation.id,
+      })
+      // Имя свойства, а не колонки: при `take` TypeORM пересобирает
+      // ORDER BY и ищет колонку через `findColumnWithPropertyPath`.
+      .orderBy('message.id', 'DESC')
+      .take(limit + 1);
+
+    if (query.before !== undefined) {
+      qb.andWhere('message.id < :before', { before: query.before });
+    }
+
+    const rows = await qb.getMany();
+    const hasMore = rows.length > limit;
+    const page = hasMore ? rows.slice(0, limit) : rows;
+    page.reverse();
+
+    return {
+      messages: page.map((row) => TripMessageDto.from(row, userId)),
+      hasMore,
+    };
+  }
+
+  /**
+   * Отправить сообщение в диалог.
+   *
+   * Право писать здесь не отдельное: доступ к диалогу и есть право
+   * писать. Гость публичного похода читает гостевой чат по другой ручке
+   * (`GET /trips/:id/messages`), и в ленте у него этого диалога нет.
+   *
+   * Текст обрезается по краям и пустым быть не может: сообщение из одних
+   * пробелов неотличимо от пустого, а в ленте выглядит как сбой вёрстки.
+   */
+  async sendMessage(
+    userId: string,
+    conversationId: number,
+    dto: SendConversationMessageDto,
+  ): Promise<TripMessageDto> {
+    const manager = this.dataSource.manager;
+    const conversation = await this.accessible(
+      manager,
+      userId,
+      conversationId,
+    );
+
+    const body = dto.body.trim();
+    if (body.length === 0) {
+      throw new BadRequestException('Сообщение не может состоять из пробелов');
+    }
+
+    const sender = await manager.findOne(User, { where: { id: userId } });
+    if (!sender) {
+      throw new NotFoundException('Пользователь не найден');
+    }
+
+    const saved = await manager.save(
+      manager.create(Message, {
+        conversationId: conversation.id,
+        senderId: userId,
+        body,
+      }),
+    );
+    saved.sender = sender;
+
+    return TripMessageDto.from(saved, userId);
+  }
+
+  /**
+   * Заглушить или вернуть уведомления по диалогу.
+   *
+   * Строки состава у чата похода может не быть — создаём её здесь же:
+   * настройка живёт в ней. `last_read_at` не трогаем: выключение
+   * уведомлений не делает диалог прочитанным.
+   */
+  async setMuted(
+    userId: string,
+    conversationId: number,
+    muted: boolean,
+  ): Promise<void> {
+    await this.dataSource.transaction(async (manager) => {
+      const conversation = await this.accessible(
+        manager,
+        userId,
+        conversationId,
+      );
+
+      const existing = await manager.findOne(ConversationMember, {
+        where: { conversationId: conversation.id, userId },
+      });
+
+      if (existing) {
+        existing.mutedAt = muted ? new Date() : null;
+        await manager.save(existing);
+        return;
+      }
+
+      await manager.insert(ConversationMember, {
+        conversationId: conversation.id,
+        userId,
+        mutedAt: muted ? new Date() : null,
+      });
+    });
+  }
+
+  /**
+   * Названия походов для чатов похода — одним запросом.
+   *
+   * `announcement` — подпись похода в остальных экранах, но он необязателен;
+   * если пуст, берём цель (она у похода обязательна). Тот же порядок, что
+   * в уведомлении альманаха: человек видит одно и то же название везде.
+   */
+  private async tripTitlesOf(
+    manager: EntityManager,
+    conversations: Conversation[],
+  ): Promise<Map<string, string>> {
+    const ids = [
+      ...new Set(
+        conversations
+          .map((row) => row.tripId)
+          .filter((id): id is string => id !== null && id !== undefined),
+      ),
+    ];
+
+    if (ids.length === 0) return new Map();
+
+    const trips = await manager.find(Trip, {
+      where: { id: In(ids) },
+      relations: { goalObject: true },
+    });
+
+    return new Map(
+      trips.map((trip) => [
+        trip.id,
+        trip.announcement ?? trip.goalObject?.name ?? `поход #${trip.id}`,
+      ]),
+    );
+  }
+
+  /** Когда собеседник личного диалога читал его в последний раз. */
+  private async peerReadAt(
+    manager: EntityManager,
+    conversation: Conversation,
+    peerId: string | null,
+  ): Promise<Date | null> {
+    if (!peerId) return null;
+
+    const row = await manager.findOne(ConversationMember, {
+      where: { conversationId: conversation.id, userId: peerId },
+    });
+
+    return row?.lastReadAt ?? null;
   }
 
   /** Сколько новых сообщений в диалоге для этого человека. */

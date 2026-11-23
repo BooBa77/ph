@@ -527,6 +527,27 @@ export const CHAT_KIND_LABELS: Record<ChatKind, string> = {
   trip_finance: 'Чат бухгалтерии',
 }
 
+/**
+ * Действие в сообщении: кнопки «Получено / Не получено».
+ *
+ * Состояние живёт на сервере в `message_actions`; сообщение лишь ссылается
+ * на действие. `canRespond` и `canRecheck` посчитаны для того, кто читает:
+ * кнопки видны адресату и отправителю по разным правилам, и решает это
+ * сервер, а не шаблон.
+ */
+export interface MessageAction {
+  id: string
+  /** `money_received` — денежное подтверждение. */
+  kind: string
+  targetUserId: string
+  state: 'pending' | 'confirmed' | 'disputed'
+  payload: Record<string, unknown>
+  canRespond: boolean
+  canRecheck: boolean
+  createdAt: string
+  respondedAt: string | null
+}
+
 /** Сообщение чата похода. `senderId === null` — системное. */
 export interface TripMessage {
   id: string
@@ -536,6 +557,8 @@ export interface TripMessage {
   body: string
   isSystem: boolean
   createdAt: string
+  /** Действие в сообщении. null — обычное сообщение. */
+  action?: MessageAction | null
 }
 
 /** Чат похода, доступный смотрящему. */

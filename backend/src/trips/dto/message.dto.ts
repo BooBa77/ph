@@ -22,8 +22,12 @@ import { CHAT_KINDS, type ChatKind } from '../trip.types';
  * В базе `kind` — код (`trip_guest`), и наружу он тоже уходит кодом: по нему
  * фронт выбирает оформление. Подпись здесь ради Swagger и отладки — рисовать
  * интерфейс по ней нельзя, иначе переводы однажды окажутся в API.
+ *
+ * Экспортируется, чтобы `ConversationDto` подписывал чаты тем же списком:
+ * два словаря разошлись бы на первой новой вкладке, и в ленте появилось бы
+ * «Диалог» вместо «Чата снаряжения» (так и случилось 23.11.2026).
  */
-const CHAT_TITLES: Record<ChatKind, string> = {
+export const CHAT_TITLES: Record<ChatKind, string> = {
   trip_guest: 'Гостевой чат',
   trip_members: 'Чат участников',
   trip_meals: 'Чат питания',

@@ -1,0 +1,34 @@
+import type { TripMessage } from '@/types/trips'
+
+/**
+ * Диалог человека: личный или чат похода — один тип на оба.
+ *
+ * Разделение видов живёт в коде `kind`, а не в разных интерфейсах: список
+ * приходит один, и лента правой колонки рисует его одним компонентом.
+ * `peer` заполнен только у личных, `tripTitle` — только у походных.
+ */
+export interface ConversationPeer {
+  id: string
+  displayName: string
+  avatarUrl: string | null
+}
+
+export interface Conversation {
+  id: string
+  /** `direct` | `trip_guest` | `trip_members` | `trip_meals` | … */
+  kind: string
+  /** Поход для чатов похода. null — личный диалог. */
+  tripId: string | null
+  /** Подпись: имя собеседника или название чата. */
+  title: string
+  /** Название похода. null — личный диалог. */
+  tripTitle: string | null
+  peer: ConversationPeer | null
+  lastMessage: TripMessage | null
+  /** Сколько сообщений новее моего последнего прочтения. */
+  unreadCount: number
+  /** Уведомления заглушены: диалог не попадает в ленту. */
+  muted: boolean
+  /** Когда собеседник читал личный диалог. null — ещё не открывал. */
+  peerLastReadAt: string | null
+}
