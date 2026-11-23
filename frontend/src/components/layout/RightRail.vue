@@ -14,6 +14,7 @@ import { respondToAction } from '@/api/message-actions'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import type { Conversation } from '@/types/conversations'
 import type { TripMessage } from '@/types/trips'
+import { tripTabOf } from '@/utils/chatTabs'
 
 /**
  * Правая колонка: лента сообщений и быстрый чат (23.11.2026).
@@ -21,8 +22,8 @@ import type { TripMessage } from '@/types/trips'
  * Заказчик: «в колонке заголовки сообщений, при клике сообщение
  * раскрывается». Раскрытие — не декорация: в нём три последних сообщения,
  * поле ввода и кнопки «Открыть чат» / «Скрыть чат». Полный экран переписки
- * появится отдельным шагом, а здесь — то, что нужно каждый день: увидеть,
- * что пришло, и ответить одной строкой.
+ * для чатов похода по-прежнему не нужен — чат читается на своей вкладке,
+ * а личные диалоги с 23.11.2026 открываются экраном `/messages/:id`.
  *
  * **Денежные действия — сверху.** Заказчик: «сообщениям про деньги
  * максимальный приоритет». Сортировка не по времени, а по срочности:
@@ -50,20 +51,9 @@ const REFRESH_MS = 60_000
 /**
  * Вкладка похода для вида чата: куда ведёт «Открыть чат».
  *
- * Коды совпадают с `TripTabCode` в `TripView.vue` — там же их читает
- * `?tab=`, поэтому адрес открывается в нужную вкладку, а не в «Гостевую».
+ * Таблица переехала в `utils/chatTabs.ts`: её же спрашивает экран диалога,
+ * когда ссылается на поход из шапки.
  */
-const TAB_BY_KIND: Record<string, string> = {
-  trip_guest: 'guest',
-  trip_members: 'members',
-  trip_meals: 'meals',
-  trip_transfer: 'transfer',
-  trip_route: 'route',
-  trip_gear: 'gear',
-  trip_first_aid: 'firstAid',
-  trip_finance: 'finance',
-}
-
 const conversations = ref<Conversation[]>([])
 const isLoading = ref(true)
 const error = ref<string | null>(null)
@@ -196,6 +186,25 @@ async function markRead(row: Conversation): Promise<void> {
 }
 
 async function toggle(row: Conversation): Promise<void> {
+  /**
+   * Личный диалог открывается экраном, а не раскрытием.
+   *
+   * Заказчик: «клик по личному диалогу ведёт на /messages/:id». В колонке
+   * 288 px переписку всё равно не читают, а полный экран с историей
+   * появился 23.11.2026 — быстрый чат остаётся для чатов похода, где
+   * «Открыть чат» ведёт на вкладку.
+   *
+   * **Кроме строки, которая ждёт моего ответа.** «Сообщениям про деньги
+   * максимальный приоритет» — это не переписка, а задача: подтвердить
+   * перевод. Она раскрывается здесь же, как и раньше, с кнопками
+   * «Подтверждаю» / «Не получено»: заставлять человека уходить на другой
+   * экран ради одной кнопки — потеря того, ради чего колонка делалась.
+   */
+  if (!row.tripId && !hasPendingAction(row)) {
+    void router.push(`/messages/${row.id}`)
+    return
+  }
+
   if (expandedId.value === row.id) {
     expandedId.value = null
     draft.value = ''
@@ -273,7 +282,7 @@ function openTripChat(row: Conversation): void {
 
   void markRead(row)
 
-  const tab = TAB_BY_KIND[row.kind]
+  const tab = tripTabOf(row.kind)
 
   void router.push({
     path: `/trips/${row.tripId}`,
@@ -393,7 +402,7 @@ function onFocus(): void {
           </span>
         </button>
 
-        <!-- Раскрытие: быстрый чат. Полный экран переписки — следующий шаг. -->
+        <!-- Раскрытие: быстрый чат для чатов похода. Личные — на /messages/:id. -->
         <div v-if="expandedId === row.id" class="flex flex-col gap-2 px-2 pb-2">
           <p v-if="previewMessages(row).length === 0" class="text-xs text-muted">
             Пока пусто — напиши первым.

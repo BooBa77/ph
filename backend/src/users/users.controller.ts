@@ -170,7 +170,14 @@ export class UsersController {
       throw new NotFoundException('Пользователь не найден');
     }
 
-    return UserPublicProfileDto.from(user, user.id === authUser.id);
+    const isSelf = user.id === authUser.id;
+    // «Написать» — только когда есть общий поход: иначе кнопка открывала бы
+    // личный диалог любому с любым, а сдерживать это в проекте нечем.
+    const hasSharedTrip = isSelf
+      ? false
+      : await this.usersService.hasSharedTrip(authUser.id, user.id);
+
+    return UserPublicProfileDto.from(user, isSelf, hasSharedTrip);
   }
 
   /**

@@ -53,7 +53,27 @@ export class UserPublicProfileDto {
   @ApiProperty({ description: 'Это профиль того, кто смотрит', example: false })
   isSelf: boolean;
 
-  static from(user: User, isSelf: boolean): UserPublicProfileDto {
+  /**
+   * Есть ли у смотрящего с этим человеком общий поход.
+   *
+   * По нему профиль показывает кнопку «Написать»: писать незнакомому
+   * человеку из ниоткуда в проекте не за что — ни модерации, ни блокировок
+   * нет, а личный диалог заводится одной кнопкой. Отвечает сервер, потому
+   * что для этого нужен состав обоих, а не только id.
+   *
+   * `false` у своего профиля: с самим собой диалог не нужен.
+   */
+  @ApiProperty({
+    description: 'Есть общий поход — можно написать',
+    example: true,
+  })
+  hasSharedTrip: boolean;
+
+  static from(
+    user: User,
+    isSelf: boolean,
+    hasSharedTrip = false,
+  ): UserPublicProfileDto {
     return {
       id: user.id,
       displayName: user.displayName,
@@ -61,6 +81,7 @@ export class UserPublicProfileDto {
       location: user.location,
       createdAt: user.createdAt.toISOString(),
       isSelf,
+      hasSharedTrip,
     };
   }
 }

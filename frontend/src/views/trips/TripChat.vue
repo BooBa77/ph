@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref } from 'vue'
 
+import { setConversationMuted } from '@/api/conversations'
 import { ApiError } from '@/api/errors'
-import { listTripMessages, sendTripMessage } from '@/api/trips'
+import { listTripChats, listTripMessages, sendTripMessage } from '@/api/trips'
 import MarkdownEditor from '@/components/ui/MarkdownEditor.vue'
 import { markdownToHtml } from '@/utils/markdown'
-import { CHAT_KIND_LABELS, type ChatKind, type TripMessage } from '@/types/trips'
+import { CHAT_KIND_LABELS, type ChatKind, type TripChat as ChatInfo, type TripMessage } from '@/types/trips'
 
 /**
  * Чат похода: гостевой — на «Гостевой», членский — на «Участниках».
@@ -18,13 +19,24 @@ import { CHAT_KIND_LABELS, type ChatKind, type TripMessage } from '@/types/trips
  * **Действия в сообщениях** (денежные подтверждения) сюда не рисуются:
  * они нужны Бухгалтерии, а не походному чату. Ответ приходит в DTO, но
  * кнопок «Да/Нет» здесь нет.
+ *
+ * **Галочка «Уведомлять об этом чате»** (23.11.2026) — та же настройка,
+ * что «Скрыть чат» в правой колонке: `conversation_members.muted_at`.
+ * Заказчик просил её и под самим чатом. Сам чат открыт по паре
+ * «поход + вид», а галочке нужен id диалога, поэтому список чатов
+ * похода читается отдельно (`GET /trips/:id/chats`); там же приходит
+ * текущее состояние. Гостю публичного похода галочка не показывается:
+ * глушить ему нечего, а ручка ответила бы 403.
  */
 const props = defineProps<{ tripId: string; kind: ChatKind }>()
 
 const messages = ref<TripMessage[]>([])
+const chat = ref<ChatInfo | null>(null)
 const isLoading = ref(true)
 const isSending = ref(false)
+const isMuting = ref(false)
 const error = ref<string | null>(null)
+const muteError = ref<string | null>(null)
 const draft = ref('')
 
 const listEl = ref<HTMLElement | null>(null)
@@ -90,6 +102,52 @@ async function send() {
 }
 
 onMounted(load)
+
+/**
+ * Загрузить состояние галочки.
+ *
+ * Отдельно от сообщений и с глушением ошибки: если список чатов не пришёл,
+ * переписка всё равно читается — просто без галочки. Ронять весь чат
+ * из-за настройки уведомлений незачем.
+ */
+async function loadChatState(): Promise<void> {
+  try {
+    const chats = await listTripChats(props.tripId)
+    chat.value = chats.find((row) => row.kind === props.kind) ?? null
+  } catch {
+    chat.value = null
+  }
+}
+
+onMounted(loadChatState)
+
+/**
+ * Переключить «Уведомлять об этом чате».
+ *
+ * Состояние переключаем после ответа сервера, а не до: галочка — это
+ * настройка, и показать её снятой, не сохранив, значит соврать. При ошибке
+ * возвращаем её же в прежнее положение.
+ */
+async function toggleMuted(): Promise<void> {
+  if (!chat.value || chat.value.muted === null || isMuting.value) return
+
+  const next = !chat.value.muted
+
+  isMuting.value = true
+  muteError.value = null
+
+  try {
+    await setConversationMuted(chat.value.id, next)
+    chat.value = { ...chat.value, muted: next }
+  } catch (problem) {
+    muteError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось изменить уведомления'
+    // Тот же объект — Vue не перерисует, а чекбокс человек уже переключил.
+    chat.value = { ...chat.value }
+  } finally {
+    isMuting.value = false
+  }
+}
 </script>
 
 <template>
@@ -143,5 +201,23 @@ onMounted(load)
         Отправить
       </button>
     </form>
+
+    <div v-if="chat && chat.muted !== null" class="flex flex-col gap-1 border-t border-border pt-2">
+      <label class="flex cursor-pointer items-center gap-2 text-xs text-muted">
+        <input
+          type="checkbox"
+          class="h-4 w-4 cursor-pointer accent-primary"
+          :checked="!chat.muted"
+          :disabled="isMuting"
+          data-test="chat-mute"
+          @change="toggleMuted"
+        />
+        Уведомлять об этом чате
+      </label>
+
+      <p v-if="muteError" class="text-xs text-muted" data-test="chat-mute-error">
+        {{ muteError }}
+      </p>
+    </div>
   </section>
 </template>

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { RouterLink, useRoute } from 'vue-router'
+import { RouterLink, useRoute, useRouter } from 'vue-router'
 
+import { openDirectConversation } from '@/api/conversations'
 import { ApiError } from '@/api/errors'
 import { getPublicUser, type PublicUser } from '@/api/users'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
@@ -14,18 +15,23 @@ import UserAvatar from '@/components/ui/UserAvatar.vue'
  * Чужой профиль отвечает на вопрос «кто это», а не «что у него со
  * здоровьем».
  *
- * Кнопки «Написать» пока нет: личные диалоги API умеет (`POST
- * /api/conversations/direct`), но экрана сообщений на фронте ещё нет,
- * и кнопка, ведущая в никуда, хуже её отсутствия.
+ * **«Написать»** (23.11.2026) показывается, только когда у смотрящего
+ * с этим человеком есть общий поход: писать незнакомому человеку «из
+ * ниоткуда» в проекте нечем сдерживать — ни модерации, ни блокировок,
+ * а личный диалог заводится одной кнопкой. Признак считает сервер
+ * (`hasSharedTrip`), потому что для него нужен состав обоих.
  *
  * Для себя (`isSelf`) показываем ссылку в свой профиль: человек часто
  * попадает сюда из участников похода и хочет поправить, что видно другим.
  */
 const route = useRoute()
+const router = useRouter()
 
 const person = ref<PublicUser | null>(null)
 const isLoading = ref(true)
+const isOpening = ref(false)
 const error = ref<string | null>(null)
+const writeError = ref<string | null>(null)
 
 const MONTH_YEAR = new Intl.DateTimeFormat('ru-RU', { month: 'long', year: 'numeric' })
 
@@ -40,6 +46,7 @@ const memberSince = computed(() => {
 async function load(id: string) {
   isLoading.value = true
   error.value = null
+  writeError.value = null
 
   try {
     person.value = await getPublicUser(id)
@@ -51,6 +58,30 @@ async function load(id: string) {
     person.value = null
   } finally {
     isLoading.value = false
+  }
+}
+
+/**
+ * Открыть личный диалог и перейти в него.
+ *
+ * `POST /conversations/direct` идемпотентен: если диалог уже был, вернётся
+ * он же, поэтому кнопка безопасна и не создаёт дублей.
+ */
+async function startDialog(): Promise<void> {
+  if (!person.value || isOpening.value) return
+
+  isOpening.value = true
+  writeError.value = null
+
+  try {
+    const conversation = await openDirectConversation(person.value.id)
+
+    await router.push(`/messages/${conversation.id}`)
+  } catch (problem) {
+    writeError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось открыть диалог'
+  } finally {
+    isOpening.value = false
   }
 }
 
@@ -96,6 +127,22 @@ watch(
             На сайте с {{ memberSince }}
           </p>
         </div>
+      </div>
+
+      <div v-if="person.hasSharedTrip" class="flex flex-col gap-1">
+        <button
+          type="button"
+          class="self-start cursor-pointer rounded-xl bg-primary px-3 py-2 text-sm font-medium text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+          :disabled="isOpening"
+          data-test="person-write"
+          @click="startDialog"
+        >
+          Написать
+        </button>
+
+        <p v-if="writeError" class="text-xs text-muted" data-test="person-write-error">
+          {{ writeError }}
+        </p>
       </div>
 
       <RouterLink

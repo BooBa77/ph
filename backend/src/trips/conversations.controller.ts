@@ -66,6 +66,26 @@ export class ConversationsController {
     return this.conversationsService.openDirect(authUser.id, dto);
   }
 
+  /**
+   * Один диалог — шапка экрана `/messages/:id`.
+   *
+   * Экран открывается по прямой ссылке, и о диалоге у него есть только id.
+   * Отдаём **ту же** `ConversationDto`, что и список: подпись, собеседник,
+   * название похода, непрочитанное и состояние галочки «Уведомлять».
+   *
+   * Роут стоит после `direct` и `:id/read`: `direct` — литеральный путь,
+   * а `:id/messages` и `:id/mute` длиннее, поэтому `:id` их не перехватывает.
+   */
+  @Get(':id')
+  @ApiOperation({ summary: 'Диалог по id' })
+  @ApiOkResponse({ type: ConversationDto })
+  async getOne(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<ConversationDto> {
+    return this.conversationsService.getOne(authUser.id, id);
+  }
+
   /** Отметить диалог прочитанным. */
   @Post(':id/read')
   @HttpCode(HttpStatus.NO_CONTENT)

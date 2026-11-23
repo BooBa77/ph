@@ -16,6 +16,7 @@ import { SportExperience } from './entities/sport-experience.entity';
 import { DisplayNameHistory } from './entities/display-name-history.entity';
 import { FamilyLink } from './entities/family-link.entity';
 import { detachTripParticipant } from '../trips/trip-participant-detach';
+import { TripParticipant } from '../trips/entities/trip-participant.entity';
 import type { FamilyPerson } from './family.types';
 import type { UserGender } from './gender.types';
 import type { SportExperienceData } from './sport-experience.types';
@@ -78,6 +79,37 @@ export class UsersService {
    */
   async findById(id: string): Promise<User | null> {
     return this.usersRepository.findOne({ where: { id } });
+  }
+
+  /**
+   * Есть ли у двух людей общий поход.
+   *
+   * Нужно публичному профилю: кнопка «Написать» показывается, только
+   * когда есть общий поход. Писать незнакомому человеку «из ниоткуда»
+   * в проекте не за что — блокировок и модерации нет, а личный диалог
+   * заводится одной кнопкой.
+   *
+   * Считаем участие в любом статусе, кроме `declined`: отказавшийся
+   * в походе не участвует, и «общего похода» у него нет. `isVirtual`
+   * (человек без аккаунта) не различаем — такие до профиля не доходят,
+   * `GET /users/:id` им отвечает 404.
+   */
+  async hasSharedTrip(userId: string, otherId: string): Promise<boolean> {
+    if (userId === otherId) return false;
+
+    const count = await this.dataSource.manager
+      .createQueryBuilder(TripParticipant, 'mine')
+      .innerJoin(
+        TripParticipant,
+        'other',
+        'other.tripId = mine.tripId AND other.userId = :otherId AND other.status <> :declined',
+        { otherId, declined: 'declined' },
+      )
+      .where('mine.userId = :userId', { userId })
+      .andWhere('mine.status <> :declined', { declined: 'declined' })
+      .getCount();
+
+    return count > 0;
   }
 
   /**

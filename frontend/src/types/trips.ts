@@ -568,6 +568,8 @@ export interface TripChat {
   title: string
   canWrite: boolean
   lastMessage: TripMessage | null
+  /** Уведомления заглушены: галочка под чатом стоит снятой. `null` — галочки нет. */
+  muted: boolean | null
 }
 
 /**

@@ -105,6 +105,15 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      // Экран диалога: полная переписка — личная или чат похода.
+      // Адрес отдельный, а не раскрытие в правой колонке: переписке нужна
+      // своя страница, на которую можно дать ссылку (23.11.2026).
+      path: '/messages/:id',
+      name: 'messages',
+      component: () => import('@/views/messages/MessageView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       // Публичный профиль: имя, город, «на сайте с». Личного здесь нет.
       path: '/people/:id',
       name: 'person',

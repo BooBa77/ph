@@ -50,6 +50,24 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
   }
 }
 
+/**
+ * Чат похода: раскрывается в колонке.
+ *
+ * Личные диалоги с 23.11.2026 открываются экраном `/messages/:id`, поэтому
+ * быстрый чат проверяется на походном — там он и остался.
+ */
+function tripConversation(overrides: Partial<Conversation> = {}): Conversation {
+  return conversation({
+    id: '5',
+    kind: 'trip_finance',
+    tripId: '3',
+    title: 'Чат бухгалтерии',
+    tripTitle: 'Витязь',
+    peer: null,
+    ...overrides,
+  })
+}
+
 function mountRail() {
   return mount(RightRail, { attachTo: document.body })
 }
@@ -96,10 +114,12 @@ describe('RightRail', () => {
 
     const rows = wrapper.findAll('[data-test^="rail-row-"]')
     expect(rows).toHaveLength(2)
-    // Разделитель тысяч в ru-RU — неразрывный пробел, поэтому \u00A0.
-    expect(rows[0].text()).toContain('Перевод 1\u00A0200 ₽')
 
-    await rows[0].find('button').trigger('click')
+    const [urgent] = rows
+    // Разделитель тысяч в ru-RU — неразрывный пробел, поэтому \u00A0.
+    expect(urgent?.text()).toContain('Перевод 1\u00A0200 ₽')
+
+    await urgent?.find('button').trigger('click')
     await flushPromises()
 
     const confirm = wrapper.find('[data-test="rail-confirm"]')
@@ -114,7 +134,7 @@ describe('RightRail', () => {
   })
 
   it('раскрывает не больше трёх последних сообщений и укладывается в 300 символов', async () => {
-    api.listConversations.mockResolvedValue({ conversations: [conversation()] })
+    api.listConversations.mockResolvedValue({ conversations: [tripConversation()] })
     api.listConversationMessages.mockResolvedValue({
       messages: [
         message('1', 'а'.repeat(150)),
@@ -142,7 +162,7 @@ describe('RightRail', () => {
   })
 
   it('скрывает чат из ленты и возвращает его из «Скрытых»', async () => {
-    api.listConversations.mockResolvedValue({ conversations: [conversation()] })
+    api.listConversations.mockResolvedValue({ conversations: [tripConversation()] })
 
     const wrapper = mountRail()
     await flushPromises()
@@ -153,15 +173,32 @@ describe('RightRail', () => {
     await wrapper.find('[data-test="rail-hide"]').trigger('click')
     await flushPromises()
 
-    expect(api.setConversationMuted).toHaveBeenCalledWith('1', true)
+    expect(api.setConversationMuted).toHaveBeenCalledWith('5', true)
     expect(wrapper.findAll('[data-test^="rail-row-"]')).toHaveLength(0)
 
     await wrapper.find('[data-test="rail-muted-toggle"]').trigger('click')
     await wrapper.find('[data-test="rail-restore"]').trigger('click')
     await flushPromises()
 
-    expect(api.setConversationMuted).toHaveBeenCalledWith('1', false)
+    expect(api.setConversationMuted).toHaveBeenCalledWith('5', false)
     expect(wrapper.findAll('[data-test^="rail-row-"]')).toHaveLength(1)
+
+    wrapper.unmount()
+  })
+
+  it('клик по личному диалогу ведёт на экран /messages/:id', async () => {
+    api.listConversations.mockResolvedValue({ conversations: [conversation()] })
+
+    const wrapper = mountRail()
+    await flushPromises()
+
+    await wrapper.find('[data-test^="rail-row-"] button').trigger('click')
+    await flushPromises()
+
+    expect(push).toHaveBeenCalledWith('/messages/1')
+    // Раскрытия нет: быстрый чат остался у чатов похода.
+    expect(wrapper.find('[data-test="rail-input"]').exists()).toBe(false)
+    expect(api.listConversationMessages).not.toHaveBeenCalled()
 
     wrapper.unmount()
   })

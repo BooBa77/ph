@@ -47,6 +47,7 @@ import { TripTypeListDto, TripTypeOptionDto } from './dto/trip-type.dto';
 import { UpdateTripDto } from './dto/update-trip.dto';
 import { TripCacheStateDto } from './dto/trip-cache-state.dto';
 import { Conversation } from './entities/conversation.entity';
+import { ConversationMember } from './entities/conversation-member.entity';
 import { GeoObject } from './entities/geo-object.entity';
 import { Message } from './entities/message.entity';
 import { Role } from './entities/role.entity';
@@ -3517,15 +3518,42 @@ export class TripsService {
   async listChats(userId: string, id: number): Promise<TripChatListDto> {
     const manager = this.dataSource.manager;
     const trip = await this.findVisibleTrip(manager, userId, id);
-    const isParticipant =
-      (await manager.count(TripParticipant, {
-        where: { tripId: trip.id, userId },
-      })) > 0;
+    const participantRow = await manager.findOne(TripParticipant, {
+      where: { tripId: trip.id, userId },
+    });
+    const isParticipant = participantRow !== null;
+    /**
+     * Можно ли глушить уведомления по чату.
+     *
+     * Право на галочку — то же, что у ручки `POST /conversations/:id/mute`:
+     * состав похода без отказавшихся. Гостю публичного похода глушить
+     * нечего — уведомлений о чужом походе у него нет, и ручка ответила бы
+     * ему 403. Фронт по `null` просто не рисует галочку.
+     */
+    const canMute =
+      participantRow !== null && participantRow.status !== 'declined';
 
     const chats = await manager.find(Conversation, {
       where: { tripId: trip.id },
       order: { id: 'ASC' },
     });
+
+    /**
+     * Строки состава — одним запросом на все чаты похода.
+     *
+     * Нужны только ради галочки «Уведомлять об этом чате»: она живёт
+     * в `conversation_members.muted_at`, и без флага под чатом человек
+     * видел бы выключенные уведомления включёнными.
+     */
+    const memberRows =
+      chats.length > 0
+        ? await manager.find(ConversationMember, {
+            where: {
+              conversationId: In(chats.map((chat) => chat.id)),
+              userId,
+            },
+          })
+        : [];
 
     const visible: TripChatDto[] = [];
 
@@ -3549,6 +3577,11 @@ export class TripsService {
         TripChatDto.from(
           { id: chat.id, kind },
           last ? TripMessageDto.from(last, userId) : null,
+          canMute
+            ? memberRows.some(
+                (row) => row.conversationId === chat.id && row.mutedAt !== null,
+              )
+            : null,
         ),
       );
     }

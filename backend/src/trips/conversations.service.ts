@@ -80,66 +80,33 @@ export class ConversationsService {
       );
     }
 
+    /**
+     * Один диалог — одна строка.
+     *
+     * Чат похода попадает в обе выборки, как только у человека появляется
+     * строка состава: её создают отметка прочтения и галочка «Уведомлять».
+     * Без склейки по id лента показала бы такой чат дважды, а бейдж посчитал
+     * бы непрочитанное два раза (на живом стенде 23.11.2026: 17 диалогов
+     * вместо 9, потому что восемь чатов похода уже были отмечены).
+     */
+    const unique = [...new Map(conversations.map((row) => [row.id, row])).values()];
+
     // Названия походов одним запросом: «Чат бухгалтерии» без названия
     // похода не говорит, куда идти.
-    const tripTitles = await this.tripTitlesOf(manager, conversations);
+    const tripTitles = await this.tripTitlesOf(manager, unique);
 
     const dtos: ConversationDto[] = [];
 
-    for (const conversation of conversations) {
-      const member = memberRows.find(
-        (row) => row.conversationId === conversation.id,
-      );
-
-      const lastMessage = await manager.findOne(Message, {
-        where: { conversationId: conversation.id },
-        // `action` нужен ленте: по нему рисуются кнопки «Подтверждаю».
-        relations: { sender: true, action: true },
-        order: { id: 'DESC' },
-      });
-
-      /**
-       * Отсчёт непрочитанного для чата, который ни разу не открывали.
-       *
-       * `last_read_at` пуст, а строки состава у чатов похода ленивые:
-       * «всё непрочитано» показало бы всю историю похода — на старом
-       * походе это сотни сообщений и бейдж «312». Считаем с момента,
-       * когда человек попал в состав: до него он этих сообщений не видел.
-       */
-      const since =
-        member?.lastReadAt ??
-        participation.find((row) => row.tripId === conversation.tripId)
-          ?.createdAt ??
-        null;
-
-      const unreadCount = await this.countUnread(
-        manager,
-        conversation.id,
-        userId,
-        since,
-      );
-
-      const peer =
-        conversation.kind === 'direct'
-          ? await this.peerOf(manager, conversation, userId)
-          : null;
-
-      const peerLastReadAt =
-        conversation.kind === 'direct'
-          ? await this.peerReadAt(manager, conversation, peer?.id ?? null)
-          : null;
-
+    for (const conversation of unique) {
       dtos.push(
-        ConversationDto.from(conversation, {
-          peer,
-          lastMessage,
-          unreadCount,
+        await this.buildDto(manager, conversation, {
           viewerId: userId,
-          tripTitle: conversation.tripId
-            ? (tripTitles.get(conversation.tripId) ?? null)
-            : null,
-          muted: Boolean(member?.mutedAt),
-          peerLastReadAt,
+          member:
+            memberRows.find(
+              (row) => row.conversationId === conversation.id,
+            ) ?? null,
+          participation,
+          tripTitles,
         }),
       );
     }
@@ -152,6 +119,47 @@ export class ConversationsService {
     });
 
     return { conversations: dtos };
+  }
+
+  /**
+   * Один диалог — то же, что строка списка, но без остальных.
+   *
+   * Экран диалога (`/messages/:id`) открывается по прямой ссылке и о
+   * диалоге не знает ничего, кроме id: ему нужны подпись, собеседник,
+   * название похода и состояние галочки. Отдаём ту же `ConversationDto`,
+   * что и список, — иначе экран и лента разошлись бы в трактовке
+   * непрочитанного.
+   *
+   * Отдельной проверки доступа здесь нет: её делает `accessible()`,
+   * то есть состав диалога или состав похода.
+   */
+  async getOne(
+    userId: string,
+    conversationId: number,
+  ): Promise<ConversationDto> {
+    const manager = this.dataSource.manager;
+    const conversation = await this.accessible(
+      manager,
+      userId,
+      conversationId,
+    );
+
+    const member = await manager.findOne(ConversationMember, {
+      where: { conversationId: conversation.id, userId },
+    });
+
+    const participation = await manager.find(TripParticipant, {
+      where: { userId, status: Not('declined') },
+    });
+
+    const tripTitles = await this.tripTitlesOf(manager, [conversation]);
+
+    return this.buildDto(manager, conversation, {
+      viewerId: userId,
+      member,
+      participation,
+      tripTitles,
+    });
   }
 
   /**
@@ -361,6 +369,77 @@ export class ConversationsService {
         userId,
         mutedAt: muted ? new Date() : null,
       });
+    });
+  }
+
+  /**
+   * Собрать DTO одного диалога: последнее сообщение, непрочитанное,
+   * собеседник и отметка прочтения.
+   *
+   * Отдельным методом, потому что это нужно двум ручкам — списку и экрану
+   * одного диалога. Второй расчёт непрочитанного разошёлся бы с первым
+   * ровно на том сообщении, из-за которого счётчик и видно.
+   */
+  private async buildDto(
+    manager: EntityManager,
+    conversation: Conversation,
+    context: {
+      viewerId: string;
+      /** Строка состава — у чатов похода она ленивая и может отсутствовать. */
+      member: ConversationMember | null;
+      /** Участие человека в походах: нужно для отсчёта непрочитанного. */
+      participation: TripParticipant[];
+      tripTitles: Map<string, string>;
+    },
+  ): Promise<ConversationDto> {
+    const lastMessage = await manager.findOne(Message, {
+      where: { conversationId: conversation.id },
+      // `action` нужен ленте: по нему рисуются кнопки «Подтверждаю».
+      relations: { sender: true, action: true },
+      order: { id: 'DESC' },
+    });
+
+    /**
+     * Отсчёт непрочитанного для чата, который ни разу не открывали.
+     *
+     * `last_read_at` пуст, а строки состава у чатов похода ленивые:
+     * «всё непрочитано» показало бы всю историю похода — на старом
+     * походе это сотни сообщений и бейдж «312». Считаем с момента,
+     * когда человек попал в состав: до него он этих сообщений не видел.
+     */
+    const since =
+      context.member?.lastReadAt ??
+      context.participation.find((row) => row.tripId === conversation.tripId)
+        ?.createdAt ??
+      null;
+
+    const unreadCount = await this.countUnread(
+      manager,
+      conversation.id,
+      context.viewerId,
+      since,
+    );
+
+    const peer =
+      conversation.kind === 'direct'
+        ? await this.peerOf(manager, conversation, context.viewerId)
+        : null;
+
+    const peerLastReadAt =
+      conversation.kind === 'direct'
+        ? await this.peerReadAt(manager, conversation, peer?.id ?? null)
+        : null;
+
+    return ConversationDto.from(conversation, {
+      peer,
+      lastMessage,
+      unreadCount,
+      viewerId: context.viewerId,
+      tripTitle: conversation.tripId
+        ? (context.tripTitles.get(conversation.tripId) ?? null)
+        : null,
+      muted: Boolean(context.member?.mutedAt),
+      peerLastReadAt,
     });
   }
 

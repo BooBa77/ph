@@ -140,9 +140,30 @@ export class TripChatDto {
   })
   lastMessage: TripMessageDto | null;
 
+  /**
+   * Заглушены ли уведомления по этому чату у смотрящего.
+   *
+   * Галочка «Уведомлять об этом чате» живёт под самим чатом, а не только
+   * в ленте, поэтому состояние приходит вместе с чатом: отдельный запрос
+   * за флагом на каждую вкладку был бы лишним кругом и мигающей галочкой.
+   * У чата похода строки состава может не быть — «нет строки» значит
+   * «уведомления включены», как и `muted_at IS NULL`.
+   *
+   * `null` — галочки быть не должно: смотрит не участник похода (гость
+   * публичного похода). Уведомлений о чужом походе у него нет, а ручка
+   * заглушения ответила бы ему 403.
+   */
+  @ApiProperty({
+    description: 'Уведомления по чату заглушены. null — галочка недоступна',
+    example: false,
+    nullable: true,
+  })
+  muted: boolean | null;
+
   static from(
     chat: { id: string; kind: ChatKind },
     lastMessage: TripMessageDto | null,
+    muted: boolean | null = null,
   ): TripChatDto {
     return {
       id: chat.id,
@@ -150,6 +171,7 @@ export class TripChatDto {
       title: CHAT_TITLES[chat.kind] ?? chat.kind,
       canWrite: true,
       lastMessage,
+      muted,
     };
   }
 }

@@ -25,6 +25,18 @@ export function openDirectConversation(userId: string): Promise<Conversation> {
 }
 
 /**
+ * GET /api/conversations/:id — один диалог.
+ *
+ * Нужен экрану `/messages/:id`: он открывается по прямой ссылке и о диалоге
+ * знает только id, а шапке нужны подпись, собеседник, название похода
+ * и состояние галочки «Уведомлять». Ответ — та же `Conversation`, что и
+ * строка ленты, поэтому экран и лента считают непрочитанное одинаково.
+ */
+export function getConversation(conversationId: string): Promise<Conversation> {
+  return apiFetch<Conversation>(`/conversations/${conversationId}`)
+}
+
+/**
  * GET /api/conversations/:id/messages — страница сообщений диалога.
  *
  * `limit` ограничен сотней на сервере; ленте быстрого чата хватает трёх,

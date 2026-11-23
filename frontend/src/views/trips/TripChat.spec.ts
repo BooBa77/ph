@@ -1,7 +1,7 @@
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { TripMessage } from '@/types/trips'
+import type { TripChat as ChatInfo, TripMessage } from '@/types/trips'
 import TripChat from '@/views/trips/TripChat.vue'
 
 /**
@@ -10,15 +10,26 @@ import TripChat from '@/views/trips/TripChat.vue'
  * Проверяем то, ради чего он здесь: сообщения приходят с бэкенда,
  * отправка уходит в API с видом чата, пустой чат приглашает написать.
  * Отдельной вкладки «Чаты» нет — это и есть её замена.
+ *
+ * Плюс галочка «Уведомлять об этом чате» (23.11.2026): состояние приходит
+ * в `GET /trips/:id/chats`, переключение идёт в `POST/DELETE
+ * /conversations/:id/mute`, а гостю публичного похода галочки нет.
  */
 const mocks = vi.hoisted(() => ({
   listTripMessages: vi.fn(),
   sendTripMessage: vi.fn(),
+  listTripChats: vi.fn(),
+  setConversationMuted: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
   listTripMessages: mocks.listTripMessages,
   sendTripMessage: mocks.sendTripMessage,
+  listTripChats: mocks.listTripChats,
+}))
+
+vi.mock('@/api/conversations', () => ({
+  setConversationMuted: mocks.setConversationMuted,
 }))
 
 function message(overrides: Partial<TripMessage> = {}): TripMessage {
@@ -30,6 +41,18 @@ function message(overrides: Partial<TripMessage> = {}): TripMessage {
     body: 'Привет',
     isSystem: false,
     createdAt: '2026-10-21T10:00:00.000Z',
+    ...overrides,
+  }
+}
+
+function chat(overrides: Partial<ChatInfo> = {}): ChatInfo {
+  return {
+    id: '44',
+    kind: 'trip_guest',
+    title: 'Гостевой чат',
+    canWrite: true,
+    lastMessage: null,
+    muted: false,
     ...overrides,
   }
 }
@@ -47,6 +70,8 @@ describe('TripChat', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mocks.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
+    mocks.listTripChats.mockResolvedValue([])
+    mocks.setConversationMuted.mockResolvedValue(undefined)
   })
 
   it('показывает сообщения из чата', async () => {
@@ -82,5 +107,41 @@ describe('TripChat', () => {
     expect(mocks.sendTripMessage).toHaveBeenCalledWith('7', 'trip_guest', 'Буду к восьми')
     expect(wrapper.find('[data-test="chat-messages"]').text()).toContain('Буду к восьми')
     expect(wrapper.find('[data-test="md-editor"]').element.innerHTML).toBe('')
+  })
+
+  it('галочка «Уведомлять» стоит по состоянию из списка чатов', async () => {
+    mocks.listTripChats.mockResolvedValue([chat({ muted: true })])
+
+    const wrapper = await mountChat()
+
+    const input = wrapper.find('[data-test="chat-mute"]')
+    expect(input.exists()).toBe(true)
+    expect(wrapper.text()).toContain('Уведомлять об этом чате')
+    expect((input.element as HTMLInputElement).checked).toBe(false)
+  })
+
+  it('снятие галочки глушит уведомления по этому чату', async () => {
+    mocks.listTripChats.mockResolvedValue([chat()])
+
+    const wrapper = await mountChat()
+
+    const input = wrapper.find('[data-test="chat-mute"]')
+    expect((input.element as HTMLInputElement).checked).toBe(true)
+
+    await input.setValue(false)
+    await flushPromises()
+
+    expect(mocks.setConversationMuted).toHaveBeenCalledWith('44', true)
+    expect((wrapper.find('[data-test="chat-mute"]').element as HTMLInputElement).checked).toBe(
+      false,
+    )
+  })
+
+  it('гостю публичного похода галочки нет — глушить нечего', async () => {
+    mocks.listTripChats.mockResolvedValue([chat({ muted: null })])
+
+    const wrapper = await mountChat()
+
+    expect(wrapper.find('[data-test="chat-mute"]').exists()).toBe(false)
   })
 })
