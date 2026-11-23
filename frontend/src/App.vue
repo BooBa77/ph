@@ -4,6 +4,7 @@ import { RouterView, useRoute } from 'vue-router'
 
 import AppHeader from '@/components/layout/AppHeader.vue'
 import MobileMenu from '@/components/layout/MobileMenu.vue'
+import MobileMessages from '@/components/layout/MobileMessages.vue'
 import RightRail from '@/components/layout/RightRail.vue'
 import SeasonDecor from '@/components/layout/SeasonDecor.vue'
 import SiteSidebar from '@/components/layout/SiteSidebar.vue'
@@ -186,6 +187,14 @@ watch(
     <!-- Лента сообщений: только для вошедшего и только от `xl`. -->
     <RightRail v-if="showHeader && auth.user" />
   </div>
+
+  <!--
+    Мобильная панель сообщений (23.11.2026): свёрнутая кнопка в углу и
+    выезжающая лента. Живёт рядом с шапкой, а не в каркасе страницы: это
+    оверлей на весь экран, и ширина колонки ему не указ. От `xl` скрыта —
+    там лента уже стоит колонкой справа.
+  -->
+  <MobileMessages v-if="showHeader && auth.user" />
 
   <!--
     Подсказка, как вынести ярлык, — на уровне приложения: кнопка живёт

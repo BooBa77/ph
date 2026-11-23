@@ -1,3 +1,4 @@
+import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -74,6 +75,8 @@ function mountRail() {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Лента живёт в сторе (23.11.2026): его же держит мобильная панель.
+  setActivePinia(createPinia())
   api.listConversations.mockResolvedValue({ conversations: [] })
   api.listConversationMessages.mockResolvedValue({ messages: [], hasMore: false })
   api.markConversationRead.mockResolvedValue(undefined)

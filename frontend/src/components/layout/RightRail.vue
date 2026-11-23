@@ -1,20 +1,25 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { onUnmounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 
 import {
   listConversationMessages,
-  listConversations,
-  markConversationRead,
   sendConversationMessage,
   setConversationMuted,
 } from '@/api/conversations'
 import { ApiError } from '@/api/errors'
 import { respondToAction } from '@/api/message-actions'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
+import { useConversationsStore } from '@/stores/conversations'
 import type { Conversation } from '@/types/conversations'
 import type { TripMessage } from '@/types/trips'
 import { tripTabOf } from '@/utils/chatTabs'
+import {
+  conversationHeading,
+  conversationSubtitle,
+  conversationTime,
+  hasPendingAction,
+} from '@/utils/conversations'
 
 /**
  * Правая колонка: лента сообщений и быстрый чат (23.11.2026).
@@ -41,12 +46,23 @@ import { tripTabOf } from '@/utils/chatTabs'
  */
 const router = useRouter()
 
+/**
+ * Лента живёт в сторе: её же показывает мобильная панель.
+ *
+ * Сортировка («деньги сверху»), заголовки и время строк переехали
+ * в `utils/conversations.ts`, а загрузка и обновление — в
+ * `stores/conversations.ts`. Иначе на мобиле пришлось бы держать вторую
+ * копию правил, и первая же правка развела бы два вида ленты.
+ */
+const feed = useConversationsStore()
+
+/** Ошибки действий (отправка, ответ на перевод, скрытие). */
+const error = ref<string | null>(null)
+
 /** Сколько символов влезает в раскрытую строку. */
 const PREVIEW_CHARS = 300
 /** Максимум сообщений в раскрытой строке. */
 const PREVIEW_LIMIT = 3
-/** Как часто обновлять ленту, пока вкладка открыта. */
-const REFRESH_MS = 60_000
 
 /**
  * Вкладка похода для вида чата: куда ведёт «Открыть чат».
@@ -54,88 +70,11 @@ const REFRESH_MS = 60_000
  * Таблица переехала в `utils/chatTabs.ts`: её же спрашивает экран диалога,
  * когда ссылается на поход из шапки.
  */
-const conversations = ref<Conversation[]>([])
-const isLoading = ref(true)
-const error = ref<string | null>(null)
 const expandedId = ref<string | null>(null)
 const draft = ref('')
 const previews = ref<Record<string, TripMessage[]>>({})
 const isSending = ref(false)
 const showMuted = ref(false)
-
-/** Строки ленты: не заглушенные, срочные сверху. */
-const visible = computed(() =>
-  conversations.value
-    .filter((row) => !row.muted)
-    .sort(byImportance),
-)
-
-const mutedRows = computed(() => conversations.value.filter((row) => row.muted))
-
-/** Счётчик в заголовке: заглушенные не считаются, их человек и гасил. */
-const unreadTotal = computed(() =>
-  conversations.value.reduce(
-    (sum, row) => sum + (row.muted ? 0 : row.unreadCount),
-    0,
-  ),
-)
-
-function hasPendingAction(row: Conversation): boolean {
-  return row.lastMessage?.action?.canRespond === true
-}
-
-/** Сначала ждущие ответа, потом по времени последнего сообщения. */
-function byImportance(left: Conversation, right: Conversation): number {
-  const leftUrgent = hasPendingAction(left) ? 1 : 0
-  const rightUrgent = hasPendingAction(right) ? 1 : 0
-
-  if (leftUrgent !== rightUrgent) return rightUrgent - leftUrgent
-
-  const leftAt = left.lastMessage?.createdAt ?? ''
-  const rightAt = right.lastMessage?.createdAt ?? ''
-
-  return rightAt.localeCompare(leftAt)
-}
-
-function amountOf(row: Conversation): number | null {
-  const amount = row.lastMessage?.action?.payload?.amountRub
-
-  return typeof amount === 'number' ? amount : null
-}
-
-/** Заголовок строки: у денег — сумма, у остальных — имя или название чата. */
-function heading(row: Conversation): string {
-  const amount = amountOf(row)
-
-  if (amount !== null && hasPendingAction(row)) {
-    return `Перевод ${amount.toLocaleString('ru-RU')} ₽`
-  }
-
-  return row.peer?.displayName ?? row.title
-}
-
-/** Подпись под заголовком: поход для чатов, первая строка для людей. */
-function subtitle(row: Conversation): string {
-  if (row.tripId) {
-    return row.tripTitle ? `${row.title} · ${row.tripTitle}` : row.title
-  }
-
-  return row.lastMessage?.body.replace(/\s+/g, ' ').slice(0, 80) ?? 'Пока пусто'
-}
-
-/** Время последнего сообщения: «14:05» для сегодняшних, «12.11» для старых. */
-function timeLabel(iso: string | undefined): string {
-  if (!iso) return ''
-
-  const date = new Date(iso)
-  const today = new Date()
-
-  if (date.toDateString() === today.toDateString()) {
-    return date.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-  }
-
-  return date.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
-}
 
 /** Тело сообщения в раскрытой строке — простым текстом, без markdown. */
 function plain(text: string): string {
@@ -174,17 +113,6 @@ async function loadPreview(row: Conversation): Promise<void> {
   }
 }
 
-async function markRead(row: Conversation): Promise<void> {
-  if (row.unreadCount === 0) return
-
-  try {
-    await markConversationRead(row.id)
-    row.unreadCount = 0
-  } catch {
-    // Отметка прочтения — не повод не показывать переписку.
-  }
-}
-
 async function toggle(row: Conversation): Promise<void> {
   /**
    * Личный диалог открывается экраном, а не раскрытием.
@@ -215,7 +143,7 @@ async function toggle(row: Conversation): Promise<void> {
   draft.value = ''
 
   await loadPreview(row)
-  await markRead(row)
+  await feed.markRead(row)
 }
 
 async function send(row: Conversation): Promise<void> {
@@ -249,7 +177,7 @@ async function answer(row: Conversation, result: 'confirmed' | 'disputed'): Prom
   try {
     await respondToAction(action.id, result)
     // Состояние действия меняет сервер: перечитываем, а не правим на месте.
-    await refresh()
+    await feed.refresh()
   } catch (problem) {
     error.value =
       problem instanceof ApiError ? problem.message : 'Не удалось ответить'
@@ -280,7 +208,7 @@ async function restore(row: Conversation): Promise<void> {
 function openTripChat(row: Conversation): void {
   if (!row.tripId) return
 
-  void markRead(row)
+  void feed.markRead(row)
 
   const tab = tripTabOf(row.kind)
 
@@ -290,41 +218,14 @@ function openTripChat(row: Conversation): void {
   })
 }
 
-async function refresh(): Promise<void> {
-  try {
-    const data = await listConversations()
+/**
+ * Живость ленты — у стора, а не здесь: тот же стор держит и мобильную
+ * панель, и обновлять ленту дважды незачем. `hold()` возвращает отписку;
+ * пока жив второй потребитель, лента продолжает обновляться.
+ */
+const releaseFeed = feed.hold()
 
-    conversations.value = data.conversations
-    error.value = null
-  } catch (problem) {
-    error.value =
-      problem instanceof ApiError ? problem.message : 'Не удалось загрузить сообщения'
-  } finally {
-    isLoading.value = false
-  }
-}
-
-let timer: ReturnType<typeof setInterval> | null = null
-
-onMounted(() => {
-  void refresh()
-
-  // Фокус окна и минута таймера: поток на каждого человека в этом шаге
-  // не заводим, а лента должна оживать без перезагрузки.
-  window.addEventListener('focus', onFocus)
-  timer = setInterval(() => {
-    if (document.visibilityState === 'visible') void refresh()
-  }, REFRESH_MS)
-})
-
-onUnmounted(() => {
-  window.removeEventListener('focus', onFocus)
-  if (timer !== null) clearInterval(timer)
-})
-
-function onFocus(): void {
-  void refresh()
-}
+onUnmounted(releaseFeed)
 </script>
 
 <template>
@@ -335,20 +236,24 @@ function onFocus(): void {
       <div class="flex items-baseline justify-between gap-2">
         <h2 class="text-sm font-medium text-text">Сообщения</h2>
         <span
-          v-if="unreadTotal > 0"
+          v-if="feed.unreadTotal > 0"
           class="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-white"
           data-test="rail-unread"
         >
-          {{ unreadTotal }}
+          {{ feed.unreadTotal }}
         </span>
       </div>
 
-      <p v-if="isLoading" class="text-sm text-muted" data-test="rail-loading">Загружаем…</p>
+      <p v-if="feed.isLoading" class="text-sm text-muted" data-test="rail-loading">
+        Загружаем…
+      </p>
 
-      <p v-else-if="error" class="text-sm text-muted" data-test="rail-error">{{ error }}</p>
+      <p v-else-if="feed.error || error" class="text-sm text-muted" data-test="rail-error">
+        {{ feed.error ?? error }}
+      </p>
 
       <p
-        v-else-if="visible.length === 0"
+        v-else-if="feed.visible.length === 0"
         class="text-sm text-muted"
         data-test="rail-empty"
       >
@@ -357,7 +262,7 @@ function onFocus(): void {
 
       <template v-else>
         <article
-          v-for="row in visible"
+          v-for="row in feed.visible"
           :key="row.id"
           class="rounded-xl border border-border bg-bg"
           :data-test="`rail-row-${row.id}`"
@@ -382,15 +287,15 @@ function onFocus(): void {
                 :class="row.unreadCount > 0 ? 'font-semibold' : ''"
                 :data-test="`rail-title-${row.id}`"
               >
-                {{ heading(row) }}
+                {{ conversationHeading(row) }}
               </span>
               <span class="ml-auto shrink-0 text-xs text-muted">
-                {{ timeLabel(row.lastMessage?.createdAt) }}
+                {{ conversationTime(row.lastMessage?.createdAt) }}
               </span>
             </span>
 
             <span class="mt-0.5 line-clamp-2 block text-xs text-muted">
-              {{ subtitle(row) }}
+              {{ conversationSubtitle(row) }}
             </span>
           </span>
 
@@ -452,7 +357,7 @@ function onFocus(): void {
               type="text"
               class="min-w-0 flex-1 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text outline-none focus:border-primary"
               placeholder="Написать…"
-              :aria-label="`Написать в ${heading(row)}`"
+              :aria-label="`Написать в ${conversationHeading(row)}`"
               data-test="rail-input"
             />
             <button
@@ -491,23 +396,23 @@ function onFocus(): void {
       </template>
 
       <!-- Возврат скрытых: «возможность вернуть есть и это несложно». -->
-      <div v-if="mutedRows.length > 0" class="mt-1 border-t border-border pt-2">
+      <div v-if="feed.muted.length > 0" class="mt-1 border-t border-border pt-2">
         <button
           type="button"
           class="cursor-pointer text-xs text-muted hover:text-text"
           data-test="rail-muted-toggle"
           @click="showMuted = !showMuted"
         >
-          Скрытые чаты · {{ mutedRows.length }}
+          Скрытые чаты · {{ feed.muted.length }}
         </button>
 
         <ul v-if="showMuted" class="mt-1 flex flex-col gap-1">
           <li
-            v-for="row in mutedRows"
+            v-for="row in feed.muted"
             :key="row.id"
             class="flex items-center justify-between gap-2 text-xs text-muted"
           >
-            <span class="truncate">{{ heading(row) }}</span>
+            <span class="truncate">{{ conversationHeading(row) }}</span>
             <button
               type="button"
               class="shrink-0 cursor-pointer text-primary hover:underline"
