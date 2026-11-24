@@ -16,7 +16,6 @@ import {
 import type { AlmanacPlacement } from './entities/trip-almanac-entry.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { returningRows } from './query-rows';
-import { ConversationEventsService } from './conversation-events.service';
 import { NotificationsService } from './notifications.service';
 import { notifyAlmanacUpdated } from './trip-almanac-notify';
 import type { Trip } from './entities/trip.entity';
@@ -56,7 +55,6 @@ export class TripAlmanacService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
-    private readonly events: ConversationEventsService,
     /** Уведомления правой панели: «Альманах» — карточка, а не сообщение. */
     private readonly notifications: NotificationsService,
   ) {}
@@ -248,27 +246,15 @@ export class TripAlmanacService {
   }
 
   /**
-   * «Альманах похода обновлён» и кадр о нём в поток переписки.
+   * «Альманах похода обновлён» — карточка получателям (24.11.2026).
    *
-   * Уведомление — по-прежнему личное сообщение от автора правки
-   * (`trip-almanac-notify.ts`), но вставка идёт мимо
-   * `ConversationsService.sendMessage`, поэтому кадр `message` надо отправить
-   * здесь. Событие — только по реально вставленной строке и только после
-   * COMMIT (это гарантирует `notifyAlmanacUpdated`): подписчик сразу
-   * перечитывает диалог и должен увидеть уже сохранённый текст.
-   *
-   * Получатели кадра — оба человека диалога, включая автора: у него может
-   * быть вторая вкладка или телефон, а «своё действие не перечитываем»
-   * клиент решает по `actorId`. Тот же порядок у `sendMessage`.
+   * Личного сообщения больше нет: панель читает уведомления, и двойная
+   * запись выключена (§14.4 п.2). Кадр `message` тоже не нужен — сообщения
+   * не существует; о карточке подписчиков извещает сам
+   * `notifyAlmanacUpdated` (`notifications.emitChanged` после записи).
    */
   private async notifyAlmanac(trip: Trip, userId: string): Promise<void> {
-    await notifyAlmanacUpdated(this.dataSource, this.notifications, trip, userId, (created) => {
-      this.events.emitMessage(
-        created.participantIds,
-        created.conversationId,
-        userId,
-      );
-    });
+    await notifyAlmanacUpdated(this.dataSource, this.notifications, trip, userId);
   }
 
   /** Участник похода, а не отказавшийся. */

@@ -10,7 +10,6 @@ import { TripParticipant } from './entities/trip-participant.entity';
 import type { DiarySyncEntryDto, SyncTripDiaryDto } from './dto/trip-diary.dto';
 import { TripDiaryDto } from './dto/trip-diary.dto';
 import { TripEventsService } from './trip-events.service';
-import { ConversationEventsService } from './conversation-events.service';
 import { NotificationsService } from './notifications.service';
 import { isValidDiaryTimes } from './trip-diary.types';
 import { notifyAlmanacUpdated } from './trip-almanac-notify';
@@ -47,7 +46,6 @@ export class TripDiaryService {
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
     private readonly events: TripEventsService,
-    private readonly conversationEvents: ConversationEventsService,
     /** Уведомления правой панели: «Альманах» — карточка, а не сообщение. */
     private readonly notifications: NotificationsService,
   ) {}
@@ -149,18 +147,13 @@ export class TripDiaryService {
       }
     });
 
-    // Уведомления — после коммита: получатель откроет уже сохранённый текст.
-    // Вставка идёт мимо `ConversationsService.sendMessage`, поэтому кадр
-    // в поток переписки отправляем здесь же (24.11.2026). Событие — только
-    // по вставленной строке и только после COMMIT внутри `notifyAlmanacUpdated`.
+    // Уведомления — после коммита: получатель откроет уже сохранённое.
+    // Карточка «Альманах» — без личного сообщения (24.11.2026, §14.4 п.2):
+    // панель больше не читает диалоги, и двойная запись выключена. Кадр
+    // `message` поэтому не нужен — сообщения нет; о карточке подписчиков
+    // извещает сам `notifyAlmanacUpdated`.
     if (almanacTouched) {
-      await notifyAlmanacUpdated(this.dataSource, this.notifications, trip, userId, (created) => {
-        this.conversationEvents.emitMessage(
-          created.participantIds,
-          created.conversationId,
-          userId,
-        );
-      });
+      await notifyAlmanacUpdated(this.dataSource, this.notifications, trip, userId);
     }
 
     // Событие — после коммита: подписчик должен перечитать уже сохранённое.

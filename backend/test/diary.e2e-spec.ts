@@ -771,11 +771,10 @@ describe('Дневник похода (e2e)', () => {
     expect(await unreadWith(third.token, organizerId)).toBe(1);
   });
 
-  it('о новом уведомлении приходит кадр в поток переписки', async () => {
-    // §10 п.14: уведомление вставляется в `messages` напрямую, мимо
-    // `ConversationsService.sendMessage`, поэтому кадр `message` надо слать
-    // из самого уведомления. Раньше лента узнавала о нём только
-    // перечитыванием по фокусу (до минуты).
+  it('о новой карточке альманаха приходит сигнал в поток переписки', async () => {
+    // §14.4 п.2: личного сообщения «Альманах похода обновлён» больше нет,
+    // есть только карточка `notifications`, поэтому и кадр один — сигнал
+    // `notifications` («перечитай панель»), без DTO и без `message`.
     const watcher = await login(`diary-e2e-sse-${Date.now()}@example.com`);
     await dataSource.query(
       `INSERT INTO trip_participants (trip_id, user_id, status)
@@ -801,65 +800,46 @@ describe('Дневник похода (e2e)', () => {
       for (const subscription of subscriptions) subscription.unsubscribe();
     }
 
+    // Своё сообщение в диалог больше не пишется: проверяем, что нового
+    // непрочитанного в переписке не появилось вовсе.
     const conversation = await conversationWith(watcher.token, organizerId);
+    expect(await unreadWith(watcher.token, organizerId)).toBe(0);
 
-    // Кадров теперь два (24.11.2026, §14): сообщение-история и сигнал
-    // «перечитай уведомления». Оба — без DTO.
-    expect(watcherFrames).toHaveLength(2);
-
-    const messageFrame = watcherFrames.find((frame) => frame.kind === 'message');
-    expect(messageFrame).toMatchObject({
-      conversationId: String(conversation.id),
-      kind: 'message',
-      actorId: organizerId,
-    });
-    expect(messageFrame?.at).toEqual(expect.any(String));
-
-    const notificationFrame = watcherFrames.find(
-      (frame) => frame.kind === 'notifications',
-    );
-    expect(notificationFrame).toMatchObject({
+    expect(watcherFrames).toHaveLength(1);
+    expect(watcherFrames[0]).toMatchObject({
       kind: 'notifications',
       conversationId: '',
       actorId: '',
     });
-    expect(notificationFrame?.at).toEqual(expect.any(String));
+    expect(watcherFrames[0]?.at).toEqual(expect.any(String));
 
-    // Автор тоже получает кадр сообщения (вторая вкладка, телефон):
-    // «своё действие не перечитываем» клиент решает по `actorId`, он здесь
-    // свой. Карточки уведомления у автора нет — сигнала ему не шлём.
-    expect(organizerFrames).toHaveLength(1);
-    expect(organizerFrames[0]?.actorId).toBe(organizerId);
-    expect(organizerFrames.some((frame) => frame.kind === 'notifications')).toBe(false);
+    // Автору карточки нет — сигнала ему тоже: он и так знает, что правил.
+    expect(organizerFrames).toHaveLength(0);
 
-    // Кадр пришёл после COMMIT: строка уже видна чтением, и она одна.
-    expect(await unreadWith(watcher.token, organizerId)).toBe(1);
+    // Карточка лежит в базе и адресована наблюдателю.
+    const cards = (await dataSource.query(
+      `SELECT "title" FROM "notifications"
+        WHERE "recipient_user_id" = $1 AND "trip_id" = $2
+          AND "kind" = 'almanac' AND "archived_at" IS NULL`,
+      [watcher.id, almanacTripId],
+    )) as Array<{ title: string }>;
+    expect(cards).toHaveLength(1);
+
+    // Диалог создан для перехода по карточке, но сообщений в нём нет.
+    expect(conversation.id).toBeDefined();
   });
 
-  it('параллельные правки оставляют одно непрочитанное', async () => {
-    // Проверка и вставка атомарны: без замка несколько одновременных
-    // запросов проскакивают проверку вместе и оставляют по строке каждый
-    // (24.11.2026: 40 параллельных `PUT` дали 8 уведомлений).
+  it('параллельные правки оставляют одну карточку альманаха', async () => {
+    // Дедупликацию держит уникальный индекс `(recipient_user_id, dedup_key)`
+    // и `ON CONFLICT DO UPDATE`: замок и проверка «уже лежит» ушли вместе
+    // с личным сообщением (24.11.2026). Раньше 40 параллельных `PUT`
+    // оставляли 8 строк в диалоге.
     const parallel = await login(`diary-e2e-parallel-${Date.now()}@example.com`);
     await dataSource.query(
       `INSERT INTO trip_participants (trip_id, user_id, status)
        VALUES ($1, $2, 'going')`,
       [almanacTripId, parallel.id],
     );
-
-    // Сначала одно уведомление и «прочитано»: дальше смотрим только гонку.
-    await createMemory(
-      organizerToken,
-      { placement: 'day', dayIndex: 7 },
-      'День седьмой.',
-    ).expect(200);
-    const conversation = await conversationWith(parallel.token, organizerId);
-    await call(
-      'post',
-      `/api/conversations/${conversation.id}/read`,
-      parallel.token,
-    ).expect(204);
-    expect(await unreadWith(parallel.token, organizerId)).toBe(0);
 
     const days = [8, 9, 10, 11, 12, 13];
     await Promise.all(
@@ -872,6 +852,13 @@ describe('Дневник похода (e2e)', () => {
       ),
     );
 
-    expect(await unreadWith(parallel.token, organizerId)).toBe(1);
+    const cards = (await dataSource.query(
+      `SELECT "id" FROM "notifications"
+        WHERE "recipient_user_id" = $1 AND "trip_id" = $2
+          AND "kind" = 'almanac' AND "archived_at" IS NULL`,
+      [parallel.id, almanacTripId],
+    )) as Array<{ id: string }>;
+
+    expect(cards).toHaveLength(1);
   });
 });

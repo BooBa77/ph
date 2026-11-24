@@ -2030,7 +2030,7 @@ describe('Бухгалтерия похода (e2e)', () => {
       });
     });
 
-    it('перевод ушедшему рождает личное сообщение с действием', async () => {
+    it('перевод ушедшему рождает карточку уведомления, а не сообщение', async () => {
       const response = await compensate(trip9, b, d.id, 50).expect(201);
       const [row] = compensationsOf(response.body);
 
@@ -2041,54 +2041,74 @@ describe('Бухгалтерия похода (e2e)', () => {
         amountRub: 50,
       });
 
+      /**
+       * Двойная запись выключена (24.11.2026, §14.4 п.2): панель читает
+       * карточки, а не диалоги. Поэтому ни сообщения, ни действия
+       * `money_received` больше не заводится — только `notifications`.
+       */
       const actions = (await dataSource.query(
-        `SELECT "id", "kind", "target_user_id", "state"
-           FROM "message_actions"
+        `SELECT "id" FROM "message_actions"
           WHERE "payload"->>'compensationId' = $1`,
         [String(row!.id)],
-      )) as Array<{ id: string; kind: string; target_user_id: string; state: string }>;
+      )) as Array<{ id: string }>;
+      expect(actions).toHaveLength(0);
 
-      expect(actions).toHaveLength(1);
-      expect(actions[0]).toMatchObject({
-        kind: 'money_received',
-        target_user_id: d.id,
-        state: 'pending',
+      const [card] = (await dataSource.query(
+        `SELECT "kind", "title", "body", "recipient_user_id", "conversation_id"
+           FROM "notifications"
+          WHERE "compensation_id" = $1`,
+        [String(row!.id)],
+      )) as Array<{
+        kind: string;
+        title: string;
+        body: string;
+        recipient_user_id: string;
+        conversation_id: string | null;
+      }>;
+
+      // Текст — тот же, что раньше был у личного сообщения: «Борис перевёл
+      // тебе 50 ₽ за поход «…»»; диалог нужен полю «Сообщение отправителю».
+      expect(card).toMatchObject({
+        kind: 'money_transfer',
+        title: 'Денежный перевод',
+        recipient_user_id: d.id,
       });
+      expect(card!.conversation_id).toEqual(expect.any(String));
+      expect(card!.body).toContain('перевёл тебе 50 ₽');
+      expect(card!.body).toContain('за поход');
 
       const messages = (await dataSource.query(
-        `SELECT "body" FROM "messages" WHERE "action_id" = $1`,
-        [actions[0]!.id],
-      )) as Array<{ body: string }>;
-
-      // Текст с 24.11.2026 — «Борис перевёл тебе 50 ₽ за поход «…»»:
-      // род глагола берётся у отправителя, а просьбы «подтверди получение»
-      // в тексте нет — кнопку рисует действие, а не строка.
-      expect(messages[0]?.body).toContain('перевёл тебе 50 ₽');
-      expect(messages[0]?.body).toContain('за поход');
+        `SELECT "id" FROM "messages" WHERE "conversation_id" = $1`,
+        [card!.conversation_id],
+      )) as Array<{ id: string }>;
+      expect(messages).toHaveLength(0);
     });
 
-    it('«Получено» в личном сообщении закрывает перевод', async () => {
-      const pending = compensationsOf((await view(trip9, b)).body)[0]!;
-      const [action] = (await dataSource.query(
-        `SELECT "id" FROM "message_actions" WHERE "payload"->>'compensationId' = $1`,
-        [String(pending.id)],
-      )) as Array<{ id: string }>;
+    it('подтверждение с карточки закрывает перевод и уводит её в архив', async () => {
+      await compensate(trip9, a, b.id, 100).expect(201);
 
+      const pending = compensationsOf((await view(trip9, a)).body).find(
+        (item) => item.toUserId === b.id && item.status === 'pending',
+      )!;
+
+      // «Подтвердить» на карточке панели — та же ручка, что у «Бухгалтерии».
       await auth(
         request(app.getHttpServer()).post(
-          `/api/message-actions/${action!.id}/respond`,
+          `/api/trips/${trip9}/finance/compensations/${pending.id}/confirm`,
         ),
-        d.token,
-      )
-        .send({ result: 'confirmed' })
-        .expect(200);
+        b.token,
+      ).expect(200);
 
       const after = await view(trip9, a);
-      expect(compensationsOf(after.body)[0]).toMatchObject({
-        status: 'confirmed',
-      });
-      expect(balanceOf(after.body, b)).toBe(0);
-      expect(balanceOf(after.body, d)).toBe(100);
+      expect(
+        compensationsOf(after.body).find((item) => item.id === pending.id),
+      ).toMatchObject({ status: 'confirmed' });
+
+      const [card] = (await dataSource.query(
+        `SELECT "archived_reason" FROM "notifications" WHERE "compensation_id" = $1`,
+        [String(pending.id)],
+      )) as Array<{ archived_reason: string | null }>;
+      expect(card?.archived_reason).toBe('confirmed');
     });
 
     it('«пока думаю» с ненулевым балансом остаётся в балансах', async () => {
@@ -2143,27 +2163,29 @@ describe('Бухгалтерия похода (e2e)', () => {
       // C в «пока думаю» и в нуле — строки тоже нет.
       expect(memberOf(settled.body, c)).toBeUndefined();
 
-      // Два перевода истекли — значит два уведомления переписаны, и каждое
-      // дошло до обоих участников диалога: 2 диалога × 2 человека.
-      const updates = received.filter(
-        (event) => event.kind === 'message_updated',
+      /**
+       * Автосогласие закрывает карточки переводов в архив (§14.2).
+       *
+       * Переписывать больше нечего: личных сообщений с действием нет
+       * (24.11.2026, §14.4 п.2), поэтому вместо `message_updated` приходит
+       * сигнал `notifications` тем, у кого карточка изменилась.
+       */
+      const signals = received.filter(
+        (event) => event.kind === 'notifications',
       );
-      expect(updates).toHaveLength(4);
-      expect(new Set(updates.map((event) => event.conversationId)).size).toBe(2);
+      expect(signals.length).toBeGreaterThan(0);
 
-      for (const event of updates) {
-        // Актора-человека нет: строка не совпадёт ни с чьим id.
-        expect(event.actorId).toBe('');
-        expect(event.messageId).toEqual(expect.any(String));
-        expect(event.body).toContain('время ожидания подтверждения вышло');
+      const archived = (await dataSource.query(
+        `SELECT "archived_reason" FROM "notifications"
+          WHERE "trip_id" = $1 AND "kind" = 'money_transfer'
+            AND "archived_at" IS NOT NULL`,
+        [trip9],
+      )) as Array<{ archived_reason: string | null }>;
 
-        // Текст в базе — тот же, что уехал в кадре.
-        const [stored] = (await dataSource.query(
-          `SELECT "body" FROM "messages" WHERE "id" = $1`,
-          [event.messageId],
-        )) as Array<{ body: string }>;
-        expect(stored?.body).toBe(event.body);
-      }
+      expect(archived.length).toBeGreaterThanOrEqual(2);
+      expect(archived.every((card) => card.archived_reason === 'expired72')).toBe(
+        true,
+      );
     });
 
     it('«Удержать» ушедшему с закрытым расчётом недоступно', async () => {

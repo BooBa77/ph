@@ -600,12 +600,12 @@ export class TripFinanceService {
       /**
        * Карточка «Денежный перевод» — в той же транзакции (24.11.2026, §14).
        *
-       * Старое личное сообщение остаётся (двойная запись, пока панель
-       * не переехала), но кнопки «Подтвердить» в новой панели живут
-       * на карточке. Ключ — `money_transfer:<перевод>`: один перевод —
-       * одна карточка у получателя.
+       * Личного сообщения больше нет (§14.4 п.2): панель читает карточки,
+       * а не диалоги, и двойная запись выключена. Ключ —
+       * `money_transfer:<перевод>`: один перевод — одна карточка
+       * у получателя.
        */
-      const posted = await this.postCompensationMessage(
+      const conversation = await this.compensationConversation(
         manager,
         trip,
         senderId,
@@ -618,8 +618,8 @@ export class TripFinanceService {
         recipientUserId: compensation.toUserId,
         tripId: String(trip.id),
         compensationId: String(compensation.id),
-        conversationId: posted.conversationId,
-        body: posted.body,
+        conversationId: conversation.conversationId,
+        body: conversation.body,
       });
 
       notificationRecipients.push(compensation.toUserId);
@@ -825,19 +825,22 @@ export class TripFinanceService {
    * который только что перевёл. Люди без аккаунта пропускаются: входить
    * в приложение им нечем, уведомление некуда положить.
    *
-   * **Кнопка «Перейти»** — действие вида `payment_request` (см.
-   * `MessageActionDto`): ответа не требует, `payload.tripId` говорит клиенту,
-   * куда вести, и из `GET /message-actions/pending` такие не показываются.
+   * **Кнопка «Перейти»** — карточка уведомления `payment_request` с
+   * `trip_id` похода: ответа она не требует, а переходит в «Бухгалтерию».
    *
-   * **Повтор не плодит строк.** Как у уведомления альманаха: если такое же
-   * непрочитанное уже лежит, второе не пишем — иначе одно нажатие «на всякий
-   * случай» давало бы две одинаковые строки в ленте.
+   * **Сообщений больше нет (24.11.2026).** Раньше здесь в личный диалог
+   * писалась строка с действием `payment_request`; панель перестала читать
+   * диалоги (§14.4 п.2), и двойная запись выключена. Осталась карточка
+   * `notifications`, а её дедупликацию держит уникальный индекс
+   * `payment_request:<поход>`: повторное нажатие обновляет одну карточку,
+   * а не заводит вторую. Проверка «такое же непрочитанное уже лежит»
+   * и `message_actions` ушли вместе с сообщением.
    */
   async requestPayments(
     userId: string,
     tripId: number,
   ): Promise<TripFinanceNotifyDto> {
-    const sent: Array<{ conversationId: string; recipientId: string }> = [];
+    const sent: string[] = [];
     let recipients = 0;
 
     const view = await this.dataSource.transaction(async (manager) => {
@@ -859,7 +862,6 @@ export class TripFinanceService {
       }
 
       const tripName = await tripNameOf(manager, trip);
-      const body = `Организатор запросил платёж по походу «${tripName}».`;
       const debtors = await this.paymentRequestRecipients(manager, trip);
       recipients = debtors.filter((row) => row.userId !== userId).length;
 
@@ -867,31 +869,10 @@ export class TripFinanceService {
         if (recipient.userId === userId) continue;
         if (recipient.user?.isVirtual === true) continue;
 
-        const conversation = await this.directConversationOf(
-          manager,
-          userId,
-          recipient.userId,
-        );
-
-        if (await this.hasUnreadBody(manager, conversation.id, userId, body)) {
-          continue;
-        }
-
-        const action = await manager.save(
-          manager.create(MessageAction, {
-            kind: 'payment_request',
-            targetUserId: recipient.userId,
-            payload: { tripId: String(trip.id), tripTitle: tripName },
-            state: 'pending',
-          }),
-        );
-
-        await manager.insert(Message, {
-          conversationId: conversation.id,
-          senderId: userId,
-          body,
-          actionId: action.id,
-        });
+        // Диалог нужен ради «Перейти» и возможного ответа: карточка без
+        // `conversation_id` не смогла бы открыть переписку. Сообщение
+        // в него не пишется.
+        await this.directConversationOf(manager, userId, recipient.userId);
 
         /**
          * Карточка «Запрос платежа» — в той же транзакции (24.11.2026, §14).
@@ -905,25 +886,16 @@ export class TripFinanceService {
           tripName,
         });
 
-        sent.push({
-          conversationId: String(conversation.id),
-          recipientId: recipient.userId,
-        });
+        sent.push(recipient.userId);
       }
 
       return this.buildView(manager, trip, userId);
     });
 
-    // Событие — после коммита: до него открытая лента получателя показала бы
-    // сообщение, которого ещё нет.
-    for (const item of sent) {
-      this.conversations.emitMessage(
-        [item.recipientId, userId],
-        item.conversationId,
-        userId,
-      );
-      // Панель уведомлений получателя — тем же кадром-сигналом.
-      this.notifications.emitChanged([item.recipientId]);
+    // Событие — после коммита: до него открытая панель получателя показала бы
+    // карточку, которой ещё нет. Сообщений нет — кадра переписки тоже нет.
+    for (const recipientId of sent) {
+      this.notifications.emitChanged([recipientId]);
     }
 
     return { ...view, notified: sent.length, recipients };
@@ -1011,30 +983,6 @@ export class TripFinanceService {
       tripId,
       userId,
     );
-  }
-
-  /** Лежит ли у получателя непрочитанное сообщение ровно с таким текстом. */
-  private async hasUnreadBody(
-    manager: EntityManager,
-    conversationId: string,
-    senderId: string,
-    body: string,
-  ): Promise<boolean> {
-    const rows = await manager.query(
-      `SELECT 1
-         FROM messages m
-         LEFT JOIN conversation_members cm
-           ON cm.conversation_id = m.conversation_id
-          AND cm.user_id <> m.sender_id
-        WHERE m.conversation_id = $1
-          AND m.sender_id = $2
-          AND m.body = $3
-          AND (cm.last_read_at IS NULL OR m.created_at > cm.last_read_at)
-        LIMIT 1`,
-      [conversationId, senderId, body],
-    );
-
-    return (rows as unknown[]).length > 0;
   }
 
   /**
@@ -2721,18 +2669,25 @@ export class TripFinanceService {
   }
 
   /**
-   * Личное сообщение о переводе (20.11.2026; всем получателям — 24.11.2026).
+   * Диалог и текст карточки о переводе (20.11.2026; без сообщения —
+   * 24.11.2026).
    *
    * Сначала так уведомляли только ушедшего: вкладку «Бухгалтерия» он уже не
-   * откроет. Заказчик распространил сценарий на всех — уведомление с
-   * кнопкой «Подтверждаю» и полем «сообщение отправителю» должно приходить
-   * каждому получателю перевода. Состояние ответа — в `message_actions`,
-   * ссылка на компенсацию в `payload` (схему не меняем, миграции нет).
+   * откроет. Заказчик распространил сценарий на всех — уведомление
+   * с «Подтвердить» и полем «Сообщение отправителю» должно приходить
+   * каждому получателю перевода.
    *
-   * Чат создаётся, если его ещё нет: пара хранится отсортированной, как
-   * в `ConversationsService.openDirect`.
+   * **Личное сообщение больше не пишется (§14.4 п.2).** Панель перестала
+   * читать диалоги, и двойная запись выключена: текст живёт в карточке
+   * `notifications`, а подтверждение — на ней же (ручка подтверждения
+   * архивирует карточку). Вместе с сообщением здесь больше не заводится
+   * `message_actions`: действие без строки, с которой его показать, — мёртвая
+   * запись, а «Подтвердить» карточки идёт через компенсацию.
+   *
+   * Диалог при этом создаётся: карточке нужен `conversation_id`, чтобы поле
+   * «Сообщение отправителю» отправило обычное сообщение в переписку.
    */
-  private async postCompensationMessage(
+  private async compensationConversation(
     manager: EntityManager,
     trip: Trip,
     senderId: string,
@@ -2746,20 +2701,6 @@ export class TripFinanceService {
       compensation.toUserId,
     );
 
-    const action = await manager.save(
-      manager.create(MessageAction, {
-        kind: 'money_received',
-        targetUserId: compensation.toUserId,
-        payload: {
-          tripId: String(trip.id),
-          compensationId: compensation.id,
-          amountRub: compensation.amountRub,
-          fromUserId: senderId,
-        },
-        state: 'pending',
-      }),
-    );
-
     const body = moneyMessageText(
       compensation.amountRub,
       await tripNameOf(manager, trip),
@@ -2767,15 +2708,6 @@ export class TripFinanceService {
       senderGender,
     );
 
-    await manager.insert(Message, {
-      conversationId: conversation.id,
-      senderId,
-      body,
-      actionId: action.id,
-    });
-
-    // Текст возвращается вызывающему: карточка уведомления показывает
-    // ту же формулировку, что и личное сообщение (24.11.2026).
     return { conversationId: String(conversation.id), body };
   }
 
