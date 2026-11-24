@@ -114,6 +114,16 @@ export const useConversationsStore = defineStore('conversations', () => {
    * тогда полный перечень, но это редкий случай.
    */
   async function applyEvent(event: ConversationEvent): Promise<void> {
+    /**
+     * Кадр `notifications` — не про диалог (24.11.2026).
+     *
+     * Он едет по этому же потоку, но адресован панели уведомлений:
+     * `conversationId` пуст, и дальше по коду строка ленты не нашлась бы,
+     * а `refresh()` перечитал бы весь список диалогов на каждое закрытие
+     * карточки. Свои уведомления перечитывает `stores/notifications.ts`.
+     */
+    if (event.kind === 'notifications') return
+
     const me = useAuthStore().user?.id ?? null
 
     if (event.actorId === me) return

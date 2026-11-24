@@ -168,6 +168,23 @@ describe('parseConversationFrame', () => {
     expect(parseConversationFrame('retry: 3000')).toBeNull()
     expect(parseConversationFrame('event: conversation\ndata: {битый json')).toBeNull()
   })
+
+  /**
+   * Карточка панели изменилась (24.11.2026). Отдельного потока у уведомлений
+   * нет (§14.2): сигнал едет по потоку переписки, `conversationId` и
+   * `actorId` у него пустые — карточка не всегда про диалог, а изменила её
+   * система. Пустые строки обязаны проходить проверку вида, иначе кадр
+   * молча пропадёт и панель обновится только по минуте.
+   */
+  it('читает сигнал «уведомления изменились» с пустыми id', () => {
+    const payload = conversationEvent({
+      kind: 'notifications',
+      conversationId: '',
+      actorId: '',
+    })
+
+    expect(parseConversationFrame(conversationFrame(payload))).toEqual(payload)
+  })
 })
 
 /** Ответ-поток: отдаёт подготовленные куски и закрывается. */
@@ -412,6 +429,44 @@ describe('subscribeConversationEvents', () => {
     expect(received[0]).toEqual(conversationEvent())
 
     stop()
+  })
+
+  /**
+   * Панель уведомлений и переписка живут на одном соединении (24.11.2026).
+   *
+   * Кадр `notifications` приходит в тот же поток, что и сообщения, поэтому
+   * два стора подписываются на один адрес. Второй `openSseStream` занял бы
+   * второе соединение HTTP/1.1 из шести, которые держит браузер: на экране
+   * похода это уже приводило к тому, что любой запрос вставал в очередь.
+   */
+  it('делит одно соединение между перепиской и панелью уведомлений', async () => {
+    useAuthStore().accessToken = 'token-123'
+
+    const fetchMock = vi.fn(async () =>
+      streamResponse([`${conversationFrame(conversationEvent())}\n\n`]),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const feed: ConversationEvent[] = []
+    const panel: ConversationEvent[] = []
+
+    const stopFeed = subscribeConversationEvents((incoming) => feed.push(incoming))
+    const stopPanel = subscribeConversationEvents((incoming) => panel.push(incoming))
+
+    await vi.waitFor(() => expect(feed).toHaveLength(1))
+    expect(panel).toHaveLength(1)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    // Ушёл один подписчик — второй продолжает получать кадры с того же
+    // соединения, нового запроса нет.
+    stopFeed()
+    const late: ConversationEvent[] = []
+    const stopLate = subscribeConversationEvents((incoming) => late.push(incoming))
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    stopPanel()
+    stopLate()
   })
 
   it('после отписки не открывает соединение заново', async () => {

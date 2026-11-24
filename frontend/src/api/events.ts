@@ -62,8 +62,18 @@ export interface TripEvent {
  * Исключение — `message_updated`: `messageId` и `body` в кадре есть, потому
  * что переписанное сообщение уже лежит в открытом диалоге и заменить надо
  * именно его тело. От смотрящего эти два поля не зависят.
+ *
+ * `notifications` (24.11.2026) — сигнал «перечитай уведомления»: появилась
+ * карточка панели, закрылась или ушла в архив. Отдельного потока для
+ * уведомлений нет (§14.2 `topics/messages.md`), поэтому вид приезжает сюда,
+ * а `conversationId` и `actorId` у него пустые: карточка не всегда привязана
+ * к диалогу, а изменила её система, не человек.
  */
-export type ConversationEventKind = 'message' | 'read' | 'message_updated'
+export type ConversationEventKind =
+  | 'message'
+  | 'read'
+  | 'message_updated'
+  | 'notifications'
 
 export interface ConversationEvent {
   conversationId: string
@@ -207,6 +217,7 @@ const CONVERSATION_EVENT_KINDS: readonly ConversationEventKind[] = [
   'message',
   'read',
   'message_updated',
+  'notifications',
 ]
 
 function isConversationEvent(value: unknown): value is ConversationEvent {
@@ -455,20 +466,62 @@ export function subscribeTripEvents(
   }
 }
 
+/** Подписчики потока переписки: соединение на человека одно на приложение. */
+interface ConversationEventStream {
+  listeners: Set<(event: ConversationEvent) => void>
+  stop: () => void
+}
+
+let conversationStream: ConversationEventStream | null = null
+
 /**
  * Подписаться на события переписки — один поток на человека.
  *
  * Адрес без id: сервер берёт человека из токена, подписаться на чужой
- * поток нечем. Поток открывает стор ленты (`stores/conversations.ts`),
- * пока лента кому-то нужна: подписчиков двое (колонка и мобильная панель),
- * и одна вкладка не должна держать два соединения.
+ * поток нечем. С 24.11.2026 поток открывают **два стора** — переписка
+ * (`stores/conversations.ts`, пока экран диалога держит ленту) и панель
+ * уведомлений (`stores/notifications.ts`), — и кадр `notifications` едет
+ * по тому же соединению (§14.2). Второй `openSseStream` был бы вторым
+ * занятым соединением HTTP/1.1 из шести, которые держит браузер; поэтому
+ * соединение здесь одно, а подписчики копятся в наборе — так же, как
+ * у `subscribeTripEvents` на поход.
+ *
+ * Отписка последнего закрывает поток: держать соединение без слушателей
+ * незачем.
  */
 export function subscribeConversationEvents(
   onEvent: (event: ConversationEvent) => void,
 ): () => void {
-  return openSseStream({
-    url: '/api/conversations/events',
-    parse: parseConversationFrame,
-    onEvent,
-  })
+  if (conversationStream === null) {
+    const listeners = new Set<(event: ConversationEvent) => void>()
+
+    const created: ConversationEventStream = {
+      listeners,
+      stop: () => undefined,
+    }
+
+    created.stop = openSseStream({
+      url: '/api/conversations/events',
+      parse: parseConversationFrame,
+      // Копия набора: отписка внутри обработчика не должна ломать обход.
+      onEvent: (event) => {
+        for (const listener of [...listeners]) listener(event)
+      },
+    })
+
+    conversationStream = created
+  }
+
+  const shared = conversationStream
+  shared.listeners.add(onEvent)
+
+  return () => {
+    shared.listeners.delete(onEvent)
+
+    // Ушёл не весь поток — соединение живо: другой стор ещё смотрит.
+    if (shared.listeners.size > 0) return
+
+    if (conversationStream === shared) conversationStream = null
+    shared.stop()
+  }
 }

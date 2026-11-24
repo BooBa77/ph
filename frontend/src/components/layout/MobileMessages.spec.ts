@@ -1,370 +1,177 @@
 import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { VueWrapper } from '@vue/test-utils'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MobileMessages from '@/components/layout/MobileMessages.vue'
-import { useConversationsStore } from '@/stores/conversations'
-import type { Conversation } from '@/types/conversations'
+import type { AppNotification } from '@/types/notifications'
 
-const { push, api, actions } = vi.hoisted(() => ({
-  push: vi.fn(),
-  api: {
-    listConversations: vi.fn(),
-    getConversation: vi.fn(),
-    markConversationRead: vi.fn(),
-    sendConversationMessage: vi.fn(),
-  },
-  actions: { respondToAction: vi.fn() },
-}))
+const { route, push, listNotifications, closeNotification, subscribeConversationEvents } =
+  vi.hoisted(() => ({
+    route: { name: 'trips', fullPath: '/trips/193' } as { name: string; fullPath: string },
+    push: vi.fn(),
+    listNotifications: vi.fn(),
+    closeNotification: vi.fn(),
+    subscribeConversationEvents: vi.fn(),
+  }))
 
 vi.mock('vue-router', () => ({
+  useRoute: () => route,
   useRouter: () => ({ push }),
-  useRoute: () => ({ name: 'home', fullPath: '/' }),
 }))
+vi.mock('@/api/notifications', () => ({ listNotifications, closeNotification }))
+vi.mock('@/api/events', () => ({ subscribeConversationEvents }))
+vi.mock('@/api/conversations', () => ({ sendConversationMessage: vi.fn() }))
+vi.mock('@/api/finance', () => ({ confirmTripCompensation: vi.fn() }))
 
-vi.mock('@/api/conversations', () => api)
-vi.mock('@/api/message-actions', () => actions)
-
-function message(id: string, body: string, createdAt = '2026-11-23T09:00:00.000Z') {
-  return {
-    id,
-    senderId: 'peer',
-    senderName: 'Анна',
-    senderAvatarUrl: null,
-    body,
-    isSystem: false,
-    createdAt,
-    action: null,
-  }
-}
-
-function conversation(overrides: Partial<Conversation> = {}): Conversation {
+function card(overrides: Partial<AppNotification> = {}): AppNotification {
   return {
     id: '1',
-    kind: 'direct',
-    tripId: null,
-    title: 'Анна',
-    tripTitle: null,
-    peer: { id: 'peer', displayName: 'Анна', avatarUrl: null },
-    lastMessage: message('10', 'Привет'),
-    unreadCount: 1,
-    muted: false,
-    peerLastReadAt: null,
+    kind: 'money_transfer',
+    section: 'system',
+    title: 'Денежный перевод',
+    body: 'Анна перевела тебе 1 000 ₽ за поход «Хамар-Дабан».',
+    conversationId: '1268',
+    tripId: '193',
+    compensationId: '55',
+    unreadCount: null,
+    preview: [],
+    createdAt: '2026-11-24T10:00:00.000Z',
+    updatedAt: '2026-11-24T10:00:00.000Z',
     ...overrides,
   }
 }
 
-/** Денежная строка: ждёт ответа «получил / не получил». */
-function moneyConversation(overrides: Partial<Conversation> = {}): Conversation {
-  return conversation({
-    id: '3',
-    lastMessage: {
-      ...message('30', 'Тебе перевели 1200 ₽', '2026-11-20T10:00:00.000Z'),
-      action: {
-        id: '77',
-        kind: 'money_received',
-        targetUserId: 'me',
-        state: 'pending',
-        payload: { amountRub: 1200 },
-        canRespond: true,
-        canRecheck: false,
-        createdAt: '2026-11-20T10:00:00.000Z',
-        respondedAt: null,
-      },
+const personal = card({
+  id: '2',
+  kind: 'direct_chat',
+  section: 'personal',
+  title: 'Борис',
+  body: 'Собираемся в шесть',
+  tripId: null,
+  compensationId: null,
+  unreadCount: 2,
+  preview: [
+    {
+      id: '10',
+      body: 'Собираемся в шесть',
+      senderId: 'peer',
+      senderName: 'Борис',
+      createdAt: '2026-11-24T09:00:00.000Z',
     },
-    ...overrides,
+  ],
+})
+
+function answer(system: AppNotification[], personalList: AppNotification[]) {
+  listNotifications.mockResolvedValue({
+    system,
+    personal: personalList,
+    systemCount: system.length,
+    personalCount: personalList.length,
   })
 }
 
-/**
- * Чат похода: ведёт на вкладку похода, а не на экран диалога.
- *
- * Так же, как «Открыть чат» в колонке: таблица `utils/chatTabs.ts` общая.
- */
-function tripConversation(overrides: Partial<Conversation> = {}): Conversation {
-  return conversation({
-    id: '5',
-    kind: 'trip_finance',
-    tripId: '3',
-    title: 'Чат бухгалтерии',
-    tripTitle: 'Витязь',
-    peer: null,
-    ...overrides,
-  })
-}
+let wrapper: VueWrapper | null = null
 
-function mountPanel() {
-  return mount(MobileMessages, { attachTo: document.body })
+async function mountPanel() {
+  wrapper = mount(MobileMessages, { attachTo: document.body })
+  await flushPromises()
+  return wrapper
 }
 
 beforeEach(() => {
   vi.clearAllMocks()
   setActivePinia(createPinia())
-  api.listConversations.mockResolvedValue({ conversations: [] })
-  api.markConversationRead.mockResolvedValue(undefined)
-  actions.respondToAction.mockResolvedValue(undefined)
+  route.name = 'trips'
+  route.fullPath = '/trips/193'
+  subscribeConversationEvents.mockReturnValue(() => undefined)
+  closeNotification.mockResolvedValue(undefined)
+  answer([card()], [personal])
 })
 
-describe('MobileMessages', () => {
-  it('показывает счётчик непрочитанного на свёрнутой кнопке', async () => {
-    api.listConversations.mockResolvedValue({
-      conversations: [
-        conversation({ id: '1', unreadCount: 2 }),
-        // Заглушенный чат в счётчик не идёт: человек сам его погасил.
-        conversation({ id: '2', unreadCount: 5, muted: true }),
-      ],
-    })
+afterEach(() => {
+  wrapper?.unmount()
+  wrapper = null
+})
 
-    const wrapper = mountPanel()
-    await flushPromises()
+describe('MobileMessages — две иконки уведомлений', () => {
+  it('рисует две иконки со своими счётчиками', async () => {
+    // Счётчик секции считает карточки, а не непрочитанные сообщения:
+    // две карточки — «2», хотя непрочитанных в них больше.
+    answer([card()], [personal, card({ id: '3', kind: 'direct_chat', title: 'Анна' })])
 
-    expect(wrapper.find('[data-test="mobile-messages-badge"]').text()).toBe('2')
+    const panel = await mountPanel()
 
-    wrapper.unmount()
-  })
-
-  it('разворачивается в ленту без заглушенных чатов', async () => {
-    api.listConversations.mockResolvedValue({
-      conversations: [
-        conversation({ id: '1' }),
-        conversation({ id: '2', unreadCount: 5, muted: true }),
-      ],
-    })
-
-    const wrapper = mountPanel()
-    await flushPromises()
-
-    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
-
-    expect(wrapper.find('[data-test="mobile-messages-panel"]').exists()).toBe(true)
-    expect(wrapper.findAll('[data-test^="mobile-messages-row-"]')).toHaveLength(1)
-
-    wrapper.unmount()
-  })
-
-  it('ведёт личный диалог на /messages/:id и снимает непрочитанное', async () => {
-    api.listConversations.mockResolvedValue({ conversations: [conversation()] })
-
-    const wrapper = mountPanel()
-    await flushPromises()
-
-    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
-    await wrapper.find('[data-test="mobile-messages-row-1"]').trigger('click')
-    await flushPromises()
-
-    expect(api.markConversationRead).toHaveBeenCalledWith('1')
-    expect(push).toHaveBeenCalledWith('/messages/1')
-    // Переход закрывает панель: поверх новой страницы ей не место.
-    expect(wrapper.find('[data-test="mobile-messages-panel"]').exists()).toBe(false)
-
-    wrapper.unmount()
-  })
-
-  it('ведёт чат похода на его вкладку', async () => {
-    api.listConversations.mockResolvedValue({ conversations: [tripConversation()] })
-
-    const wrapper = mountPanel()
-    await flushPromises()
-
-    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
-    await wrapper.find('[data-test="mobile-messages-row-5"]').trigger('click')
-    await flushPromises()
-
-    expect(push).toHaveBeenCalledWith({ path: '/trips/3', query: { tab: 'finance' } })
-
-    wrapper.unmount()
-  })
-
-  it('раскрывает денежное действие и отвечает на него', async () => {
-    api.listConversations.mockResolvedValue({ conversations: [moneyConversation()] })
-
-    const wrapper = mountPanel()
-    await flushPromises()
-
-    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
-
-    const row = wrapper.find('[data-test="mobile-messages-row-3"]')
-    expect(row.text()).toContain('Перевод 1\u00A0200 ₽')
-
-    await row.trigger('click')
-    await flushPromises()
-
-    // Ушли не на экран диалога: отвечать там нечем.
-    expect(push).not.toHaveBeenCalled()
-
-    // «Сообщение отправителю» есть и на мобиле (24.11.2026).
-    const reply = wrapper.find('[data-test="mobile-messages-reply-input"]')
-    expect(reply.attributes('placeholder')).toBe('Сообщение отправителю:')
-    await reply.setValue('Получил')
-
-    // «Не получено» убрано: ответ на перевод один (24.11.2026).
-    expect(wrapper.find('[data-test="mobile-messages-dispute"]').exists()).toBe(false)
-    // Поле обратной связи отправляется и без подтверждения.
-    expect(wrapper.find('[data-test="mobile-messages-reply-send"]').exists()).toBe(true)
-
-    await wrapper.find('[data-test="mobile-messages-confirm"]').trigger('click')
-    await flushPromises()
-
-    expect(actions.respondToAction).toHaveBeenCalledWith('77', 'Получил')
-
-    wrapper.unmount()
+    expect(panel.get('[data-test="mobile-notifications-system-badge"]').text()).toBe('1')
+    expect(panel.get('[data-test="mobile-notifications-personal-badge"]').text()).toBe('2')
   })
 
   /**
-   * Приоритет действия — серверный (24.11.2026): просьба о платеже после
-   * перевода не должна отбирать у строки «Подтверждаю».
+   * «Нет уведомлений в секции — нет и её иконки» (§14.1): кнопка с вечным
+   * нулём — мусор в углу экрана.
    */
-  it('не отдаёт строку просьбе о платеже, пока перевод ждёт ответа', async () => {
-    api.listConversations.mockResolvedValue({
-      conversations: [
-        conversation({
-          id: '7',
-          action: {
-            id: '71',
-            kind: 'money_received',
-            targetUserId: 'me',
-            state: 'pending',
-            payload: { amountRub: 1000 },
-            canRespond: true,
-            canRecheck: false,
-            createdAt: '2026-11-20T10:00:00.000Z',
-            respondedAt: null,
-          },
-          lastMessage: {
-            ...message('70', 'Организатор запросил платёж по походу «Витязь».'),
-            action: {
-              id: '88',
-              kind: 'payment_request',
-              targetUserId: 'me',
-              state: 'pending',
-              payload: { tripId: '3', tripTitle: 'Витязь' },
-              canRespond: false,
-              canRecheck: false,
-              createdAt: '2026-11-24T09:00:00.000Z',
-              respondedAt: null,
-            },
-          },
-        }),
-      ],
-    })
+  it('секция без уведомлений иконки не имеет', async () => {
+    answer([], [personal])
 
-    const wrapper = mountPanel()
-    await flushPromises()
+    const panel = await mountPanel()
 
-    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
-
-    const row = wrapper.find('[data-test="mobile-messages-row-7"]')
-    expect(row.text()).toContain('Перевод 1\u00A0000 ₽')
-
-    await row.trigger('click')
-    await flushPromises()
-
-    expect(wrapper.find('[data-test="mobile-messages-confirm"]').exists()).toBe(true)
-    expect(wrapper.find('[data-test="mobile-messages-go-finance"]').exists()).toBe(false)
-
-    await wrapper.find('[data-test="mobile-messages-confirm"]').trigger('click')
-    await flushPromises()
-
-    expect(actions.respondToAction).toHaveBeenCalledWith('71', '')
-
-    wrapper.unmount()
+    expect(panel.find('[data-test="mobile-notifications-system"]').exists()).toBe(false)
+    expect(panel.find('[data-test="mobile-notifications-personal"]').exists()).toBe(true)
   })
 
-  it('у просьбы о платеже — кнопка «Перейти» в бухгалтерию похода', async () => {
-    api.listConversations.mockResolvedValue({
-      conversations: [
-        conversation({
-          id: '4',
-          lastMessage: {
-            ...message('40', 'Организатор запросил платёж по походу «Витязь».'),
-            action: {
-              id: '88',
-              kind: 'payment_request',
-              targetUserId: 'me',
-              state: 'pending',
-              payload: { tripId: '3', tripTitle: 'Витязь' },
-              canRespond: false,
-              canRecheck: false,
-              createdAt: '2026-11-24T09:00:00.000Z',
-              respondedAt: null,
-            },
-          },
-        }),
-      ],
-    })
+  it('без уведомлений нет ни одной иконки', async () => {
+    answer([], [])
 
-    const wrapper = mountPanel()
-    await flushPromises()
+    const panel = await mountPanel()
 
-    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
-    await wrapper.find('[data-test="mobile-messages-row-4"]').trigger('click')
-    await flushPromises()
-
-    expect(push).not.toHaveBeenCalled()
-    expect(wrapper.find('[data-test="mobile-messages-confirm"]').exists()).toBe(false)
-
-    await wrapper.find('[data-test="mobile-messages-go-finance"]').trigger('click')
-    await flushPromises()
-
-    expect(push).toHaveBeenCalledWith({ path: '/trips/3', query: { tab: 'finance' } })
-
-    wrapper.unmount()
+    expect(panel.find('[data-test^="mobile-notifications-"]').exists()).toBe(false)
   })
 
   /**
-   * Переписанный текст (24.11.2026): автосогласие через 72 часа меняет тело
-   * уведомления. Подпись строки берётся из `lastMessage`, поэтому панель
-   * показывает новый текст после того, как стор перечитал строку, и счётчик
-   * непрочитанного от этого не растёт.
+   * Иконка открывает панель **на своей секции**: раскрыта та, по которой
+   * нажали, вторая свёрнута.
    */
-  it('показывает новый текст сообщения, не наращивая непрочитанное', async () => {
-    // Личный диалог: у чата похода подпись — название вкладки, а не текст
-    // сообщения, поэтому переписанное уведомление проверяем на личном.
-    api.listConversations.mockResolvedValue({
-      conversations: [
-        conversation({
-          id: '1',
-          unreadCount: 0,
-          lastMessage: message('10', 'Анна перевела тебе 1000 ₽'),
-        }),
-      ],
-    })
+  it('иконка системных открывает панель с раскрытой системной секцией', async () => {
+    const panel = await mountPanel()
 
-    const wrapper = mountPanel()
+    await panel.get('[data-test="mobile-notifications-system"]').trigger('click')
+
+    expect(panel.find('[data-test="mobile-messages-panel"]').exists()).toBe(true)
+    expect(panel.find('[data-test="mobile-messages-card-1"]').exists()).toBe(true)
+    expect(panel.find('[data-test="mobile-messages-card-2"]').exists()).toBe(false)
+  })
+
+  it('иконка личных открывает панель с раскрытой личной секцией', async () => {
+    const panel = await mountPanel()
+
+    await panel.get('[data-test="mobile-notifications-personal"]').trigger('click')
+
+    expect(panel.find('[data-test="mobile-messages-card-2"]').exists()).toBe(true)
+    expect(panel.find('[data-test="mobile-messages-card-1"]').exists()).toBe(false)
+  })
+
+  it('карточки в панели те же, что в колонке: «ОК» закрывает и перечитывает', async () => {
+    const panel = await mountPanel()
+    await panel.get('[data-test="mobile-notifications-personal"]').trigger('click')
+    await panel.get('[data-test="mobile-messages-card-2"] button').trigger('click')
+
+    // У личного чата в раскрытии есть «ОК».
+    answer([], [])
+    await panel.get('[data-test="mobile-messages-ok"]').trigger('click')
     await flushPromises()
 
-    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
-    await flushPromises()
+    expect(closeNotification).toHaveBeenCalledWith('2')
+    // Карточек не осталось — панель закрылась сама, и иконки тоже нет.
+    expect(panel.find('[data-test="mobile-messages-panel"]').exists()).toBe(false)
+    expect(panel.find('[data-test="mobile-notifications-personal"]').exists()).toBe(false)
+  })
 
-    expect(wrapper.find('[data-test="mobile-messages-row-1"]').text()).toContain(
-      'Анна перевела тебе 1000 ₽',
-    )
+  it('на экране диалога ни иконок, ни панели', async () => {
+    route.name = 'messages'
 
-    api.getConversation.mockResolvedValue(
-      conversation({
-        id: '1',
-        unreadCount: 0,
-        lastMessage: message('10', 'Время ожидания подтверждения вышло'),
-      }),
-    )
+    const panel = await mountPanel()
 
-    const feed = useConversationsStore()
-    await feed.applyEvent({
-      conversationId: '1',
-      kind: 'message_updated',
-      actorId: '',
-      at: '2026-11-24T09:30:00.000Z',
-      messageId: '10',
-      body: 'Время ожидания подтверждения вышло',
-    })
-    await flushPromises()
-
-    expect(wrapper.find('[data-test="mobile-messages-row-1"]').text()).toContain(
-      'Время ожидания подтверждения вышло',
-    )
-    expect(feed.rows[0]?.unreadCount).toBe(0)
-    expect(wrapper.find('[data-test="mobile-messages-badge"]').exists()).toBe(false)
-
-    wrapper.unmount()
+    expect(panel.find('[data-test="mobile-notifications-system"]').exists()).toBe(false)
+    expect(panel.find('[data-test="mobile-messages-panel"]').exists()).toBe(false)
   })
 })

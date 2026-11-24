@@ -1,176 +1,123 @@
 <script setup lang="ts">
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { useRoute } from 'vue-router'
 
-import { ApiError } from '@/api/errors'
-import { sendConversationMessage } from '@/api/conversations'
-import { respondToAction } from '@/api/message-actions'
+import NotificationSection from '@/components/notifications/NotificationSection.vue'
 import SidebarIcon from '@/components/ui/SidebarIcon.vue'
-import UserAvatar from '@/components/ui/UserAvatar.vue'
-import { useConversationsStore } from '@/stores/conversations'
-import type { Conversation } from '@/types/conversations'
-import { tripTabOf } from '@/utils/chatTabs'
+import { useNotificationsStore } from '@/stores/notifications'
+import type { NotificationSection as Section } from '@/types/notifications'
 import {
-  conversationHeading,
-  conversationSubtitle,
-  conversationTime,
-  hasRowAction,
-  isPaymentRequest,
-  rowAction,
-} from '@/utils/conversations'
+  PERSONAL_SECTION_TITLE,
+  SYSTEM_SECTION_TITLE,
+} from '@/utils/notifications'
 
 /**
- * Мобильная панель сообщений (23.11.2026).
+ * Мобильная панель уведомлений (24.11.2026; заменила панель диалогов
+ * 23.11.2026).
  *
- * **Зачем.** Колонка сообщений живёт от `xl`, то есть на телефоне её нет
- * вовсе: ни ленты, ни счётчика непрочитанного. Экран диалога был, но попасть
- * на него можно было только по прямой ссылке или из профиля. Заказчик:
- * «в мобиле это может быть свёрнутое внизу иконку», как в VK.
+ * **Заказчик:** «Мобила до xl: две иконки в правом нижнем углу со
+ * счётчиками (треугольник с „!“ — системные, конверт — личные); нет
+ * уведомлений в секции — нет и её иконки. Иконка открывает панель на своей
+ * секции» (§14.1).
  *
- * **Свёрнутая иконка — она же бейдж.** Кнопка в правом нижнем углу со
- * счётчиком: пока сообщений нет, это просто вход в панель, а с непрочитанным
- * она ещё и говорит, сколько. Отдельного значка-счётчика не заводим —
- * счётчик нужен там, куда человек и так тянется пальцем.
+ * Отсюда два правила, которых не было у прежней кнопки:
  *
- * **Развёрнутая панель — та же лента.** Порядок строк (деньги сверху),
- * заголовки и время берутся из `utils/conversations.ts`, данные — из
- * `stores/conversations.ts`, то есть из того же места, что и колонка на
- * десктопе. Копии правил нет: иначе «деньги сверху» на мобиле пришлось бы
- * помнить отдельно.
+ * 1. **Иконка у секции своя.** Одна кнопка со счётчиком всего непрочитанного
+ *    не отвечала на вопрос «а что там»: человек не знал, деньги это или
+ *    личное сообщение. Треугольник и конверт различают разделы, и счётчик
+ *    у каждого свой.
+ * 2. **Пустая секция иконки не имеет.** Счётчик 0 не показывается вовсе:
+ *    кнопка, у которой всегда ноль, — это мусор в углу экрана.
  *
- * **Куда ведёт строка.** Личный диалог — на свой экран `/messages/:id`,
- * чат похода — на вкладку похода (`?tab=`), как «Открыть чат» в колонке.
- * Строка с неотвеченным переводом раскрывается здесь же: это задача, а не
- * переписка, и кнопка «Подтверждаю» должна быть под пальцем.
+ * **Развёрнутая панель — те же секции и те же карточки**, что в колонке:
+ * разметка карточки и секции общая (`components/notifications/`), данные —
+ * один стор. Копии правил нет: иначе «раскрыто одно уведомление» на мобиле
+ * пришлось бы помнить отдельно.
+ *
+ * **Открытая секция одна.** Иконка открывает панель на своей секции; вторую
+ * можно раскрыть кликом по её заголовку — тогда первая свернётся. Так же
+ * ведёт себя колонка: раскрыто всегда одно уведомление и одна секция не
+ * держит открытой вторую.
  *
  * **Чего здесь нет намеренно.** Галочки «Уведомлять» и «Скрыть чат»:
  * первая живёт на экране диалога и под чатом похода, вторая — в колонке,
- * где есть куда вернуть скрытое. Панель на телефоне — только список и вход.
+ * где есть куда вернуть скрытое. Панель на телефоне — только список
+ * и переходы по карточке.
  */
-const feed = useConversationsStore()
+const notifications = useNotificationsStore()
 const route = useRoute()
-const router = useRouter()
 
 /** Панель открыта. */
 const isOpen = ref(false)
 
-/** Какая строка раскрыта (действия: перевод и просьба о платеже). */
+/** Какая секция раскрыта; `null` — обе свёрнуты. */
+const activeSection = ref<Section | null>(null)
+
+/** Раскрытая карточка — одна на обе секции, как в колонке. */
 const expandedId = ref<string | null>(null)
-
-/** «Сообщение отправителю» к ответу на перевод (24.11.2026). */
-const replyDraft = ref('')
-
-/** Ошибка ответа на действие: остальные ошибки показывает стор. */
-const actionError = ref<string | null>(null)
 
 /** Панель: нужен фокус после открытия. */
 const panel = ref<HTMLElement | null>(null)
 
 /**
- * Счётчик в углу не раздувается: «99+» вместо четырёхзначного числа,
- * которое на кнопке 56 px уже не читается.
- */
-const unreadLabel = computed(() =>
-  feed.unreadTotal > 99 ? '99+' : String(feed.unreadTotal),
-)
-
-/**
- * Экран диалога занимает весь экран, и кнопка в углу перекрывала бы поле
- * ввода. Там она не нужна: панель — это вход в диалог, а мы уже в нём.
+ * Экран диалога занимает весь экран, и кнопки в углу перекрывали бы поле
+ * ввода. Там они не нужны: панель — это вход в диалог и в уведомления,
+ * а мы уже в переписке.
  */
 const onDialogScreen = computed(() => route.name === 'messages')
 
+/** У системной секции есть что показать. */
+const hasSystem = computed(() => notifications.system.length > 0)
+
+/** У личной секции есть что показать. */
+const hasPersonal = computed(() => notifications.personal.length > 0)
+
+/** Шапка панели: всего активных карточек. */
+const total = computed(() => notifications.total)
+
+/** «99+» вместо четырёхзначного числа, которое на бейдже не читается. */
+function labelOf(count: number): string {
+  return count > 99 ? '99+' : String(count)
+}
+
+const systemLabel = computed(() => labelOf(notifications.systemCount))
+const personalLabel = computed(() => labelOf(notifications.personalCount))
+
 function close(): void {
   isOpen.value = false
+  activeSection.value = null
   expandedId.value = null
-  replyDraft.value = ''
-  actionError.value = null
 }
 
-async function open(row: Conversation): Promise<void> {
-  // Действие — задача: раскрываем кнопки здесь, а не уводим на экран,
-  // где отвечать нечем. Так же ведёт себя просьба организатора о платеже:
-  // кнопка «Перейти» должна быть под пальцем.
-  if (hasRowAction(row)) {
-    expandedId.value = expandedId.value === row.id ? null : row.id
-    replyDraft.value = ''
-    return
-  }
+/** Иконка секции: панель открывается на ней, карточки свёрнуты. */
+function openSection(section: Section): void {
+  activeSection.value = section
+  expandedId.value = null
+  isOpen.value = true
+}
 
-  void feed.markRead(row)
-  close()
+/** Заголовок секции: раскрыть её, свёрнутую — свернуть. */
+function toggleSection(section: Section): void {
+  activeSection.value = activeSection.value === section ? null : section
+}
 
-  if (row.tripId) {
-    const tab = tripTabOf(row.kind)
-
-    await router.push({ path: `/trips/${row.tripId}`, query: tab ? { tab } : {} })
-    return
-  }
-
-  await router.push(`/messages/${row.id}`)
+/** Выбор карточки: раскрывается одна, прежняя сворачивается без действий. */
+function expand(id: string): void {
+  expandedId.value = expandedId.value === id ? null : id
 }
 
 /**
- * «Подтверждаю получение» — единственный ответ на перевод (24.11.2026).
- *
- * «Не получено» убрано: банковский перевод идёт до трёх дней, а спор не
- * отменял перевод, а снимал автосогласие и подвешивал строку. Если денег
- * ещё нет, есть поле обратной связи.
+ * Панель закрывается, когда показывать нечего: последнюю карточку закрыли
+ * «ОК» или подтвердили перевод, и пустая панель на весь экран только
+ * мешала бы.
  */
-async function answer(row: Conversation): Promise<void> {
-  // Действие диалога, а не последнего сообщения: приоритет выбирает сервер.
-  const action = rowAction(row)
-
-  if (!action) return
-
-  try {
-    await respondToAction(action.id, replyDraft.value)
-    replyDraft.value = ''
-    // Состояние действия меняет сервер: перечитываем, а не правим на месте.
-    await feed.refresh()
-    expandedId.value = null
-  } catch (problem) {
-    actionError.value =
-      problem instanceof ApiError ? problem.message : 'Не удалось ответить'
-  }
-}
+watch(total, (value) => {
+  if (isOpen.value && value === 0) close()
+})
 
 /**
- * Обратная связь отправителю без подтверждения (24.11.2026).
- *
- * Обычное сообщение в диалог: «деньги ещё не пришли, жду». Таймер
- * автосогласия не трогается — через 72 часа перевод засчитается сам,
- * а действие остаётся доступным, пока оно не разрешено.
- */
-async function replyToSender(row: Conversation): Promise<void> {
-  const body = replyDraft.value.trim()
-
-  if (!body) return
-
-  try {
-    await sendConversationMessage(row.id, body)
-    replyDraft.value = ''
-    await feed.refresh()
-  } catch (problem) {
-    actionError.value =
-      problem instanceof ApiError ? problem.message : 'Не удалось отправить сообщение'
-  }
-}
-
-/** «Перейти» из просьбы о платеже — в «Бухгалтерию» похода (24.11.2026). */
-function openFinance(row: Conversation): void {
-  const tripId = rowAction(row)?.payload?.tripId
-
-  if (typeof tripId !== 'string') return
-
-  void feed.markRead(row)
-  close()
-  void router.push({ path: `/trips/${tripId}`, query: { tab: 'finance' } })
-}
-
-/**
- * Escape и прокрутка — как у мобильного меню: панель оверлей, и жест по ней
- * не должен прокручивать страницу под ней. Фокус кладём на саму панель,
+ * Escape и прокрутка — как у прежней панели и мобильного меню: оверлей
+ * не должен прокручивать страницу под собой. Фокус кладём на саму панель,
  * чтобы с клавиатуры человек попадал внутрь, а не в начало документа.
  */
 let savedOverflow = ''
@@ -202,11 +149,11 @@ watch(
   () => close(),
 )
 
-/** Лента обновляется сама, пока панель (и колонка) кому-то видны. */
-const releaseFeed = feed.hold()
+/** Панель обновляется сама, пока она (и колонка) кому-то видны. */
+const release = notifications.hold()
 
 onUnmounted(() => {
-  releaseFeed()
+  release()
   window.removeEventListener('keydown', onKeydown)
 
   if (typeof document !== 'undefined') document.body.style.overflow = savedOverflow
@@ -215,28 +162,54 @@ onUnmounted(() => {
 
 <template>
   <!--
-    `xl:hidden` на обеих частях: от 1280 px лента уже стоит колонкой справа,
-    и вторая кнопка в углу там только мешала бы.
+    `xl:hidden` на обеих частях: от 1280 px уведомления уже стоят колонкой
+    справа, и вторая пара кнопок в углу там только мешала бы.
   -->
   <div v-if="!onDialogScreen" class="xl:hidden">
-    <button
-      type="button"
-      class="fixed right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-40 flex h-14 w-14 cursor-pointer items-center justify-center rounded-full bg-primary text-white shadow-2xl transition-transform active:scale-95"
-      :aria-expanded="isOpen"
-      aria-label="Сообщения"
-      data-test="mobile-messages-button"
-      @click="isOpen = true"
+    <!--
+      Две иконки, а не одна: «треугольник с !» — системные уведомления,
+      конверт — личные. Счётчик у каждой свой; секция без карточек кнопки
+      не имеет вовсе.
+    -->
+    <div
+      class="fixed right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-40 flex items-center gap-2"
     >
-      <span class="block h-6 w-6"><SidebarIcon name="messages" /></span>
-
-      <span
-        v-if="feed.unreadTotal > 0"
-        class="absolute -top-1 -right-1 min-w-6 rounded-full border border-primary bg-white px-1.5 py-0.5 text-center text-xs font-semibold leading-none text-primary"
-        data-test="mobile-messages-badge"
+      <button
+        v-if="hasSystem"
+        type="button"
+        class="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full bg-primary text-white shadow-2xl transition-transform active:scale-95"
+        aria-label="Системные уведомления"
+        data-test="mobile-notifications-system"
+        @click="openSection('system')"
       >
-        {{ unreadLabel }}
-      </span>
-    </button>
+        <span class="block h-6 w-6"><SidebarIcon name="alert" /></span>
+
+        <span
+          class="absolute -top-1 -right-1 min-w-6 rounded-full border border-primary bg-white px-1.5 py-0.5 text-center text-xs font-semibold leading-none text-primary"
+          data-test="mobile-notifications-system-badge"
+        >
+          {{ systemLabel }}
+        </span>
+      </button>
+
+      <button
+        v-if="hasPersonal"
+        type="button"
+        class="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full bg-primary text-white shadow-2xl transition-transform active:scale-95"
+        aria-label="Личные сообщения"
+        data-test="mobile-notifications-personal"
+        @click="openSection('personal')"
+      >
+        <span class="block h-6 w-6"><SidebarIcon name="mail" /></span>
+
+        <span
+          class="absolute -top-1 -right-1 min-w-6 rounded-full border border-primary bg-white px-1.5 py-0.5 text-center text-xs font-semibold leading-none text-primary"
+          data-test="mobile-notifications-personal-badge"
+        >
+          {{ personalLabel }}
+        </span>
+      </button>
+    </div>
 
     <Transition name="sheet">
       <div v-if="isOpen" class="fixed inset-0 z-40 xl:hidden" data-test="mobile-messages-panel">
@@ -251,24 +224,24 @@ onUnmounted(() => {
           class="sheet__panel absolute inset-x-0 bottom-0 flex max-h-[80vh] flex-col rounded-t-2xl border-t border-border bg-surface pb-[env(safe-area-inset-bottom)] shadow-2xl outline-none"
           role="dialog"
           aria-modal="true"
-          aria-label="Сообщения"
+          aria-label="Уведомления"
           tabindex="-1"
         >
           <div class="flex items-center gap-2 border-b border-border px-4 py-3">
-            <span class="text-sm font-medium text-text">Сообщения</span>
+            <span class="text-sm font-medium text-text">Уведомления</span>
 
             <span
-              v-if="feed.unreadTotal > 0"
+              v-if="total > 0"
               class="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-white"
               data-test="mobile-messages-total"
             >
-              {{ feed.unreadTotal }}
+              {{ total }}
             </span>
 
             <button
               type="button"
               class="ml-auto cursor-pointer rounded-full p-2 text-muted transition-colors hover:bg-bg hover:text-text"
-              aria-label="Закрыть сообщения"
+              aria-label="Закрыть уведомления"
               data-test="mobile-messages-close"
               @click="close()"
             >
@@ -276,21 +249,25 @@ onUnmounted(() => {
             </button>
           </div>
 
-          <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto p-2">
-            <p v-if="feed.isLoading" class="p-2 text-sm text-muted" data-test="mobile-messages-loading">
+          <div class="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto p-2">
+            <p
+              v-if="notifications.isLoading"
+              class="p-2 text-sm text-muted"
+              data-test="mobile-messages-loading"
+            >
               Загружаем…
             </p>
 
             <p
-              v-else-if="feed.error"
+              v-else-if="notifications.error"
               class="p-2 text-sm text-muted"
               data-test="mobile-messages-error"
             >
-              {{ feed.error }}
+              {{ notifications.error }}
             </p>
 
             <p
-              v-else-if="feed.visible.length === 0"
+              v-else-if="total === 0"
               class="p-2 text-sm text-muted"
               data-test="mobile-messages-empty"
             >
@@ -298,102 +275,29 @@ onUnmounted(() => {
             </p>
 
             <template v-else>
-              <article
-                v-for="row in feed.visible"
-                :key="row.id"
-                class="rounded-xl border border-border bg-bg"
-              >
-                <button
-                  type="button"
-                  class="flex min-h-12 w-full cursor-pointer items-start gap-2 px-3 py-2 text-left"
-                  :aria-expanded="expandedId === row.id"
-                  :data-test="`mobile-messages-row-${row.id}`"
-                  @click="open(row)"
-                >
-                  <UserAvatar
-                    v-if="row.peer"
-                    :src="row.peer.avatarUrl"
-                    :size="28"
-                    :alt="row.peer.displayName"
-                  />
+              <NotificationSection
+                v-if="hasSystem"
+                section="system"
+                :title="SYSTEM_SECTION_TITLE"
+                :items="notifications.system"
+                :open="activeSection === 'system'"
+                :expanded-id="expandedId"
+                test-prefix="mobile-messages"
+                @toggle="toggleSection('system')"
+                @expand="expand"
+              />
 
-                  <span class="min-w-0 flex-1">
-                    <span class="flex items-baseline gap-2">
-                      <span
-                        class="truncate text-sm text-text"
-                        :class="row.unreadCount > 0 ? 'font-semibold' : ''"
-                      >
-                        {{ conversationHeading(row) }}
-                      </span>
-                      <span class="ml-auto shrink-0 text-xs text-muted">
-                        {{ conversationTime(row.lastMessage?.createdAt) }}
-                      </span>
-                    </span>
-
-                    <span class="mt-0.5 line-clamp-2 block text-xs text-muted">
-                      {{ conversationSubtitle(row) }}
-                    </span>
-                  </span>
-
-                  <span
-                    v-if="row.unreadCount > 0"
-                    class="shrink-0 rounded-full bg-primary px-1.5 text-xs font-medium text-white"
-                  >
-                    {{ row.unreadCount }}
-                  </span>
-                </button>
-
-                <!-- Действия: ответ на перевод или переход к платежу. -->
-                <div
-                  v-if="expandedId === row.id"
-                  class="flex flex-col gap-2 px-3 pb-3"
-                  :data-test="`mobile-messages-action-${row.id}`"
-                >
-                  <p v-if="actionError" class="text-xs text-red-600">{{ actionError }}</p>
-
-                  <template v-if="rowAction(row)?.canRespond">
-                    <!-- «Сообщение отправителю»: уходит и ответом, и само по себе. -->
-                    <div class="flex gap-1">
-                      <input
-                        v-model="replyDraft"
-                        type="text"
-                        class="min-w-0 flex-1 rounded-lg border border-border bg-field px-2 py-1.5 text-xs text-text outline-none focus:border-primary"
-                        placeholder="Сообщение отправителю:"
-                        aria-label="Сообщение отправителю"
-                        data-test="mobile-messages-reply-input"
-                      />
-                      <button
-                        type="button"
-                        class="cursor-pointer rounded-lg border border-border px-2 py-1.5 text-xs text-text disabled:cursor-not-allowed disabled:opacity-50"
-                        :disabled="!replyDraft.trim()"
-                        data-test="mobile-messages-reply-send"
-                        @click="replyToSender(row)"
-                      >
-                        →
-                      </button>
-                    </div>
-
-                    <button
-                      type="button"
-                      class="w-full cursor-pointer rounded-lg bg-primary px-2 py-2 text-xs font-medium text-white"
-                      data-test="mobile-messages-confirm"
-                      @click="answer(row)"
-                    >
-                      Подтверждаю
-                    </button>
-                  </template>
-
-                  <button
-                    v-else-if="isPaymentRequest(row)"
-                    type="button"
-                    class="cursor-pointer rounded-lg bg-primary px-2 py-2 text-xs font-medium text-white"
-                    data-test="mobile-messages-go-finance"
-                    @click="openFinance(row)"
-                  >
-                    Перейти
-                  </button>
-                </div>
-              </article>
+              <NotificationSection
+                v-if="hasPersonal"
+                section="personal"
+                :title="PERSONAL_SECTION_TITLE"
+                :items="notifications.personal"
+                :open="activeSection === 'personal'"
+                :expanded-id="expandedId"
+                test-prefix="mobile-messages"
+                @toggle="toggleSection('personal')"
+                @expand="expand"
+              />
             </template>
           </div>
         </div>
