@@ -15,6 +15,7 @@ import { Message } from './entities/message.entity';
 import { MessageAction } from './entities/message-action.entity';
 import { TripCompensation } from './entities/trip-compensation.entity';
 import { ConversationEventsService } from './conversation-events.service';
+import { NotificationsService } from './notifications.service';
 import { TripEventsService } from './trip-events.service';
 
 /**
@@ -45,6 +46,12 @@ export class MessageActionsService {
     private readonly dataSource: DataSource,
     private readonly events: TripEventsService,
     private readonly conversations: ConversationEventsService,
+    /**
+     * Уведомления правой панели (24.11.2026, §14). «Подтвердить» в карточке
+     * перевода идёт этой же ручкой, поэтому архив карточки обязан
+     * случиться здесь, а не только в подтверждении из «Бухгалтерии».
+     */
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -63,6 +70,8 @@ export class MessageActionsService {
   ): Promise<MessageActionDto> {
     let confirmedTripId: string | null = null;
     const sentTo: Array<{ conversationId: string; senderId: string }> = [];
+    /** Чьи карточки уведомлений изменились — сигнал после COMMIT. */
+    const notificationRecipients: string[] = [];
 
     const dto = await this.dataSource.transaction(async (manager) => {
       // `FOR UPDATE`: два устройства могут нажать «Да» одновременно,
@@ -99,6 +108,25 @@ export class MessageActionsService {
        */
       if (action.kind === 'money_received' && action.state === 'confirmed') {
         confirmedTripId = await this.confirmLinkedCompensation(manager, action);
+
+        /**
+         * Карточка перевода — в архив (24.11.2026, §14.2).
+         *
+         * Заказчик: «Подтвердить» закрывает карточку, она уходит в архив
+         * с причиной «подтвердил человек». Ответ приходит этой ручкой,
+         * а не подтверждением из «Бухгалтерии», поэтому архив нужен здесь.
+         */
+        const compensationId = this.compensationIdOf(action);
+        if (compensationId !== null) {
+          notificationRecipients.push(
+            ...(await this.notifications.archiveCompensation(
+              manager,
+              compensationId,
+              'confirmed',
+            )),
+          );
+        }
+        notificationRecipients.push(userId);
       }
 
       /**
@@ -129,6 +157,10 @@ export class MessageActionsService {
 
     if (confirmedTripId !== null) {
       this.events.emitFinance(confirmedTripId, userId);
+    }
+
+    for (const recipientId of new Set(notificationRecipients)) {
+      this.notifications.emitChanged([recipientId]);
     }
 
     // Та же схема, что у `ConversationsService.sendMessage`: кадр после
@@ -197,6 +229,9 @@ export class MessageActionsService {
    * текст «перевёл 1000 ₽» без возможности что-то с ним сделать.
    */
   async cancel(userId: string, actionId: number): Promise<void> {
+    /** Чьи карточки уведомлений изменились — сигнал после COMMIT. */
+    const notificationRecipients: string[] = [];
+
     await this.dataSource.transaction(async (manager) => {
       const action = await this.lockAction(manager, actionId);
       const senderId = await this.senderOf(manager, action.id);
@@ -210,9 +245,27 @@ export class MessageActionsService {
         );
       }
 
+      /**
+       * Карточка перевода удаляется вместе с действием (24.11.2026, §14.2).
+       *
+       * Компенсация при отмене действия остаётся строкой вкладки, но
+       * «подтверди перевод, которого нет» в панели — прямая ошибка.
+       */
+      const compensationId = this.compensationIdOf(action);
+      if (compensationId !== null) {
+        notificationRecipients.push(
+          ...(await this.notifications.dropForCompensation(manager, compensationId)),
+        );
+      }
+      notificationRecipients.push(action.targetUserId);
+
       await manager.delete(Message, { actionId: action.id });
       await manager.delete(MessageAction, { id: action.id });
     });
+
+    for (const recipientId of new Set(notificationRecipients)) {
+      this.notifications.emitChanged([recipientId]);
+    }
   }
 
   /**
@@ -280,6 +333,20 @@ export class MessageActionsService {
         MessageActionDto.from(action, userId, userId),
       ),
     };
+  }
+
+  /**
+   * Компенсация, которой касается действие, — из `payload`.
+   *
+   * `null` — действие не про деньги или связь потеряна. Отдельного поля
+   * «компенсация» у действия нет: связь лежит в jsonb, и это уже проверено
+   * `confirmLinkedCompensation`.
+   */
+  private compensationIdOf(action: MessageAction): string | null {
+    const raw = (action.payload as { compensationId?: unknown } | null)
+      ?.compensationId;
+
+    return raw === undefined || raw === null ? null : String(raw);
   }
 
   /**

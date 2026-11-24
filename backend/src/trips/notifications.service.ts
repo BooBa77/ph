@@ -376,6 +376,31 @@ export class NotificationsService {
   }
 
   /**
+   * Перевод отменён — карточка удаляется вместе с ним.
+   *
+   * Отмена действия в переписке («мой косяк») удаляет сообщение и действие,
+   * но строка компенсации живёт своей жизнью; карточка про перевод, которого
+   * больше нет, висела бы с кнопкой «Подтвердить». Поэтому уведомление
+   * удаляем здесь, а не ждём каскада по компенсации.
+   */
+  async dropForCompensation(
+    manager: EntityManager,
+    compensationId: string,
+  ): Promise<string[]> {
+    const rows = returningRows<{ recipient_user_id: string }>(
+      await manager.query(
+        `DELETE FROM "notifications"
+          WHERE "kind" = 'money_transfer'
+            AND "compensation_id" = $1
+        RETURNING "recipient_user_id"`,
+        [String(compensationId)],
+      ),
+    );
+
+    return rows.map((row) => row.recipient_user_id);
+  }
+
+  /**
    * Долг закрыт оплатой — запрос платежа в архив.
    *
    * Проверяется при чтении «Бухгалтерии» (и сразу после перевода): остаток
