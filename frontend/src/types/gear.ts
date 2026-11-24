@@ -519,6 +519,12 @@ export interface TripGearLoadPersonalUnit {
   id: string
   title: string
   weightGrams: number | null
+  /**
+   * Вес известен (24.11.2026). У личной аптечки без веса `false`,
+   * а `weightGrams` — `null`: в рюкзаке она подписана «вес не указан».
+   * Необязательное — старые ответы и моки без поля считаются взвешенными.
+   */
+  weightKnown?: boolean
 }
 
 /**

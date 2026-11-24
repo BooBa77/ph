@@ -565,11 +565,12 @@ describe('вкладка «Снаряжение» похода', () => {
 
     // В заголовке «Моего рюкзака» теперь вес, а не количество (09.11.2026):
     // заказчик просил суммарный вес, видимый и в свёрнутой секции.
-    expect(wrapper.get('[data-test="gear-backpack"] > summary').text()).toContain(
-      'Мой рюкзак',
+    // 24.11.2026 слова: «Мой рюкзак 2,6 кг», без «Всего» и «без веса».
+    expect(wrapper.get('[data-test="gear-backpack"] > summary').text()).toBe(
+      'Мой рюкзак 2,6 кг',
     )
     expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
-      'Всего: 2,6 кг',
+      'Мой рюкзак 2,6 кг',
     )
 
     // Прогресс стоит в `<summary>`: в свёрнутой секции только он и виден.
@@ -899,15 +900,15 @@ describe('вкладка «Снаряжение» похода', () => {
 
     expect(
       wrapper.get('[data-test="gear-backpack-public"] summary').text(),
-    ).toContain('Всего: 2,6 кг')
+    ).toBe('Общественное 2,6 кг')
     expect(
       wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
-    ).toContain('Всего: 1,2 кг')
+    ).toBe('Личное 1,2 кг')
 
     // Итог рюкзака виден в свёрнутой строке: 2,6 кг общественного
-    // плюс 1,2 кг личного (09.11.2026).
+    // плюс 1,2 кг личного (09.11.2026); слова — 24.11.2026.
     expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
-      'Всего: 3,8 кг',
+      'Мой рюкзак 3,8 кг',
     )
   })
 
@@ -1203,6 +1204,17 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(wrapper.find('[data-test="gear-taken-empty"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="gear-backpack-public-empty"]').exists()).toBe(true)
     expect(wrapper.find('[data-test="gear-backpack-personal-empty"]').exists()).toBe(true)
+
+    // Пустой рюкзак говорит словами, а не прочерком (24.11.2026).
+    expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
+      'Мой рюкзак пуст',
+    )
+    expect(
+      wrapper.get('[data-test="gear-backpack-public"] summary').text(),
+    ).toBe('Общественного груза нет')
+    expect(
+      wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
+    ).toBe('Личное ещё не указано')
   })
 
   // ───────────────────────── «Список»: чек-листы (05.11.2026) ─────────────────────────
@@ -1860,9 +1872,10 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(mocks.assignTripGearPackage).toHaveBeenCalledWith('1', 'p9', ANNA)
   })
 
-  it('общественная аптечка без веса видна в рюкзаке, но без «0 г»', async () => {
+  it('общественная аптечка без веса видна в рюкзаке и подписана «вес не указан»', async () => {
     // 09.11.2026: «Общественную аптечку отображаем даже пустую», и цифры
     // веса у невзвешенной быть не должно — в раскладке она 0 граммов.
+    // 24.11.2026 заказчик заменил прочерк словами «вес не указан».
     mocks.getTripGearLoad.mockResolvedValue(
       tripLoad({
         doctorUserId: ME,
@@ -1887,7 +1900,168 @@ describe('вкладка «Снаряжение» похода', () => {
     const row = wrapper.get('[data-test="gear-backpack-item-public"]')
 
     expect(row.text()).toContain('Общественная аптечка')
+    expect(row.text()).toContain('вес не указан')
     expect(row.text()).not.toContain('0 г')
+  })
+
+  it('подытоги рюкзака — словами: всё взвешено, только невзвешенные, смешанные', async () => {
+    // Всё взвешено: «Общественное 2,6 кг» / «Личное 800 г», заголовок
+    // «Мой рюкзак 3,4 кг». Общественное совпадает с плиткой 1:1.
+    mocks.getTripGearLoad.mockResolvedValue(
+      tripLoad({
+        totalWeightGrams: 2600,
+        backpacks: [
+          loadBackpack(ME, {
+            gear: [
+              {
+                kind: 'gear',
+                id: 'g1',
+                title: 'Палатка',
+                weightGrams: 2600,
+                assignedUserId: ME,
+              },
+            ],
+            gearWeightGrams: 2600,
+            totalWeightGrams: 2600,
+          }),
+        ],
+        personal: {
+          gearWeightGrams: 800,
+          packagesWeightGrams: 0,
+          totalWeightGrams: 800,
+          gear: [
+            {
+              kind: 'personal',
+              id: 'p1',
+              title: 'Куртка мембранная',
+              weightGrams: 800,
+              weightKnown: true,
+            },
+          ],
+          packages: [],
+        },
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    expect(wrapper.get('[data-test="gear-bag-demo-me"]').text()).toContain('Всего: 2,6 кг')
+    expect(
+      wrapper.get('[data-test="gear-backpack-public"] summary').text(),
+    ).toBe('Общественное 2,6 кг')
+    expect(
+      wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
+    ).toBe('Личное 800 г')
+    expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
+      'Мой рюкзак 3,4 кг',
+    )
+  })
+
+  it('только невзвешенные строки: «вес не указан» и в подытогах, и у вещей', async () => {
+    // Личная аптечка без веса приходит с `weightGrams: null` и
+    // `weightKnown: false` (24.11.2026) — раньше её здесь не было вовсе.
+    mocks.getTripGearLoad.mockResolvedValue(
+      tripLoad({
+        backpacks: [
+          loadBackpack(ME, {
+            gear: [
+              {
+                kind: 'firstAid',
+                id: 'public',
+                title: 'Общественная аптечка',
+                weightGrams: 0,
+                weightKnown: false,
+                assignedUserId: ME,
+              },
+            ],
+          }),
+        ],
+        personal: {
+          gearWeightGrams: 0,
+          packagesWeightGrams: 0,
+          totalWeightGrams: 0,
+          gear: [
+            {
+              kind: 'firstAid',
+              id: 'fa',
+              title: 'Личная аптечка',
+              weightGrams: null,
+              weightKnown: false,
+            },
+          ],
+          packages: [],
+        },
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    expect(
+      wrapper.get('[data-test="gear-backpack-public"] summary').text(),
+    ).toBe('Общественное, вес не указан')
+    expect(
+      wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
+    ).toBe('Личное, вес не указан')
+    expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
+      'Мой рюкзак, вес не указан',
+    )
+    expect(
+      wrapper.get('[data-test="gear-backpack-firstAid-fa"]').text(),
+    ).toContain('вес не указан')
+  })
+
+  it('смешанные строки: в подытог идут только взвешенные', async () => {
+    mocks.getTripGearLoad.mockResolvedValue(
+      tripLoad({
+        backpacks: [
+          loadBackpack(ME, {
+            gear: [
+              {
+                kind: 'gear',
+                id: 'g1',
+                title: 'Палатка',
+                weightGrams: 2600,
+                assignedUserId: ME,
+              },
+              {
+                kind: 'gear',
+                id: 'g2',
+                title: 'Топор',
+                weightGrams: 0,
+                weightKnown: false,
+                assignedUserId: ME,
+              },
+            ],
+            gearWeightGrams: 2600,
+            totalWeightGrams: 2600,
+          }),
+        ],
+        personal: {
+          gearWeightGrams: 0,
+          packagesWeightGrams: 350,
+          totalWeightGrams: 350,
+          gear: [],
+          packages: [
+            { id: 'my-food', name: 'Мои продукты', weightGrams: 350, isActual: false },
+          ],
+        },
+      }),
+    )
+
+    const wrapper = await mounted()
+
+    expect(
+      wrapper.get('[data-test="gear-backpack-public"] summary').text(),
+    ).toBe('Общественное 2,6 кг')
+    expect(
+      wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
+    ).toBe('Личное 350 г')
+    expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
+      'Мой рюкзак 2,95 кг',
+    )
+    expect(wrapper.get('[data-test="gear-backpack-item-g2"]').text()).toContain(
+      'вес не указан',
+    )
   })
 
   it('личная еда в «Моём рюкзаке» стоит в «Личном» с расчётным или фактическим весом', async () => {
@@ -1915,7 +2089,7 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(pack.text()).toContain('1,2 кг')
     expect(
       wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
-    ).toContain('Всего: 2 кг')
+    ).toBe('Личное 2 кг')
   })
 
   it('«Мои продукты» видны в «Личном», а фактический вес подменяет расчёт (09.11.2026)', async () => {
@@ -1961,10 +2135,10 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(pack.text()).toContain('350 г')
     expect(
       wrapper.get('[data-test="gear-backpack-personal"] summary').text(),
-    ).toContain('Всего: 350 г')
+    ).toBe('Личное 350 г')
     // Главный итог — общественное плюс личное: 2600 + 350.
     expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
-      'Всего: 2,95 кг',
+      'Мой рюкзак 2,95 кг',
     )
   })
 
@@ -1989,7 +2163,7 @@ describe('вкладка «Снаряжение» похода', () => {
     expect(pack.text()).toContain('расчёт')
     expect(pack.text()).toContain('70 г')
     expect(wrapper.get('[data-test="gear-backpack-total"]').text()).toBe(
-      'Всего: 70 г',
+      'Мой рюкзак 70 г',
     )
   })
 })

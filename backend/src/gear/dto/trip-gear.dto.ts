@@ -1030,6 +1030,17 @@ export class TripGearLoadPersonalUnitDto {
     example: 800,
   })
   weightGrams: number | null;
+
+  /**
+   * Известен ли вес (24.11.2026). У личной аптечки со списком, но без
+   * взвешивания, `false`, а `weightGrams: null` — в рюкзаке она подписана
+   * «вес не указан». У остальных строк совпадает с `weightGrams !== null`.
+   */
+  @ApiProperty({
+    description: 'Вес известен. false — личную аптечку ещё не взвесили',
+    example: true,
+  })
+  weightKnown: boolean;
 }
 
 /**

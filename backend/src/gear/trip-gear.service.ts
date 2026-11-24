@@ -1316,13 +1316,18 @@ export class TripGearService {
     let packagesWithoutWeight = 0;
 
     for (const row of rows) {
-      const weight = row.gearItem.weightGrams;
-      // Вещь без веса в расчёт не входит: «не взвешено» — честный ответ,
-      // а ноль веса соврал бы о доле (тот же принцип, что в каталоге).
-      if (weight === null || weight <= 0) {
-        itemsWithoutWeight += 1;
-        continue;
-      }
+      const storedWeight = row.gearItem.weightGrams;
+      /**
+       * Вещь без веса всё равно едет в рюкзаке (24.11.2026): заказчик
+       * просил подписывать её «вес не указан», а не прятать. В расчёт
+       * она идёт нулём, и `itemsWithoutWeight` по-прежнему говорит,
+       * сколько таких вещей, — иначе цифра «не взвешено» пропала бы
+       * вместе со строкой.
+       */
+      const weightKnown = storedWeight !== null && storedWeight > 0;
+      const weight = weightKnown ? storedWeight : 0;
+
+      if (!weightKnown) itemsWithoutWeight += 1;
 
       const key = loadUnitKey('gear', row.id);
       const typeCode = row.gearItem.gearType?.code ?? '';
@@ -1332,6 +1337,7 @@ export class TripGearService {
         weightGrams: weight,
         ownerUserId: row.ownerUserId,
         isFirstAid: typeCode === FIRST_AID_TYPE_CODE,
+        weightKnown,
       });
       titles.set(
         key,
@@ -1540,16 +1546,16 @@ export class TripGearService {
     });
     const sleeping = await this.sleepingRows(manager, trip.id, viewerId);
     /**
-     * Личная аптечка (09.11.2026). Заказчик: «Личную аптечку как „Мои
-     * продукты“ отображаем в Личном рюкзаке».
+     * Личная аптечка (09.11.2026, уточнено 24.11.2026). Заказчик: «Личную
+     * аптечку как „Мои продукты“ отображаем в Личном рюкзаке».
      *
-     * 09.11.2026, замечание к шагу: «если в личной аптечке нет ни одного
-     * выполненного пункта или вес пустой, то и отображать её в рюкзаке
-     * не нужно». Поэтому строка появляется, только когда собрано **хотя бы
-     * одно** (есть отметка) и аптечка **взвешена**: пустая и невзвешенная
-     * аптечка — не груз, а незаполненный список, и в рюкзаке она занимала
-     * строку без веса. Общественная при этом остаётся даже пустой: её место
-     * у доктора — правило, а не то, что человек успел отметить.
+     * Строка появляется, если аптечка **собрана** (есть хотя бы одна
+     * отметка) или **взвешена**. Пустой только что заведённый список —
+     * не груз, и в рюкзаке он не занимает строку. Если собрана, но не
+     * взвешена, строка приходит с `weightGrams: null` и `weightKnown:
+     * false`: экран подписывает её «вес не указан» и не считает в итог.
+     * Раньше невзвешенная аптечка не отдавалась вовсе, и в «Личном»
+     * у неё не было ни цифры, ни подписи.
      */
     const personalFirstAid = await manager.findOne(Checklist, {
       where: {
@@ -1567,14 +1573,14 @@ export class TripGearService {
           });
     const personalFirstAidRow =
       personalFirstAid !== null &&
-      personalFirstAid.weightGrams !== null &&
-      personalFirstAidDone > 0
+      (personalFirstAid.weightGrams !== null || personalFirstAidDone > 0)
         ? [
             {
               kind: 'firstAid' as const,
               id: personalFirstAid.id,
               title: 'Личная аптечка',
               weightGrams: personalFirstAid.weightGrams,
+              weightKnown: personalFirstAid.weightGrams !== null,
             },
           ]
         : [];
@@ -1589,6 +1595,7 @@ export class TripGearService {
         id: row.id,
         title: row.gearItem.title,
         weightGrams: row.gearItem.weightGrams,
+        weightKnown: row.gearItem.weightGrams !== null,
       })),
       ...sleeping.map((row) => ({
         kind: 'sleeping' as const,
@@ -1596,6 +1603,7 @@ export class TripGearService {
         title: row.title,
         weightGrams:
           row.weight_grams === null ? null : Number(row.weight_grams),
+        weightKnown: row.weight_grams !== null,
       })),
       ...personalFirstAidRow,
     ];

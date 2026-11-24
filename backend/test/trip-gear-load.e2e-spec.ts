@@ -432,6 +432,58 @@ describe('Раскладка груза по рюкзакам (e2e)', () => {
     );
   });
 
+  it('вещь без веса остаётся в рюкзаке с weightKnown false (24.11.2026)', async () => {
+    // Заказчик: невзвешенная вещь подписывается «вес не указан», а не
+    // исчезает из «Общественного». В расчёт она идёт нулём, счётчик
+    // `itemsWithoutWeight` остаётся.
+    const spoonId = await addGear(organizerToken, {
+      typeId: plainTypeId,
+      title: 'Ложка без веса',
+    });
+    const proposed = await propose(organizerToken, spoonId).expect(201);
+    await call(
+      'patch',
+      `/api/trips/${tripId}/gear/${proposed.body.id}`,
+      organizerToken,
+      { status: 'approved', assignedUserId: organizerId },
+    ).expect(200);
+
+    try {
+      const response = await call(
+        'get',
+        `/api/trips/${tripId}/gear/load`,
+        organizerToken,
+      ).expect(200);
+      const bag = (
+        response.body.backpacks as Array<{
+          gear: Array<{
+            id: string;
+            weightGrams: number;
+            weightKnown: boolean;
+          }>;
+        }>
+      ).find(
+        (backpack: { userId: string }) => backpack.userId === organizerId,
+      );
+      expect(bag?.gear).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: proposed.body.id,
+            weightGrams: 0,
+            weightKnown: false,
+          }),
+        ]),
+      );
+      expect(response.body.itemsWithoutWeight).toBeGreaterThanOrEqual(1);
+    } finally {
+      await call(
+        'delete',
+        `/api/trips/${tripId}/gear/${proposed.body.id}`,
+        organizerToken,
+      ).expect(204);
+    }
+  });
+
   it('доли считаются с поправкой на пол', async () => {
     const response = await call(
       'get',
@@ -730,6 +782,84 @@ describe('Раскладка груза по рюкзакам (e2e)', () => {
     await call('post', `/api/trips/${tripId}/gear/personal`, memberToken, {
       gearItemId: Number(jacketId),
     }).expect(404);
+  });
+
+  it('личная аптечка: собранная без веса видна с weightKnown false, взвешенная — с весом (24.11.2026)', async () => {
+    // Заказчик: «Аптечка / Личная аптечка» — часть «Личного» рюкзака,
+    // а невзвешенная строка подписывается «вес не указан». Раньше сервер
+    // не отдавал такую аптечку вовсе, и подписи не было.
+    const aid = await call(
+      'get',
+      `/api/trips/${tripId}/first-aid`,
+      organizerToken,
+    ).expect(200);
+    const checklistId = aid.body.personal.checklist.id as string;
+
+    const item = await call(
+      'post',
+      `/api/checklists/${checklistId}/items`,
+      organizerToken,
+      { title: 'Бинт стерильный' },
+    ).expect(201);
+    await call(
+      'patch',
+      `/api/checklists/items/${item.body.id}`,
+      organizerToken,
+      { isDone: true },
+    ).expect(200);
+
+    try {
+      // Собрана, но не взвешена: строка есть, веса нет.
+      const withoutWeight = await call(
+        'get',
+        `/api/trips/${tripId}/gear/load`,
+        organizerToken,
+      ).expect(200);
+      const unweighedRow = (
+        withoutWeight.body.personal.gear as Array<{
+          kind: string;
+          title: string;
+          weightGrams: number | null;
+          weightKnown: boolean;
+        }>
+      ).find((row) => row.kind === 'firstAid');
+      expect(unweighedRow).toMatchObject({
+        title: 'Личная аптечка',
+        weightGrams: null,
+        weightKnown: false,
+      });
+
+      // Взвесили — та же строка с числом и weightKnown true.
+      await call(
+        'patch',
+        `/api/trips/${tripId}/first-aid/weight`,
+        organizerToken,
+        { scope: 'personal', weightGrams: 320 },
+      ).expect(200);
+
+      const weighed = await call(
+        'get',
+        `/api/trips/${tripId}/gear/load`,
+        organizerToken,
+      ).expect(200);
+      const weighedRow = (
+        weighed.body.personal.gear as Array<{
+          kind: string;
+          weightGrams: number | null;
+          weightKnown: boolean;
+        }>
+      ).find((row) => row.kind === 'firstAid');
+      expect(weighedRow).toMatchObject({
+        weightGrams: 320,
+        weightKnown: true,
+      });
+    } finally {
+      await call(
+        'delete',
+        `/api/checklists/${checklistId}`,
+        organizerToken,
+      ).expect(204);
+    }
   });
 
   it('«Мои продукты»: личная еда без пакета видна в «Личном» рюкзака (09.11.2026)', async () => {

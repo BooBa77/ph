@@ -54,10 +54,12 @@ import { readMyFoodWeight } from '@/utils/myFoodWeight'
  * Вкладка «Снаряжение» похода (код `gear`), первый проход по фронту
  * (05.11.2026).
  *
- * План целиком — `docs/ph/gear-tab.md`. По нему на странице **две большие
+ * План целиком — `docs/ph/gear-tab.md`. По нему на странице **большие
  * сворачиваемые секции**: общественное снаряжение (цвет темы, заказчик
- * склоняется к красно-коричневому) и личное (синее, как у «Питания»
- * и «Спальника»). Внутри — вложенные секции, каждая со своим сворачиванием.
+ * склоняется к красно-коричневому), рекомендации участникам, личное (синее,
+ * как у «Питания» и «Спальника») и с 24.11.2026 — отдельная оранжевая
+ * «Мой рюкзак» с общественным, личным и словами-подытогами. Внутри —
+ * вложенные секции, каждая со своим сворачиванием.
  *
  * **«Список» — с 05.11.2026.** Заказчик описал логику: в общественной
  * секции список общественного снаряжения, между секциями — отдельная
@@ -628,6 +630,8 @@ interface LoadBag {
   gear: LoadPill[]
   packages: LoadPill[]
   weight: string
+  /** Итог с сервера: «Общественное» в рюкзаке не досчитывает его на экране. */
+  totalWeightGrams: number
 }
 
 function itemPill(item: TripGearItem): LoadPill {
@@ -696,6 +700,7 @@ const bags = computed<LoadBag[]>(() => {
         weight: hasKnownWeight
           ? formatWeightTotal(backpack.totalWeightGrams, 0)
           : '—',
+        totalWeightGrams: backpack.totalWeightGrams,
       }
     })
   }
@@ -709,6 +714,7 @@ const bags = computed<LoadBag[]>(() => {
       gear: list.map(itemPill),
       packages: [],
       weight: weightTotalLabel(list),
+      totalWeightGrams: sumWeight(list),
     }
   })
 })
@@ -744,48 +750,87 @@ const backpackPublicPackages = computed<LoadPill[]>(() =>
   loadData.value ? (myLoadBag.value?.packages ?? []) : [],
 )
 
-/**
- * Сумма веса строк рюкзака и число «без веса» — одной парой функций на все
- * три итога. Веса с сервера приходят готовыми, но у личных вещей он бывает
- * `null`, и складывать их надо одинаково: иначе итог рюкзака разошёлся бы
- * с итогами его секций.
- */
+/** Сумма известных весов: строки без веса идут нулём, как считает сервер. */
 function sumWeight(rows: Array<{ weightGrams: number | null }>): number {
   return rows.reduce((sum, row) => sum + (row.weightGrams ?? 0), 0)
 }
 
-function countWithoutWeight(
-  rows: Array<{ weightGrams: number | null; kind?: string }>,
-): number {
-  // Личная аптечка без веса уже не приходит: 09.11.2026 сервер не отдаёт
-  // её в рюкзаке, пока она не взвешена (first-aid.md §4). Исключение
-  // оставлено страховкой: если строка всё же придёт с `null`, в «без веса»
-  // она не попадёт — у самой аптечки вес вообще не показывается.
-  return rows.filter((row) => row.weightGrams === null && row.kind !== 'firstAid')
-    .length
+/** Строка рюкзака, у которой вес бывает неизвестен. */
+interface BackpackRow {
+  weightGrams: number | null
+  /** `false` — вес не указан, даже если в раскладке строка идёт нулём. */
+  weightKnown?: boolean
 }
 
-const backpackPublicWeightGrams = computed(() =>
-  sumWeight([...backpackPublicGear.value, ...backpackPublicPackages.value]),
+/** Личная строка рюкзака: вещь «Взял», «Спальник» или личная аптечка. */
+interface BackpackPersonalGearRow extends BackpackRow {
+  key: string
+  id: string
+  kind: 'personal' | 'sleeping' | 'firstAid'
+  title: string
+  weightKnown: boolean
+}
+
+/**
+ * Взвешена ли строка. У общественной аптечки без веса `weightKnown: false`
+ * и `weightGrams: 0` — это не «0 г», а «не взвесили»; у личных вещей
+ * и личной аптечки неизвестный вес приходит `null`.
+ */
+function rowHasWeight(row: BackpackRow): boolean {
+  return row.weightKnown !== false && row.weightGrams !== null
+}
+
+/**
+ * Подытог секции словами (решение заказчика 24.11.2026).
+ *
+ * Прочерка и «Всего: 0 г» больше нет: пустая секция говорит «груза нет»,
+ * секция из одних невзвешенных — «вес не указан», смешанная считает только
+ * взвешенные строки и показывает число. `grams` — итог с сервера, если он
+ * есть: «Общественное» обязано совпадать с плиткой «Распределения» 1:1.
+ */
+function sectionSummary(
+  title: string,
+  rows: BackpackRow[],
+  emptyLabel: string,
+  unweighedLabel: string,
+  grams?: number,
+): string {
+  if (rows.length === 0) return emptyLabel
+
+  const weighed = rows.filter(rowHasWeight)
+  if (weighed.length === 0) return unweighedLabel
+
+  return `${title} ${formatWeight(grams ?? sumWeight(weighed))}`
+}
+
+const backpackPublicRows = computed<LoadPill[]>(() => [
+  ...backpackPublicGear.value,
+  ...backpackPublicPackages.value,
+])
+
+/**
+ * «Общественное» в «Моём рюкзаке» — 1:1 из моей плитки «Распределения».
+ *
+ * Вещи и пакеты берутся из того же `GET /gear/load`, а число — из итога
+ * плитки (`totalWeightGrams`), а не складывается на экране: иначе две
+ * суммы одного груза однажды разошлись бы.
+ */
+const backpackPublicSummary = computed(() =>
+  sectionSummary(
+    'Общественное',
+    backpackPublicRows.value,
+    'Общественного груза нет',
+    'Общественное, вес не указан',
+    myLoadBag.value?.totalWeightGrams,
+  ),
 )
-
-const backpackPublicWeight = computed(() => {
-  const rows = [...backpackPublicGear.value, ...backpackPublicPackages.value]
-  // Единственная строка — невзвешенная аптечка: веса нет вообще, а не «0 г».
-  const hasKnownWeight = rows.some((row) => row.weightKnown && row.weightGrams !== null)
-
-  return rows.length > 0 && hasKnownWeight
-    ? formatWeightTotal(backpackPublicWeightGrams.value, 0)
-    : '—'
-})
 
 /**
  * «Личное» в «Моём рюкзаке» (06.11.2026): свои вещи «Взял», строки
- * «Спальника» и своя еда из «Питания» — с фактическим весом, а если его
- * нет, с расчётным. Заказчик просил ровно это, и личное здесь отдельной
- * секцией, а не в общем итоге: в распределение оно не входит.
+ * «Спальника», личная аптечка и своя еда из «Питания» — с фактическим
+ * весом, а если его нет, с расчётным. В распределение личное не входит.
  */
-const backpackPersonalGear = computed(() => {
+const backpackPersonalGear = computed<BackpackPersonalGearRow[]>(() => {
   const personal = loadData.value?.personal
   if (personal) {
     return personal.gear.map((row) => ({
@@ -794,6 +839,7 @@ const backpackPersonalGear = computed(() => {
       kind: row.kind,
       title: row.title,
       weightGrams: row.weightGrams,
+      weightKnown: row.weightKnown !== false,
     }))
   }
 
@@ -804,6 +850,7 @@ const backpackPersonalGear = computed(() => {
       kind: 'personal' as const,
       title: item.title,
       weightGrams: item.weightGrams,
+      weightKnown: item.weightGrams !== null,
     })),
     ...sleeping.value.map((row) => ({
       key: `sleeping-${row.id}`,
@@ -811,6 +858,7 @@ const backpackPersonalGear = computed(() => {
       kind: 'sleeping' as const,
       title: row.title,
       weightGrams: row.weightGrams,
+      weightKnown: row.weightGrams !== null,
     })),
   ]
 })
@@ -834,56 +882,44 @@ const backpackPersonalPackages = computed(() => {
   })
 })
 
-const backpackPersonalWeightGrams = computed(() =>
-  sumWeight([...backpackPersonalGear.value, ...backpackPersonalPackages.value]),
+const backpackPersonalRows = computed<BackpackRow[]>(() => [
+  ...backpackPersonalGear.value,
+  ...backpackPersonalPackages.value,
+])
+
+const backpackPersonalSummary = computed(() =>
+  sectionSummary(
+    'Личное',
+    backpackPersonalRows.value,
+    'Личное ещё не указано',
+    'Личное, вес не указан',
+  ),
 )
 
-const backpackPersonalWeight = computed(() => {
-  const rows = [...backpackPersonalGear.value, ...backpackPersonalPackages.value]
-  const hasKnownWeight = rows.some((row) => row.weightGrams !== null)
-
-  return rows.length > 0 && hasKnownWeight
-    ? formatWeightTotal(
-        backpackPersonalWeightGrams.value,
-        countWithoutWeight(backpackPersonalGear.value),
-      )
-    : '—'
-})
-
 /**
- * Итог «Моего рюкзака» одной цифрой в заголовке (09.11.2026).
+ * Итог «Моего рюкзака» в заголовке (09.11.2026, слова — 24.11.2026).
  *
- * Заказчик: «Нужен суммарный вес рюкзака, сделай в строке „Мой рюкзак“,
- * чтобы даже в свёрнутом видно было». Считаем те же строки, что показаны
- * внутри: общественное плюс личное, — поэтому цифра в заголовке не может
- * разойтись с двумя подытогами. Пустой рюкзак цифру не показывает:
- * «Всего: 0 г» у человека без груза читалось бы как ошибка.
+ * Заказчик просил вес, видимый и в свёрнутой секции: «Мой рюкзак 3,8 кг».
+ * Считаются те же строки, что показаны внутри, поэтому цифра не расходится
+ * с подытогами. Пустой рюкзак говорит «Мой рюкзак пуст», рюкзак из одних
+ * невзвешенных — «Мой рюкзак, вес не указан»; смешанный считает только
+ * взвешенные.
  */
-const backpackTotalWeight = computed(() => {
-  const rows = [
-    ...backpackPublicGear.value,
-    ...backpackPublicPackages.value,
-    ...backpackPersonalGear.value,
-    ...backpackPersonalPackages.value,
-  ]
-  const hasKnownWeight = rows.some((row) => row.weightGrams !== null)
-  const grams = backpackPublicWeightGrams.value + backpackPersonalWeightGrams.value
+const backpackSummary = computed(() => {
+  const rows = [...backpackPublicRows.value, ...backpackPersonalRows.value]
 
-  return rows.length > 0 && hasKnownWeight
-    ? formatWeightTotal(
-        grams,
-        countWithoutWeight(backpackPublicGear.value) +
-          countWithoutWeight(backpackPersonalGear.value),
-      )
-    : ''
+  if (rows.length === 0) return 'Мой рюкзак пуст'
+  if (!rows.some(rowHasWeight)) return 'Мой рюкзак, вес не указан'
+
+  const grams =
+    (myLoadBag.value?.totalWeightGrams ?? sumWeight(backpackPublicRows.value)) +
+    sumWeight(backpackPersonalRows.value)
+
+  return `Мой рюкзак ${formatWeight(grams)}`
 })
 
 /** Есть ли во «Личном» вообще что показать. */
-const backpackPersonalEmpty = computed(
-  () =>
-    backpackPersonalGear.value.length === 0 &&
-    backpackPersonalPackages.value.length === 0,
-)
+const backpackPersonalEmpty = computed(() => backpackPersonalRows.value.length === 0)
 
 /** Организатору — выбор хозяина для «Добавить вручную», как в «Ночёвках». */
 const isOrganizer = computed(() => props.trip.organizerUserId === meId.value)
@@ -2624,165 +2660,153 @@ const excludedIds = computed(() => {
           </div>
         </details>
 
-        <!--
-          «Мой рюкзак» — то же, что моя плитка в «Распределении», плюс личные
-          вещи из «Спальника» (06.11.2026): заказчик считает рюкзак целым —
-          «личное + общее» (`gear-distribution.md` §5). Дополнительные
-          рюкзаки («сменка на окончание похода») ждут модели.
-        -->
-        <details
-          :open="isSectionOpen('backpack')"
-          class="rounded-xl border border-border bg-white p-3"
-          data-test="gear-backpack"
-          @toggle="onSectionToggle('backpack', $event)"
-        >
-          <summary class="relative cursor-pointer select-none text-sm font-medium text-text">
-            <span class="inline-block max-w-full truncate align-bottom">Мой рюкзак</span>
+      </details>
 
-            <!--
-              Итог рюкзака виден и в свёрнутой строке (09.11.2026): заказчик
-              просил «суммарный вес рюкзака, чтобы даже в свёрнутом видно
-              было». Цифра считается из тех же строк, что лежат внутри,
-              поэтому с подытогами секций не расходится.
-            -->
-            <span
-              v-if="backpackTotalWeight"
-              class="ml-1 text-xs font-normal text-muted"
-              data-test="gear-backpack-total"
-            >{{ backpackTotalWeight }}</span>
-          </summary>
+      <!--
+        «Мой рюкзак» — четвёртая большая секция «Снаряжения» (24.11.2026).
+        Заказчик: вынести её из «Личного снаряжения» отдельной большой
+        секцией, цвет — оранжевый, как у общественной. «Общественное» —
+        1:1 из моей плитки «Распределения» (вещи и пакеты еды), «Личное» —
+        свои вещи «Взял», строки «Спальника», личная аптечка и личная еда
+        «Питания». Подытоги — словами: пусто, «вес не указан», иначе
+        «{} кг» по взвешенным строкам. Ключ свёрнутости остался `backpack`,
+        поэтому привычка с прошлых версий не сбрасывается.
+      -->
+      <details
+        :open="isSectionOpen('backpack')"
+        class="flex flex-col gap-3 rounded-2xl border border-orange-900 bg-orange-100 p-3"
+        data-test="gear-backpack"
+        @toggle="onSectionToggle('backpack', $event)"
+      >
+        <summary class="cursor-pointer select-none text-sm font-medium text-orange-900">
+          <span
+            class="inline-block max-w-full truncate align-bottom"
+            data-test="gear-backpack-total"
+          >{{ backpackSummary }}</span>
+        </summary>
 
-          <div class="mt-2 flex flex-col gap-2">
-            <!--
-              «Общественное» и «Личное» — две секции (06.11.2026), как просил
-              заказчик: «секция Личное снаряжение/Рюкзак должна быть
-              разделена на две секции „Общественное“ и „Личное“». В «Личном»
-              рядом со своими вещами стоит личная еда из «Питания» с
-              фактическим весом, а если его нет — с расчётным.
-            -->
-            <details
-              :open="isSectionOpen('backpack-public')"
-              class="rounded-xl border border-border bg-surface p-2"
-              data-test="gear-backpack-public"
-              @toggle="onSectionToggle('backpack-public', $event)"
-            >
-              <summary class="relative cursor-pointer select-none text-sm font-medium text-text">
-                <span class="inline-block max-w-full truncate align-bottom">Общественное</span>
-                <span class="ml-1 text-xs font-normal text-muted">
-                  {{ backpackPublicWeight }}
-                </span>
-              </summary>
+        <div class="flex flex-col gap-2">
+          <!--
+            «Общественное» — ровно моя плитка «Распределения»: те же вещи
+            с несущим «я», те же пакеты еды и тот же итог с сервера.
+            Ничего не досчитываем: числа приходят из `GET /gear/load`.
+          -->
+          <details
+            :open="isSectionOpen('backpack-public')"
+            class="rounded-xl border border-orange-300 bg-white p-2"
+            data-test="gear-backpack-public"
+            @toggle="onSectionToggle('backpack-public', $event)"
+          >
+            <summary class="relative cursor-pointer select-none text-sm font-medium text-orange-900">
+              <span
+                class="inline-block max-w-full truncate align-bottom"
+              >{{ backpackPublicSummary }}</span>
+            </summary>
 
-              <div class="mt-2 flex flex-col gap-1">
-                <p
-                  v-if="backpackPublicGear.length === 0 && backpackPublicPackages.length === 0"
-                  class="text-sm text-muted"
-                  data-test="gear-backpack-public-empty"
+            <div class="mt-2 flex flex-col gap-1">
+              <p
+                v-if="backpackPublicRows.length === 0"
+                class="text-sm text-muted"
+                data-test="gear-backpack-public-empty"
+              >
+                Общественного груза за тобой нет.
+              </p>
+
+              <ul v-else class="flex flex-col gap-1">
+                <li
+                  v-for="pill in backpackPublicGear"
+                  :key="pill.key"
+                  class="flex items-baseline justify-between gap-2 rounded-lg border border-border bg-white px-2 py-1 text-sm"
+                  :data-test="`gear-backpack-item-${pill.id}`"
                 >
-                  Общественного груза за тобой нет.
-                </p>
-
-                <template v-else>
-                  <ul class="flex flex-col gap-1">
-                    <li
-                      v-for="pill in backpackPublicGear"
-                      :key="pill.key"
-                      class="flex items-baseline justify-between gap-2 rounded-lg border border-border bg-white px-2 py-1 text-sm"
-                      :data-test="`gear-backpack-item-${pill.id}`"
-                    >
-                      <span class="min-w-0 truncate">{{ pill.title }}</span>
-                      <!--
-                        Невзвешенная аптечка (weightKnown: false) цифры
-                        не показывает: в раскладке она 0, но «0 г» читалось
-                        бы как вес (слова заказчика 09.11.2026). Раньше это
-                        правило соблюдалось только в «Распределении», а здесь
-                        в рюкзаке проступало «0 г».
-                      -->
-                      <span
-                        v-if="
-                          pill.kind !== 'firstAid' ||
-                          (pill.weightKnown && pill.weightGrams !== null)
-                        "
-                        class="shrink-0 text-xs text-muted"
-                      >
-                        {{ pill.weightGrams === null ? 'без веса' : formatWeight(pill.weightGrams) }}
-                      </span>
-                    </li>
-
-                    <li
-                      v-for="pill in backpackPublicPackages"
-                      :key="pill.key"
-                      class="flex items-baseline justify-between gap-2 rounded-lg border border-violet-300 bg-violet-100 px-2 py-1 text-sm text-violet-900"
-                      :data-test="`gear-backpack-package-${pill.id}`"
-                    >
-                      <span class="min-w-0 truncate">{{ pill.title }}</span>
-                      <span class="shrink-0 text-xs">· {{ formatWeight(pill.weightGrams) }}</span>
-                    </li>
-                  </ul>
-                </template>
-              </div>
-            </details>
-
-            <details
-              :open="isSectionOpen('backpack-personal')"
-              class="rounded-xl border border-blue-200 bg-blue-50 p-2"
-              data-test="gear-backpack-personal"
-              @toggle="onSectionToggle('backpack-personal', $event)"
-            >
-              <summary class="relative cursor-pointer select-none text-sm font-medium text-blue-900">
-                <span class="inline-block max-w-full truncate align-bottom">Личное</span>
-                <span class="ml-1 text-xs font-normal text-blue-700">
-                  {{ backpackPersonalWeight }}
-                </span>
-              </summary>
-
-              <div class="mt-2 flex flex-col gap-1">
-                <p
-                  v-if="backpackPersonalEmpty"
-                  class="text-sm text-muted"
-                  data-test="gear-backpack-personal-empty"
-                >
-                  Личных вещей и личной еды нет.
-                </p>
-
-                <ul v-else class="flex flex-col gap-1">
-                  <li
-                    v-for="row in backpackPersonalGear"
-                    :key="row.key"
-                    class="flex items-baseline justify-between gap-2 rounded-lg border border-blue-200 bg-white px-2 py-1 text-sm"
-                    :data-test="`gear-backpack-${row.kind}-${row.id}`"
-                  >
-                    <span class="min-w-0 truncate">{{ row.title }}</span>
-                    <span
-                      v-if="row.kind !== 'firstAid' || row.weightGrams !== null"
-                      class="shrink-0 text-xs text-muted"
-                    >
-                      {{ row.weightGrams === null ? 'без веса' : formatWeight(row.weightGrams) }}
-                    </span>
-                  </li>
-
+                  <span class="min-w-0 truncate">{{ pill.title }}</span>
                   <!--
-                    Личная еда: вес фактический, если пакет взвешен и состав
-                    не менялся, иначе расчётный — заказчик просил показывать
-                    оба и называть, какой именно.
+                    Невзвешенная вещь и аптечка без веса подписаны словами
+                    (24.11.2026): «0 г» у аптечки читался бы как вес,
+                    а прочерк скрывал бы, что вещь не взвесили.
                   -->
-                  <li
-                    v-for="pack in backpackPersonalPackages"
-                    :key="`personal-package-${pack.id}`"
-                    class="flex items-baseline justify-between gap-2 rounded-lg border border-blue-200 bg-white px-2 py-1 text-sm"
-                    :data-test="`gear-backpack-personal-package-${pack.id}`"
-                  >
-                    <span class="min-w-0 truncate">{{ pack.name }}</span>
-                    <span class="shrink-0 text-xs text-muted">
-                      <span class="text-blue-700">{{ pack.isActual ? 'факт' : 'расчёт' }} · </span>
-                      {{ formatWeight(pack.weightGrams) }}
-                    </span>
-                  </li>
-                </ul>
-              </div>
-            </details>
-          </div>
-        </details>
+                  <span class="shrink-0 text-xs text-muted">
+                    {{
+                      rowHasWeight(pill)
+                        ? formatWeight(pill.weightGrams)
+                        : 'вес не указан'
+                    }}
+                  </span>
+                </li>
+
+                <li
+                  v-for="pill in backpackPublicPackages"
+                  :key="pill.key"
+                  class="flex items-baseline justify-between gap-2 rounded-lg border border-violet-300 bg-violet-100 px-2 py-1 text-sm text-violet-900"
+                  :data-test="`gear-backpack-package-${pill.id}`"
+                >
+                  <span class="min-w-0 truncate">{{ pill.title }}</span>
+                  <span class="shrink-0 text-xs">· {{ formatWeight(pill.weightGrams) }}</span>
+                </li>
+              </ul>
+            </div>
+          </details>
+
+          <!--
+            «Личное» — свои вещи «Взял», «Спальник» «Ночёвок», личная
+            аптечка и личная еда. Личная аптечка без веса теперь тоже
+            здесь и подписана «вес не указан» (24.11.2026).
+          -->
+          <details
+            :open="isSectionOpen('backpack-personal')"
+            class="rounded-xl border border-blue-200 bg-blue-50 p-2"
+            data-test="gear-backpack-personal"
+            @toggle="onSectionToggle('backpack-personal', $event)"
+          >
+            <summary class="relative cursor-pointer select-none text-sm font-medium text-blue-900">
+              <span
+                class="inline-block max-w-full truncate align-bottom"
+              >{{ backpackPersonalSummary }}</span>
+            </summary>
+
+            <div class="mt-2 flex flex-col gap-1">
+              <p
+                v-if="backpackPersonalEmpty"
+                class="text-sm text-muted"
+                data-test="gear-backpack-personal-empty"
+              >
+                Личных вещей и личной еды нет.
+              </p>
+
+              <ul v-else class="flex flex-col gap-1">
+                <li
+                  v-for="row in backpackPersonalGear"
+                  :key="row.key"
+                  class="flex items-baseline justify-between gap-2 rounded-lg border border-blue-200 bg-white px-2 py-1 text-sm"
+                  :data-test="`gear-backpack-${row.kind}-${row.id}`"
+                >
+                  <span class="min-w-0 truncate">{{ row.title }}</span>
+                  <span class="shrink-0 text-xs text-muted">
+                    {{ rowHasWeight(row) ? formatWeight(row.weightGrams) : 'вес не указан' }}
+                  </span>
+                </li>
+
+                <!--
+                  Личная еда: вес фактический, если пакет взвешен и состав
+                  не менялся, иначе расчётный — заказчик просил показывать
+                  оба и называть, какой именно.
+                -->
+                <li
+                  v-for="pack in backpackPersonalPackages"
+                  :key="`personal-package-${pack.id}`"
+                  class="flex items-baseline justify-between gap-2 rounded-lg border border-blue-200 bg-white px-2 py-1 text-sm"
+                  :data-test="`gear-backpack-personal-package-${pack.id}`"
+                >
+                  <span class="min-w-0 truncate">{{ pack.name }}</span>
+                  <span class="shrink-0 text-xs text-muted">
+                    <span class="text-blue-700">{{ pack.isActual ? 'факт' : 'расчёт' }} · </span>
+                    {{ formatWeight(pack.weightGrams) }}
+                  </span>
+                </li>
+              </ul>
+            </div>
+          </details>
+        </div>
       </details>
     </template>
 
