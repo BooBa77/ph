@@ -2,10 +2,10 @@ import { DataSource, type EntityManager } from 'typeorm';
 
 import { Conversation } from './entities/conversation.entity';
 import { ConversationMember } from './entities/conversation-member.entity';
-import { GeoObject } from './entities/geo-object.entity';
 import { Message } from './entities/message.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import type { Trip } from './entities/trip.entity';
+import { tripNameOf } from './trip-name';
 
 /**
  * «Альманах похода обновлён» — личное сообщение участникам (22.11.2026).
@@ -68,18 +68,6 @@ export async function notifyAlmanacUpdated(
       });
     }
   });
-}
-
-/** Имя похода для текста уведомления: цель, иначе анонс, иначе номер. */
-async function tripNameOf(manager: EntityManager, trip: Trip): Promise<string> {
-  const goal = await manager.findOne(GeoObject, {
-    where: { id: trip.goalObjectId },
-  });
-
-  const announcement = trip.announcement?.trim();
-  if (announcement) return announcement;
-
-  return goal?.name ?? `поход #${trip.id}`;
 }
 
 /**

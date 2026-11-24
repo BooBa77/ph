@@ -77,8 +77,9 @@ const draft = ref('')
  * Сообщение отправителю вместе с ответом на перевод (24.11.2026).
  *
  * Отдельно от `draft`: то поле — обычная отправка в чат, а это живёт под
- * кнопками «Подтверждаю / Не получено» и уходит вместе с ответом. Слить их
- * значило бы отправлять текст дважды — сообщением и ответом.
+ * строкой денег и служит ответом «деньги не пришли, жду». Уйти может и с
+ * подтверждением, и само по себе — второе важнее: подтверждать есть что
+ * только тогда, когда деньги дошли.
  */
 const replyDraft = ref('')
 const previews = ref<Record<string, TripMessage[]>>({})
@@ -133,9 +134,9 @@ async function toggle(row: Conversation): Promise<void> {
    *
    * **Кроме строки, которая ждёт моего ответа.** «Сообщениям про деньги
    * максимальный приоритет» — это не переписка, а задача: подтвердить
-   * перевод. Она раскрывается здесь же, как и раньше, с кнопками
-   * «Подтверждаю» / «Не получено»: заставлять человека уходить на другой
-   * экран ради одной кнопки — потеря того, ради чего колонка делалась.
+   * перевод. Она раскрывается здесь же, как и раньше, с кнопкой
+   * «Подтверждаю» и полем обратной связи: заставлять человека уходить на
+   * другой экран ради одной кнопки — потеря того, ради чего колонка делалась.
    */
   if (!row.tripId && !hasRowAction(row)) {
     void router.push(`/messages/${row.id}`)
@@ -180,19 +181,58 @@ async function send(row: Conversation): Promise<void> {
   }
 }
 
-async function answer(row: Conversation, result: 'confirmed' | 'disputed'): Promise<void> {
+/**
+ * «Подтверждаю получение» — единственный ответ на перевод (24.11.2026).
+ *
+ * Кнопки «не получено» больше нет: заказчик снял её, потому что банковский
+ * перевод идёт до трёх дней, а спор не отменял перевод, а подвешивал его
+ * навсегда. Если денег ещё нет, человеку есть поле обратной связи: оно
+ * отправляет обычное сообщение и автосогласие через 72 часа не трогает.
+ */
+async function answer(row: Conversation): Promise<void> {
   const action = row.lastMessage?.action
 
   if (!action) return
 
   try {
-    await respondToAction(action.id, result, replyDraft.value)
+    await respondToAction(action.id, replyDraft.value)
     replyDraft.value = ''
     // Состояние действия меняет сервер: перечитываем, а не правим на месте.
     await feed.refresh()
   } catch (problem) {
     error.value =
       problem instanceof ApiError ? problem.message : 'Не удалось ответить'
+  }
+}
+
+/**
+ * Обратная связь отправителю без подтверждения (24.11.2026).
+ *
+ * «Деньги ещё не пришли, жду» — обычное сообщение в тот же диалог, а не
+ * ответ на действие: таймер автосогласия продолжает идти, и через 72 часа
+ * перевод засчитается сам. Действие при этом остаётся доступным: сервер
+ * прикрепляет неразрешённый перевод к последнему сообщению диалога.
+ */
+async function replyToSender(row: Conversation): Promise<void> {
+  const body = replyDraft.value.trim()
+
+  if (!body || isSending.value) return
+
+  isSending.value = true
+  error.value = null
+
+  try {
+    await sendConversationMessage(row.id, body)
+    replyDraft.value = ''
+    // Последнее сообщение сменилось, а действие осталось: сервер прикрепляет
+    // неразрешённый перевод к новой последней строке, поэтому перечитываем.
+    await feed.refresh()
+    await loadPreview(row)
+  } catch (problem) {
+    error.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось отправить сообщение'
+  } finally {
+    isSending.value = false
   }
 }
 
@@ -395,36 +435,38 @@ onUnmounted(() => {
           >
             <!--
               «Сообщение отправителю» (24.11.2026). Заказчик: в уведомлении
-              о переводе есть кнопка «Подтвердить» и поле ввода. Текст
-              уходит вместе с ответом и необязателен.
+              о переводе есть кнопка «Подтвердить» и поле ввода. С 24.11.2026
+              поле живёт и без ответа: «деньги ещё не пришли, жду» — обычное
+              сообщение, а не подтверждение. Поэтому у поля своя отправка.
             -->
-            <input
-              v-model="replyDraft"
-              type="text"
-              class="w-full rounded-lg border border-border bg-field px-2 py-1 text-xs text-text outline-none focus:border-primary"
-              placeholder="Сообщение отправителю:"
-              aria-label="Сообщение отправителю"
-              data-test="rail-reply-input"
-            />
-
-            <div class="flex gap-2">
+            <div class="flex gap-1">
+              <input
+                v-model="replyDraft"
+                type="text"
+                class="min-w-0 flex-1 rounded-lg border border-border bg-field px-2 py-1 text-xs text-text outline-none focus:border-primary"
+                placeholder="Сообщение отправителю:"
+                aria-label="Сообщение отправителю"
+                data-test="rail-reply-input"
+              />
               <button
                 type="button"
-                class="flex-1 cursor-pointer rounded-lg bg-primary px-2 py-1 text-xs font-medium text-white"
-                data-test="rail-confirm"
-                @click="answer(row, 'confirmed')"
+                class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="!replyDraft.trim() || isSending"
+                data-test="rail-reply-send"
+                @click="replyToSender(row)"
               >
-                Подтверждаю
-              </button>
-              <button
-                type="button"
-                class="flex-1 cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text"
-                data-test="rail-dispute"
-                @click="answer(row, 'disputed')"
-              >
-                Не получено
+                →
               </button>
             </div>
+
+            <button
+              type="button"
+              class="w-full cursor-pointer rounded-lg bg-primary px-2 py-1 text-xs font-medium text-white"
+              data-test="rail-confirm"
+              @click="answer(row)"
+            >
+              Подтверждаю
+            </button>
           </div>
 
           <!--

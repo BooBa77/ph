@@ -10,6 +10,7 @@ const { push, api, actions } = vi.hoisted(() => ({
   api: {
     listConversations: vi.fn(),
     markConversationRead: vi.fn(),
+    sendConversationMessage: vi.fn(),
   },
   actions: { respondToAction: vi.fn() },
 }))
@@ -194,10 +195,15 @@ describe('MobileMessages', () => {
     expect(reply.attributes('placeholder')).toBe('Сообщение отправителю:')
     await reply.setValue('Получил')
 
+    // «Не получено» убрано: ответ на перевод один (24.11.2026).
+    expect(wrapper.find('[data-test="mobile-messages-dispute"]').exists()).toBe(false)
+    // Поле обратной связи отправляется и без подтверждения.
+    expect(wrapper.find('[data-test="mobile-messages-reply-send"]').exists()).toBe(true)
+
     await wrapper.find('[data-test="mobile-messages-confirm"]').trigger('click')
     await flushPromises()
 
-    expect(actions.respondToAction).toHaveBeenCalledWith('77', 'confirmed', 'Получил')
+    expect(actions.respondToAction).toHaveBeenCalledWith('77', 'Получил')
 
     wrapper.unmount()
   })

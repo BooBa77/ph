@@ -18,12 +18,14 @@ import {
   TripMessageDto,
   type TripMessageListDto,
 } from './dto/message.dto';
+import { MessageActionDto } from './dto/message-action.dto';
 import { Conversation } from './entities/conversation.entity';
 import { ConversationMember } from './entities/conversation-member.entity';
 import { Message } from './entities/message.entity';
 import { Trip } from './entities/trip.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { ConversationEventsService } from './conversation-events.service';
+import { tripNameOf } from './trip-name';
 import { User } from '../users/entities/user.entity';
 
 /** Сколько сообщений диалога отдаём по умолчанию — как у чатов похода. */
@@ -488,7 +490,7 @@ export class ConversationsService {
         ? await this.peerReadAt(manager, conversation, peer?.id ?? null)
         : null;
 
-    return ConversationDto.from(conversation, {
+    const dto = ConversationDto.from(conversation, {
       peer,
       lastMessage,
       unreadCount,
@@ -499,14 +501,51 @@ export class ConversationsService {
       muted: Boolean(context.member?.mutedAt),
       peerLastReadAt,
     });
+
+    /**
+     * Действие диалога, а не только последнего сообщения (24.11.2026).
+     *
+     * Раньше кнопка «Подтверждаю» жила на последнем сообщении диалога, и
+     * любая реплика после уведомления о переводе её гасила: строка теряла
+     * кнопки и уезжала из верха ленты. С полем обратной связи («деньги ещё
+     * не пришли, жду») это перестало быть редким случаем — человек пишет
+     * отправителю и тут же теряет возможность подтвердить, когда деньги
+     * дойдут. Поэтому неразрешённое действие, адресованное смотрящему,
+     * прикрепляется к последнему сообщению: id и права у него верные,
+     * отвечать можно из любой строки диалога.
+     *
+     * Легаси `disputed` сюда не попадает: кнопки «не получено» больше нет,
+     * а такие строки остались только от прежних прогонов.
+     */
+    if (dto.lastMessage !== null && dto.lastMessage.action === null) {
+      const pending = await manager.findOne(Message, {
+        where: {
+          conversationId: conversation.id,
+          action: { targetUserId: context.viewerId, state: 'pending' },
+        },
+        relations: { action: true },
+        order: { id: 'DESC' },
+      });
+
+      if (pending?.action) {
+        dto.lastMessage.action = MessageActionDto.from(
+          pending.action,
+          context.viewerId,
+          pending.senderId,
+        );
+      }
+    }
+
+    return dto;
   }
 
   /**
    * Названия походов для чатов похода — одним запросом.
    *
    * `announcement` — подпись похода в остальных экранах, но он необязателен;
-   * если пуст, берём цель (она у похода обязательна). Тот же порядок, что
-   * в уведомлении альманаха: человек видит одно и то же название везде.
+   * если пуст, берём цель (она у похода обязательна). Порядок живёт
+   * в `tripNameOf` (`trip-name.ts`) — той же функции, что называет поход
+   * в уведомлениях, иначе одно и то же место называлось бы по-разному.
    */
   private async tripTitlesOf(
     manager: EntityManager,
@@ -528,10 +567,12 @@ export class ConversationsService {
     });
 
     return new Map(
-      trips.map((trip) => [
-        trip.id,
-        trip.announcement ?? trip.goalObject?.name ?? `поход #${trip.id}`,
-      ]),
+      await Promise.all(
+        trips.map(async (trip) => [
+          trip.id,
+          await tripNameOf(manager, trip),
+        ] as const),
+      ),
     );
   }
 

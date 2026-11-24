@@ -66,6 +66,7 @@ import {
 import { TripEventsService } from './trip-events.service';
 import { ConversationEventsService } from './conversation-events.service';
 import { TripsService } from './trips.service';
+import { tripNameOf } from './trip-name';
 import { UsersService } from '../users/users.service';
 
 /** Сегодняшняя дата строкой `ГГГГ-ММ-ДД` (сервер живёт в UTC). */
@@ -85,12 +86,7 @@ function todayIso(): string {
  */
 const AUTO_CONFIRM_MS = 72 * 60 * 60 * 1000;
 
-/** Имя похода для текста уведомления: анонс, иначе номер. */
-function tripNameOf(trip: Trip): string {
-  const announcement = trip.announcement?.trim();
-
-  return announcement || `поход #${trip.id}`;
-}
+/** Имя похода для текста уведомления — общая функция `trip-name.ts`. */
 
 /**
  * Текст уведомления о переводе получателю (24.11.2026).
@@ -736,7 +732,8 @@ export class TripFinanceService {
         );
       }
 
-      const body = `Организатор запросил платёж по походу «${tripNameOf(trip)}».`;
+      const tripName = await tripNameOf(manager, trip);
+      const body = `Организатор запросил платёж по походу «${tripName}».`;
       const debtors = await this.paymentRequestRecipients(manager, trip);
       recipients = debtors.filter((row) => row.userId !== userId).length;
 
@@ -758,7 +755,7 @@ export class TripFinanceService {
           manager.create(MessageAction, {
             kind: 'payment_request',
             targetUserId: recipient.userId,
-            payload: { tripId: String(trip.id), tripTitle: tripNameOf(trip) },
+            payload: { tripId: String(trip.id), tripTitle: tripName },
             state: 'pending',
           }),
         );
@@ -2581,7 +2578,7 @@ export class TripFinanceService {
       senderId,
       body: moneyMessageText(
         compensation.amountRub,
-        tripNameOf(trip),
+        await tripNameOf(manager, trip),
         senderName,
         senderGender,
       ),
@@ -2705,7 +2702,7 @@ export class TripFinanceService {
       const body =
         moneyMessageText(
           row.amountRub,
-          tripNameOf(trip),
+          await tripNameOf(manager, trip),
           sender?.displayName ?? '',
           sender?.gender,
         ) + MONEY_SETTLED_TAIL;

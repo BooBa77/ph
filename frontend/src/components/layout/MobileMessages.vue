@@ -3,6 +3,7 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
+import { sendConversationMessage } from '@/api/conversations'
 import { respondToAction } from '@/api/message-actions'
 import SidebarIcon from '@/components/ui/SidebarIcon.vue'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
@@ -108,13 +109,20 @@ async function open(row: Conversation): Promise<void> {
   await router.push(`/messages/${row.id}`)
 }
 
-async function answer(row: Conversation, result: 'confirmed' | 'disputed'): Promise<void> {
+/**
+ * «Подтверждаю получение» — единственный ответ на перевод (24.11.2026).
+ *
+ * «Не получено» убрано: банковский перевод идёт до трёх дней, а спор не
+ * отменял перевод, а снимал автосогласие и подвешивал строку. Если денег
+ * ещё нет, есть поле обратной связи.
+ */
+async function answer(row: Conversation): Promise<void> {
   const action = row.lastMessage?.action
 
   if (!action) return
 
   try {
-    await respondToAction(action.id, result, replyDraft.value)
+    await respondToAction(action.id, replyDraft.value)
     replyDraft.value = ''
     // Состояние действия меняет сервер: перечитываем, а не правим на месте.
     await feed.refresh()
@@ -122,6 +130,28 @@ async function answer(row: Conversation, result: 'confirmed' | 'disputed'): Prom
   } catch (problem) {
     actionError.value =
       problem instanceof ApiError ? problem.message : 'Не удалось ответить'
+  }
+}
+
+/**
+ * Обратная связь отправителю без подтверждения (24.11.2026).
+ *
+ * Обычное сообщение в диалог: «деньги ещё не пришли, жду». Таймер
+ * автосогласия не трогается — через 72 часа перевод засчитается сам,
+ * а действие остаётся доступным, пока оно не разрешено.
+ */
+async function replyToSender(row: Conversation): Promise<void> {
+  const body = replyDraft.value.trim()
+
+  if (!body) return
+
+  try {
+    await sendConversationMessage(row.id, body)
+    replyDraft.value = ''
+    await feed.refresh()
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось отправить сообщение'
   }
 }
 
@@ -320,34 +350,35 @@ onUnmounted(() => {
                   <p v-if="actionError" class="text-xs text-red-600">{{ actionError }}</p>
 
                   <template v-if="row.lastMessage?.action?.canRespond">
-                    <!-- «Сообщение отправителю»: уходит вместе с ответом. -->
-                    <input
-                      v-model="replyDraft"
-                      type="text"
-                      class="w-full rounded-lg border border-border bg-field px-2 py-1.5 text-xs text-text outline-none focus:border-primary"
-                      placeholder="Сообщение отправителю:"
-                      aria-label="Сообщение отправителю"
-                      data-test="mobile-messages-reply-input"
-                    />
-
-                    <div class="flex gap-2">
+                    <!-- «Сообщение отправителю»: уходит и ответом, и само по себе. -->
+                    <div class="flex gap-1">
+                      <input
+                        v-model="replyDraft"
+                        type="text"
+                        class="min-w-0 flex-1 rounded-lg border border-border bg-field px-2 py-1.5 text-xs text-text outline-none focus:border-primary"
+                        placeholder="Сообщение отправителю:"
+                        aria-label="Сообщение отправителю"
+                        data-test="mobile-messages-reply-input"
+                      />
                       <button
                         type="button"
-                        class="flex-1 cursor-pointer rounded-lg bg-primary px-2 py-2 text-xs font-medium text-white"
-                        data-test="mobile-messages-confirm"
-                        @click="answer(row, 'confirmed')"
+                        class="cursor-pointer rounded-lg border border-border px-2 py-1.5 text-xs text-text disabled:cursor-not-allowed disabled:opacity-50"
+                        :disabled="!replyDraft.trim()"
+                        data-test="mobile-messages-reply-send"
+                        @click="replyToSender(row)"
                       >
-                        Подтверждаю
-                      </button>
-                      <button
-                        type="button"
-                        class="flex-1 cursor-pointer rounded-lg border border-border px-2 py-2 text-xs text-text"
-                        data-test="mobile-messages-dispute"
-                        @click="answer(row, 'disputed')"
-                      >
-                        Не получено
+                        →
                       </button>
                     </div>
+
+                    <button
+                      type="button"
+                      class="w-full cursor-pointer rounded-lg bg-primary px-2 py-2 text-xs font-medium text-white"
+                      data-test="mobile-messages-confirm"
+                      @click="answer(row)"
+                    >
+                      Подтверждаю
+                    </button>
                   </template>
 
                   <button

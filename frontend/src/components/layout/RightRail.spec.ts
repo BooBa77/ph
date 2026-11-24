@@ -127,11 +127,13 @@ describe('RightRail', () => {
 
     const confirm = wrapper.find('[data-test="rail-confirm"]')
     expect(confirm.exists()).toBe(true)
+    // Кнопки «Не получено» больше нет: единственный ответ — подтверждение.
+    expect(wrapper.find('[data-test="rail-dispute"]').exists()).toBe(false)
 
     await confirm.trigger('click')
     await flushPromises()
 
-    expect(actions.respondToAction).toHaveBeenCalledWith('77', 'confirmed', '')
+    expect(actions.respondToAction).toHaveBeenCalledWith('77', '')
 
     wrapper.unmount()
   })
@@ -173,11 +175,60 @@ describe('RightRail', () => {
     await wrapper.find('[data-test="rail-confirm"]').trigger('click')
     await flushPromises()
 
-    expect(actions.respondToAction).toHaveBeenCalledWith(
-      '79',
-      'confirmed',
-      'Получил, спасибо!',
-    )
+    expect(actions.respondToAction).toHaveBeenCalledWith('79', 'Получил, спасибо!')
+
+    wrapper.unmount()
+  })
+
+  /**
+   * Поле обратной связи без подтверждения (24.11.2026).
+   *
+   * Заказчик снял «Не получено»: если денег ещё нет, человеку достаточно
+   * написать отправителю. Это обычное сообщение — таймер автосогласия
+   * продолжает идти, и через 72 часа перевод засчитывается сам.
+   */
+  it('отправляет сообщение отправителю без подтверждения перевода', async () => {
+    api.listConversations.mockResolvedValue({
+      conversations: [
+        conversation({
+          id: '6',
+          lastMessage: {
+            ...message('60', 'Анна перевела тебе 1000 ₽'),
+            action: {
+              id: '80',
+              kind: 'money_received',
+              targetUserId: 'me',
+              state: 'pending',
+              payload: { amountRub: 1000 },
+              canRespond: true,
+              canRecheck: false,
+              createdAt: '2026-11-20T10:00:00.000Z',
+              respondedAt: null,
+            },
+          },
+        }),
+      ],
+    })
+    api.sendConversationMessage.mockResolvedValue(message('61', 'Деньги ещё не пришли'))
+
+    const wrapper = mountRail()
+    await flushPromises()
+
+    await wrapper.find('[data-test^="rail-row-"] button').trigger('click')
+    await flushPromises()
+
+    const send = wrapper.find('[data-test="rail-reply-send"]')
+    expect(send.exists()).toBe(true)
+    // Пока поле пустое, отправлять нечего.
+    expect(send.attributes('disabled')).toBeDefined()
+
+    await wrapper.find('[data-test="rail-reply-input"]').setValue('Деньги ещё не пришли')
+    await send.trigger('click')
+    await flushPromises()
+
+    expect(api.sendConversationMessage).toHaveBeenCalledWith('6', 'Деньги ещё не пришли')
+    // Перевод не подтверждён: ответ на действие не отправлялся.
+    expect(actions.respondToAction).not.toHaveBeenCalled()
 
     wrapper.unmount()
   })
