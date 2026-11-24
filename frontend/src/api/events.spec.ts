@@ -248,6 +248,71 @@ describe('subscribeTripEvents', () => {
     await new Promise((resolve) => setTimeout(resolve, 1200))
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  /**
+   * Один поход — одно соединение (24.11.2026).
+   *
+   * Шапка слушает «Снаряжение», вкладка — свой канал, а на бэкенде канал
+   * один на поход: кадры у потоков одинаковые. Два соединения на страницу
+   * занимали по слоту HTTP/1.1 каждое, и вместе с потоком переписки
+   * ссылка на поход во второй вкладке выбирала все шесть слотов браузера —
+   * после этого любой запрос (в том числе POST кнопки уведомлений) стоял
+   * в очереди браузера и не уходил в сеть.
+   */
+  it('делит одно соединение на все вкладки похода', async () => {
+    useAuthStore().accessToken = 'token-123'
+
+    const urls: string[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        urls.push(String(input))
+
+        return streamResponse([`${frame(event())}\n\n`])
+      }),
+    )
+
+    const header: TripEvent[] = []
+    const finance: TripEvent[] = []
+
+    const stopHeader = subscribeTripEvents('770', (incoming) => header.push(incoming))
+    const stopFinance = subscribeTripEvents('770', (incoming) => finance.push(incoming), 'finance')
+
+    await vi.waitFor(() => expect(header).toHaveLength(1))
+    expect(finance).toHaveLength(1)
+    // Адрес — у первого подписчика; второго соединения нет вовсе.
+    expect(urls).toEqual(['/api/trips/770/gear/events'])
+
+    stopHeader()
+    stopFinance()
+  })
+
+  it('отписка одной вкладки не рвёт поток остальным', async () => {
+    useAuthStore().accessToken = 'token-123'
+
+    const fetchMock = vi.fn(async () => streamResponse(['']))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const stopHeader = subscribeTripEvents('771', () => {})
+    const stopFinance = subscribeTripEvents('771', () => {}, 'finance')
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+
+    stopHeader()
+    // Соединение одно и оно живо: повторный подписчик вкладки заводит
+    // не второй запрос, а второго слушателя.
+    const stopDiary = subscribeTripEvents('771', () => {}, 'diary')
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    stopFinance()
+    stopDiary()
+
+    // Последний ушёл — поток закрыт и снят с учёта: новый подписчик
+    // открывает соединение заново.
+    const stopAgain = subscribeTripEvents('771', () => {})
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    stopAgain()
+  })
 })
 
 describe('subscribeConversationEvents', () => {

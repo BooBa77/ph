@@ -8,12 +8,14 @@ import { useAuthStore } from '@/stores/auth'
  * сигнал «перечитай данные», а не сами данные (почему так — в
  * `TripEventsService` и `ConversationEventsService` на бэкенде).
  *
- * **Потоков четыре вида.** У «Снаряжения» (`/gear/events`), «Бухгалтерии»
- * (`/finance/events`), «Питания» (`/meals/events`) и «Дневника»
- * (`/diary/events`) свои адреса и свои права — они на поход. Пятый —
- * переписка (`/api/conversations/events`), и он **на человека**: чатов
- * у человека девять, а вкладка одна. Чаты похода едут по нему же:
- * сообщения в них те же самые.
+ * **Потоков два вида: поход и переписка.** У похода четыре адреса —
+ * «Снаряжение» (`/gear/events`), «Бухгалтерия» (`/finance/events`),
+ * «Питание» (`/meals/events`) и «Дневник» (`/diary/events`), — но кадры
+ * и права у них общие, поэтому на поход открывается **одно** соединение
+ * на все вкладки (см. `subscribeTripEvents`). Второй поток — переписка
+ * (`/api/conversations/events`), и он **на человека**: чатов у человека
+ * девять, а вкладка одна. Чаты похода едут по нему же: сообщения в них
+ * те же самые.
  *
  * **Канал не фильтрует `scope`: фильтрует вкладка.** На бэкенде канал
  * событий один на поход (`TripEventsService`), поэтому в «Снаряжение»
@@ -350,24 +352,85 @@ function openSseStream<T>(options: {
   }
 }
 
+/** Подписчики одного похода и их общее соединение. */
+interface TripEventStream {
+  listeners: Set<(event: TripEvent) => void>
+  stop: () => void
+}
+
 /**
- * Подписаться на изменения вкладки похода.
+ * По походу — **одно** соединение, сколько бы вкладок его ни слушало.
  *
- * `channel` выбирает адрес: «Снаряжение» слушает `/gear/events`
- * (по умолчанию — так вызывал единственный поток до 12.11.2026),
- * «Бухгалтерия» — `/finance/events`, «Питание» — `/meals/events`,
- * «Дневник» — `/diary/events`.
+ * Почему так (24.11.2026). На бэкенде канал событий один на поход
+ * (`TripEventsService`): `/gear/events`, `/finance/events`, `/meals/events`
+ * и `/diary/events` отличаются только проверкой доступа, а кадры отдают
+ * одни и те же, с `scope` внутри. Значит `GET /finance/events` рядом
+ * с `GET /gear/events` — это два одинаковых потока с одинаковыми кадрами.
+ *
+ * Раньше каждый экран открывал свой: шапка похода — «Снаряжение», вкладка —
+ * свой канал, и на «Снаряжении» в сети висели **два** `gear/events`. Поток
+ * SSE — это занятое соединение HTTP/1.1, а браузер держит их к одному хосту
+ * шесть на профиль. Ссылка на поход, открытая во второй вкладке, занимала
+ * все шесть, и тогда **любой** запрос вставал в очередь браузера навсегда:
+ * кнопка оставалась занятой, а в сети запроса не было. Поэтому соединение
+ * одно на поход, а вкладки подписываются на него и разбирают кадры по
+ * `scope` сами.
+ *
+ * Адрес берётся у **первого** подписчика: все каналы отдают одно и то же,
+ * а проверка доступа у них общая — участник похода.
+ */
+const tripStreams = new Map<string, TripEventStream>()
+
+/**
+ * Подписаться на изменения похода.
+ *
+ * `channel` выбирает адрес соединения (у «Снаряжения», «Бухгалтерии»,
+ * «Питания» и «Дневника» свои контроллеры), но кадры получают все
+ * подписчики похода: вкладка сама смотрит на `scope`. Отписка последнего
+ * закрывает поток — держать соединение без слушателей незачем.
  */
 export function subscribeTripEvents(
   tripId: string,
   onEvent: (event: TripEvent) => void,
   channel: TripEventChannel = 'gear',
 ): () => void {
-  return openSseStream({
-    url: `/api/trips/${tripId}/${channel}/events`,
-    parse: parseSseFrame,
-    onEvent,
-  })
+  let stream = tripStreams.get(tripId)
+
+  if (stream === undefined) {
+    // Слушатели копятся в наборе, а поток один: кадр отдаётся всем, кто
+    // подписан на поход сейчас (копия — чтобы отписка внутри обработчика
+    // не сломала обход).
+    const listeners = new Set<(event: TripEvent) => void>()
+
+    const created: TripEventStream = {
+      listeners,
+      stop: () => undefined,
+    }
+
+    created.stop = openSseStream({
+      url: `/api/trips/${tripId}/${channel}/events`,
+      parse: parseSseFrame,
+      onEvent: (event) => {
+        for (const listener of [...listeners]) listener(event)
+      },
+    })
+
+    tripStreams.set(tripId, created)
+    stream = created
+  }
+
+  const shared = stream
+  shared.listeners.add(onEvent)
+
+  return () => {
+    shared.listeners.delete(onEvent)
+
+    // Ушли не все — соединение живо: вкладка сменилась, шапка осталась.
+    if (shared.listeners.size > 0) return
+
+    if (tripStreams.get(tripId) === shared) tripStreams.delete(tripId)
+    shared.stop()
+  }
 }
 
 /**
