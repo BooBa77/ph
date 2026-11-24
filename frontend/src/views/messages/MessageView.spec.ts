@@ -6,16 +6,19 @@ import { createMemoryHistory, createRouter } from 'vue-router'
 import { ApiError } from '@/api/errors'
 import { useConversationsStore } from '@/stores/conversations'
 import type { Conversation } from '@/types/conversations'
-import type { TripMessage } from '@/types/trips'
+import type { MessageAction, TripMessage } from '@/types/trips'
 import MessageView from '@/views/messages/MessageView.vue'
 
 /**
- * Экран диалога `/messages/:id` (23.11.2026; живое сообщение — 24.11.2026).
+ * Экран диалога `/messages/:id` (23.11.2026; живое сообщение — 24.11.2026;
+ * денежное действие — 24.11.2026).
  *
  * Проверяем то, ради чего он заведён: шапку (собеседник или чат с походом),
  * переписку, «Прочитано» на последнем своём сообщении, галочку «Уведомлять»
  * и историю вверх по курсору `before`. С 24.11.2026 — ещё и то, что чужое
- * сообщение из событий дописывается в открытую переписку.
+ * сообщение из событий дописывается в открытую переписку, а действие
+ * диалога («Подтверждаю», поле «Сообщение отправителю», «Перейти») живёт
+ * на экране, а не только в ленте.
  *
  * Стор авторизации подменён: экрану нужен только мой id, чтобы отличить
  * свои сообщения от чужих. Pinia при этом настоящая — экран слушает стор
@@ -23,18 +26,25 @@ import MessageView from '@/views/messages/MessageView.vue'
  */
 const mocks = vi.hoisted(() => ({
   getConversation: vi.fn(),
+  listConversations: vi.fn(),
   listConversationMessages: vi.fn(),
   markConversationRead: vi.fn(),
   sendConversationMessage: vi.fn(),
   setConversationMuted: vi.fn(),
+  respondToAction: vi.fn(),
 }))
 
 vi.mock('@/api/conversations', () => ({
   getConversation: mocks.getConversation,
+  listConversations: mocks.listConversations,
   listConversationMessages: mocks.listConversationMessages,
   markConversationRead: mocks.markConversationRead,
   sendConversationMessage: mocks.sendConversationMessage,
   setConversationMuted: mocks.setConversationMuted,
+}))
+
+vi.mock('@/api/message-actions', () => ({
+  respondToAction: mocks.respondToAction,
 }))
 
 vi.mock('@/stores/auth', () => ({
@@ -71,6 +81,22 @@ function message(overrides: Partial<TripMessage> = {}): TripMessage {
   }
 }
 
+/** Действие диалога: по умолчанию неразрешённый перевод, ждущий ответа. */
+function action(overrides: Partial<MessageAction> = {}): MessageAction {
+  return {
+    id: '42',
+    kind: 'money_received',
+    targetUserId: 'me',
+    state: 'pending',
+    payload: { amountRub: 1000 },
+    canRespond: true,
+    canRecheck: false,
+    createdAt: '2026-11-24T09:00:00.000Z',
+    respondedAt: null,
+    ...overrides,
+  }
+}
+
 async function openScreen(path = '/messages/7') {
   const router = createRouter({
     history: createMemoryHistory(),
@@ -100,6 +126,7 @@ describe('MessageView', () => {
 
   beforeEach(() => {
     mocks.getConversation.mockResolvedValue(conversation())
+    mocks.listConversations.mockResolvedValue({ conversations: [] })
     mocks.listConversationMessages.mockResolvedValue({
       messages: [message()],
       hasMore: false,
@@ -109,6 +136,7 @@ describe('MessageView', () => {
       message({ id: '9', senderId: 'me', senderName: 'Я', body: 'Буду к восьми' }),
     )
     mocks.setConversationMuted.mockResolvedValue(undefined)
+    mocks.respondToAction.mockResolvedValue(action({ state: 'confirmed' }))
   })
 
   it('шапка личного диалога — имя собеседника, переписка на месте', async () => {
@@ -350,5 +378,126 @@ describe('MessageView', () => {
     await flushPromises()
 
     expect(wrapper.find('[data-test="message-read"]').text()).toBe('Прочитано')
+  })
+
+  /**
+   * Денежное действие на экране (24.11.2026): человек открыл переписку по
+   * прямой ссылке, и подтвердить перевод было негде — кнопка жила только
+   * в колонке и мобильной панели.
+   */
+  it('у ждущего перевода показывает «Подтверждаю» и поле отправителю', async () => {
+    mocks.getConversation.mockResolvedValue(conversation({ action: action() }))
+
+    const { wrapper } = await openScreen()
+
+    expect(wrapper.find('[data-test="message-action"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="message-action-title"]').text()).toBe('Перевод 1\u00A0000 ₽')
+    expect(wrapper.find('[data-test="message-confirm"]').text()).toBe('Подтверждаю')
+    expect(
+      wrapper.find('[data-test="message-reply-input"]').attributes('placeholder'),
+    ).toBe('Сообщение отправителю:')
+    expect(wrapper.find('[data-test="message-reply-send"]').text()).toBe('→')
+    // «Перейти» — у просьбы о платеже, здесь его быть не должно.
+    expect(wrapper.find('[data-test="message-go-finance"]').exists()).toBe(false)
+  })
+
+  it('«Подтверждаю» закрывает перевод и перечитывает диалог и ленту', async () => {
+    mocks.getConversation
+      .mockResolvedValueOnce(conversation({ action: action() }))
+      .mockResolvedValueOnce(
+        conversation({ action: null, lastMessage: message({ id: '1' }) }),
+      )
+
+    const { wrapper } = await openScreen()
+
+    await wrapper.find('[data-test="message-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.respondToAction).toHaveBeenCalledWith('42', '')
+    // Диалог перечитан: GET /conversations/:id второй раз, после ответа.
+    expect(mocks.getConversation).toHaveBeenCalledTimes(2)
+    // Строка ленты тоже перечитана — своё действие стор не применяет.
+    expect(mocks.listConversations).toHaveBeenCalled()
+    // Перевод закрыт, ответ больше не предлагается.
+    expect(wrapper.find('[data-test="message-confirm"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="message-action"]').exists()).toBe(false)
+  })
+
+  /**
+   * Поле «Сообщение отправителю» — обычное сообщение (24.11.2026), а не
+   * ответ на действие: таймер автосогласия не трогается, перевод остаётся
+   * ждать «Подтверждаю».
+   */
+  it('поле «Сообщение отправителю» отправляет обычное сообщение', async () => {
+    mocks.getConversation.mockResolvedValue(conversation({ action: action() }))
+    mocks.sendConversationMessage.mockResolvedValueOnce(
+      message({ id: '9', senderId: 'me', body: 'Деньги пришли, спасибо' }),
+    )
+
+    const { wrapper } = await openScreen()
+
+    await wrapper.find('[data-test="message-reply-input"]').setValue('Деньги пришли, спасибо')
+    await wrapper.find('[data-test="message-reply-send"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.sendConversationMessage).toHaveBeenCalledWith('7', 'Деньги пришли, спасибо')
+    expect(mocks.respondToAction).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="message-list"]').text()).toContain('Деньги пришли, спасибо')
+    expect(
+      (wrapper.find('[data-test="message-reply-input"]').element as HTMLInputElement).value,
+    ).toBe('')
+    // Перевод так и ждёт ответа — кнопка на месте.
+    expect(wrapper.find('[data-test="message-confirm"]').exists()).toBe(true)
+  })
+
+  /**
+   * Поле работает и вместе с ответом (24.11.2026): текст уходит телом
+   * `POST /message-actions/:id/respond`, а сервер записывает его обычным
+   * сообщением. Своё сообщение событием не приходит, поэтому экран обязан
+   * дописать его из перечитанного диалога — иначе реплика молча исчезнет.
+   */
+  it('«Подтверждаю» отправляет текст из поля и дописывает его в переписку', async () => {
+    mocks.getConversation
+      .mockResolvedValueOnce(conversation({ action: action() }))
+      .mockResolvedValueOnce(
+        conversation({
+          action: null,
+          lastMessage: message({ id: '10', senderId: 'me', body: 'Спасибо, получил' }),
+        }),
+      )
+
+    const { wrapper } = await openScreen()
+
+    await wrapper.find('[data-test="message-reply-input"]').setValue('Спасибо, получил')
+    await wrapper.find('[data-test="message-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.respondToAction).toHaveBeenCalledWith('42', 'Спасибо, получил')
+    expect(wrapper.find('[data-test="message-list"]').text()).toContain('Спасибо, получил')
+  })
+
+  it('«Перейти» у просьбы о платеже ведёт в «Бухгалтерию» похода', async () => {
+    mocks.getConversation.mockResolvedValue(
+      conversation({
+        action: action({
+          kind: 'payment_request',
+          canRespond: false,
+          payload: { tripId: '3' },
+        }),
+      }),
+    )
+
+    const { wrapper, router } = await openScreen()
+
+    expect(wrapper.find('[data-test="message-action-title"]').text()).toBe(
+      'Организатор запросил платёж',
+    )
+    expect(wrapper.find('[data-test="message-confirm"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="message-go-finance"]').trigger('click')
+    await flushPromises()
+
+    expect(router.currentRoute.value.path).toBe('/trips/3')
+    expect(router.currentRoute.value.query).toEqual({ tab: 'finance' })
   })
 })

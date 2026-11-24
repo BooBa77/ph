@@ -10,12 +10,18 @@ import {
   setConversationMuted,
 } from '@/api/conversations'
 import { ApiError } from '@/api/errors'
+import { respondToAction } from '@/api/message-actions'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
 import type { Conversation } from '@/types/conversations'
 import type { TripMessage } from '@/types/trips'
 import { tripTabOf } from '@/utils/chatTabs'
+import {
+  conversationHeading,
+  isPaymentRequest,
+  rowAction,
+} from '@/utils/conversations'
 import { markdownToHtml } from '@/utils/markdown'
 
 /**
@@ -49,6 +55,14 @@ import { markdownToHtml } from '@/utils/markdown'
  * уже дотянут с сервера сторо́м, второго запроса за ним нет. «Прочитано»
  * приходит событием `read` — иначе оно появлялось бы только при повторном
  * открытии диалога.
+ *
+ * **Деньги на экране, а не только в ленте (24.11.2026).** «Подтверждаю»
+ * и поле «Сообщение отправителю» жили в правой колонке и мобильной панели,
+ * а на экране их не было: человек, открывший переписку по прямой ссылке,
+ * подтвердить перевод не мог. Экран показывает то же действие диалога,
+ * что и лента, — `Conversation.action` (`rowAction`), одно и выбранное
+ * сервером. Свой ответ стор не применяет (`actorId` — мой), поэтому после
+ * ответа экран сам перечитывает диалог и строку ленты.
  */
 const route = useRoute()
 const router = useRouter()
@@ -67,6 +81,18 @@ const isMuting = ref(false)
 const error = ref<string | null>(null)
 const muteError = ref<string | null>(null)
 const draft = ref('')
+/**
+ * «Сообщение отправителю» к ответу на перевод (24.11.2026).
+ *
+ * Отдельно от `draft`: то поле — обычная отправка в чат, а это живёт в
+ * карточке денежного действия и уходит либо вместе с «Подтверждаю», либо
+ * само по себе обычным сообщением.
+ */
+const replyDraft = ref('')
+/** Ответ на действие в полёте: два клика не должны отправить его дважды. */
+const isAnswering = ref(false)
+/** Ошибка карточки действия: остальные ошибки экрана живут выше. */
+const actionError = ref<string | null>(null)
 
 const listEl = ref<HTMLElement | null>(null)
 
@@ -75,6 +101,33 @@ const myId = computed(() => auth.user?.id ?? null)
 
 /** Заголовок шапки: имя собеседника или название чата. */
 const heading = computed(() => conversation.value?.peer?.displayName ?? conversation.value?.title ?? '')
+
+/**
+ * Действие диалога — одно, и какое именно, решает сервер (24.11.2026).
+ *
+ * Берём то же поле, что лента (`utils/conversations.ts`): неразрешённый
+ * перевод важнее просьбы о платеже. Своей логики выбора на экране нет —
+ * иначе экран и колонка разошлись бы в том, что показывать, когда в диалоге
+ * лежат оба.
+ */
+const action = computed(() => (conversation.value ? rowAction(conversation.value) : null))
+
+/** Ждёт ли перевод моего «Подтверждаю»: у просьбы о платеже ответа нет. */
+const isConfirmable = computed(() => action.value?.canRespond === true)
+
+/** Просьба организатора о платеже: отвечать нечем, только «Перейти». */
+const isPaymentRequestAction = computed(
+  () => conversation.value !== null && isPaymentRequest(conversation.value),
+)
+
+/** Заголовок карточки: у перевода — сумма, у просьбы — словами. */
+const actionTitle = computed(() => {
+  const row = conversation.value
+
+  if (!row) return ''
+
+  return isConfirmable.value ? conversationHeading(row) : 'Организатор запросил платёж'
+})
 
 /** Свои сообщения — по правому краю. */
 function isOwn(message: TripMessage): boolean {
@@ -179,6 +232,9 @@ async function open(id: string): Promise<void> {
   messages.value = []
   hasMore.value = false
   draft.value = ''
+  replyDraft.value = ''
+  actionError.value = null
+  isAnswering.value = false
 
   try {
     conversation.value = await getConversation(id)
@@ -286,6 +342,122 @@ async function send(): Promise<void> {
   } finally {
     isSending.value = false
   }
+}
+
+/**
+ * Перечитать диалог и строку ленты после ответа (24.11.2026).
+ *
+ * Своё действие стор не применяет: `actorId` события — мой id, и лента
+ * ждала бы минуту опроса, а «Подтверждаю» висела бы на уже закрытом
+ * переводе. Поэтому экран читает `GET /conversations/:id` сам — это же
+ * приносит и обновлённое действие, и текст из поля «Сообщение отправителю»
+ * последним сообщением, — а строку ленты перечитывает стор.
+ */
+async function reloadAfterAnswer(): Promise<void> {
+  const row = conversation.value
+
+  if (!row) return
+
+  try {
+    const fresh = await getConversation(row.id)
+
+    conversation.value = fresh
+
+    /**
+     * Текст из поля сервер записал обычным сообщением. Своё сообщение
+     * событием не приходит (`actorId` — мой), поэтому дописываем его из
+     * `lastMessage`. Уже показанное — не дублируем: последнее сообщение
+     * почти всегда есть в списке.
+     */
+    const incoming = fresh.lastMessage
+
+    if (incoming && !messages.value.some((message) => message.id === incoming.id)) {
+      messages.value = [...messages.value, incoming]
+      await scrollToBottom()
+    }
+  } catch {
+    // Ответ уже прошёл; ошибку чтения не показываем — следующий опрос
+    // диалога догонит. Кнопка просто останется до перезагрузки экрана.
+  }
+
+  await feed.refresh()
+}
+
+/**
+ * «Подтверждаю» — единственный ответ на перевод (24.11.2026).
+ *
+ * Кнопки «не получено» нет: она перевод не отменяла, а снимала
+ * автосогласие и подвешивала строку навсегда. Ответ окончательный, поэтому
+ * после него перечитываем диалог и ленту, а не ждём события.
+ */
+async function answer(): Promise<void> {
+  const current = action.value
+
+  if (!current || isAnswering.value) return
+
+  isAnswering.value = true
+  actionError.value = null
+
+  try {
+    await respondToAction(current.id, replyDraft.value)
+    replyDraft.value = ''
+    await reloadAfterAnswer()
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось ответить'
+  } finally {
+    isAnswering.value = false
+  }
+}
+
+/**
+ * Поле «Сообщение отправителю» без подтверждения (24.11.2026).
+ *
+ * «Деньги ещё не пришли, жду» — обычное сообщение в тот же диалог, а не
+ * ответ на действие: таймер автосогласия продолжает идти, и через 72 часа
+ * перевод засчитается сам. Перевод остаётся неразрешённым, поэтому после
+ * отправки перечитываем то же, что после ответа: последнее сообщение
+ * сменилось, а действие осталось.
+ */
+async function replyToSender(): Promise<void> {
+  const row = conversation.value
+  const body = replyDraft.value.trim()
+
+  if (!row || !body || isAnswering.value) return
+
+  isAnswering.value = true
+  actionError.value = null
+
+  try {
+    const message = await sendConversationMessage(row.id, body)
+
+    messages.value = [...messages.value, message]
+    replyDraft.value = ''
+    // Строка ленты должна показать это же сообщение: событие своего автора
+    // стор не применяет, а ответ ручки уже всё принёс.
+    feed.rememberMessage(row.id, message)
+    await scrollToBottom()
+    await reloadAfterAnswer()
+  } catch (problem) {
+    actionError.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось отправить сообщение'
+  } finally {
+    isAnswering.value = false
+  }
+}
+
+/**
+ * «Перейти» из просьбы организатора о платеже (24.11.2026).
+ *
+ * Адрес — из `payload.tripId`: просьба приходит личным диалогом, и своей
+ * привязки к походу у строки нет.
+ */
+function openFinance(): void {
+  const tripId = action.value?.payload?.tripId
+
+  if (typeof tripId !== 'string') return
+
+  void router.push({ path: `/trips/${tripId}`, query: { tab: 'finance' } })
 }
 
 /**
@@ -459,6 +631,73 @@ watch(
       <p v-if="muteError" class="text-xs text-muted" data-test="message-mute-error">
         {{ muteError }}
       </p>
+
+      <!--
+        Действие диалога (24.11.2026). Та же карточка, что в правой колонке
+        и мобильной панели, но на весь экран: человек, открывший переписку
+        по прямой ссылке, должен подтвердить перевод здесь, а не искать
+        колонку. Действие одно — его выбрал сервер (`Conversation.action`).
+      -->
+      <section
+        v-if="action"
+        class="flex flex-col gap-2 rounded-xl border border-border bg-surface px-4 py-3"
+        data-test="message-action"
+      >
+        <p class="text-sm font-medium text-text" data-test="message-action-title">
+          {{ actionTitle }}
+        </p>
+
+        <p
+          v-if="actionError"
+          class="text-xs text-muted"
+          data-test="message-action-error"
+        >
+          {{ actionError }}
+        </p>
+
+        <template v-if="isConfirmable">
+          <div class="flex gap-2">
+            <input
+              v-model="replyDraft"
+              type="text"
+              class="min-w-0 flex-1 rounded-xl border border-border bg-field px-3 py-2 text-sm text-text outline-none focus:border-primary"
+              placeholder="Сообщение отправителю:"
+              aria-label="Сообщение отправителю"
+              data-test="message-reply-input"
+            />
+            <button
+              type="button"
+              class="shrink-0 cursor-pointer rounded-xl border border-border px-3 py-2 text-sm text-text disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="!replyDraft.trim() || isAnswering"
+              data-test="message-reply-send"
+              @click="replyToSender"
+            >
+              →
+            </button>
+          </div>
+
+          <button
+            type="button"
+            class="w-full cursor-pointer rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white disabled:cursor-not-allowed disabled:opacity-50"
+            :disabled="isAnswering"
+            data-test="message-confirm"
+            @click="answer"
+          >
+            Подтверждаю
+          </button>
+        </template>
+
+        <!-- Просьба организатора о платеже: отвечать нечем, только «Перейти». -->
+        <button
+          v-else-if="isPaymentRequestAction"
+          type="button"
+          class="w-full cursor-pointer rounded-xl bg-primary px-4 py-2 text-sm font-medium text-white"
+          data-test="message-go-finance"
+          @click="openFinance"
+        >
+          Перейти
+        </button>
+      </section>
 
       <p v-if="error" class="text-sm text-muted" data-test="message-error">{{ error }}</p>
 
