@@ -16,6 +16,7 @@ import {
   conversationTime,
   hasRowAction,
   isPaymentRequest,
+  rowAction,
 } from '@/utils/conversations'
 
 /**
@@ -117,7 +118,8 @@ async function open(row: Conversation): Promise<void> {
  * ещё нет, есть поле обратной связи.
  */
 async function answer(row: Conversation): Promise<void> {
-  const action = row.lastMessage?.action
+  // Действие диалога, а не последнего сообщения: приоритет выбирает сервер.
+  const action = rowAction(row)
 
   if (!action) return
 
@@ -157,7 +159,7 @@ async function replyToSender(row: Conversation): Promise<void> {
 
 /** «Перейти» из просьбы о платеже — в «Бухгалтерию» похода (24.11.2026). */
 function openFinance(row: Conversation): void {
-  const tripId = row.lastMessage?.action?.payload?.tripId
+  const tripId = rowAction(row)?.payload?.tripId
 
   if (typeof tripId !== 'string') return
 
@@ -349,7 +351,7 @@ onUnmounted(() => {
                 >
                   <p v-if="actionError" class="text-xs text-red-600">{{ actionError }}</p>
 
-                  <template v-if="row.lastMessage?.action?.canRespond">
+                  <template v-if="rowAction(row)?.canRespond">
                     <!-- «Сообщение отправителю»: уходит и ответом, и само по себе. -->
                     <div class="flex gap-1">
                       <input

@@ -14,6 +14,7 @@ import {
 
 import type { Conversation } from '../entities/conversation.entity';
 import type { Message } from '../entities/message.entity';
+import { MessageActionDto } from './message-action.dto';
 import { CHAT_TITLES, TripMessageDto } from './message.dto';
 
 /** Кто собеседник в личном диалоге. */
@@ -61,6 +62,30 @@ export class ConversationDto {
     nullable: true,
   })
   lastMessage: TripMessageDto | null;
+
+  /**
+   * Действие диалога — одно, и какое именно, решает сервер (24.11.2026).
+   *
+   * Раньше лента брала действие из `lastMessage.action`, и любая следующая
+   * реплика (в том числе «Организатор запросил платёж») перекрывала строку
+   * перевода: кнопка «Подтверждаю» исчезала, а строка уезжала с верха.
+   * Здесь лежит выбранное действие независимо от того, на каком сообщении
+   * оно висит. Приоритет: неразрешённый перевод выше просьбы о платеже;
+   * просьба видна, только когда перевода нет или он уже подтверждён.
+   * `null` — действий нет.
+   *
+   * Это поле — контракт ленты. `lastMessage.action` остаётся ради
+   * совместимости и старых проверок, но рисовать кнопки по нему больше
+   * нельзя: он по-прежнему описывает последнее сообщение, а не диалог.
+   */
+  @ApiProperty({
+    description:
+      'Действие диалога: неразрешённый перевод, иначе просьба о платеже. ' +
+      'null — действий нет',
+    type: () => MessageActionDto,
+    nullable: true,
+  })
+  action: MessageActionDto | null;
 
   @ApiProperty({
     description: 'Сколько сообщений новее моего последнего прочтения',
@@ -126,6 +151,8 @@ export class ConversationDto {
       lastMessage: Message | null;
       unreadCount: number;
       viewerId: string;
+      /** Действие диалога: одно, приоритет выбран сервисом. */
+      action?: MessageActionDto | null;
       /** Название похода для чатов похода, null — личный диалог. */
       tripTitle?: string | null;
       /** Заглушены ли уведомления у этого человека. */
@@ -143,6 +170,7 @@ export class ConversationDto {
       lastMessage: options.lastMessage
         ? TripMessageDto.from(options.lastMessage, options.viewerId)
         : null,
+      action: options.action ?? null,
       unreadCount: options.unreadCount,
       tripTitle: options.tripTitle ?? null,
       muted: options.muted === true,

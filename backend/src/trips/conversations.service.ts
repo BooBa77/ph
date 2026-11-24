@@ -506,34 +506,56 @@ export class ConversationsService {
      * Действие диалога, а не только последнего сообщения (24.11.2026).
      *
      * Раньше кнопка «Подтверждаю» жила на последнем сообщении диалога, и
-     * любая реплика после уведомления о переводе её гасила: строка теряла
-     * кнопки и уезжала из верха ленты. С полем обратной связи («деньги ещё
-     * не пришли, жду») это перестало быть редким случаем — человек пишет
-     * отправителю и тут же теряет возможность подтвердить, когда деньги
-     * дойдут. Поэтому неразрешённое действие, адресованное смотрящему,
-     * прикрепляется к последнему сообщению: id и права у него верные,
-     * отвечать можно из любой строки диалога.
+     * любая реплика после уведомления о переводе её гасила. С полем обратной
+     * связи («деньги ещё не пришли, жду») это перестало быть редким случаем —
+     * человек пишет отправителю и тут же теряет возможность подтвердить.
      *
-     * Легаси `disputed` сюда не попадает: кнопки «не получено» больше нет,
-     * а такие строки остались только от прежних прогонов.
+     * **Какое действие показывать, решает сервер, а не порядок сообщений.**
+     * Неразрешённый перевод (`pending`, адресован смотрящему) важнее просьбы
+     * организатора о платеже: пока перевод ждёт ответа, лента обязана держать
+     * «Подтверждаю», даже если просьба пришла позже. Просьба выходит вперёд,
+     * только когда перевода в диалоге нет или он уже подтверждён. Двух
+     * действий лента не показывает — поле одно.
+     *
+     * **Почему `disputed` не попадает.** Кнопки «не получено» больше нет,
+     * такие строки остались только от прежних прогонов; поднимать их снова
+     * в ленту значило бы вернуть снятый сценарий.
+     *
+     * Запрос один на диалог, как и раньше: из него же берётся действие для
+     * `lastMessage.action` — совместимость со старыми проверками сохраняется.
      */
-    if (dto.lastMessage !== null && dto.lastMessage.action === null) {
-      const pending = await manager.findOne(Message, {
-        where: {
-          conversationId: conversation.id,
-          action: { targetUserId: context.viewerId, state: 'pending' },
-        },
-        relations: { action: true },
-        order: { id: 'DESC' },
-      });
+    const pending = await manager.find(Message, {
+      where: {
+        conversationId: conversation.id,
+        action: { targetUserId: context.viewerId, state: 'pending' },
+      },
+      relations: { action: true },
+      order: { id: 'DESC' },
+    });
 
-      if (pending?.action) {
-        dto.lastMessage.action = MessageActionDto.from(
-          pending.action,
-          context.viewerId,
-          pending.senderId,
-        );
-      }
+    const dialogAction =
+      pending.find((row) => row.action?.kind === 'money_received') ??
+      pending.find((row) => row.action?.kind === 'payment_request') ??
+      null;
+
+    if (dialogAction?.action) {
+      dto.action = MessageActionDto.from(
+        dialogAction.action,
+        context.viewerId,
+        dialogAction.senderId,
+      );
+    }
+
+    if (
+      dto.lastMessage !== null &&
+      dto.lastMessage.action === null &&
+      pending[0]?.action
+    ) {
+      dto.lastMessage.action = MessageActionDto.from(
+        pending[0].action,
+        context.viewerId,
+        pending[0].senderId,
+      );
     }
 
     return dto;

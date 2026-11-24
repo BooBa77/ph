@@ -174,4 +174,65 @@ describe('utils/conversations', () => {
     expect(hasRowAction(conversation())).toBe(false)
     expect(isPaymentRequest(conversation())).toBe(false)
   })
+
+  /**
+   * Приоритет действия — на сервере, но лента обязана читать именно поле
+   * диалога (24.11.2026). Просьба о платеже, пришедшая после перевода,
+   * лежит в `lastMessage.action`, а «Подтверждаю» — в `action`.
+   */
+  it('действие диалога важнее действия последнего сообщения', () => {
+    const transfer = moneyConversation().lastMessage?.action
+    const request = paymentConversation().lastMessage?.action
+
+    const row = conversation({
+      id: '6',
+      action: transfer ?? null,
+      lastMessage: {
+        ...message('60', 'Организатор запросил платёж по походу «Витязь».'),
+        action: request ?? null,
+      },
+    })
+
+    // Строка остаётся денежной: просьба её не перекрывает.
+    expect(hasPendingAction(row)).toBe(true)
+    expect(isPaymentRequest(row)).toBe(false)
+    expect(amountOf(row)).toBe(1200)
+    expect(conversationHeading(row)).toBe('Перевод 1\u00A0200 ₽')
+  })
+
+  it('после подтверждения перевода показывается просьба о платеже', () => {
+    const request = paymentConversation().lastMessage?.action
+
+    const row = conversation({
+      id: '7',
+      action: request ?? null,
+      lastMessage: message('70', 'Организатор запросил платёж по походу «Витязь».'),
+    })
+
+    expect(hasPendingAction(row)).toBe(false)
+    expect(isPaymentRequest(row)).toBe(true)
+    expect(hasRowAction(row)).toBe(true)
+    expect(conversationHeading(row)).toBe('Анна')
+  })
+
+  /**
+   * Чужая просьба о платеже лежит действием последнего сообщения, но
+   * адресована не мне: сервер вернул `action: null`, и кнопки быть не должно.
+   */
+  it('не показывает чужую просьбу о платеже по lastMessage.action', () => {
+    const request = paymentConversation().lastMessage?.action
+
+    const row = conversation({
+      id: '8',
+      action: null,
+      lastMessage: {
+        ...message('80', 'Организатор запросил платёж по походу «Витязь».'),
+        action: request ?? null,
+      },
+    })
+
+    expect(hasRowAction(row)).toBe(false)
+    expect(isPaymentRequest(row)).toBe(false)
+    expect(hasPendingAction(row)).toBe(false)
+  })
 })

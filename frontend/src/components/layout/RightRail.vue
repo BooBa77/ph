@@ -20,6 +20,7 @@ import {
   conversationTime,
   hasRowAction,
   isPaymentRequest,
+  rowAction,
 } from '@/utils/conversations'
 
 /**
@@ -190,7 +191,9 @@ async function send(row: Conversation): Promise<void> {
  * отправляет обычное сообщение и автосогласие через 72 часа не трогает.
  */
 async function answer(row: Conversation): Promise<void> {
-  const action = row.lastMessage?.action
+  // Действие диалога, а не последнего сообщения: сервер мог выбрать перевод,
+  // хотя последним в диалоге лежит просьба о платеже.
+  const action = rowAction(row)
 
   if (!action) return
 
@@ -244,7 +247,7 @@ async function replyToSender(row: Conversation): Promise<void> {
  * привязки к походу у неё нет.
  */
 function openFinance(row: Conversation): void {
-  const tripId = row.lastMessage?.action?.payload?.tripId
+  const tripId = rowAction(row)?.payload?.tripId
 
   if (typeof tripId !== 'string') return
 
@@ -429,7 +432,7 @@ onUnmounted(() => {
           </ol>
 
           <div
-            v-if="row.lastMessage?.action?.canRespond"
+            v-if="rowAction(row)?.canRespond"
             class="flex flex-col gap-2"
             :data-test="`rail-action-${row.id}`"
           >

@@ -1,4 +1,4 @@
-import type { TripMessage } from '@/types/trips'
+import type { MessageAction, TripMessage } from '@/types/trips'
 
 /**
  * Диалог человека: личный или чат похода — один тип на оба.
@@ -25,6 +25,14 @@ export interface Conversation {
   tripTitle: string | null
   peer: ConversationPeer | null
   lastMessage: TripMessage | null
+  /**
+   * Действие диалога — одно, и какое именно, решает сервер (24.11.2026).
+   *
+   * Неразрешённый перевод выше просьбы о платеже: пока ждут «Подтверждаю»,
+   * просьба строку не перекрывает. Поле необязательное: старые ответы и
+   * кеш без него читаются по `lastMessage.action` (см. `rowAction`).
+   */
+  action?: MessageAction | null
   /** Сколько сообщений новее моего последнего прочтения. */
   unreadCount: number
   /** Уведомления заглушены: диалог не попадает в ленту. */

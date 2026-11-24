@@ -208,6 +208,66 @@ describe('MobileMessages', () => {
     wrapper.unmount()
   })
 
+  /**
+   * Приоритет действия — серверный (24.11.2026): просьба о платеже после
+   * перевода не должна отбирать у строки «Подтверждаю».
+   */
+  it('не отдаёт строку просьбе о платеже, пока перевод ждёт ответа', async () => {
+    api.listConversations.mockResolvedValue({
+      conversations: [
+        conversation({
+          id: '7',
+          action: {
+            id: '71',
+            kind: 'money_received',
+            targetUserId: 'me',
+            state: 'pending',
+            payload: { amountRub: 1000 },
+            canRespond: true,
+            canRecheck: false,
+            createdAt: '2026-11-20T10:00:00.000Z',
+            respondedAt: null,
+          },
+          lastMessage: {
+            ...message('70', 'Организатор запросил платёж по походу «Витязь».'),
+            action: {
+              id: '88',
+              kind: 'payment_request',
+              targetUserId: 'me',
+              state: 'pending',
+              payload: { tripId: '3', tripTitle: 'Витязь' },
+              canRespond: false,
+              canRecheck: false,
+              createdAt: '2026-11-24T09:00:00.000Z',
+              respondedAt: null,
+            },
+          },
+        }),
+      ],
+    })
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
+
+    const row = wrapper.find('[data-test="mobile-messages-row-7"]')
+    expect(row.text()).toContain('Перевод 1\u00A0000 ₽')
+
+    await row.trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="mobile-messages-confirm"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="mobile-messages-go-finance"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="mobile-messages-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(actions.respondToAction).toHaveBeenCalledWith('71', '')
+
+    wrapper.unmount()
+  })
+
   it('у просьбы о платеже — кнопка «Перейти» в бухгалтерию похода', async () => {
     api.listConversations.mockResolvedValue({
       conversations: [

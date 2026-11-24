@@ -274,6 +274,130 @@ describe('RightRail', () => {
     wrapper.unmount()
   })
 
+  /**
+   * Приоритет действия — серверный (24.11.2026): просьба о платеже, пришедшая
+   * после перевода, лежит в `lastMessage.action`, а лента обязана держать
+   * «Подтверждаю» из `action` диалога.
+   */
+  it('не отдаёт строку просьбе о платеже, пока перевод ждёт ответа', async () => {
+    api.listConversations.mockResolvedValue({
+      conversations: [
+        conversation({
+          id: '7',
+          action: {
+            id: '71',
+            kind: 'money_received',
+            targetUserId: 'me',
+            state: 'pending',
+            payload: { amountRub: 1000 },
+            canRespond: true,
+            canRecheck: false,
+            createdAt: '2026-11-20T10:00:00.000Z',
+            respondedAt: null,
+          },
+          lastMessage: {
+            ...message('70', 'Организатор запросил платёж по походу «Витязь».'),
+            action: {
+              id: '88',
+              kind: 'payment_request',
+              targetUserId: 'me',
+              state: 'pending',
+              payload: { tripId: '3', tripTitle: 'Витязь' },
+              canRespond: false,
+              canRecheck: false,
+              createdAt: '2026-11-24T09:00:00.000Z',
+              respondedAt: null,
+            },
+          },
+        }),
+      ],
+    })
+
+    const wrapper = mountRail()
+    await flushPromises()
+
+    const row = wrapper.find('[data-test="rail-row-7"]')
+    expect(row.text()).toContain('Перевод 1\u00A0000 ₽')
+
+    await row.find('button').trigger('click')
+    await flushPromises()
+
+    // Кнопка — от перевода, а не «Перейти» от просьбы.
+    expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="rail-go-finance"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="rail-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(actions.respondToAction).toHaveBeenCalledWith('71', '')
+
+    wrapper.unmount()
+  })
+
+  it('после подтверждения перевода выходит просьба о платеже с «Перейти»', async () => {
+    const request = {
+      id: '88',
+      kind: 'payment_request',
+      targetUserId: 'me',
+      state: 'pending' as const,
+      payload: { tripId: '3', tripTitle: 'Витязь' },
+      canRespond: false,
+      canRecheck: false,
+      createdAt: '2026-11-24T09:00:00.000Z',
+      respondedAt: null,
+    }
+
+    api.listConversations
+      .mockResolvedValueOnce({
+        conversations: [
+          conversation({
+            id: '8',
+            action: {
+              id: '72',
+              kind: 'money_received',
+              targetUserId: 'me',
+              state: 'pending',
+              payload: { amountRub: 1000 },
+              canRespond: true,
+              canRecheck: false,
+              createdAt: '2026-11-20T10:00:00.000Z',
+              respondedAt: null,
+            },
+            lastMessage: {
+              ...message('80', 'Организатор запросил платёж по походу «Витязь».'),
+              action: request,
+            },
+          }),
+        ],
+      })
+      .mockResolvedValueOnce({
+        conversations: [
+          conversation({
+            id: '8',
+            action: request,
+            lastMessage: {
+              ...message('80', 'Организатор запросил платёж по походу «Витязь».'),
+              action: request,
+            },
+          }),
+        ],
+      })
+
+    const wrapper = mountRail()
+    await flushPromises()
+
+    await wrapper.find('[data-test="rail-row-8"] button').trigger('click')
+    await flushPromises()
+    await wrapper.find('[data-test="rail-confirm"]').trigger('click')
+    await flushPromises()
+
+    // Перевод закрыт: кнопки ответа больше нет, просьба вышла вперёд.
+    expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="rail-go-finance"]').exists()).toBe(true)
+
+    wrapper.unmount()
+  })
+
   it('раскрывает не больше трёх последних сообщений и укладывается в 300 символов', async () => {
     api.listConversations.mockResolvedValue({ conversations: [tripConversation()] })
     api.listConversationMessages.mockResolvedValue({

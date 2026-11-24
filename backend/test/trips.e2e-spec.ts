@@ -1778,6 +1778,91 @@ describe('Походы (e2e)', () => {
       expect(await unreadForStranger()).toBe(0);
     });
 
+    /**
+     * Контракт ленты: действие диалога выбирает сервер (24.11.2026).
+     *
+     * Просьба о платеже пришла последней, но перевод ещё ждёт ответа —
+     * значит, лента обязана показывать перевод, а не просьбу. После
+     * подтверждения перевода вперёд выходит просьба. `lastMessage.action`
+     * при этом остаётся действием последнего сообщения: старые проверки
+     * не ломаются.
+     */
+    it('действие диалога: перевод важнее просьбы о платеже', async () => {
+      const stamp = Date.now();
+      const payer = await login(`trips-e2e-action-payer-${stamp}@example.com`);
+      const recipient = await login(`trips-e2e-action-recipient-${stamp}@example.com`);
+
+      const conversationId = (
+        await dataSource.query(
+          `INSERT INTO conversations (kind, direct_a, direct_b)
+           VALUES ('direct', LEAST($1::uuid, $2::uuid), GREATEST($1::uuid, $2::uuid))
+           RETURNING id`,
+          [payer.id, recipient.id],
+        )
+      )[0].id as string;
+
+      // Состав диалога: список ленты для личных строится по нему.
+      await dataSource.query(
+        `INSERT INTO conversation_members (conversation_id, user_id)
+         VALUES ($1, $2), ($1, $3)`,
+        [conversationId, payer.id, recipient.id],
+      );
+
+      const transferId = (
+        await dataSource.query(
+          `INSERT INTO message_actions (kind, target_user_id, payload, state)
+           VALUES ('money_received', $1, $2::jsonb, 'pending') RETURNING id`,
+          [recipient.id, JSON.stringify({ amountRub: 1000 })],
+        )
+      )[0].id as string;
+
+      const requestId = (
+        await dataSource.query(
+          `INSERT INTO message_actions (kind, target_user_id, payload, state)
+           VALUES ('payment_request', $1, $2::jsonb, 'pending') RETURNING id`,
+          [recipient.id, JSON.stringify({ tripId: '193', tripTitle: 'Хамар-Дабан' })],
+        )
+      )[0].id as string;
+
+      await dataSource.query(
+        `INSERT INTO messages (conversation_id, sender_id, body, action_id) VALUES
+           ($1, $2, 'Перевёл тебе 1000 ₽', $3),
+           ($1, $2, 'Организатор запросил платёж по походу «Хамар-Дабан».', $4)`,
+        [conversationId, payer.id, transferId, requestId],
+      );
+
+      const rowOf = async () => {
+        const response = await request(app.getHttpServer())
+          .get('/api/conversations')
+          .set('Authorization', `Bearer ${recipient.token}`)
+          .expect(200);
+
+        return (
+          response.body.conversations as Array<{
+            id: string;
+            action: { kind: string } | null;
+            lastMessage: { action: { kind: string } | null } | null;
+          }>
+        ).find((item) => item.id === conversationId);
+      };
+
+      const before = await rowOf();
+      // Перевод ждёт ответа — он и есть действие диалога.
+      expect(before?.action?.kind).toBe('money_received');
+      // Поле последнего сообщения не подменено: там просьба, как и было.
+      expect(before?.lastMessage?.action?.kind).toBe('payment_request');
+
+      await request(app.getHttpServer())
+        .post(`/api/message-actions/${transferId}/respond`)
+        .set('Authorization', `Bearer ${recipient.token}`)
+        .send({ result: 'confirmed' })
+        .expect(200);
+
+      const after = await rowOf();
+      // Перевод разрешён — вперёд выходит просьба о платеже.
+      expect(after?.action?.kind).toBe('payment_request');
+    });
+
     it('без токена диалоги закрыты', async () => {
       await request(app.getHttpServer()).get('/api/conversations').expect(401);
     });

@@ -1,4 +1,5 @@
 import type { Conversation } from '@/types/conversations'
+import type { MessageAction } from '@/types/trips'
 
 /**
  * Общие правила ленты сообщений: порядок строк и их подписи.
@@ -13,9 +14,26 @@ import type { Conversation } from '@/types/conversations'
  * и не пишут. Так их можно проверить без монтирования компонента.
  */
 
+/**
+ * Действие строки — поле диалога, а не последнего сообщения (24.11.2026).
+ *
+ * Сервер сам решает, какое действие показать: неразрешённый перевод важнее
+ * просьбы о платеже, и пришедшая позже просьба строку больше не перекрывает.
+ * `lastMessage.action` — запасной путь только для **старых** ответов и кеша,
+ * где поля `action` ещё нет вовсе. Если сервер прислал `action: null`, значит
+ * действий у диалога нет: подставлять действие последнего сообщения нельзя,
+ * иначе чужая просьба о платеже показала бы «Перейти» тому, кому она
+ * не адресована.
+ */
+export function rowAction(row: Conversation): MessageAction | null {
+  if (row.action !== undefined) return row.action
+
+  return row.lastMessage?.action ?? null
+}
+
 /** Ждёт ли строка моего ответа (денежное действие). */
 export function hasPendingAction(row: Conversation): boolean {
-  return row.lastMessage?.action?.canRespond === true
+  return rowAction(row)?.canRespond === true
 }
 
 /**
@@ -28,7 +46,7 @@ export function hasPendingAction(row: Conversation): boolean {
  * кнопка «Перейти» должна быть видна сразу, а не после перехода в переписку.
  */
 export function hasRowAction(row: Conversation): boolean {
-  const action = row.lastMessage?.action
+  const action = rowAction(row)
 
   if (!action) return false
 
@@ -37,12 +55,12 @@ export function hasRowAction(row: Conversation): boolean {
 
 /** Просьба организатора о платеже: у неё кнопка «Перейти», а не «Да / Нет». */
 export function isPaymentRequest(row: Conversation): boolean {
-  return row.lastMessage?.action?.kind === 'payment_request'
+  return rowAction(row)?.kind === 'payment_request'
 }
 
 /** Сумма перевода в строке, если действие денежное. */
 export function amountOf(row: Conversation): number | null {
-  const amount = row.lastMessage?.action?.payload?.amountRub
+  const amount = rowAction(row)?.payload?.amountRub
 
   return typeof amount === 'number' ? amount : null
 }
