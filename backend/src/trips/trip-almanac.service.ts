@@ -15,6 +15,7 @@ import {
 } from './dto/trip-almanac.dto';
 import type { AlmanacPlacement } from './entities/trip-almanac-entry.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
+import { returningRows } from './query-rows';
 import { notifyAlmanacUpdated } from './trip-almanac-notify';
 import { TripsService } from './trips.service';
 
@@ -113,16 +114,18 @@ export class TripAlmanacService {
 
     const dayIndex = this.dayIndexOf(dto.placement, dto.dayIndex);
 
-    const inserted = await this.dataSource.query(
-      `INSERT INTO trip_almanac_entries
-         (trip_id, user_id, placement, day_index, body, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, now(), now())
-       ON CONFLICT (trip_id, user_id, placement, day_index) DO NOTHING
-       RETURNING id`,
-      [trip.id, userId, dto.placement, dayIndex, body],
+    const inserted = returningRows<{ id: string }>(
+      await this.dataSource.query(
+        `INSERT INTO trip_almanac_entries
+           (trip_id, user_id, placement, day_index, body, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, now(), now())
+         ON CONFLICT (trip_id, user_id, placement, day_index) DO NOTHING
+         RETURNING id`,
+        [trip.id, userId, dto.placement, dayIndex, body],
+      ),
     );
 
-    if ((inserted as unknown[]).length === 0) {
+    if (inserted.length === 0) {
       throw new ConflictException(
         dto.placement === 'day'
           ? 'На этот день у тебя уже есть воспоминание — открой его и допиши'
@@ -161,15 +164,17 @@ export class TripAlmanacService {
       throw new BadRequestException('Воспоминание не может быть пустым');
     }
 
-    const rows = await this.dataSource.query(
-      `UPDATE trip_almanac_entries
-          SET body = $1, updated_at = now()
-        WHERE id = $2 AND trip_id = $3 AND user_id = $4
-      RETURNING id`,
-      [body, entryId, trip.id, userId],
+    const rows = returningRows<{ id: string }>(
+      await this.dataSource.query(
+        `UPDATE trip_almanac_entries
+            SET body = $1, updated_at = now()
+          WHERE id = $2 AND trip_id = $3 AND user_id = $4
+        RETURNING id`,
+        [body, entryId, trip.id, userId],
+      ),
     );
 
-    if ((rows as unknown[]).length === 0) {
+    if (rows.length === 0) {
       throw new NotFoundException('Воспоминание не найдено');
     }
 
@@ -189,6 +194,10 @@ export class TripAlmanacService {
    *   и серверная правка сломала бы правило «побеждает более поздняя правка»
    *   — следующая же правка с телефона не применилась бы.
    *
+   * Результат обоих запросов разбирается `returningRows` (`query-rows.ts`):
+   * для `DELETE`/`UPDATE` TypeORM отдаёт пару `[rows, rowCount]`, и проверка
+   * по длине пары не отличила бы «удалили» от «нечего удалять».
+   *
    * Уведомление здесь не рассылается: удаление — это уборка организатора,
    * а не новое воспоминание. Заказчик просил уведомлять о правках, иначе
    * участники получали бы письмо на каждое удаление.
@@ -204,23 +213,27 @@ export class TripAlmanacService {
       throw new ForbiddenException('Удалять записи альманаха может только организатор');
     }
 
-    const removed = await this.dataSource.query(
-      `DELETE FROM trip_almanac_entries
-        WHERE id = $1 AND trip_id = $2
-      RETURNING id`,
-      [entryId, trip.id],
-    );
-
-    if ((removed as unknown[]).length === 0) {
-      const unmarked = await this.dataSource.query(
-        `UPDATE trip_diary_entries
-            SET shared_with_trip = false
-          WHERE id = $1 AND trip_id = $2 AND shared_with_trip
+    const removed = returningRows<{ id: string }>(
+      await this.dataSource.query(
+        `DELETE FROM trip_almanac_entries
+          WHERE id = $1 AND trip_id = $2
         RETURNING id`,
         [entryId, trip.id],
+      ),
+    );
+
+    if (removed.length === 0) {
+      const unmarked = returningRows<{ id: string }>(
+        await this.dataSource.query(
+          `UPDATE trip_diary_entries
+              SET shared_with_trip = false
+            WHERE id = $1 AND trip_id = $2 AND shared_with_trip
+          RETURNING id`,
+          [entryId, trip.id],
+        ),
       );
 
-      if ((unmarked as unknown[]).length === 0) {
+      if (unmarked.length === 0) {
         throw new NotFoundException('Запись альманаха не найдена');
       }
     }
