@@ -60,11 +60,44 @@ import { tripNameOf } from './trip-name';
  * Порядок в транзакции поэтому такой: найти/открыть диалог → взять замок →
  * проверить непрочитанное → вставить. Замок берётся после `directConversation`
  * (ключ — id диалога) и отпускается вместе с транзакцией.
+ *
+ * ## Кадр в поток переписки (24.11.2026)
+ *
+ * Вставка идёт напрямую в `messages`, мимо `ConversationsService.sendMessage`,
+ * поэтому кадр `message` в `GET /api/conversations/events` сам не уходил:
+ * лента узнавала об уведомлении только перечитыванием по фокусу (до минуты),
+ * и на устройстве это выглядело как «пришло, когда вернулся на вкладку».
+ * Теперь каждая **реально вставленная** строка отдаётся наружу через
+ * `onCreated`, а вызывающий сервис шлёт по ней событие.
+ *
+ * Три ограничения, которые отсюда следуют:
+ *
+ * 1. **Кадр — после COMMIT, а не из транзакции.** Подписчик по событию
+ *    перечитывает строку диалога; если отправить кадр до коммита, запрос
+ *    может не увидеть ещё не сохранённое сообщение и лента останется пустой.
+ *    Поэтому вставки копятся в массиве, а `onCreated` зовётся после
+ *    `dataSource.transaction`.
+ * 2. **Только по вставленным.** Когда непрочитанное уже лежало, новой строки
+ *    нет — событие не шлём: строка в ленте и так одна, а лишний кадр заставил
+ *    бы клиента перечитать её впустую.
+ * 3. **Оба человека диалога.** `participantIds` — автор и адресат: у автора
+ *    может быть вторая вкладка, а «своё действие не перечитываем» клиент
+ *    решает по `actorId` (тот же порядок, что у `ConversationsService`).
  */
+export interface AlmanacNotification {
+  /** Диалог, в который легло уведомление (id `bigint` строкой). */
+  conversationId: string;
+  /** Кому доступен диалог: автор правки и адресат. */
+  participantIds: string[];
+}
+
+export type AlmanacNotifyListener = (notification: AlmanacNotification) => void;
+
 export async function notifyAlmanacUpdated(
   dataSource: DataSource,
   trip: Trip,
   authorId: string,
+  onCreated?: AlmanacNotifyListener,
 ): Promise<void> {
   const manager = dataSource.manager;
 
@@ -80,6 +113,8 @@ export async function notifyAlmanacUpdated(
 
   const tripName = await tripNameOf(manager, trip);
   const body = `Альманах похода «${tripName}» обновлён: /trips/${trip.id}?tab=guest`;
+
+  const created: AlmanacNotification[] = [];
 
   await dataSource.transaction(async (transaction) => {
     for (const recipientId of recipients) {
@@ -98,8 +133,19 @@ export async function notifyAlmanacUpdated(
         senderId: authorId,
         body,
       });
+
+      created.push({
+        conversationId: conversation.id,
+        participantIds: [authorId, recipientId],
+      });
     }
   });
+
+  // Кадры — только после COMMIT: подписчик перечитывает строку сразу
+  // и должен увидеть уже сохранённое сообщение. Вставок не было — молчим.
+  for (const notification of created) {
+    onCreated?.(notification);
+  }
 }
 
 /**

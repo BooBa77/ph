@@ -16,7 +16,9 @@ import {
 import type { AlmanacPlacement } from './entities/trip-almanac-entry.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { returningRows } from './query-rows';
+import { ConversationEventsService } from './conversation-events.service';
 import { notifyAlmanacUpdated } from './trip-almanac-notify';
+import type { Trip } from './entities/trip.entity';
 import { TripsService } from './trips.service';
 
 /**
@@ -53,6 +55,7 @@ export class TripAlmanacService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
+    private readonly events: ConversationEventsService,
   ) {}
 
   /**
@@ -133,7 +136,7 @@ export class TripAlmanacService {
       );
     }
 
-    await notifyAlmanacUpdated(this.dataSource, trip, userId);
+    await this.notifyAlmanac(trip, userId);
 
     return this.getAlmanac(userId, tripId);
   }
@@ -178,7 +181,7 @@ export class TripAlmanacService {
       throw new NotFoundException('Воспоминание не найдено');
     }
 
-    await notifyAlmanacUpdated(this.dataSource, trip, userId);
+    await this.notifyAlmanac(trip, userId);
 
     return this.getAlmanac(userId, tripId);
   }
@@ -239,6 +242,30 @@ export class TripAlmanacService {
     }
 
     return this.getAlmanac(userId, tripId);
+  }
+
+  /**
+   * «Альманах похода обновлён» и кадр о нём в поток переписки.
+   *
+   * Уведомление — по-прежнему личное сообщение от автора правки
+   * (`trip-almanac-notify.ts`), но вставка идёт мимо
+   * `ConversationsService.sendMessage`, поэтому кадр `message` надо отправить
+   * здесь. Событие — только по реально вставленной строке и только после
+   * COMMIT (это гарантирует `notifyAlmanacUpdated`): подписчик сразу
+   * перечитывает диалог и должен увидеть уже сохранённый текст.
+   *
+   * Получатели кадра — оба человека диалога, включая автора: у него может
+   * быть вторая вкладка или телефон, а «своё действие не перечитываем»
+   * клиент решает по `actorId`. Тот же порядок у `sendMessage`.
+   */
+  private async notifyAlmanac(trip: Trip, userId: string): Promise<void> {
+    await notifyAlmanacUpdated(this.dataSource, trip, userId, (created) => {
+      this.events.emitMessage(
+        created.participantIds,
+        created.conversationId,
+        userId,
+      );
+    });
   }
 
   /** Участник похода, а не отказавшийся. */

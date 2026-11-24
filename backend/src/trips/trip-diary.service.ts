@@ -10,6 +10,7 @@ import { TripParticipant } from './entities/trip-participant.entity';
 import type { DiarySyncEntryDto, SyncTripDiaryDto } from './dto/trip-diary.dto';
 import { TripDiaryDto } from './dto/trip-diary.dto';
 import { TripEventsService } from './trip-events.service';
+import { ConversationEventsService } from './conversation-events.service';
 import { isValidDiaryTimes } from './trip-diary.types';
 import { notifyAlmanacUpdated } from './trip-almanac-notify';
 import { TripsService } from './trips.service';
@@ -45,6 +46,7 @@ export class TripDiaryService {
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
     private readonly events: TripEventsService,
+    private readonly conversationEvents: ConversationEventsService,
   ) {}
 
   /** Мои записи похода, старые сверху. */
@@ -145,8 +147,17 @@ export class TripDiaryService {
     });
 
     // Уведомления — после коммита: получатель откроет уже сохранённый текст.
+    // Вставка идёт мимо `ConversationsService.sendMessage`, поэтому кадр
+    // в поток переписки отправляем здесь же (24.11.2026). Событие — только
+    // по вставленной строке и только после COMMIT внутри `notifyAlmanacUpdated`.
     if (almanacTouched) {
-      await notifyAlmanacUpdated(this.dataSource, trip, userId);
+      await notifyAlmanacUpdated(this.dataSource, trip, userId, (created) => {
+        this.conversationEvents.emitMessage(
+          created.participantIds,
+          created.conversationId,
+          userId,
+        );
+      });
     }
 
     // Событие — после коммита: подписчик должен перечитать уже сохранённое.

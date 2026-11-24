@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { DataSource, EntityManager } from 'typeorm';
 
-import { notifyAlmanacUpdated } from './trip-almanac-notify';
+import {
+  notifyAlmanacUpdated,
+  type AlmanacNotification,
+} from './trip-almanac-notify';
 import type { Trip } from './entities/trip.entity';
 
 /**
@@ -54,6 +57,8 @@ function stub({
 }: StubOptions) {
   const queries: Query[] = [];
   const inserts: { conversationId: string; senderId: string; body: string }[] = [];
+  /** Порядок шагов: `commit` транзакции и `emit` кадра — для проверки «после». */
+  const log: string[] = [];
 
   const conversation = {
     id: CONVERSATION,
@@ -92,14 +97,17 @@ function stub({
 
   const dataSource = {
     manager,
-    transaction: async (run: (scope: EntityManager) => Promise<void>) =>
-      run(manager as unknown as EntityManager),
+    transaction: async (run: (scope: EntityManager) => Promise<void>) => {
+      await run(manager as unknown as EntityManager);
+      log.push('commit');
+    },
   };
 
   return {
     dataSource: dataSource as unknown as DataSource,
     queries,
     inserts,
+    log,
   };
 }
 
@@ -184,5 +192,58 @@ describe('уведомление альманаха: дедупликация', 
 
     expect(queries).toEqual([]);
     expect(inserts).toEqual([]);
+  });
+});
+
+/**
+ * Кадр «новое сообщение» в поток переписки (24.11.2026, §10 п.14).
+ *
+ * Уведомление вставляется в `messages` напрямую, мимо
+ * `ConversationsService.sendMessage`, поэтому раньше лента узнавала о нём
+ * только перечитыванием по фокусу. Теперь факт вставки отдаётся наружу,
+ * и вызывающий сервис шлёт событие.
+ *
+ * Здесь — три правила, остальное проверяет e2e `diary` на живой базе:
+ * кадр уходит на обоих участников диалога, уходит **после** COMMIT,
+ * и не уходит вовсе, когда нового уведомления не было.
+ */
+describe('уведомление альманаха: кадр в поток переписки', () => {
+  it('отдаёт кадр на обоих участников диалога — и после коммита', async () => {
+    const { dataSource, log } = stub({ unread: false });
+    const notifications: AlmanacNotification[] = [];
+
+    await notifyAlmanacUpdated(dataSource, TRIP, ANNA, (created) => {
+      log.push('emit');
+      notifications.push(created);
+    });
+
+    // Диалог — пара людей: автор правки тоже получает кадр (вторая вкладка,
+    // телефон), а «своё» клиент узнаёт по `actorId`, который подставит сервис.
+    expect(notifications).toEqual([
+      { conversationId: CONVERSATION, participantIds: [ANNA, BORIS] },
+    ]);
+    // Сначала COMMIT, потом кадр: иначе подписчик перечитает диалог
+    // до сохранения и увидит пустую ленту.
+    expect(log).toEqual(['commit', 'emit']);
+  });
+
+  it('не отдаёт кадр, если непрочитанное уже лежало — вставки не было', async () => {
+    const { dataSource } = stub({ unread: true });
+    let emitted = 0;
+
+    await notifyAlmanacUpdated(dataSource, TRIP, ANNA, () => {
+      emitted += 1;
+    });
+
+    expect(emitted).toBe(0);
+  });
+
+  it('работает без слушателя: старые вызовы не ломаются', async () => {
+    const { dataSource, inserts } = stub({ unread: false });
+
+    await expect(
+      notifyAlmanacUpdated(dataSource, TRIP, ANNA),
+    ).resolves.toBeUndefined();
+    expect(inserts).toHaveLength(1);
   });
 });

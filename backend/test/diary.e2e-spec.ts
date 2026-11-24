@@ -10,6 +10,8 @@ import { AppModule } from './../src/app.module';
 import { configureApp } from './../src/app.setup';
 import { EmailCodeService } from './../src/email/services/email-code.service';
 import { SmtpService } from './../src/email/services/smtp.service';
+import { ConversationEventsService } from './../src/trips/conversation-events.service';
+import type { ConversationEvent } from './../src/trips/conversation-events.service';
 
 /**
  * «Дневник» похода (e2e) — 16.11.2026.
@@ -767,6 +769,56 @@ describe('Дневник похода (e2e)', () => {
     ).expect(200);
 
     expect(await unreadWith(third.token, organizerId)).toBe(1);
+  });
+
+  it('о новом уведомлении приходит кадр в поток переписки', async () => {
+    // §10 п.14: уведомление вставляется в `messages` напрямую, мимо
+    // `ConversationsService.sendMessage`, поэтому кадр `message` надо слать
+    // из самого уведомления. Раньше лента узнавала о нём только
+    // перечитыванием по фокусу (до минуты).
+    const watcher = await login(`diary-e2e-sse-${Date.now()}@example.com`);
+    await dataSource.query(
+      `INSERT INTO trip_participants (trip_id, user_id, status)
+       VALUES ($1, $2, 'going')`,
+      [almanacTripId, watcher.id],
+    );
+
+    const events = app.get(ConversationEventsService);
+    const watcherFrames: ConversationEvent[] = [];
+    const organizerFrames: ConversationEvent[] = [];
+    const subscriptions = [
+      events.stream(watcher.id).subscribe((event) => watcherFrames.push(event)),
+      events.stream(organizerId).subscribe((event) => organizerFrames.push(event)),
+    ];
+
+    try {
+      await createMemory(
+        organizerToken,
+        { placement: 'day', dayIndex: 14 },
+        'День четырнадцатый: проверка кадра.',
+      ).expect(200);
+    } finally {
+      for (const subscription of subscriptions) subscription.unsubscribe();
+    }
+
+    const conversation = await conversationWith(watcher.token, organizerId);
+
+    // Кадр — сигнал без DTO: только диалог, вид, автор и время.
+    expect(watcherFrames).toHaveLength(1);
+    expect(watcherFrames[0]).toMatchObject({
+      conversationId: String(conversation.id),
+      kind: 'message',
+      actorId: organizerId,
+    });
+    expect(watcherFrames[0]?.at).toEqual(expect.any(String));
+
+    // Автор тоже получает кадр (вторая вкладка, телефон): «своё действие
+    // не перечитываем» клиент решает по `actorId`, он здесь свой.
+    expect(organizerFrames).toHaveLength(1);
+    expect(organizerFrames[0]?.actorId).toBe(organizerId);
+
+    // Кадр пришёл после COMMIT: строка уже видна чтением, и она одна.
+    expect(await unreadWith(watcher.token, organizerId)).toBe(1);
   });
 
   it('параллельные правки оставляют одно непрочитанное', async () => {
