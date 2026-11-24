@@ -42,7 +42,9 @@ function stub({
   const queries: string[] = [];
 
   const manager = {
-    find: async () => participants,
+    // Шпион, а не просто функция: проверка «без получателей» смотрит, что
+    // состав всё-таки прочитан, — иначе она ничего не значит.
+    find: vi.fn(async () => participants),
     insert: vi.fn(async () => {
       log.push('insert');
     }),

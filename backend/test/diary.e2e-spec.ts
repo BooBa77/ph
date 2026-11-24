@@ -142,23 +142,22 @@ describe('Дневник похода (e2e)', () => {
     );
   }
 
-  /** Личный диалог с человеком — строка ленты (там же `unreadCount`). */
-  async function conversationWith(
-    token: string,
-    peerId: string,
-  ): Promise<{ id: string; unreadCount: number }> {
-    const list = await call('get', '/api/conversations', token).expect(200);
-    const row = list.body.conversations.find(
-      (item: { peer: { id: string } | null }) => item.peer?.id === peerId,
-    );
+  /**
+   * Активные карточки альманаха у человека.
+   *
+   * С 24.11.2026 уведомление альманаха — строка `notifications`, а не личное
+   * сообщение: непрочитанных в переписке больше нет, и проверять дедупликацию
+   * надо по карточкам (§14.2).
+   */
+  async function almanacCards(userId: string): Promise<number> {
+    const rows = (await dataSource.query(
+      `SELECT count(*)::int AS "n" FROM "notifications"
+        WHERE "recipient_user_id" = $1 AND "trip_id" = $2
+          AND "kind" = 'almanac' AND "archived_at" IS NULL`,
+      [userId, almanacTripId],
+    )) as Array<{ n: number }>;
 
-    if (!row) throw new Error('личный диалог не найден');
-
-    return row;
-  }
-
-  async function unreadWith(token: string, peerId: string): Promise<number> {
-    return (await conversationWith(token, peerId)).unreadCount;
+    return rows[0]?.n ?? 0;
   }
 
   /** Запись в том виде, в каком её пришлёт устройство. */
@@ -719,30 +718,31 @@ describe('Дневник похода (e2e)', () => {
     await syncOn(almanacTripId, organizerToken, [field]).expect(200);
   });
 
-  it('о правке альманаха приходит одно непрочитанное личное сообщение', async () => {
-    const conversations = async () =>
-      (
-        await call('get', '/api/conversations', memberToken).expect(200)
-      ).body.conversations.find(
-        (row: { peer: { id: string } | null }) => row.peer?.id === organizerId,
-      )?.unreadCount ?? 0;
+  it('о правке альманаха приходит одна карточка, вторая её обновляет', async () => {
+    // Свежий участник: у него карточки ещё нет, иначе дедупликация
+    // не отличима от «карточка уже лежала».
+    const fresh = await login(`diary-e2e-card-${Date.now()}@example.com`);
+    await dataSource.query(
+      `INSERT INTO trip_participants (trip_id, user_id, status)
+       VALUES ($1, $2, 'going')`,
+      [almanacTripId, fresh.id],
+    );
 
-    // Первое воспоминание — уведомление может прийти, если его ещё нет.
     await createMemory(organizerToken, { placement: 'day', dayIndex: 4 }, 'День четвёртый.').expect(
       200,
     );
-    const first = await conversations();
-    expect(first).toBeGreaterThan(0);
+    expect(await almanacCards(fresh.id)).toBe(1);
 
-    // Второе — «такое непрочитанное уже есть», новое не шлём.
+    // Вторая редакция — ключ `almanac:<поход>` тот же: карточка обновляется,
+    // второй не появляется.
     await createMemory(organizerToken, { placement: 'day', dayIndex: 5 }, 'День пятый.').expect(
       200,
     );
-    expect(await conversations()).toBe(first);
+    expect(await almanacCards(fresh.id)).toBe(1);
   });
 
-  it('непрочитанное от другого автора — то же уведомление', async () => {
-    // Правило заказчика — одно непрочитанное на человека на поход, и оно
+  it('карточка одна на поход, кто бы ни правил альманах', async () => {
+    // Правило заказчика — одна карточка на человека на поход, и оно
     // не зависит от того, кто именно правил альманах. До 24.11.2026 проверка
     // смотрела только на сообщения того же автора: двое правили по очереди,
     // и получатель копил одинаковые строки (бэклог §53).
@@ -758,17 +758,17 @@ describe('Дневник похода (e2e)', () => {
       { placement: 'day', dayIndex: 6 },
       'День шестой: организатор.',
     ).expect(200);
-    expect(await unreadWith(third.token, organizerId)).toBe(1);
+    expect(await almanacCards(third.id)).toBe(1);
 
-    // Другой автор — участник. У третьего уже лежит непрочитанное
-    // от организатора, значит второго уведомления быть не должно.
+    // Другой автор — участник. У третьего уже лежит карточка от организатора,
+    // значит второй быть не должно: ключ дедупликации — поход, а не автор.
     await createMemory(
       memberToken,
       { placement: 'day', dayIndex: 6 },
       'День шестой: участник.',
     ).expect(200);
 
-    expect(await unreadWith(third.token, organizerId)).toBe(1);
+    expect(await almanacCards(third.id)).toBe(1);
   });
 
   it('о новой карточке альманаха приходит сигнал в поток переписки', async () => {
@@ -800,11 +800,6 @@ describe('Дневник похода (e2e)', () => {
       for (const subscription of subscriptions) subscription.unsubscribe();
     }
 
-    // Своё сообщение в диалог больше не пишется: проверяем, что нового
-    // непрочитанного в переписке не появилось вовсе.
-    const conversation = await conversationWith(watcher.token, organizerId);
-    expect(await unreadWith(watcher.token, organizerId)).toBe(0);
-
     expect(watcherFrames).toHaveLength(1);
     expect(watcherFrames[0]).toMatchObject({
       kind: 'notifications',
@@ -824,9 +819,6 @@ describe('Дневник похода (e2e)', () => {
       [watcher.id, almanacTripId],
     )) as Array<{ title: string }>;
     expect(cards).toHaveLength(1);
-
-    // Диалог создан для перехода по карточке, но сообщений в нём нет.
-    expect(conversation.id).toBeDefined();
   });
 
   it('параллельные правки оставляют одну карточку альманаха', async () => {

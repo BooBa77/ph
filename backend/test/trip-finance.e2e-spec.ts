@@ -47,6 +47,8 @@ describe('Бухгалтерия похода (e2e)', () => {
   let trip9: string;
   /** Завершённый поход: прежние чеки — история, новые можно (20.11.2026). */
   let trip10: string;
+  /** Поход для проверки подтверждения с карточки (свой, чтобы не менять trip9). */
+  let cardTrip: string;
   let virtualPersonId: string;
   let lastCode: string | null = null;
 
@@ -247,9 +249,19 @@ describe('Бухгалтерия похода (e2e)', () => {
     if (dataSource?.isInitialized) {
       // Расходы, доли и компенсации уходят каскадом вместе с походами.
       await dataSource.query('DELETE FROM trips WHERE id = ANY($1::bigint[])', [
-        [trip1, trip2, trip3, trip4, trip5, trip6, trip7, trip8, trip9, trip10].filter(
-          Boolean,
-        ),
+        [
+          trip1,
+          trip2,
+          trip3,
+          trip4,
+          trip5,
+          trip6,
+          trip7,
+          trip8,
+          trip9,
+          trip10,
+          cardTrip,
+        ].filter(Boolean),
       ]);
       // Личные сообщения о компенсациях живут вне похода: диалог не уходит
       // каскадом от `trips`, а FK действий и сообщений держат людей.
@@ -2085,21 +2097,34 @@ describe('Бухгалтерия похода (e2e)', () => {
     });
 
     it('подтверждение с карточки закрывает перевод и уводит её в архив', async () => {
-      await compensate(trip9, a, b.id, 100).expect(201);
+      /**
+       * Отдельный поход: в общем `trip9` кредитор — ушедший `d`, а ручка
+       * подтверждения требует «идёт» (кроме залога). Здесь получатель
+       * идущий и с кредитом: Борис платит за двоих, Анна ему переводит.
+       */
+      cardTrip = await createTrip('Подтверждение с карточки');
+      await addGoing(cardTrip, b);
+      await addExpense(cardTrip, b, {
+        amountRub: 100,
+        split: 'all',
+        description: 'Общий стол',
+        spentAt: '2026-11-20',
+      });
+      await compensate(cardTrip, a, b.id, 50).expect(201);
 
-      const pending = compensationsOf((await view(trip9, a)).body).find(
+      const pending = compensationsOf((await view(cardTrip, a)).body).find(
         (item) => item.toUserId === b.id && item.status === 'pending',
       )!;
 
       // «Подтвердить» на карточке панели — та же ручка, что у «Бухгалтерии».
       await auth(
         request(app.getHttpServer()).post(
-          `/api/trips/${trip9}/finance/compensations/${pending.id}/confirm`,
+          `/api/trips/${cardTrip}/finance/compensations/${pending.id}/confirm`,
         ),
         b.token,
       ).expect(200);
 
-      const after = await view(trip9, a);
+      const after = await view(cardTrip, a);
       expect(
         compensationsOf(after.body).find((item) => item.id === pending.id),
       ).toMatchObject({ status: 'confirmed' });
