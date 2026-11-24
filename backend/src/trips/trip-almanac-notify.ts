@@ -19,10 +19,10 @@ import { tripNameOf } from './trip-name';
  *
  * 1. **Автору — не отправляем.** Он и так знает, что написал.
  * 2. **Отказникам (`declined`) — не отправляем**: они уже не в походе.
- * 3. **Одно непрочитанное на человека.** Если такое же сообщение лежит
- *    непрочитанным, новое не нужно: в списке диалогов оно всё равно одно,
- *    а счётчик станет врать. Проверка — по `last_read_at`, того же поля,
- *    что считает непрочитанное в `ConversationsService`.
+ * 3. **Одно непрочитанное на человека на поход.** Если такое же сообщение
+ *    лежит непрочитанным, новое не нужно: в списке диалогов оно всё равно
+ *    одно, а счётчик станет врать. Проверка — по `last_read_at`, того же
+ *    поля, что считает непрочитанное в `ConversationsService`.
  *
  * Сообщение пишет **сам автор правки**, а не системный отправитель: личный
  * диалог в проекте — это пара людей, и системные сообщения (`sender_id IS
@@ -32,6 +32,34 @@ import { tripNameOf } from './trip-name';
  * Ссылка — относительный адрес страницы похода: экран личных диалогов
  * ещё не сделан, и когда он появится, адрес надо будет сделать кликабельным
  * там, а не хранить абсолютный URL в базе (у dev и прода он разный).
+ *
+ * ## Почему 23.11.2026 приходило по три одинаковых (бэклог §53)
+ *
+ * Дедупликация в этом файле была, но с двумя дефектами — оба воспроизведены
+ * на dev 24.11.2026 (`.tmp-verify/almanac-notify-probe.mjs` и
+ * `.tmp-verify/almanac-notify-race.mjs`):
+ *
+ * 1. **Проверка смотрела только на сообщения того же автора.** В SQL было
+ *    `m.sender_id = $автор`, а правило заказчика — «одно непрочитанное
+ *    на человека на поход», без деления по авторам. Двое правят альманах
+ *    по очереди, у читателя лежит непрочитанное от первого — второй пишет
+ *    ещё одно: проверка его не увидела. Именно так и выглядели три строки
+ *    в диалоге 23.11.2026: одна от Анны и две от Бориса. Теперь ищем
+ *    непрочитанное с тем же текстом **от любого автора** (поход закодирован
+ *    в тексте, поэтому отдельного поля не нужно), а адресат указан явно —
+ *    `conversation_members.user_id = получатель`, как в счётчике.
+ * 2. **Проверка и вставка были не атомарны.** Обе шли в транзакции, но под
+ *    READ COMMITTED параллельный запрос не видит ещё не закоммиченную вставку
+ *    соседа: 40 одновременных `PUT` оставили 8 уведомлений (замер 24.11.2026).
+ *    Уникального индекса по тексту нет и заводить его нельзя: `messages.body`
+ *    правится (автосогласие переписывает текст), а миграций в этом шаге нет.
+ *    Поэтому перед проверкой берём **транзакционный advisory-lock по диалогу**
+ *    (`pg_advisory_xact_lock`): он сериализует только уведомления одного
+ *    диалога, снимается сам на COMMIT/ROLLBACK и не требует схемы.
+ *
+ * Порядок в транзакции поэтому такой: найти/открыть диалог → взять замок →
+ * проверить непрочитанное → вставить. Замок берётся после `directConversation`
+ * (ключ — id диалога) и отпускается вместе с транзакцией.
  */
 export async function notifyAlmanacUpdated(
   dataSource: DataSource,
@@ -57,7 +85,11 @@ export async function notifyAlmanacUpdated(
     for (const recipientId of recipients) {
       const conversation = await directConversation(transaction, authorId, recipientId);
 
-      if (await hasUnreadFrom(transaction, conversation.id, authorId, body)) {
+      // Замок — до проверки: иначе параллельная правка проходит проверку
+      // вместе с этой и обе вставляют уведомление.
+      await lockConversation(transaction, conversation.id);
+
+      if (await hasUnread(transaction, conversation.id, recipientId, body)) {
         continue;
       }
 
@@ -118,29 +150,54 @@ async function directConversation(
 }
 
 /**
- * Лежит ли у получателя непрочитанное сообщение ровно с таким текстом.
+ * Транзакционный замок уведомлений одного диалога.
  *
- * `last_read_at IS NULL` — диалог ещё не открывали, значит всё в нём
- * непрочитано. Свои сообщения не считаются (отправитель здесь — автор).
+ * `pg_advisory_xact_lock` живёт до конца транзакции: второй запрос с тем же
+ * ключом ждёт COMMIT первого, а не спит в коде. Ключ — текст с id диалога,
+ * чтобы один и тот же приём нельзя было спутать с другими замками приложения;
+ * `hashtextextended` сводит его к bigint.
  */
-async function hasUnreadFrom(
+async function lockConversation(
   manager: EntityManager,
   conversationId: string,
-  senderId: string,
+): Promise<void> {
+  await manager.query(
+    `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`,
+    [`almanac-notify:${conversationId}`],
+  );
+}
+
+/**
+ * Лежит ли у получателя непрочитанное уведомление ровно с таким текстом.
+ *
+ * - **Без фильтра по отправителю:** правило — одно непрочитанное на человека
+ *   на поход. Текст содержит имя похода и ссылку, поэтому «то же сообщение»
+ *   и «тот же поход» — одно и то же.
+ * - **Адресат указан явно** (`conversation_members.user_id = $2`), как
+ *   в `ConversationsService.countUnread`: проверка и счётчик считают
+ *   по одному правилу.
+ * - `last_read_at IS NULL` — диалог ещё не открывали, значит всё в нём
+ *   непрочитано. Свои сообщения не считаются.
+ */
+async function hasUnread(
+  manager: EntityManager,
+  conversationId: string,
+  recipientId: string,
   body: string,
 ): Promise<boolean> {
   const rows = await manager.query(
     `SELECT 1
        FROM messages m
-       LEFT JOIN conversation_members cm
+       JOIN conversation_members cm
          ON cm.conversation_id = m.conversation_id
-        AND cm.user_id <> m.sender_id
+        AND cm.user_id = $2
       WHERE m.conversation_id = $1
-        AND m.sender_id = $2
+        AND m.sender_id IS NOT NULL
+        AND m.sender_id <> $2
         AND m.body = $3
         AND (cm.last_read_at IS NULL OR m.created_at > cm.last_read_at)
       LIMIT 1`,
-    [conversationId, senderId, body],
+    [conversationId, recipientId, body],
   );
 
   return (rows as unknown[]).length > 0;

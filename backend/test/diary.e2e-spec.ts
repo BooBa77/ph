@@ -140,6 +140,25 @@ describe('Дневник похода (e2e)', () => {
     );
   }
 
+  /** Личный диалог с человеком — строка ленты (там же `unreadCount`). */
+  async function conversationWith(
+    token: string,
+    peerId: string,
+  ): Promise<{ id: string; unreadCount: number }> {
+    const list = await call('get', '/api/conversations', token).expect(200);
+    const row = list.body.conversations.find(
+      (item: { peer: { id: string } | null }) => item.peer?.id === peerId,
+    );
+
+    if (!row) throw new Error('личный диалог не найден');
+
+    return row;
+  }
+
+  async function unreadWith(token: string, peerId: string): Promise<number> {
+    return (await conversationWith(token, peerId)).unreadCount;
+  }
+
   /** Запись в том виде, в каком её пришлёт устройство. */
   function entry(
     overrides: Record<string, unknown> = {},
@@ -718,5 +737,74 @@ describe('Дневник похода (e2e)', () => {
       200,
     );
     expect(await conversations()).toBe(first);
+  });
+
+  it('непрочитанное от другого автора — то же уведомление', async () => {
+    // Правило заказчика — одно непрочитанное на человека на поход, и оно
+    // не зависит от того, кто именно правил альманах. До 24.11.2026 проверка
+    // смотрела только на сообщения того же автора: двое правили по очереди,
+    // и получатель копил одинаковые строки (бэклог §53).
+    const third = await login(`diary-e2e-third-${Date.now()}@example.com`);
+    await dataSource.query(
+      `INSERT INTO trip_participants (trip_id, user_id, status)
+       VALUES ($1, $2, 'going')`,
+      [almanacTripId, third.id],
+    );
+
+    await createMemory(
+      organizerToken,
+      { placement: 'day', dayIndex: 6 },
+      'День шестой: организатор.',
+    ).expect(200);
+    expect(await unreadWith(third.token, organizerId)).toBe(1);
+
+    // Другой автор — участник. У третьего уже лежит непрочитанное
+    // от организатора, значит второго уведомления быть не должно.
+    await createMemory(
+      memberToken,
+      { placement: 'day', dayIndex: 6 },
+      'День шестой: участник.',
+    ).expect(200);
+
+    expect(await unreadWith(third.token, organizerId)).toBe(1);
+  });
+
+  it('параллельные правки оставляют одно непрочитанное', async () => {
+    // Проверка и вставка атомарны: без замка несколько одновременных
+    // запросов проскакивают проверку вместе и оставляют по строке каждый
+    // (24.11.2026: 40 параллельных `PUT` дали 8 уведомлений).
+    const parallel = await login(`diary-e2e-parallel-${Date.now()}@example.com`);
+    await dataSource.query(
+      `INSERT INTO trip_participants (trip_id, user_id, status)
+       VALUES ($1, $2, 'going')`,
+      [almanacTripId, parallel.id],
+    );
+
+    // Сначала одно уведомление и «прочитано»: дальше смотрим только гонку.
+    await createMemory(
+      organizerToken,
+      { placement: 'day', dayIndex: 7 },
+      'День седьмой.',
+    ).expect(200);
+    const conversation = await conversationWith(parallel.token, organizerId);
+    await call(
+      'post',
+      `/api/conversations/${conversation.id}/read`,
+      parallel.token,
+    ).expect(204);
+    expect(await unreadWith(parallel.token, organizerId)).toBe(0);
+
+    const days = [8, 9, 10, 11, 12, 13];
+    await Promise.all(
+      days.map((day) =>
+        createMemory(
+          organizerToken,
+          { placement: 'day', dayIndex: day },
+          `День ${day}: параллельная правка.`,
+        ).expect(200),
+      ),
+    );
+
+    expect(await unreadWith(parallel.token, organizerId)).toBe(1);
   });
 });
