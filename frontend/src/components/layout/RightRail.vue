@@ -225,7 +225,33 @@ function openTripChat(row: Conversation): void {
  */
 const releaseFeed = feed.hold()
 
-onUnmounted(releaseFeed)
+/**
+ * Живое сообщение в раскрытой строке (24.11.2026).
+ *
+ * Саму ленту правит стор, но у раскрытия свой список трёх последних
+ * сообщений — без этого новый текст появился бы только после повторного
+ * раскрытия. События своего автора стор не отдаёт, поэтому своя отправка
+ * (её и так дописывает ответ ручки) дублем не придёт.
+ */
+const stopEvents = feed.onEvent((event, row) => {
+  const incoming = row?.lastMessage
+
+  if (event.kind !== 'message' || !row || !incoming) return
+
+  const current = previews.value[row.id]
+
+  if (!current || current.some((message) => message.id === incoming.id)) return
+
+  previews.value = {
+    ...previews.value,
+    [row.id]: [...current, incoming].slice(-PREVIEW_LIMIT),
+  }
+})
+
+onUnmounted(() => {
+  releaseFeed()
+  stopEvents()
+})
 </script>
 
 <template>

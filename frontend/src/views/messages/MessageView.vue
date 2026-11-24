@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import {
@@ -12,6 +12,7 @@ import {
 import { ApiError } from '@/api/errors'
 import UserAvatar from '@/components/ui/UserAvatar.vue'
 import { useAuthStore } from '@/stores/auth'
+import { useConversationsStore } from '@/stores/conversations'
 import type { Conversation } from '@/types/conversations'
 import type { TripMessage } from '@/types/trips'
 import { tripTabOf } from '@/utils/chatTabs'
@@ -41,6 +42,13 @@ import { markdownToHtml } from '@/utils/markdown'
  * диалог (`peerLastReadAt`), точнее нарисовать нечем: по отдельным
  * сообщениям отметок нет, поэтому галочка стоит только на последнем —
  * «до этого места прочитано».
+ *
+ * **Живость (24.11.2026).** Поток на человека один, и держит его стор
+ * ленты (`stores/conversations.ts`); экран только слушает событие. Чужое
+ * сообщение дописывается в переписку, а не перечитывается: `row.lastMessage`
+ * уже дотянут с сервера сторо́м, второго запроса за ним нет. «Прочитано»
+ * приходит событием `read` — иначе оно появлялось бы только при повторном
+ * открытии диалога.
  */
 const route = useRoute()
 const router = useRouter()
@@ -199,6 +207,9 @@ async function open(id: string): Promise<void> {
 
   try {
     await markConversationRead(id)
+    // Сервер обнулил счётчик; строку ленты надо поправить здесь же, иначе
+    // бейдж в колонке показывал бы прочитанный диалог до следующего опроса.
+    feed.clearUnread(String(id))
   } catch {
     // Счётчик в колонке промолчит до следующего обновления — не беда.
   }
@@ -265,6 +276,9 @@ async function send(): Promise<void> {
 
     messages.value = [...messages.value, message]
     draft.value = ''
+    // Строка ленты должна показать это же сообщение, а не прошлое: событие
+    // своего автора стор не применяет, а ответ ручки уже всё принёс.
+    feed.rememberMessage(conversation.value.id, message)
     await scrollToBottom()
   } catch (problem) {
     error.value =
@@ -316,6 +330,49 @@ const tripLink = computed(() => {
 function back(): void {
   router.back()
 }
+
+/**
+ * Живое сообщение в открытом диалоге (24.11.2026).
+ *
+ * Подписка живёт, пока экран на экране: поток уже открыт сторо́м ленты,
+ * поэтому это наблюдатель, а не соединение. `actorId` сравниваем со своим —
+ * своё сообщение дописано ответом `POST /messages`, и второй раз его
+ * вставлять нельзя.
+ */
+const feed = useConversationsStore()
+
+const stopEvents = feed.onEvent((event, row) => {
+  const openId = conversation.value?.id
+
+  if (!openId || String(event.conversationId) !== openId) return
+  if (event.actorId === myId.value) return
+
+  if (event.kind === 'read') {
+    if (!conversation.value) return
+    conversation.value = { ...conversation.value, peerLastReadAt: event.at }
+    return
+  }
+
+  const incoming = row?.lastMessage
+  const list = listEl.value
+  /**
+   * Прокрутку догоняем, только если человек читал последние сообщения.
+   * Иначе приход нового сообщения выдернул бы его из истории, которую он
+   * листает вверх.
+   */
+  const atBottom = !list || list.scrollHeight - list.scrollTop - list.clientHeight < 120
+
+  if (incoming && !messages.value.some((message) => message.id === incoming.id)) {
+    messages.value = [...messages.value, incoming]
+    if (atBottom) void scrollToBottom()
+  }
+
+  // Диалог открыт — пришедшее сообщение прочитано сразу: бейдж не растёт.
+  if (row) void feed.markRead(row)
+  else void feed.refresh()
+})
+
+onUnmounted(stopEvents)
 
 watch(
   () => route.params.id,

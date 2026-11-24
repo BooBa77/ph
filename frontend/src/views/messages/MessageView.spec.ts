@@ -1,22 +1,25 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMemoryHistory, createRouter } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
+import { useConversationsStore } from '@/stores/conversations'
 import type { Conversation } from '@/types/conversations'
 import type { TripMessage } from '@/types/trips'
 import MessageView from '@/views/messages/MessageView.vue'
 
 /**
- * Экран диалога `/messages/:id` (23.11.2026).
+ * Экран диалога `/messages/:id` (23.11.2026; живое сообщение — 24.11.2026).
  *
  * Проверяем то, ради чего он заведён: шапку (собеседник или чат с походом),
  * переписку, «Прочитано» на последнем своём сообщении, галочку «Уведомлять»
- * и историю вверх по курсору `before`.
+ * и историю вверх по курсору `before`. С 24.11.2026 — ещё и то, что чужое
+ * сообщение из событий дописывается в открытую переписку.
  *
  * Стор авторизации подменён: экрану нужен только мой id, чтобы отличить
- * свои сообщения от чужих, а поднимать ради этого Pinia в каждом тесте —
- * лишний каркас.
+ * свои сообщения от чужих. Pinia при этом настоящая — экран слушает стор
+ * ленты (`stores/conversations.ts`), а он без неё не заводится.
  */
 const mocks = vi.hoisted(() => ({
   getConversation: vi.fn(),
@@ -81,7 +84,10 @@ async function openScreen(path = '/messages/7') {
   await router.push(path)
   await router.isReady()
 
-  const wrapper = mount(MessageView, { global: { plugins: [router] } })
+  const pinia = createPinia()
+  setActivePinia(pinia)
+
+  const wrapper = mount(MessageView, { global: { plugins: [router, pinia] } })
   await flushPromises()
 
   return { wrapper, router }
@@ -245,5 +251,63 @@ describe('MessageView', () => {
       'Диалог не найден или недоступен',
     )
     expect(mocks.listConversationMessages).not.toHaveBeenCalled()
+  })
+
+  /**
+   * Живое сообщение (24.11.2026): экран не перечитывает историю, а берёт
+   * готовую строку из события — стор уже дотянул её одним
+   * `GET /conversations/:id`.
+   */
+  it('дописывает чужое сообщение из события, не перечитывая историю', async () => {
+    const { wrapper } = await openScreen()
+
+    // Строка ленты уже есть, а в ней — пришедшее сообщение.
+    const fresh = message({ id: '2', body: 'Я на связи', createdAt: '2026-11-24T09:10:00.000Z' })
+    mocks.getConversation.mockResolvedValue(
+      conversation({ lastMessage: fresh, unreadCount: 1 }),
+    )
+
+    const feed = useConversationsStore()
+    feed.rows = [conversation({ id: '7', unreadCount: 0 })]
+
+    await feed.applyEvent({
+      conversationId: '7',
+      kind: 'message',
+      actorId: 'peer',
+      at: '2026-11-24T09:10:00.000Z',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="message-list"]').text()).toContain('Я на связи')
+    // История не перечитывалась: первая страница запрошена один раз при
+    // открытии экрана, а не на каждое сообщение.
+    expect(mocks.listConversationMessages).toHaveBeenCalledTimes(1)
+    // Открытый диалог прочитан сразу — повторная отметка отправлена.
+    expect(mocks.markConversationRead).toHaveBeenCalledTimes(2)
+    expect(feed.rows[0]?.unreadCount).toBe(0)
+  })
+
+  it('отметка прочтения собеседника из события рисует «Прочитано»', async () => {
+    mocks.listConversationMessages.mockResolvedValue({
+      messages: [message({ id: '5', senderId: 'me', body: 'Ты тут?' })],
+      hasMore: false,
+    })
+
+    const { wrapper } = await openScreen()
+
+    expect(wrapper.find('[data-test="message-read"]').exists()).toBe(false)
+
+    const feed = useConversationsStore()
+    feed.rows = [conversation({ id: '7', peerLastReadAt: null, lastMessage: null })]
+
+    await feed.applyEvent({
+      conversationId: '7',
+      kind: 'read',
+      actorId: 'peer',
+      at: '2026-11-24T09:30:00.000Z',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="message-read"]').text()).toBe('Прочитано')
   })
 })

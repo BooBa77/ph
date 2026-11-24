@@ -23,6 +23,7 @@ import { ConversationMember } from './entities/conversation-member.entity';
 import { Message } from './entities/message.entity';
 import { Trip } from './entities/trip.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
+import { ConversationEventsService } from './conversation-events.service';
 import { User } from '../users/entities/user.entity';
 
 /** Сколько сообщений диалога отдаём по умолчанию — как у чатов похода. */
@@ -45,7 +46,15 @@ const DEFAULT_CONVERSATION_PAGE_SIZE = 50;
  */
 @Injectable()
 export class ConversationsService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    /**
+     * Канал событий переписки (24.11.2026). Публикация — здесь, а не
+     * в контроллере: событие должно уйти только после того, как сообщение
+     * легло в базу, а отметить прочитанным значит знать состав диалога.
+     */
+    private readonly events: ConversationEventsService,
+  ) {}
 
   /** Диалоги, которые видит человек, с последним сообщением и непрочитанным. */
   async listMine(userId: string): Promise<ConversationListDto> {
@@ -221,7 +230,7 @@ export class ConversationsService {
 
   /** Отметить диалог прочитанным: `last_read_at = now`. */
   async markRead(userId: string, conversationId: number): Promise<void> {
-    await this.dataSource.transaction(async (manager) => {
+    const recipients = await this.dataSource.transaction(async (manager) => {
       const conversation = await this.accessible(manager, userId, conversationId);
 
       const existing = await manager.findOne(ConversationMember, {
@@ -231,7 +240,7 @@ export class ConversationsService {
       if (existing) {
         existing.lastReadAt = new Date();
         await manager.save(existing);
-        return;
+        return this.participantsOf(manager, conversation);
       }
 
       // Для чата похода строки состава могло не быть — она ленивая.
@@ -240,7 +249,19 @@ export class ConversationsService {
         userId,
         lastReadAt: new Date(),
       });
+
+      return this.participantsOf(manager, conversation);
     });
+
+    /**
+     * Отметка прочтения — второе событие переписки (24.11.2026).
+     *
+     * Без него «Прочитано» у автора сообщения появлялось бы только после
+     * перезагрузки или следующего опроса: метка лежит в
+     * `conversation_members` и в ленте не видна. Шлём после транзакции:
+     * событие «прочитано» до коммита было бы неправдой.
+     */
+    this.events.emitRead(recipients, String(conversationId), userId);
   }
 
   /**
@@ -332,7 +353,44 @@ export class ConversationsService {
     );
     saved.sender = sender;
 
+    /**
+     * Событие «новое сообщение» — уже после вставки (24.11.2026).
+     *
+     * Получатели — состав диалога: у личного это пара участников, у чата
+     * похода — состав похода без отказавшихся. Автору тоже уходит: у него
+     * может быть вторая вкладка, и «своё» там узнаётся по `actorId`.
+     */
+    this.events.emitMessage(
+      await this.participantsOf(manager, conversation),
+      conversation.id,
+      userId,
+    );
+
     return TripMessageDto.from(saved, userId);
+  }
+
+  /**
+   * Оповестить участников диалога о новом сообщении.
+   *
+   * Сообщение в чат похода умеет писать ещё и `TripsService`
+   * (`POST /trips/:id/messages` — им пользуется вкладка чата похода).
+   * Логика получателей должна быть одна, поэтому путь через «Трипсы»
+   * зовёт этот метод, а не считает состав сам: иначе личный диалог и чат
+   * похода разошлись бы в том, кому слать событие.
+   */
+  async notifyMessage(conversationId: string, actorId: string): Promise<void> {
+    const manager = this.dataSource.manager;
+    const conversation = await manager.findOne(Conversation, {
+      where: { id: conversationId },
+    });
+
+    if (!conversation) return;
+
+    this.events.emitMessage(
+      await this.participantsOf(manager, conversation),
+      conversation.id,
+      actorId,
+    );
   }
 
   /**
@@ -535,6 +593,33 @@ export class ConversationsService {
       displayName: user.displayName,
       avatarUrl: user.avatarUrl,
     };
+  }
+
+  /**
+   * Кому доступен диалог — по этому списку и рассылается событие.
+   *
+   * Те же правила, что у `accessible()`: личный диалог — пара участников,
+   * чат похода — состав похода без отказавшихся. Отказник из чата не
+   * получает ни сообщений, ни метки прочтения: он «не участник», и
+   * событие о жизни чата ему не нужно.
+   */
+  private async participantsOf(
+    manager: EntityManager,
+    conversation: Conversation,
+  ): Promise<string[]> {
+    if (conversation.kind === 'direct') {
+      return [conversation.directA, conversation.directB].filter(
+        (id): id is string => Boolean(id),
+      );
+    }
+
+    if (!conversation.tripId) return [];
+
+    const rows = await manager.find(TripParticipant, {
+      where: { tripId: conversation.tripId, status: Not('declined') },
+    });
+
+    return rows.map((row) => row.userId);
   }
 
   /** Проверить, что диалог этому человеку доступен. */

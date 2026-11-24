@@ -9,12 +9,17 @@ import {
   ParseIntPipe,
   Post,
   Query,
+  Req,
+  Res,
 } from '@nestjs/common';
 import { ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import type { Request, Response } from 'express';
 
 import { CurrentUser } from '../auth/decorators/current-user.decorator';
 import type { AuthUser } from '../auth/decorators/current-user.decorator';
+import { ConversationEventsService } from './conversation-events.service';
 import { ConversationsService } from './conversations.service';
+import { streamConversationEvents } from './trip-events-stream';
 import {
   ConversationDto,
   ConversationListDto,
@@ -38,7 +43,10 @@ import { TripMessageDto, TripMessageListDto } from './dto/message.dto';
 @ApiTags('conversations')
 @Controller('conversations')
 export class ConversationsController {
-  constructor(private readonly conversationsService: ConversationsService) {}
+  constructor(
+    private readonly conversationsService: ConversationsService,
+    private readonly events: ConversationEventsService,
+  ) {}
 
   /** Мои диалоги: последнее сообщение, непрочитанное, собеседник. */
   @Get()
@@ -64,6 +72,44 @@ export class ConversationsController {
     @Body() dto: OpenDirectDto,
   ): Promise<ConversationDto> {
     return this.conversationsService.openDirect(authUser.id, dto);
+  }
+
+  /**
+   * Поток событий переписки (SSE) — один на человека (24.11.2026).
+   *
+   * Заказчик: «экран диалога не обновляется вовсе — новое сообщение видно
+   * лишь после повторного открытия». Лента при этом жила по фокусу и минуте.
+   *
+   * **Почему на человека, а не на диалог.** Чатов у человека девять,
+   * вкладка одна: девять соединений вместо одного. Кадр несёт
+   * `conversationId`, и клиент раскладывает его и по ленте, и по открытому
+   * диалогу. Чаты похода едут по этому же потоку: сообщения в них те же.
+   *
+   * **Почему не `@Sse()`.** Декоратор подписывается на Observable, который
+   * возвращает обработчик, а нам нужен один и тот же поток под Node-
+   * `Response` (заголовки, `retry`, heartbeat) — общий с вкладками похода.
+   *
+   * **Права проверять нечего.** Поток личный, ключ — id из токена:
+   * подписаться на чужой нечем. Аноним отсекается guard до первого байта,
+   * то есть отвечает обычным 401 JSON, а не висящим потоком.
+   *
+   * **Роут объявлен до `:id`.** `GET /conversations/events` иначе попал бы
+   * в `:id` и упал бы в `ParseIntPipe` с 400: Express берёт первый
+   * совпавший маршрут в порядке объявления.
+   */
+  @Get('events')
+  @ApiOperation({ summary: 'Поток событий переписки (SSE)' })
+  @ApiOkResponse({
+    description:
+      'text/event-stream: кадры `event: conversation`, данные — JSON ' +
+      '{conversationId, kind, actorId, at}',
+  })
+  stream(
+    @CurrentUser() authUser: AuthUser,
+    @Req() request: Request,
+    @Res() response: Response,
+  ): void {
+    streamConversationEvents(this.events, authUser.id, request, response);
   }
 
   /**

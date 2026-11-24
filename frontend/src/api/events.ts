@@ -1,29 +1,30 @@
 import { useAuthStore } from '@/stores/auth'
 
 /**
- * Живые события похода — Server-Sent Events (06.11.2026).
+ * Живые события — Server-Sent Events (06.11.2026; переписка — 24.11.2026).
  *
  * Заказчик: «пришло время SSE. Участники перетасовывают вещи и нужно видеть
  * изменения онлайн». Поток открывает вкладка, пока она на экране; событие —
  * сигнал «перечитай данные», а не сами данные (почему так — в
- * `TripEventsService` на бэкенде).
+ * `TripEventsService` и `ConversationEventsService` на бэкенде).
  *
- * **Потоков два** (12.11.2026): у «Снаряжения» (`/gear/events`) и
- * «Бухгалтерии» (`/finance/events`) свои адреса и свои права. Заказчик про
- * деньги: «здесь очень важен SSE, обычно за компенсацию берутся на обратной
- * дороге и все в раз».
+ * **Потоков четыре вида.** У «Снаряжения» (`/gear/events`), «Бухгалтерии»
+ * (`/finance/events`), «Питания» (`/meals/events`) и «Дневника»
+ * (`/diary/events`) свои адреса и свои права — они на поход. Пятый —
+ * переписка (`/api/conversations/events`), и он **на человека**: чатов
+ * у человека девять, а вкладка одна. Чаты похода едут по нему же:
+ * сообщения в них те же самые.
  *
  * **Канал не фильтрует `scope`: фильтрует вкладка.** На бэкенде канал
  * событий один на поход (`TripEventsService`), поэтому в «Снаряжение»
  * прилетают и денежные события, и наоборот. `scope` в кадре и говорит
- * вкладке, её ли это изменение; без этой проверки «Бухгалтерия»
- * перечитывалась бы на каждое перетаскивание вещи.
+ * вкладке, её ли это изменение.
  *
  * **Почему `fetch`, а не `EventSource`.** Нативный `EventSource` не умеет
  * заголовки, а вход в проекте — `Authorization: Bearer`: токен пришлось бы
  * класть в query-строку, то есть в логи nginx и историю прокси. `fetch`
  * с телом-стримом умеет и заголовок, и отмену, а разбор кадров SSE —
- * три десятка строк ниже.
+ * несколько десятков строк ниже.
  *
  * **Почему переподключаемся сами.** `fetch`-поток, в отличие от
  * `EventSource`, не переподключается. Обрыв связи, перезапуск бэкенда
@@ -47,18 +48,49 @@ export interface TripEvent {
   at: string
 }
 
+/**
+ * Что произошло в переписке: пришло сообщение или диалог прочитали.
+ *
+ * `ConversationDto` здесь не едет намеренно: он зависит от смотрящего
+ * (`unreadCount`, `peer`, `peerLastReadAt`), и один объект на всех отдал бы
+ * чужое непрочитанное. По `conversationId` клиент находит строку и
+ * дотягивает её одним `GET /api/conversations/:id`.
+ */
+export type ConversationEventKind = 'message' | 'read'
+
+export interface ConversationEvent {
+  conversationId: string
+  kind: ConversationEventKind
+  /** Кто действовал: своё действие клиент уже применил и не перечитывает. */
+  actorId: string
+  at: string
+}
+
 /** Паузы переподключения по попыткам; последняя повторяется. */
 const RECONNECT_MS = [1000, 2000, 5000, 10_000, 15_000]
 
 /**
- * Разобрать один кадр SSE (`event: …`/`data: …` до пустой строки).
+ * Сколько тишины терпим, прежде чем считать поток мёртвым.
  *
- * Возвращает `null` для всего, что не является событием вкладки: кадров
- * `: ping`, `retry: 3000`, неизвестных имён и битого JSON. Имя события
- * проверяется, чтобы будущий `event: chat` не притворился изменением
- * снаряжения и не вызвал лишний запрос.
+ * Сервер пишет пустой комментарий раз в 25 секунд (`trip-events-stream.ts`),
+ * так что минута без единого байта — это уже не «тихо в переписке»,
+ * а оборванное соединение. Нужно оно потому, что **обрыв не всегда виден**:
+ * 24.11.2026 на живой проверке бэкенд перезапустили посреди потока, а вкладка
+ * не получила ни `loadingFailed`, ни конца ответа — dev-прокси Vite держал
+ * ответ открытым, и TCP-обрыв до неё не дошёл. Клиент ждал бы вечно, и живое
+ * сообщение после перезапуска не приходило бы вовсе. На мобильной сети
+ * бывает то же самое: полусгнившее соединение, по которому ничего не идёт.
  */
-export function parseSseFrame(frame: string): TripEvent | null {
+const IDLE_TIMEOUT_MS = 60_000
+
+/**
+ * Разобрать кадр SSE на имя события и данные.
+ *
+ * Возвращает `null` для всего, что не несёт события: кадров `: ping`,
+ * `retry: 3000` и прочих полей. Имя события отдаётся отдельно — какой
+ * поток его слушает, решает вызывающий.
+ */
+function readSseFrame(frame: string): { name: string; data: string } | null {
   const data: string[] = []
   let eventName = ''
 
@@ -75,15 +107,57 @@ export function parseSseFrame(frame: string): TripEvent | null {
   }
 
   if (data.length === 0) return null
-  if (eventName !== '' && eventName !== 'trip') return null
+
+  return { name: eventName, data: data.join('\n') }
+}
+
+/**
+ * Разобрать кадр известного потока.
+ *
+ * `eventName` проверяется, чтобы будущий `event: chat` не притворился
+ * изменением снаряжения, а кадр переписки не был принят за событие
+ * вкладки. Пустое имя допускается: так сервер писал до 12.11.2026,
+ * и такие кадры должны продолжать работать.
+ */
+function parseFrame<T>(
+  frame: string,
+  eventName: string,
+  isEvent: (value: unknown) => value is T,
+): T | null {
+  const read = readSseFrame(frame)
+
+  if (!read) return null
+  if (read.name !== '' && read.name !== eventName) return null
 
   try {
-    const parsed: unknown = JSON.parse(data.join('\n'))
+    const parsed: unknown = JSON.parse(read.data)
 
-    return isTripEvent(parsed) ? parsed : null
+    return isEvent(parsed) ? parsed : null
   } catch {
     return null
   }
+}
+
+/**
+ * Разобрать один кадр события вкладки (`event: trip`/`data: …` до пустой
+ * строки).
+ *
+ * Возвращает `null` для всего, что не является событием вкладки: кадров
+ * `: ping`, `retry: 3000`, неизвестных имён и битого JSON.
+ */
+export function parseSseFrame(frame: string): TripEvent | null {
+  return parseFrame(frame, 'trip', isTripEvent)
+}
+
+/**
+ * Разобрать один кадр события переписки (`event: conversation`).
+ *
+ * Отдельная функция, а не параметр у `parseSseFrame`: у потоков разная
+ * проверка данных, и общий парсер пришлось бы учить обоим видам событий —
+ * тогда кадр похода мог бы вернуться как событие переписки.
+ */
+export function parseConversationFrame(frame: string): ConversationEvent | null {
+  return parseFrame(frame, 'conversation', isConversationEvent)
 }
 
 /**
@@ -115,23 +189,42 @@ function isTripEvent(value: unknown): value is TripEvent {
   )
 }
 
+/** Виды событий переписки: всё остальное — не наше. */
+const CONVERSATION_EVENT_KINDS: readonly ConversationEventKind[] = ['message', 'read']
+
+function isConversationEvent(value: unknown): value is ConversationEvent {
+  if (typeof value !== 'object' || value === null) return false
+
+  const event = value as Partial<ConversationEvent>
+
+  return (
+    typeof event.conversationId === 'string' &&
+    CONVERSATION_EVENT_KINDS.includes(event.kind as ConversationEventKind) &&
+    typeof event.actorId === 'string' &&
+    typeof event.at === 'string'
+  )
+}
+
 /**
- * Подписаться на изменения вкладки похода.
+ * Открыть поток и отдавать разобранные кадры — общий низ для всех потоков.
  *
- * `channel` выбирает адрес: «Снаряжение» слушает `/gear/events`
- * (по умолчанию — так вызывал единственный поток до 12.11.2026),
- * «Бухгалтерия» — `/finance/events`, «Питание» — `/meals/events`.
+ * Здесь всё, что не зависит от того, чьи это события: `Bearer`-заголовок,
+ * refresh при 401, разбор кадров по пустой строке, отмена и
+ * переподключение с паузами. Адрес, разбор кадра и обработчик приходят
+ * снаружи — раньше это было одним `subscribeTripEvents`, и второй поток
+ * (переписка) завёл бы вторую копию переподключения.
  *
  * Возвращает функцию отписки: она обрывает соединение и отменяет
  * запланированное переподключение. Вызывать обязательно при уходе
- * с вкладки — иначе браузер держит поток до закрытия страницы, а сервер
+ * с экрана — иначе браузер держит поток до закрытия страницы, а сервер
  * продолжает писать в него.
  */
-export function subscribeTripEvents(
-  tripId: string,
-  onEvent: (event: TripEvent) => void,
-  channel: TripEventChannel = 'gear',
-): () => void {
+function openSseStream<T>(options: {
+  url: string
+  /** Разобрать кадр; `null` — кадр не нашего вида. */
+  parse: (frame: string) => T | null
+  onEvent: (event: T) => void
+}): () => void {
   const controller = new AbortController()
   let attempt = 0
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
@@ -141,7 +234,7 @@ export function subscribeTripEvents(
     const headers = new Headers({ Accept: 'text/event-stream' })
     if (token) headers.set('Authorization', `Bearer ${token}`)
 
-    return fetch(`/api/trips/${tripId}/${channel}/events`, {
+    return fetch(options.url, {
       headers,
       credentials: 'include',
       signal: controller.signal,
@@ -189,11 +282,31 @@ export function subscribeTripEvents(
     const reader = body.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
+    let idle: ReturnType<typeof setTimeout> | null = null
+
+    /**
+     * Сторож тишины: любой байт (в том числе `: ping`) сдвигает срок.
+     * Когда срок вышел, отменяем чтение — это закрывает поток, и
+     * `connect()` штатно уходит в переподключение.
+     */
+    const armIdle = (): void => {
+      if (idle !== null) clearTimeout(idle)
+
+      idle = setTimeout(() => {
+        idle = null
+        void reader.cancel().catch(() => undefined)
+      }, IDLE_TIMEOUT_MS)
+    }
+
+    armIdle()
 
     try {
       for (;;) {
         const { value, done } = await reader.read()
         if (done) return
+
+        // Байты пришли — поток жив, даже если это только heartbeat.
+        armIdle()
 
         // Кадры разделяются пустой строкой. CRLF приводим к LF сразу:
         // сервер пишет `\n`, но прокси вправе переписать перевод строки.
@@ -201,14 +314,15 @@ export function subscribeTripEvents(
 
         let boundary = buffer.indexOf('\n\n')
         while (boundary !== -1) {
-          const event = parseSseFrame(buffer.slice(0, boundary))
+          const event = options.parse(buffer.slice(0, boundary))
           buffer = buffer.slice(boundary + 2)
-          if (event) onEvent(event)
+          if (event) options.onEvent(event)
 
           boundary = buffer.indexOf('\n\n')
         }
       }
     } finally {
+      if (idle !== null) clearTimeout(idle)
       reader.releaseLock()
     }
   }
@@ -234,4 +348,42 @@ export function subscribeTripEvents(
       reconnectTimer = null
     }
   }
+}
+
+/**
+ * Подписаться на изменения вкладки похода.
+ *
+ * `channel` выбирает адрес: «Снаряжение» слушает `/gear/events`
+ * (по умолчанию — так вызывал единственный поток до 12.11.2026),
+ * «Бухгалтерия» — `/finance/events`, «Питание» — `/meals/events`,
+ * «Дневник» — `/diary/events`.
+ */
+export function subscribeTripEvents(
+  tripId: string,
+  onEvent: (event: TripEvent) => void,
+  channel: TripEventChannel = 'gear',
+): () => void {
+  return openSseStream({
+    url: `/api/trips/${tripId}/${channel}/events`,
+    parse: parseSseFrame,
+    onEvent,
+  })
+}
+
+/**
+ * Подписаться на события переписки — один поток на человека.
+ *
+ * Адрес без id: сервер берёт человека из токена, подписаться на чужой
+ * поток нечем. Поток открывает стор ленты (`stores/conversations.ts`),
+ * пока лента кому-то нужна: подписчиков двое (колонка и мобильная панель),
+ * и одна вкладка не должна держать два соединения.
+ */
+export function subscribeConversationEvents(
+  onEvent: (event: ConversationEvent) => void,
+): () => void {
+  return openSseStream({
+    url: '/api/conversations/events',
+    parse: parseConversationFrame,
+    onEvent,
+  })
 }

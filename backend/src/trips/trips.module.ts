@@ -62,6 +62,7 @@ import { VehiclesController } from './vehicles.controller';
 import { VehiclesService } from './vehicles.service';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
+import { ConversationEventsService } from './conversation-events.service';
 import { MessageActionsController } from './message-actions.controller';
 import { MessageActionsService } from './message-actions.service';
 import { ObjectsController } from './objects.controller';
@@ -160,6 +161,8 @@ import { ObjectsService } from './objects.service';
     ObjectsService,
     MessageActionsService,
     ConversationsService,
+    // Канал событий переписки: ключ — человек, а не диалог (24.11.2026).
+    ConversationEventsService,
   ],
   exports: [
     TripsService,
@@ -174,6 +177,7 @@ import { ObjectsService } from './objects.service';
     ObjectsService,
     MessageActionsService,
     ConversationsService,
+    ConversationEventsService,
   ],
 })
 export class TripsModule {}

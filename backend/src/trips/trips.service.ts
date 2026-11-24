@@ -93,6 +93,7 @@ import {
 } from './trip.types';
 import { nextWeekendRange } from './weekend';
 import { TripEventsService } from './trip-events.service';
+import { ConversationsService } from './conversations.service';
 import { readTripCacheState } from './trip-cache-state';
 import { recalculateCommonEaterShares } from './trip-finance-shares';
 
@@ -240,6 +241,14 @@ export class TripsService {
      * перезагрузки — канал тот же, что у перетаскивания вещи.
      */
     private readonly events: TripEventsService,
+    /**
+     * Переписка (24.11.2026). Сообщение в чат похода пишется здесь, но
+     * событие «новое сообщение» уходит в общий канал переписки — иначе
+     * вкладка чата похода осталась бы без живой переписки, а лента её
+     * получала бы. Кому слать, решает `ConversationsService`: там же
+     * состав диалога для личных.
+     */
+    private readonly conversations: ConversationsService,
   ) {}
 
   /**
@@ -3672,6 +3681,9 @@ export class TripsService {
       }),
     );
     saved.sender = sender;
+
+    // После вставки: событие — сигнал «перечитай», а не сами данные.
+    await this.conversations.notifyMessage(chat.id, userId);
 
     return TripMessageDto.from(saved, userId);
   }

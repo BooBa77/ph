@@ -1,0 +1,121 @@
+import { Injectable } from '@nestjs/common';
+import { Observable, Subject } from 'rxjs';
+
+/**
+ * Что произошло в переписке: пришло сообщение или диалог прочитали.
+ *
+ * Двух видов достаточно обоим экранам. `message` двигает строку ленты
+ * (текст, время, непрочитанное) и дописывает открытый диалог; `read` —
+ * единственный способ показать «Прочитано» без перезагрузки: отметка
+ * прочтения живёт в `conversation_members` и никак иначе не видна.
+ */
+export type ConversationEventKind = 'message' | 'read';
+
+/**
+ * Событие переписки для подписчиков потока (SSE).
+ *
+ * **Почему сигнал, а не `ConversationDto`.** DTO зависит от смотрящего:
+ * в нём `unreadCount`, `peer` и `peerLastReadAt` посчитаны для одного
+ * человека, и разослать всем один объект значило бы отдать чужое
+ * непрочитанное и чужую метку прочтения. Ровно та же причина, по которой
+ * `TripEvent` не несёт `TripGearItemDto`. Клиент по `conversationId`
+ * находит строку и дотягивает её одним `GET /conversations/:id`.
+ *
+ * `actorId` нужен клиенту, чтобы **не перечитывать своё же действие**:
+ * ответ `POST /messages` уже вернул сообщение, а своя отметка прочтения
+ * уже обнулила счётчик. Чужие действия — наоборот, повод обновиться.
+ */
+export interface ConversationEvent {
+  /** id диалога строкой: в базе `bigint`, TypeORM отдаёт его строкой. */
+  conversationId: string;
+  kind: ConversationEventKind;
+  actorId: string;
+  at: string;
+}
+
+/**
+ * Канал событий переписки — **один поток на человека**, память процесса.
+ *
+ * Зачем: лента и экран диалога обновлялись по фокусу окна и раз в минуту,
+ * а открытая переписка — не обновлялась вовсе. Новое сообщение появлялось
+ * только после повторного открытия экрана, и разговор двух людей шёл
+ * с задержкой до минуты.
+ *
+ * **Почему на человека, а не на диалог.** Чатов у человека девять, вкладка
+ * одна: подписка на каждый диалог — это девять соединений там, где нужно
+ * одно. Событие несёт `conversationId`, и клиент сам раскладывает его
+ * и по ленте, и по открытому диалогу. Чаты похода едут по этому же потоку:
+ * сообщения в них те же самые, а личный диалог к походу не относится —
+ * пятого походного потока ради них не заводим.
+ *
+ * **Почему без Redis.** Процесс бэкенда один (`docker-compose.prod.yml`),
+ * горизонтального масштабирования нет. Появится второй инстанс — сюда
+ * придёт pg_notify или Redis, и это будет замена одного класса.
+ *
+ * Ключ — id человека строкой: id в базе — uuid, но строкой он остаётся
+ * и в токене, и в DTO, поэтому приведений типа в вызовах нет.
+ *
+ * `Map` чистится сама: когда уходит последний подписчик, канал удаляется —
+ * иначе карта росла бы на каждого человека, заходившего за время жизни
+ * процесса.
+ */
+@Injectable()
+export class ConversationEventsService {
+  private readonly streams = new Map<string, Subject<ConversationEvent>>();
+
+  /** Поток событий одного человека. Отписка последнего закрывает канал. */
+  stream(userId: string): Observable<ConversationEvent> {
+    return new Observable<ConversationEvent>((subscriber) => {
+      const subject = this.channel(userId);
+      const subscription = subject.subscribe(subscriber);
+
+      return () => {
+        subscription.unsubscribe();
+        if (!subject.observed) this.streams.delete(userId);
+      };
+    });
+  }
+
+  /**
+   * Новое сообщение в диалоге — всем, кому он доступен.
+   *
+   * Автор тоже получает событие: у него может быть вторая вкладка или
+   * телефон, и «своё» там определяется по `actorId`, а не по отсутствию
+   * кадра. Тот же порядок у событий похода.
+   */
+  emitMessage(recipientIds: string[], conversationId: string, actorId: string): void {
+    this.send(recipientIds, { kind: 'message', conversationId, actorId });
+  }
+
+  /**
+   * Диалог прочитан — участникам, чтобы «Прочитано» появилось у автора
+   * сообщения сразу, а не после следующего обновления ленты.
+   */
+  emitRead(recipientIds: string[], conversationId: string, actorId: string): void {
+    this.send(recipientIds, { kind: 'read', conversationId, actorId });
+  }
+
+  private send(
+    recipientIds: string[],
+    payload: Omit<ConversationEvent, 'at'>,
+  ): void {
+    const at = new Date().toISOString();
+
+    // Один диалог — одна строка на человека: `Set` отсекает повтор, если
+    // человек попал и в состав диалога, и в состав похода.
+    for (const userId of new Set(recipientIds)) {
+      // Нет подписчиков — событие некому отдавать: канал не создаём.
+      this.streams.get(userId)?.next({ ...payload, at });
+    }
+  }
+
+  private channel(userId: string): Subject<ConversationEvent> {
+    const existing = this.streams.get(userId);
+    if (existing) return existing;
+
+    const created = new Subject<ConversationEvent>();
+    this.streams.set(userId, created);
+
+    return created;
+  }
+}
