@@ -178,7 +178,12 @@ watch(
         : ''
     "
   >
-    <SiteSidebar v-if="showHeader" class="md:w-56 md:shrink-0" />
+    <!--
+      Колонка меню сузилась с 224 до 192 px (24.11.2026): заказчик просил
+      увеличить правую колонку сообщений за счёт левой. Иконки и подписи
+      в 192 px помещаются, а освободившиеся 32 px ушли переписке.
+    -->
+    <SiteSidebar v-if="showHeader" class="md:w-48 md:shrink-0" />
 
     <div class="min-w-0 flex-1">
       <RouterView />

@@ -18,7 +18,8 @@ import {
   conversationHeading,
   conversationSubtitle,
   conversationTime,
-  hasPendingAction,
+  hasRowAction,
+  isPaymentRequest,
 } from '@/utils/conversations'
 
 /**
@@ -72,6 +73,14 @@ const PREVIEW_LIMIT = 3
  */
 const expandedId = ref<string | null>(null)
 const draft = ref('')
+/**
+ * Сообщение отправителю вместе с ответом на перевод (24.11.2026).
+ *
+ * Отдельно от `draft`: то поле — обычная отправка в чат, а это живёт под
+ * кнопками «Подтверждаю / Не получено» и уходит вместе с ответом. Слить их
+ * значило бы отправлять текст дважды — сообщением и ответом.
+ */
+const replyDraft = ref('')
 const previews = ref<Record<string, TripMessage[]>>({})
 const isSending = ref(false)
 const showMuted = ref(false)
@@ -128,7 +137,7 @@ async function toggle(row: Conversation): Promise<void> {
    * «Подтверждаю» / «Не получено»: заставлять человека уходить на другой
    * экран ради одной кнопки — потеря того, ради чего колонка делалась.
    */
-  if (!row.tripId && !hasPendingAction(row)) {
+  if (!row.tripId && !hasRowAction(row)) {
     void router.push(`/messages/${row.id}`)
     return
   }
@@ -136,11 +145,13 @@ async function toggle(row: Conversation): Promise<void> {
   if (expandedId.value === row.id) {
     expandedId.value = null
     draft.value = ''
+    replyDraft.value = ''
     return
   }
 
   expandedId.value = row.id
   draft.value = ''
+  replyDraft.value = ''
 
   await loadPreview(row)
   await feed.markRead(row)
@@ -175,13 +186,30 @@ async function answer(row: Conversation, result: 'confirmed' | 'disputed'): Prom
   if (!action) return
 
   try {
-    await respondToAction(action.id, result)
+    await respondToAction(action.id, result, replyDraft.value)
+    replyDraft.value = ''
     // Состояние действия меняет сервер: перечитываем, а не правим на месте.
     await feed.refresh()
   } catch (problem) {
     error.value =
       problem instanceof ApiError ? problem.message : 'Не удалось ответить'
   }
+}
+
+/**
+ * «Перейти» из просьбы организатора о платеже (24.11.2026).
+ *
+ * Заказчик: «Переход раздел Бухгалтерия похода». Адрес — из `payload.tripId`:
+ * строка ленты у просьбы — личный диалог (`tripId === null`), и своей
+ * привязки к походу у неё нет.
+ */
+function openFinance(row: Conversation): void {
+  const tripId = row.lastMessage?.action?.payload?.tripId
+
+  if (typeof tripId !== 'string') return
+
+  void feed.markRead(row)
+  void router.push({ path: `/trips/${tripId}`, query: { tab: 'finance' } })
 }
 
 async function hide(row: Conversation): Promise<void> {
@@ -255,7 +283,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="hidden xl:block xl:w-72 xl:shrink-0" data-test="right-rail">
+  <!--
+    Ширина 352 px вместо 288 (24.11.2026): заказчик просил «увеличить правую
+    с сообщениями за счёт левого сайдбара» — текст в раскрытии и поле ввода
+    в 288 px не помещались. Колонка меню в `App.vue` сузилась на столько же,
+    поэтому контент страницы почти не потерял.
+  -->
+  <aside class="hidden xl:block xl:w-88 xl:shrink-0" data-test="right-rail">
     <div
       class="flex max-h-[calc(100vh-7rem)] flex-col gap-2 overflow-y-auto rounded-xl border border-border bg-surface p-3 xl:sticky xl:top-4"
     >
@@ -356,26 +390,56 @@ onUnmounted(() => {
 
           <div
             v-if="row.lastMessage?.action?.canRespond"
-            class="flex gap-2"
+            class="flex flex-col gap-2"
             :data-test="`rail-action-${row.id}`"
           >
-            <button
-              type="button"
-              class="flex-1 cursor-pointer rounded-lg bg-primary px-2 py-1 text-xs font-medium text-white"
-              data-test="rail-confirm"
-              @click="answer(row, 'confirmed')"
-            >
-              Подтверждаю
-            </button>
-            <button
-              type="button"
-              class="flex-1 cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text"
-              data-test="rail-dispute"
-              @click="answer(row, 'disputed')"
-            >
-              Не получено
-            </button>
+            <!--
+              «Сообщение отправителю» (24.11.2026). Заказчик: в уведомлении
+              о переводе есть кнопка «Подтвердить» и поле ввода. Текст
+              уходит вместе с ответом и необязателен.
+            -->
+            <input
+              v-model="replyDraft"
+              type="text"
+              class="w-full rounded-lg border border-border bg-field px-2 py-1 text-xs text-text outline-none focus:border-primary"
+              placeholder="Сообщение отправителю:"
+              aria-label="Сообщение отправителю"
+              data-test="rail-reply-input"
+            />
+
+            <div class="flex gap-2">
+              <button
+                type="button"
+                class="flex-1 cursor-pointer rounded-lg bg-primary px-2 py-1 text-xs font-medium text-white"
+                data-test="rail-confirm"
+                @click="answer(row, 'confirmed')"
+              >
+                Подтверждаю
+              </button>
+              <button
+                type="button"
+                class="flex-1 cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text"
+                data-test="rail-dispute"
+                @click="answer(row, 'disputed')"
+              >
+                Не получено
+              </button>
+            </div>
           </div>
+
+          <!--
+            Просьба организатора о платеже: отвечать нечем, поэтому одна
+            кнопка «Перейти» в «Бухгалтерию» похода (24.11.2026).
+          -->
+          <button
+            v-else-if="isPaymentRequest(row)"
+            type="button"
+            class="cursor-pointer rounded-lg bg-primary px-2 py-1 text-xs font-medium text-white"
+            data-test="rail-go-finance"
+            @click="openFinance(row)"
+          >
+            Перейти
+          </button>
 
           <form class="flex gap-1" @submit.prevent="send(row)">
             <input

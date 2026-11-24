@@ -24,6 +24,7 @@ import {
   TransferTripDepositDto,
   TripDepartureDto,
   TripFinanceDto,
+  TripFinanceNotifyDto,
   TripFinanceSyncDto,
 } from './dto/trip-finance.dto';
 import { TripFinanceService } from './trip-finance.service';
@@ -155,6 +156,25 @@ export class TripFinanceController {
     @Param('compensationId', ParseIntPipe) compensationId: number,
   ): Promise<TripFinanceDto> {
     return this.finance.confirmCompensation(authUser.id, id, compensationId);
+  }
+
+  /**
+   * «Отправить уведомления о компенсации» (24.11.2026).
+   *
+   * Кнопка в «Бухгалтерии» для организатора и соорганизатора: уведомления
+   * уходят участникам с отрицательным балансом, а при установленном залоге —
+   * ещё и с нулевым. Ответ — вкладка целиком плюс число адресатов, чтобы
+   * экран мог сказать «ушло N», а не молчать.
+   */
+  @Post(':id/finance/payment-requests')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Позвать должников: уведомления о платеже в личные сообщения' })
+  @ApiOkResponse({ type: TripFinanceNotifyDto })
+  async requestPayments(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+  ): Promise<TripFinanceNotifyDto> {
+    return this.finance.requestPayments(authUser.id, id);
   }
 
   @Delete(':id/finance/compensations/:compensationId')

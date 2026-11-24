@@ -8,6 +8,8 @@ import {
   conversationSubtitle,
   conversationTime,
   hasPendingAction,
+  hasRowAction,
+  isPaymentRequest,
   mutedConversations,
   unreadTotalOf,
   visibleConversations,
@@ -53,6 +55,27 @@ function moneyConversation(overrides: Partial<Conversation> = {}): Conversation 
       },
     },
     ...overrides,
+  })
+}
+
+/** Просьба организатора о платеже: кнопка «Перейти», отвечать нечем. */
+function paymentConversation(): Conversation {
+  return conversation({
+    id: '4',
+    lastMessage: {
+      ...message('40', 'Организатор запросил платёж по походу «Витязь».'),
+      action: {
+        id: '88',
+        kind: 'payment_request',
+        targetUserId: 'me',
+        state: 'pending',
+        payload: { tripId: '3', tripTitle: 'Витязь' },
+        canRespond: false,
+        canRecheck: false,
+        createdAt: '2026-11-24T09:00:00.000Z',
+        respondedAt: null,
+      },
+    },
   })
 }
 
@@ -133,5 +156,22 @@ describe('utils/conversations', () => {
     expect(conversationTime(today.toISOString())).toBe('14:05')
     expect(conversationTime('2026-11-12T10:00:00.000Z')).toMatch(/^\d{2}\.\d{2}$/)
     expect(conversationTime(undefined)).toBe('')
+  })
+
+  it('просьбу о платеже раскрывает, но задачей с ответом не считает', () => {
+    const request = paymentConversation()
+
+    // Кнопка «Перейти» — в раскрытии строки, как у перевода.
+    expect(hasRowAction(request)).toBe(true)
+    expect(isPaymentRequest(request)).toBe(true)
+
+    // А в счётчик срочности и в подписи «Перевод …» она не попадает:
+    // это уведомление, а не вопрос, на который ждут «да / нет».
+    expect(hasPendingAction(request)).toBe(false)
+    expect(amountOf(request)).toBeNull()
+    expect(conversationHeading(request)).toBe('Анна')
+
+    expect(hasRowAction(conversation())).toBe(false)
+    expect(isPaymentRequest(conversation())).toBe(false)
   })
 })

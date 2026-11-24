@@ -13,7 +13,8 @@ import {
   conversationHeading,
   conversationSubtitle,
   conversationTime,
-  hasPendingAction,
+  hasRowAction,
+  isPaymentRequest,
 } from '@/utils/conversations'
 
 /**
@@ -51,8 +52,11 @@ const router = useRouter()
 /** Панель открыта. */
 const isOpen = ref(false)
 
-/** Какая строка раскрыта (только денежные действия). */
+/** Какая строка раскрыта (действия: перевод и просьба о платеже). */
 const expandedId = ref<string | null>(null)
+
+/** «Сообщение отправителю» к ответу на перевод (24.11.2026). */
+const replyDraft = ref('')
 
 /** Ошибка ответа на действие: остальные ошибки показывает стор. */
 const actionError = ref<string | null>(null)
@@ -77,14 +81,17 @@ const onDialogScreen = computed(() => route.name === 'messages')
 function close(): void {
   isOpen.value = false
   expandedId.value = null
+  replyDraft.value = ''
   actionError.value = null
 }
 
 async function open(row: Conversation): Promise<void> {
-  // Денежное действие — задача: раскрываем кнопки здесь, а не уводим
-  // на экран, где отвечать нечем.
-  if (hasPendingAction(row)) {
+  // Действие — задача: раскрываем кнопки здесь, а не уводим на экран,
+  // где отвечать нечем. Так же ведёт себя просьба организатора о платеже:
+  // кнопка «Перейти» должна быть под пальцем.
+  if (hasRowAction(row)) {
     expandedId.value = expandedId.value === row.id ? null : row.id
+    replyDraft.value = ''
     return
   }
 
@@ -107,7 +114,8 @@ async function answer(row: Conversation, result: 'confirmed' | 'disputed'): Prom
   if (!action) return
 
   try {
-    await respondToAction(action.id, result)
+    await respondToAction(action.id, result, replyDraft.value)
+    replyDraft.value = ''
     // Состояние действия меняет сервер: перечитываем, а не правим на месте.
     await feed.refresh()
     expandedId.value = null
@@ -115,6 +123,17 @@ async function answer(row: Conversation, result: 'confirmed' | 'disputed'): Prom
     actionError.value =
       problem instanceof ApiError ? problem.message : 'Не удалось ответить'
   }
+}
+
+/** «Перейти» из просьбы о платеже — в «Бухгалтерию» похода (24.11.2026). */
+function openFinance(row: Conversation): void {
+  const tripId = row.lastMessage?.action?.payload?.tripId
+
+  if (typeof tripId !== 'string') return
+
+  void feed.markRead(row)
+  close()
+  void router.push({ path: `/trips/${tripId}`, query: { tab: 'finance' } })
 }
 
 /**
@@ -292,7 +311,7 @@ onUnmounted(() => {
                   </span>
                 </button>
 
-                <!-- Деньги: ответ тут же, как в колонке на десктопе. -->
+                <!-- Действия: ответ на перевод или переход к платежу. -->
                 <div
                   v-if="expandedId === row.id"
                   class="flex flex-col gap-2 px-3 pb-3"
@@ -300,24 +319,46 @@ onUnmounted(() => {
                 >
                   <p v-if="actionError" class="text-xs text-red-600">{{ actionError }}</p>
 
-                  <div class="flex gap-2">
-                    <button
-                      type="button"
-                      class="flex-1 cursor-pointer rounded-lg bg-primary px-2 py-2 text-xs font-medium text-white"
-                      data-test="mobile-messages-confirm"
-                      @click="answer(row, 'confirmed')"
-                    >
-                      Подтверждаю
-                    </button>
-                    <button
-                      type="button"
-                      class="flex-1 cursor-pointer rounded-lg border border-border px-2 py-2 text-xs text-text"
-                      data-test="mobile-messages-dispute"
-                      @click="answer(row, 'disputed')"
-                    >
-                      Не получено
-                    </button>
-                  </div>
+                  <template v-if="row.lastMessage?.action?.canRespond">
+                    <!-- «Сообщение отправителю»: уходит вместе с ответом. -->
+                    <input
+                      v-model="replyDraft"
+                      type="text"
+                      class="w-full rounded-lg border border-border bg-field px-2 py-1.5 text-xs text-text outline-none focus:border-primary"
+                      placeholder="Сообщение отправителю:"
+                      aria-label="Сообщение отправителю"
+                      data-test="mobile-messages-reply-input"
+                    />
+
+                    <div class="flex gap-2">
+                      <button
+                        type="button"
+                        class="flex-1 cursor-pointer rounded-lg bg-primary px-2 py-2 text-xs font-medium text-white"
+                        data-test="mobile-messages-confirm"
+                        @click="answer(row, 'confirmed')"
+                      >
+                        Подтверждаю
+                      </button>
+                      <button
+                        type="button"
+                        class="flex-1 cursor-pointer rounded-lg border border-border px-2 py-2 text-xs text-text"
+                        data-test="mobile-messages-dispute"
+                        @click="answer(row, 'disputed')"
+                      >
+                        Не получено
+                      </button>
+                    </div>
+                  </template>
+
+                  <button
+                    v-else-if="isPaymentRequest(row)"
+                    type="button"
+                    class="cursor-pointer rounded-lg bg-primary px-2 py-2 text-xs font-medium text-white"
+                    data-test="mobile-messages-go-finance"
+                    @click="openFinance(row)"
+                  >
+                    Перейти
+                  </button>
                 </div>
               </article>
             </template>

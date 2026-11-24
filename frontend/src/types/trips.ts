@@ -537,7 +537,11 @@ export const CHAT_KIND_LABELS: Record<ChatKind, string> = {
  */
 export interface MessageAction {
   id: string
-  /** `money_received` — денежное подтверждение. */
+  /**
+   * `money_received` — денежное подтверждение; `payment_request` — просьба
+   * организатора зайти в «Бухгалтерию» (24.11.2026). У просьбы `canRespond`
+   * всегда `false`: отвечать нечем, кнопка у неё — «Перейти».
+   */
   kind: string
   targetUserId: string
   state: 'pending' | 'confirmed' | 'disputed'

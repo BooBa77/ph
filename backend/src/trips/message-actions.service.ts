@@ -14,6 +14,7 @@ import {
 import { Message } from './entities/message.entity';
 import { MessageAction } from './entities/message-action.entity';
 import { TripCompensation } from './entities/trip-compensation.entity';
+import { ConversationEventsService } from './conversation-events.service';
 import { TripEventsService } from './trip-events.service';
 
 /**
@@ -43,20 +44,31 @@ export class MessageActionsService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly events: TripEventsService,
+    private readonly conversations: ConversationEventsService,
   ) {}
 
-  /** Ответ адресата: «получено» или «не получено». */
+  /**
+   * Ответ адресата: «получено» или «не получено».
+   *
+   * `body` — необязательное сообщение отправителю (24.11.2026). Заказчик:
+   * у уведомления о переводе есть поле «сообщение отправителю», и текст
+   * уходит обычным сообщением в тот же личный диалог. Отправляем и при
+   * «не получено»: причина для отправителя нужна не меньше, чем благодарность.
+   */
   async respond(
     userId: string,
     actionId: number,
     result: ActionAnswer,
+    body?: string,
   ): Promise<MessageActionDto> {
     let confirmedTripId: string | null = null;
+    const sentTo: Array<{ conversationId: string; senderId: string }> = [];
 
     const dto = await this.dataSource.transaction(async (manager) => {
       // `FOR UPDATE`: два устройства могут нажать «Да» одновременно,
       // и без блокировки оба прочитали бы `pending`.
       const action = await this.lockAction(manager, actionId);
+      const senderId = await this.senderOf(manager, action.id);
 
       if (action.targetUserId !== userId) {
         throw new ForbiddenException('Ответить на действие может только адресат');
@@ -64,20 +76,12 @@ export class MessageActionsService {
 
       // Подтверждение окончательно: второго перевода быть не может.
       if (action.state === 'confirmed') {
-        return MessageActionDto.from(
-          action,
-          userId,
-          await this.senderOf(manager, action.id),
-        );
+        return MessageActionDto.from(action, userId, senderId);
       }
 
       if (action.state === 'disputed' && result === 'disputed') {
         // Уже сказал «не получено» — повторный клик ничего не меняет.
-        return MessageActionDto.from(
-          action,
-          userId,
-          await this.senderOf(manager, action.id),
-        );
+        return MessageActionDto.from(action, userId, senderId);
       }
 
       action.state = result;
@@ -87,26 +91,54 @@ export class MessageActionsService {
       /**
        * Деньги двигает ответ в сообщении (20.11.2026).
        *
-       * Компенсация ушедшему живёт строкой `trip_compensations`, а он сам
-       * вкладку уже не откроет — «Получено» он нажимает в личном сообщении.
-       * Поэтому «Да» закрывает связанный перевод по `payload.compensationId`
-       * (миграции нет: связь лежит в jsonb). «Нет» ничего не двигает:
-       * строка остаётся ожидающей, а автосогласие через 72 часа по ней
-       * отменяется — человек сказал, что деньги не дошли.
+       * Компенсация живёт строкой `trip_compensations`, а уведомление —
+       * личным сообщением. Поэтому «Да» закрывает связанный перевод по
+       * `payload.compensationId` (миграции нет: связь лежит в jsonb).
+       * «Нет» ничего не двигает: строка остаётся ожидающей, а автосогласие
+       * через 72 часа по ней отменяется — человек сказал, что деньги не дошли.
        */
       if (action.kind === 'money_received' && action.state === 'confirmed') {
         confirmedTripId = await this.confirmLinkedCompensation(manager, action);
       }
 
-      return MessageActionDto.from(
-        action,
-        userId,
-        await this.senderOf(manager, action.id),
-      );
+      /**
+       * Сообщение отправителю — только если оно есть.
+       *
+       * Пустую строку не пишем: пробельное сообщение в ленте выглядит как
+       * сбой вёрстки (то же правило, что у `POST /messages`).
+       */
+      const text = body?.trim() ?? '';
+      if (text.length > 0 && senderId !== null) {
+        const source = await manager.findOne(Message, {
+          where: { actionId: action.id, senderId },
+          order: { id: 'ASC' },
+        });
+
+        if (source !== null) {
+          await manager.insert(Message, {
+            conversationId: source.conversationId,
+            senderId: userId,
+            body: text,
+          });
+          sentTo.push({ conversationId: String(source.conversationId), senderId });
+        }
+      }
+
+      return MessageActionDto.from(action, userId, senderId);
     });
 
     if (confirmedTripId !== null) {
       this.events.emitFinance(confirmedTripId, userId);
+    }
+
+    // Та же схема, что у `ConversationsService.sendMessage`: кадр после
+    // коммита, иначе открытый диалог отправителя ждал бы опроса.
+    for (const item of sentTo) {
+      this.conversations.emitMessage(
+        [item.senderId, userId],
+        item.conversationId,
+        userId,
+      );
     }
 
     return dto;
@@ -192,7 +224,13 @@ export class MessageActionsService {
    */
   async pending(userId: string): Promise<PendingActionsDto> {
     const toAnswer = await this.dataSource.manager.find(MessageAction, {
-      where: { targetUserId: userId, state: In(['pending', 'disputed']) },
+      // Только переводы: `payment_request` — уведомление с кнопкой «Перейти»,
+      // отвечать на него нечем, и в списке нерешённых ему не место (24.11.2026).
+      where: {
+        kind: 'money_received',
+        targetUserId: userId,
+        state: In(['pending', 'disputed']),
+      },
       order: { createdAt: 'DESC' },
       take: 50,
     });
@@ -218,6 +256,7 @@ export class MessageActionsService {
         : await this.dataSource.manager.find(MessageAction, {
             where: {
               id: In(mine.map((row) => row.action_id)),
+              kind: 'money_received',
               state: 'disputed',
             },
             order: { createdAt: 'DESC' },

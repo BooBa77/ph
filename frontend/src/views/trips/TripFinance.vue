@@ -8,6 +8,7 @@ import {
   confirmTripCompensation,
   deleteTripCompensation,
   getTripFinance,
+  requestTripPayments,
   setTripDepositStatus,
 } from '@/api/finance'
 import {
@@ -308,6 +309,19 @@ const canCompensate = computed(
   () => canSpend.value && senders.value.some((sender) => sender.suggestions.length > 0),
 )
 
+/**
+ * «Отправить уведомления о компенсации» — организатору и соорганизатору
+ * (24.11.2026). Право считает сервер (`me.canRequestPayments`), кнопка лишь
+ * показывает его: спрятанная кнопка — не запрет.
+ */
+const canRequestPayments = computed(() => finance.value?.me.canRequestPayments === true)
+
+/** Сколько уведомлений ушло — или почему не ушло ни одного. */
+const paymentsNotice = ref<string | null>(null)
+
+/** Кнопка отправки уведомлений занята: второй клик ничего не делает. */
+const busyPayments = ref(false)
+
 const balanceClass = computed(() => {
   const balance = finance.value?.me.balanceRub ?? 0
 
@@ -605,6 +619,7 @@ function applyView(view: TripFinance): void {
 
   finance.value = view
   actionError.value = null
+  paymentsNotice.value = null
   expenseModalOpen.value = false
   editingExpense.value = null
   compensationOpen.value = false
@@ -742,6 +757,45 @@ function confirmRow(row: MoneyRowView): void {
 function cancelRow(row: MoneyRowView): void {
   if (row.compensation !== null) void cancelCompensation(row.compensation)
 }
+
+/**
+ * Позвать должников уведомлениями (24.11.2026).
+ *
+ * Заказчик: кнопка «Отправить уведомления о компенсации» — участникам
+ * с отрицательным балансом, а при установленном залоге ещё и с нулевым
+ * уходит личное сообщение «Организатор запросил платёж по походу …»
+ * с кнопкой «Перейти» в эту вкладку. Ответ сервера — вкладка целиком,
+ * поэтому применяем его как обычную мутацию; `notified` говорит, скольким
+ * ушло: при пустом списке должников молчание выглядело бы поломкой.
+ */
+async function requestPaymentsSend(): Promise<void> {
+  if (busyPayments.value) return
+
+  busyPayments.value = true
+  actionError.value = null
+  paymentsNotice.value = null
+
+  try {
+    const view = await requestTripPayments(props.tripId)
+    applyView(view)
+
+    // Три исхода, и все три видны словами: ушло N; уведомления уже лежали
+    // непрочитанными (повтор не плодим); должников нет вовсе.
+    paymentsNotice.value =
+      view.notified > 0
+        ? `Уведомления отправлены: ${view.notified}.`
+        : view.recipients > 0
+          ? 'Уведомления уже отправлены — повторно не шлём.'
+          : 'Должников нет — отправлять некому.'
+  } catch (problem) {
+    actionError.value = messageOf(
+      problem,
+      'Не удалось отправить уведомления о компенсации',
+    )
+  } finally {
+    busyPayments.value = false
+  }
+}
 </script>
 
 <template>
@@ -808,8 +862,33 @@ function cancelRow(row: MoneyRowView): void {
             >
               Компенсация
             </button>
+
+            <!--
+              «Отправить уведомления о компенсации» (24.11.2026) — только
+              организатору и соорганизатору. Зовёт должников в личку:
+              у отрицательного баланса всегда, у нулевого — если в походе
+              установлен залог.
+            -->
+            <button
+              v-if="canRequestPayments"
+              type="button"
+              class="cursor-pointer rounded-xl border border-border bg-surface px-3 py-1.5 text-sm text-text transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="busyPayments"
+              data-test="finance-request-payments"
+              @click="requestPaymentsSend"
+            >
+              Отправить уведомления о компенсации
+            </button>
           </div>
         </div>
+
+        <p
+          v-if="paymentsNotice"
+          class="text-xs text-muted"
+          data-test="finance-payments-notice"
+        >
+          {{ paymentsNotice }}
+        </p>
 
         <!--
           Залог участия (v3, 18.11.2026) — больше не отдельный блок:

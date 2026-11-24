@@ -18,6 +18,28 @@ export function hasPendingAction(row: Conversation): boolean {
   return row.lastMessage?.action?.canRespond === true
 }
 
+/**
+ * Есть ли у строки действие, ради которого она раскрывается на месте
+ * (24.11.2026).
+ *
+ * Так было только у перевода, ждущего ответа: это задача, и уводить человека
+ * на другой экран ради одной кнопки — потеря того, ради чего колонка
+ * делалась. С этого шага так же ведёт себя «Организатор запросил платёж»:
+ * кнопка «Перейти» должна быть видна сразу, а не после перехода в переписку.
+ */
+export function hasRowAction(row: Conversation): boolean {
+  const action = row.lastMessage?.action
+
+  if (!action) return false
+
+  return action.canRespond === true || action.kind === 'payment_request'
+}
+
+/** Просьба организатора о платеже: у неё кнопка «Перейти», а не «Да / Нет». */
+export function isPaymentRequest(row: Conversation): boolean {
+  return row.lastMessage?.action?.kind === 'payment_request'
+}
+
 /** Сумма перевода в строке, если действие денежное. */
 export function amountOf(row: Conversation): number | null {
   const amount = row.lastMessage?.action?.payload?.amountRub

@@ -189,10 +189,56 @@ describe('MobileMessages', () => {
     // Ушли не на экран диалога: отвечать там нечем.
     expect(push).not.toHaveBeenCalled()
 
+    // «Сообщение отправителю» есть и на мобиле (24.11.2026).
+    const reply = wrapper.find('[data-test="mobile-messages-reply-input"]')
+    expect(reply.attributes('placeholder')).toBe('Сообщение отправителю:')
+    await reply.setValue('Получил')
+
     await wrapper.find('[data-test="mobile-messages-confirm"]').trigger('click')
     await flushPromises()
 
-    expect(actions.respondToAction).toHaveBeenCalledWith('77', 'confirmed')
+    expect(actions.respondToAction).toHaveBeenCalledWith('77', 'confirmed', 'Получил')
+
+    wrapper.unmount()
+  })
+
+  it('у просьбы о платеже — кнопка «Перейти» в бухгалтерию похода', async () => {
+    api.listConversations.mockResolvedValue({
+      conversations: [
+        conversation({
+          id: '4',
+          lastMessage: {
+            ...message('40', 'Организатор запросил платёж по походу «Витязь».'),
+            action: {
+              id: '88',
+              kind: 'payment_request',
+              targetUserId: 'me',
+              state: 'pending',
+              payload: { tripId: '3', tripTitle: 'Витязь' },
+              canRespond: false,
+              canRecheck: false,
+              createdAt: '2026-11-24T09:00:00.000Z',
+              respondedAt: null,
+            },
+          },
+        }),
+      ],
+    })
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
+    await wrapper.find('[data-test="mobile-messages-row-4"]').trigger('click')
+    await flushPromises()
+
+    expect(push).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="mobile-messages-confirm"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="mobile-messages-go-finance"]').trigger('click')
+    await flushPromises()
+
+    expect(push).toHaveBeenCalledWith({ path: '/trips/3', query: { tab: 'finance' } })
 
     wrapper.unmount()
   })

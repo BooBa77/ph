@@ -33,6 +33,7 @@ const mocks = vi.hoisted(() => ({
   deleteTripCompensation: vi.fn(),
   setTripDepositStatus: vi.fn(),
   transferTripDeposit: vi.fn(),
+  requestTripPayments: vi.fn(),
   subscribeTripEvents: vi.fn(),
   stopLiveEvents: vi.fn(),
 }))
@@ -47,6 +48,7 @@ vi.mock('@/api/finance', () => ({
   deleteTripCompensation: mocks.deleteTripCompensation,
   setTripDepositStatus: mocks.setTripDepositStatus,
   transferTripDeposit: mocks.transferTripDeposit,
+  requestTripPayments: mocks.requestTripPayments,
 }))
 
 vi.mock('@/api/events', () => ({
@@ -147,6 +149,7 @@ function state(overrides: Partial<TripFinance> = {}): TripFinance {
       familyDebtRub: 1000,
       familyCreditRub: 0,
       canSpend: true,
+      canRequestPayments: false,
       suggestions: [
         {
           userIds: [ANNA],
@@ -275,6 +278,7 @@ function meQuiet(overrides: Partial<TripFinance['me']> = {}): TripFinance['me'] 
     familyDebtRub: 0,
     familyCreditRub: 0,
     canSpend: true,
+    canRequestPayments: false,
     suggestions: [],
     ...overrides,
   }
@@ -472,6 +476,60 @@ describe('вкладка «Бухгалтерия»', () => {
     depositModalEmit = null
     mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
     mocks.getTripFinance.mockResolvedValue(state())
+  })
+
+  it('организатору — кнопка «Отправить уведомления о компенсации»', async () => {
+    mocks.getTripFinance.mockResolvedValue(
+      state({ me: { ...state().me, canRequestPayments: true } }),
+    )
+    mocks.requestTripPayments.mockResolvedValue({
+      ...state(),
+      notified: 2,
+      recipients: 2,
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    const button = wrapper.get('[data-test="finance-request-payments"]')
+    expect(button.text()).toBe('Отправить уведомления о компенсации')
+
+    await button.trigger('click')
+    await flushPromises()
+
+    expect(mocks.requestTripPayments).toHaveBeenCalledWith('7')
+    expect(wrapper.get('[data-test="finance-payments-notice"]').text()).toBe(
+      'Уведомления отправлены: 2.',
+    )
+  })
+
+  it('рядовому участнику кнопки уведомлений нет', async () => {
+    const wrapper = mountView()
+    await flushPromises()
+
+    // `canRequestPayments: false` в фикстуре — как у обычного участника.
+    expect(wrapper.find('[data-test="finance-request-payments"]').exists()).toBe(false)
+  })
+
+  it('повторное нажатие не плодит уведомлений и говорит об этом', async () => {
+    mocks.getTripFinance.mockResolvedValue(
+      state({ me: { ...state().me, canRequestPayments: true } }),
+    )
+    mocks.requestTripPayments.mockResolvedValue({
+      ...state(),
+      notified: 0,
+      recipients: 1,
+    })
+
+    const wrapper = mountView()
+    await flushPromises()
+
+    await wrapper.get('[data-test="finance-request-payments"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.get('[data-test="finance-payments-notice"]').text()).toBe(
+      'Уведомления уже отправлены — повторно не шлём.',
+    )
   })
 
   it('баланс цифрой в одну строку и без подписей-объяснений', async () => {

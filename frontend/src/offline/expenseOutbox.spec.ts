@@ -82,6 +82,7 @@ function view(): TripFinance {
       familyDebtRub: 0,
       familyCreditRub: 0,
       canSpend: true,
+      canRequestPayments: false,
       suggestions: [],
     },
     managedSenders: [],

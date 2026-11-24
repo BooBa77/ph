@@ -159,6 +159,11 @@ export interface MyFinance {
    * Если `false`, кнопки на экране выключены и объясняют почему.
    */
   canSpend: boolean
+  /**
+   * Могу ли я позвать должников (24.11.2026): кнопка «Отправить уведомления
+   * о компенсации» — организатору и соорганизатору, пока он в походе.
+   */
+  canRequestPayments: boolean
   suggestions: CompensationOption[]
 }
 
@@ -433,6 +438,20 @@ export interface TripExpenseSyncResult {
 /** Ответ `POST …/finance/expenses/sync`: вкладка целиком и итоги по чекам. */
 export interface TripFinanceSync extends TripFinance {
   results: TripExpenseSyncResult[]
+}
+
+/**
+ * Ответ `POST …/finance/payment-requests` (24.11.2026): вкладка целиком
+ * и `notified` — скольким участникам ушло уведомление.
+ */
+export interface TripFinanceNotify extends TripFinance {
+  /** Скольким ушло уведомление сейчас. */
+  notified: number
+  /**
+   * Сколько должников нашлось всего. Больше `notified`, когда уведомление уже
+   * лежало непрочитанным: второе не шлём, но и «некому» сказать нельзя.
+   */
+  recipients: number
 }
 
 /** Тело `POST /api/trips/:id/finance/compensations`. */

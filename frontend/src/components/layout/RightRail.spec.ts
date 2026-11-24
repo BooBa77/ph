@@ -131,7 +131,94 @@ describe('RightRail', () => {
     await confirm.trigger('click')
     await flushPromises()
 
-    expect(actions.respondToAction).toHaveBeenCalledWith('77', 'confirmed')
+    expect(actions.respondToAction).toHaveBeenCalledWith('77', 'confirmed', '')
+
+    wrapper.unmount()
+  })
+
+  it('отправляет ответ вместе с «сообщением отправителю»', async () => {
+    api.listConversations.mockResolvedValue({
+      conversations: [
+        conversation({
+          id: '3',
+          lastMessage: {
+            ...message('30', 'Анна перевела тебе 1000 ₽', '2026-11-20T10:00:00.000Z'),
+            action: {
+              id: '79',
+              kind: 'money_received',
+              targetUserId: 'me',
+              state: 'pending',
+              payload: { amountRub: 1000 },
+              canRespond: true,
+              canRecheck: false,
+              createdAt: '2026-11-20T10:00:00.000Z',
+              respondedAt: null,
+            },
+          },
+        }),
+      ],
+    })
+
+    const wrapper = mountRail()
+    await flushPromises()
+
+    await wrapper.find('[data-test^="rail-row-"] button').trigger('click')
+    await flushPromises()
+
+    const reply = wrapper.find('[data-test="rail-reply-input"]')
+    expect(reply.exists()).toBe(true)
+    expect(reply.attributes('placeholder')).toBe('Сообщение отправителю:')
+
+    await reply.setValue('Получил, спасибо!')
+    await wrapper.find('[data-test="rail-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(actions.respondToAction).toHaveBeenCalledWith(
+      '79',
+      'confirmed',
+      'Получил, спасибо!',
+    )
+
+    wrapper.unmount()
+  })
+
+  it('у просьбы о платеже — кнопка «Перейти» в бухгалтерию похода', async () => {
+    api.listConversations.mockResolvedValue({
+      conversations: [
+        conversation({
+          id: '4',
+          lastMessage: {
+            ...message('40', 'Организатор запросил платёж по походу «Витязь».'),
+            action: {
+              id: '88',
+              kind: 'payment_request',
+              targetUserId: 'me',
+              state: 'pending',
+              payload: { tripId: '3', tripTitle: 'Витязь' },
+              canRespond: false,
+              canRecheck: false,
+              createdAt: '2026-11-24T09:00:00.000Z',
+              respondedAt: null,
+            },
+          },
+        }),
+      ],
+    })
+
+    const wrapper = mountRail()
+    await flushPromises()
+
+    // Просьба раскрывается на месте, а не уводит на экран диалога.
+    await wrapper.find('[data-test^="rail-row-"] button').trigger('click')
+    await flushPromises()
+
+    expect(push).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="rail-go-finance"]').trigger('click')
+    await flushPromises()
+
+    expect(push).toHaveBeenCalledWith({ path: '/trips/3', query: { tab: 'finance' } })
 
     wrapper.unmount()
   })

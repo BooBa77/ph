@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn } from 'class-validator';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 
 import type { MessageAction } from '../entities/message-action.entity';
 
@@ -22,6 +22,24 @@ export class RespondActionDto {
     message: 'Ответом может быть только «получено» или «не получено»',
   })
   result: ActionAnswer;
+
+  /**
+   * Сообщение отправителю вместе с ответом (24.11.2026).
+   *
+   * Заказчик: в уведомлении о переводе есть поле «сообщение отправителю».
+   * Текст необязателен: нажатие «Подтверждаю» без него — обычный ответ,
+   * и заставлять человека что-то писать было бы новым препятствием.
+   * Уходит обычным сообщением в тот же личный диалог, от имени адресата.
+   */
+  @ApiProperty({
+    description: 'Необязательный текст отправителю',
+    example: 'Получил, спасибо!',
+    required: false,
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(4000, { message: 'Сообщение длиннее 4000 символов' })
+  body?: string;
 }
 
 /**
@@ -37,7 +55,9 @@ export class MessageActionDto {
   id: string;
 
   @ApiProperty({
-    description: 'Вид действия',
+    description:
+      'Вид действия: money_received — перевод, который надо подтвердить; ' +
+      'payment_request — просьба организатора зайти в «Бухгалтерию» (24.11.2026)',
     example: 'money_received',
   })
   kind: string;
@@ -86,7 +106,16 @@ export class MessageActionDto {
       targetUserId: action.targetUserId,
       state: action.state,
       payload: action.payload,
+      /**
+       * «Да / Нет» — только у перевода, который ждёт ответа.
+       *
+       * `payment_request` (24.11.2026) — уведомление с кнопкой «Перейти»,
+       * а не задача: отвечать на него нечем, и в `GET pending` он не идёт.
+       * Без этой проверки у просьбы о платеже появились бы кнопки
+       * «Подтверждаю / Не получено» и она вечно висела бы в списке.
+       */
       canRespond:
+        action.kind === 'money_received' &&
         action.targetUserId === viewerId &&
         (action.state === 'pending' || action.state === 'disputed'),
       canRecheck: senderId === viewerId && action.state === 'disputed',

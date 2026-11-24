@@ -50,7 +50,7 @@ export class MessageActionsController {
     return this.actionsService.pending(authUser.id);
   }
 
-  /** Ответ адресата: «получено» или «не получено». */
+  /** Ответ адресата: «получено» или «не получено», при желании — со словами отправителю. */
   @Post(':id/respond')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'Ответить на действие' })
@@ -60,7 +60,7 @@ export class MessageActionsController {
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: RespondActionDto,
   ): Promise<MessageActionDto> {
-    return this.actionsService.respond(authUser.id, id, dto.result);
+    return this.actionsService.respond(authUser.id, id, dto.result, dto.body);
   }
 
   /** Отправитель просит посмотреть ещё раз. */

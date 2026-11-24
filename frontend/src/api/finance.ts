@@ -6,6 +6,7 @@ import type {
   TripDeparture,
   TripExpenseSyncEntry,
   TripFinance,
+  TripFinanceNotify,
   TripFinanceSync,
 } from '@/types/finance'
 
@@ -121,6 +122,24 @@ export async function deleteTripCompensation(
     `/trips/${tripId}/finance/compensations/${compensationId}`,
     { method: 'DELETE' },
   )
+}
+
+/**
+ * POST …/finance/payment-requests — «Отправить уведомления о компенсации»
+ * (24.11.2026).
+ *
+ * Организатор или соорганизатор зовёт должников: каждому уходит личное
+ * сообщение «Организатор запросил платёж по походу …» с кнопкой «Перейти».
+ * Ответ — вкладка целиком плюс `notified`, чтобы экран сказал, скольким
+ * ушло: при пустом списке должников не уходит никому, и молчание кнопки
+ * выглядело бы поломкой.
+ */
+export async function requestTripPayments(
+  tripId: string,
+): Promise<TripFinanceNotify> {
+  return apiFetch<TripFinanceNotify>(`/trips/${tripId}/finance/payment-requests`, {
+    method: 'POST',
+  })
 }
 
 /**

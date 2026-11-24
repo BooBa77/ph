@@ -27,6 +27,7 @@ import {
   TripExpenseDto,
   TripExpenseSyncResultDto,
   TripFinanceDto,
+  TripFinanceNotifyDto,
   TripFinanceSyncDto,
 } from './dto/trip-finance.dto';
 import { Conversation } from './entities/conversation.entity';
@@ -63,6 +64,7 @@ import {
   type ShareAmount,
 } from './finance';
 import { TripEventsService } from './trip-events.service';
+import { ConversationEventsService } from './conversation-events.service';
 import { TripsService } from './trips.service';
 import { UsersService } from '../users/users.service';
 
@@ -72,13 +74,53 @@ function todayIso(): string {
 }
 
 /**
- * Срок автосогласия компенсации ушедшему (20.11.2026).
+ * Срок автосогласия компенсации (20.11.2026; для всех получателей — 24.11.2026).
  *
  * Заказчик: «три дня без ответа считаются согласием» — деньги в кругу
  * друзей, а не в банке, и висящий перевод не должен держать расчёт
- * месяцами. Срок живёт в одном месте: он же двигает `confirmed_at`.
+ * месяцами. С 24.11.2026 срок один для всех: сценарий «Борис ушёл в другой
+ * поход, был оффлайн и не подтвердил перевод — транзакция завершается
+ * успешно» ничем не отличается от молчания идущего. Срок живёт в одном
+ * месте: он же двигает `confirmed_at`.
  */
 const AUTO_CONFIRM_MS = 72 * 60 * 60 * 1000;
+
+/** Имя похода для текста уведомления: анонс, иначе номер. */
+function tripNameOf(trip: Trip): string {
+  const announcement = trip.announcement?.trim();
+
+  return announcement || `поход #${trip.id}`;
+}
+
+/**
+ * Текст уведомления о переводе получателю (24.11.2026).
+ *
+ * Заказчик задал формулировку дословно: «Алиса перевела тебе 1000 руб
+ * за поход Витязь». Род глагола берётся у отправителя: «перевела» и
+ * «перевёл» — разные слова, а не одна строка на всех.
+ */
+function moneyMessageText(
+  amountRub: number,
+  tripName: string,
+  senderName: string,
+  senderGender: string | null | undefined,
+): string {
+  const verb = senderGender === 'f' ? 'перевела' : 'перевёл';
+
+  return `${senderName} ${verb} тебе ${amountRub} ₽ за поход «${tripName}».`;
+}
+
+/**
+ * Дописанное к уведомлению, когда срок ожидания истёк (24.11.2026).
+ *
+ * Заказчик: «Так как время ожидания подтверждения вышло, перевод засчитан
+ * как успешный. Если поступления тебе не было, свяжись с отправителем за
+ * рамками ph». Фраза заменяет прежнее уведомление целиком — кнопок
+ * подтверждения к этому моменту уже нет.
+ */
+const MONEY_SETTLED_TAIL =
+  ' Так как время ожидания подтверждения вышло, перевод засчитан как успешный. ' +
+  'Если поступления тебе не было, свяжись с отправителем за рамками ph.';
 
 /**
  * Уникальный индекс `UQ_trip_expenses_client` сработал на вставке.
@@ -127,6 +169,7 @@ export class TripFinanceService {
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
     private readonly events: TripEventsService,
+    private readonly conversations: ConversationEventsService,
     private readonly users: UsersService,
   ) {}
 
@@ -140,10 +183,7 @@ export class TripFinanceService {
     // вкладки, а не кроном: отдельного планировщика в проекте нет, а баланс
     // обязан сойтись в тот момент, когда его смотрят. Повторный вызов ничего
     // не меняет — строки уже `confirmed`.
-    const settled = await this.settleExpiredCompensations(
-      manager,
-      String(trip.id),
-    );
+    const settled = await this.settleExpiredCompensations(manager, trip);
     const view = await this.buildView(manager, trip, userId);
 
     if (settled) this.events.emitFinance(String(tripId), userId);
@@ -386,13 +426,17 @@ export class TripFinanceService {
     amountRub: number,
     fromUserId?: string,
   ): Promise<TripFinanceDto> {
+    // Отправитель известен до транзакции: его имя и род нужны тексту
+    // уведомления, а `users.findById` ходит своим менеджером.
+    const senderId = fromUserId ?? userId;
+    const sender = await this.users.findById(senderId);
+
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
       await this.assertGoing(manager, String(trip.id), userId);
 
       // «Папа платит за всех» и «я веду Дядю Витю»: отправителем может быть
       // человек без аккаунта, но действует всегда вошедший участник.
-      const senderId = fromUserId ?? userId;
       await this.assertCanActFor(manager, String(trip.id), userId, senderId);
 
       if (toUserId === senderId) {
@@ -479,17 +523,24 @@ export class TripFinanceService {
         }),
       );
 
-      // Ушедший вкладку не откроет, поэтому о переводе ему сообщают личным
-      // сообщением (20.11.2026). Кнопка «Получено» живёт в самом сообщении,
-      // а если ответа нет 72 часа — перевод подтвердится сам.
-      if (recipientDeclined) {
-        await this.postCompensationMessage(
-          manager,
-          trip,
-          senderId,
-          compensation,
-        );
-      }
+      // Уведомление получателю — всегда, а не только ушедшему (24.11.2026).
+      //
+      // Заказчик: «Алиса отправляет сообщение о переводе Борису… Борису
+      // приходит уведомление „Алиса перевела тебе 1000 руб за поход
+      // Витязь“, есть кнопка „Подтвердить“ и поле ввода „сообщение
+      // отправителю“». Вкладка «Бухгалтерия» остаётся вторым путём: ответ
+      // в уведомлении закрывает ту же строку компенсации.
+      //
+      // Дед-лайн (72 часа) с этого шага действует для всех, а не только для
+      // `declined`: `settleExpiredCompensations` больше не смотрит на статус.
+      await this.postCompensationMessage(
+        manager,
+        trip,
+        senderId,
+        compensation,
+        sender?.displayName ?? '',
+        sender?.gender,
+      );
 
       return this.buildView(manager, trip, userId);
     });
@@ -543,6 +594,11 @@ export class TripFinanceService {
         compensation.confirmedAt = new Date();
         await manager.save(compensation);
       }
+
+      // Подтверждение из вкладки закрывает и уведомление в переписке
+      // (24.11.2026): с этого шага уведомление есть у любого перевода,
+      // и без этого кнопки «Подтверждаю» висели бы в ленте после расчёта.
+      await this.closeLinkedAction(manager, compensation.id);
 
       // Залог — тот же перевод, но у него есть покрытие (v3, 18.11.2026):
       // сумма сверх недостачи становится обычным переводом, а состояние
@@ -619,11 +675,227 @@ export class TripFinanceService {
 
       await manager.delete(TripCompensation, { id: compensation.id });
 
+      // Отменённый перевод не должен оставлять в переписке просьбу
+      // подтвердить получение (24.11.2026): сообщение пришло от отправителя,
+      // и «подтверди» на отменённые деньги — прямая ошибка. Действие
+      // удаляется вместе с сообщениями, как в «мой косяк» у `MessageActionsService`.
+      await this.dropLinkedActions(manager, compensation.id);
+
       return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
     return view;
+  }
+
+  /**
+   * «Отправить уведомления о компенсации» (24.11.2026).
+   *
+   * Заказчик: «В разделе Поход/Бухгалтерия кнопка, доступная организаторам
+   * „Отправить уведомления о компенсации“. По ней улетают уведомления
+   * участникам с отрицательным балансом и участникам с нулевым балансом при
+   * установленном залоге — „Организатор запросил платёж по походу Витязь“
+   * с кнопкой „Перейти“. Переход — раздел Бухгалтерия похода».
+   *
+   * **Кому.** Идущим участникам, у кого остаток с учётом ожидающих переводов
+   * отрицательный; при установленном залоге — ещё и тем, у кого он ровно
+   * ноль. Ожидающие переводы учитываются, иначе просьба пришла бы человеку,
+   * который только что перевёл. Люди без аккаунта пропускаются: входить
+   * в приложение им нечем, уведомление некуда положить.
+   *
+   * **Кнопка «Перейти»** — действие вида `payment_request` (см.
+   * `MessageActionDto`): ответа не требует, `payload.tripId` говорит клиенту,
+   * куда вести, и из `GET /message-actions/pending` такие не показываются.
+   *
+   * **Повтор не плодит строк.** Как у уведомления альманаха: если такое же
+   * непрочитанное уже лежит, второе не пишем — иначе одно нажатие «на всякий
+   * случай» давало бы две одинаковые строки в ленте.
+   */
+  async requestPayments(
+    userId: string,
+    tripId: number,
+  ): Promise<TripFinanceNotifyDto> {
+    const sent: Array<{ conversationId: string; recipientId: string }> = [];
+    let recipients = 0;
+
+    const view = await this.dataSource.transaction(async (manager) => {
+      const trip = await this.trips.getVisibleTrip(userId, tripId);
+      const roles = await this.organizerRoles(manager, trip);
+      const role = roles.get(userId);
+      const mine = await manager.findOne(TripParticipant, {
+        where: { tripId: String(trip.id), userId },
+      });
+      const active =
+        mine?.status === 'going' ||
+        mine?.status === 'maybe' ||
+        mine?.status === 'helping';
+
+      if (role === undefined || (role === 'coOrganizer' && !active)) {
+        throw new ForbiddenException(
+          'Уведомления о компенсации отправляет организатор',
+        );
+      }
+
+      const body = `Организатор запросил платёж по походу «${tripNameOf(trip)}».`;
+      const debtors = await this.paymentRequestRecipients(manager, trip);
+      recipients = debtors.filter((row) => row.userId !== userId).length;
+
+      for (const recipient of debtors) {
+        if (recipient.userId === userId) continue;
+        if (recipient.user?.isVirtual === true) continue;
+
+        const conversation = await this.directConversationOf(
+          manager,
+          userId,
+          recipient.userId,
+        );
+
+        if (await this.hasUnreadBody(manager, conversation.id, userId, body)) {
+          continue;
+        }
+
+        const action = await manager.save(
+          manager.create(MessageAction, {
+            kind: 'payment_request',
+            targetUserId: recipient.userId,
+            payload: { tripId: String(trip.id), tripTitle: tripNameOf(trip) },
+            state: 'pending',
+          }),
+        );
+
+        await manager.insert(Message, {
+          conversationId: conversation.id,
+          senderId: userId,
+          body,
+          actionId: action.id,
+        });
+
+        sent.push({
+          conversationId: String(conversation.id),
+          recipientId: recipient.userId,
+        });
+      }
+
+      return this.buildView(manager, trip, userId);
+    });
+
+    // Событие — после коммита: до него открытая лента получателя показала бы
+    // сообщение, которого ещё нет.
+    for (const item of sent) {
+      this.conversations.emitMessage(
+        [item.recipientId, userId],
+        item.conversationId,
+        userId,
+      );
+    }
+
+    return { ...view, notified: sent.length, recipients };
+  }
+
+  /**
+   * Кому просить платёж: отрицательный остаток, а при залоге — и ноль.
+   *
+   * Остаток — `remainingFromEntities`, та же функция, что считает «с учётом
+   * ожидающих» на вкладке: второго расчёта денег быть не должно.
+   */
+  private async paymentRequestRecipients(
+    manager: EntityManager,
+    trip: Trip,
+  ): Promise<TripParticipant[]> {
+    const tripId = String(trip.id);
+    const { expenses, compensations } = await this.loadMoney(manager, tripId);
+    const participants = await this.goingParticipants(manager, tripId);
+    const memberIds = participants.map((item) => item.userId);
+
+    const adjustments = await manager.find(TripDepositAdjustment, {
+      where: { tripId },
+    });
+    const remaining = remainingFromEntities(
+      expenses,
+      compensations,
+      memberIds,
+      adjustments.map((row) => ({
+        userId: row.userId,
+        amountRub: row.amountRub,
+      })),
+    );
+
+    const hasDeposit = trip.depositRub !== null && trip.depositRub > 0;
+
+    return participants.filter((participant) => {
+      const rest = remaining.get(participant.userId) ?? 0;
+
+      return rest < 0 || (hasDeposit && rest === 0);
+    });
+  }
+
+  /** Лежит ли у получателя непрочитанное сообщение ровно с таким текстом. */
+  private async hasUnreadBody(
+    manager: EntityManager,
+    conversationId: string,
+    senderId: string,
+    body: string,
+  ): Promise<boolean> {
+    const rows = await manager.query(
+      `SELECT 1
+         FROM messages m
+         LEFT JOIN conversation_members cm
+           ON cm.conversation_id = m.conversation_id
+          AND cm.user_id <> m.sender_id
+        WHERE m.conversation_id = $1
+          AND m.sender_id = $2
+          AND m.body = $3
+          AND (cm.last_read_at IS NULL OR m.created_at > cm.last_read_at)
+        LIMIT 1`,
+      [conversationId, senderId, body],
+    );
+
+    return (rows as unknown[]).length > 0;
+  }
+
+  /**
+   * Закрыть действие, связанное с компенсацией (24.11.2026).
+   *
+   * Подтверждение из вкладки и автосогласие через 72 часа должны убирать
+   * кнопки из уведомления: состояние живёт в `message_actions`, а не
+   * в сообщении. Связь — `payload.compensationId`, отдельной колонки нет.
+   */
+  private async closeLinkedAction(
+    manager: EntityManager,
+    compensationId: string,
+  ): Promise<void> {
+    await manager.query(
+      `UPDATE "message_actions"
+          SET "state" = 'confirmed', "responded_at" = now(), "updated_at" = now()
+        WHERE "kind" = 'money_received'
+          AND "payload"->>'compensationId' = $1
+          AND "state" IN ('pending', 'disputed')`,
+      [String(compensationId)],
+    );
+  }
+
+  /**
+   * Удалить действия и их сообщения отменённой компенсации.
+   *
+   * Сообщения — до действий: у ссылки `ON DELETE SET NULL`, и если удалить
+   * действие первым, «подтверди получение» осталось бы висеть без кнопок
+   * (тот же порядок, что в «мой косяк» у `MessageActionsService`).
+   */
+  private async dropLinkedActions(
+    manager: EntityManager,
+    compensationId: string,
+  ): Promise<void> {
+    const rows = (await manager.query(
+      `SELECT "id" FROM "message_actions"
+        WHERE "kind" = 'money_received'
+          AND "payload"->>'compensationId' = $1`,
+      [String(compensationId)],
+    )) as Array<{ id: string }>;
+
+    for (const row of rows) {
+      await manager.delete(Message, { actionId: row.id });
+      await manager.delete(MessageAction, { id: row.id });
+    }
   }
 
   // ─────────────────────────── сборка вкладки ───────────────────────────
@@ -768,6 +1040,19 @@ export class TripFinanceService {
       };
     });
 
+    // Право позвать должников (24.11.2026) — у организатора и у
+    // соорганизатора, пока он в походе. Считается здесь же, на сервере:
+    // спрятанная кнопка — не запрет, а решение принимает `requestPayments`.
+    const myRoles = await this.organizerRoles(manager, trip);
+    const myRole = myRoles.get(viewerId);
+    const myStatus = [...participants, ...others].find(
+      (participant) => participant.userId === viewerId,
+    )?.status;
+    const canRequestPayments =
+      myRole === 'organizer' ||
+      (myRole === 'coOrganizer' &&
+        (myStatus === 'going' || myStatus === 'maybe' || myStatus === 'helping'));
+
     const me: MyFinanceDto = {
       balanceRub: balances.get(viewerId) ?? 0,
       remainingRub: remaining.get(viewerId) ?? 0,
@@ -782,6 +1067,7 @@ export class TripFinanceService {
       // Приглашённый видит вкладку, но ещё не тратил: экран по этому флагу
       // выключает кнопки. Проверка прав остаётся на сервере (`assertGoing`).
       canSpend: memberIds.includes(viewerId),
+      canRequestPayments,
       suggestions,
     };
 
@@ -2251,12 +2537,13 @@ export class TripFinanceService {
   }
 
   /**
-   * Личное сообщение о переводе ушедшему (20.11.2026).
+   * Личное сообщение о переводе (20.11.2026; всем получателям — 24.11.2026).
    *
-   * Вкладку «Бухгалтерия» он уже не откроет, поэтому подтверждение приходит
-   * в личный диалог: сообщение с кнопками «Да / Нет», общее состояние
-   * действия — в `message_actions`. Ссылка на компенсацию лежит в `payload`
-   * (схему не меняем, миграции нет): по ней ответ закроет тот же перевод.
+   * Сначала так уведомляли только ушедшего: вкладку «Бухгалтерия» он уже не
+   * откроет. Заказчик распространил сценарий на всех — уведомление с
+   * кнопкой «Подтверждаю» и полем «сообщение отправителю» должно приходить
+   * каждому получателю перевода. Состояние ответа — в `message_actions`,
+   * ссылка на компенсацию в `payload` (схему не меняем, миграции нет).
    *
    * Чат создаётся, если его ещё нет: пара хранится отсортированной, как
    * в `ConversationsService.openDirect`.
@@ -2266,38 +2553,14 @@ export class TripFinanceService {
     trip: Trip,
     senderId: string,
     compensation: TripCompensation,
+    senderName: string,
+    senderGender: string | null | undefined,
   ): Promise<void> {
-    const [a, b] = [senderId, compensation.toUserId].sort();
-
-    let conversation = await manager.findOne(Conversation, {
-      where: { kind: 'direct', directA: a, directB: b },
-    });
-
-    if (!conversation) {
-      conversation = await manager.save(
-        manager.create(Conversation, {
-          kind: 'direct',
-          directA: a,
-          directB: b,
-        }),
-      );
-      await manager.insert(ConversationMember, [
-        { conversationId: conversation.id, userId: a },
-        { conversationId: conversation.id, userId: b },
-      ]);
-    } else {
-      // Диалог мог быть создан раньше без строк состава — чиним, как в
-      // `openDirect`: доступ к личному диалогу — это и есть состав.
-      for (const memberId of [a, b]) {
-        await manager
-          .createQueryBuilder()
-          .insert()
-          .into(ConversationMember)
-          .values({ conversationId: conversation.id, userId: memberId })
-          .orIgnore()
-          .execute();
-      }
-    }
+    const conversation = await this.directConversationOf(
+      manager,
+      senderId,
+      compensation.toUserId,
+    );
 
     const action = await manager.save(
       manager.create(MessageAction, {
@@ -2316,43 +2579,95 @@ export class TripFinanceService {
     await manager.insert(Message, {
       conversationId: conversation.id,
       senderId,
-      body: `Поход «${trip.announcement ?? 'поход'}»: тебе перевели ${compensation.amountRub} ₽ — подтверди получение.`,
+      body: moneyMessageText(
+        compensation.amountRub,
+        tripNameOf(trip),
+        senderName,
+        senderGender,
+      ),
       actionId: action.id,
     });
   }
 
   /**
-   * Автосогласие через 72 часа (20.11.2026).
+   * Личный диалог пары — найти или открыть.
+   *
+   * Пара хранится отсортированной (`direct_a < direct_b`). Строки состава
+   * чиним на месте, как `openDirect`: у личного диалога доступ — это и есть
+   * состав.
+   */
+  private async directConversationOf(
+    manager: EntityManager,
+    firstUserId: string,
+    secondUserId: string,
+  ): Promise<Conversation> {
+    const [a, b] = [firstUserId, secondUserId].sort();
+
+    const existing = await manager.findOne(Conversation, {
+      where: { kind: 'direct', directA: a, directB: b },
+    });
+
+    if (existing) {
+      for (const memberId of [a, b]) {
+        await manager
+          .createQueryBuilder()
+          .insert()
+          .into(ConversationMember)
+          .values({ conversationId: existing.id, userId: memberId })
+          .orIgnore()
+          .execute();
+      }
+
+      return existing;
+    }
+
+    const created = await manager.save(
+      manager.create(Conversation, { kind: 'direct', directA: a, directB: b }),
+    );
+
+    await manager.insert(ConversationMember, [
+      { conversationId: created.id, userId: a },
+      { conversationId: created.id, userId: b },
+    ]);
+
+    return created;
+  }
+
+  /**
+   * Автосогласие через 72 часа (20.11.2026; для всех получателей — 24.11.2026).
    *
    * Проверяется при чтении вкладки, а не кроном: планировщика в проекте нет,
-   * а расчёт обязан сойтись тогда, когда на него смотрят. Подтверждается
-   * только перевод **ушедшему** — идущий подтверждает сам, у него для этого
-   * есть кнопка «Получено».
+   * а расчёт обязан сойтись тогда, когда на него смотрят. Сначала так
+   * закрывались только переводы **ушедшим**; заказчик распространил срок на
+   * всех: «Борис ушёл в другой поход, был оффлайн и не подтвердил перевод —
+   * транзакция завершается успешно». Идущий тоже может не открыть вкладку
+   * трое суток, и висящий перевод не должен держать расчёт.
    *
    * Ответ «не получено» (`disputed`) автосогласие отменяет: человек уже
    * сказал, что денег нет, и молча подтверждать за него нельзя — строка
    * остаётся `pending`, пока отправитель не разберётся.
    *
+   * **Уведомление переписывается, а не дополняется** (24.11.2026): заказчик
+   * просил, чтобы вместо просьбы подтвердить в личном диалоге лежало
+   * объяснение «время вышло, перевод засчитан». Кнопок к этому моменту нет —
+   * `message_actions` уже `confirmed`, — но текст должен объяснить, почему.
+   *
    * `true` — что-то подтвердилось, и вызывающему стоит разослать SSE.
    */
   private async settleExpiredCompensations(
     manager: EntityManager,
-    tripId: string,
+    trip: Trip,
   ): Promise<boolean> {
+    const tripId = String(trip.id);
     const pending = await manager.find(TripCompensation, {
       where: { tripId, status: 'pending', kind: 'compensation' },
     });
     if (pending.length === 0) return false;
 
-    const declined = await manager.find(TripParticipant, {
-      where: { tripId, status: 'declined' },
-    });
-    const declinedIds = new Set(declined.map((row) => row.userId));
     const deadline = Date.now() - AUTO_CONFIRM_MS;
     let settled = false;
 
     for (const row of pending) {
-      if (!declinedIds.has(row.toUserId)) continue;
       if (row.createdAt.getTime() > deadline) continue;
 
       const actions = (await manager.query(
@@ -2372,14 +2687,33 @@ export class TripFinanceService {
       row.confirmedAt = new Date(row.createdAt.getTime() + AUTO_CONFIRM_MS);
       await manager.save(row);
 
-      if (actions[0] !== undefined) {
-        await manager.query(
-          `UPDATE "message_actions"
-              SET "state" = 'confirmed', "responded_at" = now(), "updated_at" = now()
-            WHERE "id" = $1`,
-          [actions[0].id],
-        );
+      if (actions[0] === undefined) {
+        settled = true;
+        continue;
       }
+
+      await manager.query(
+        `UPDATE "message_actions"
+            SET "state" = 'confirmed', "responded_at" = now(), "updated_at" = now()
+          WHERE "id" = $1`,
+        [actions[0].id],
+      );
+
+      // Текст собираем заново, а не правим суффикс: у части уведомлений
+      // лежит прежняя формулировка, а заказчик назвал новую дословно.
+      const sender = await this.users.findById(row.fromUserId);
+      const body =
+        moneyMessageText(
+          row.amountRub,
+          tripNameOf(trip),
+          sender?.displayName ?? '',
+          sender?.gender,
+        ) + MONEY_SETTLED_TAIL;
+
+      await manager.query(
+        `UPDATE "messages" SET "body" = $2 WHERE "action_id" = $1`,
+        [actions[0].id, body],
+      );
 
       settled = true;
     }

@@ -495,6 +495,12 @@ export class MyFinanceDto {
   })
   canSpend: boolean;
 
+  @ApiProperty({
+    description:
+      'Может ли текущий человек позвать должников: кнопка «Отправить уведомления о компенсации» — организатору и соорганизатору (24.11.2026)',
+  })
+  canRequestPayments: boolean;
+
   @ApiProperty({ type: [CompensationOptionDto] })
   suggestions: CompensationOptionDto[];
 }
@@ -1009,6 +1015,29 @@ export class TripFinanceDto {
     type: [CompensationSenderDto],
   })
   managedSenders: CompensationSenderDto[];
+}
+
+/**
+ * Ответ `POST …/finance/payment-requests` (24.11.2026).
+ *
+ * Вкладка целиком, как у остальных денежных действий, плюс `notified`:
+ * человеку нужно знать, ушли ли уведомления и скольким. Без этого числа
+ * кнопка выглядела бы как «нажал и ничего не произошло» — при пустом списке
+ * должников так и есть.
+ */
+export class TripFinanceNotifyDto extends TripFinanceDto {
+  @ApiProperty({
+    description: 'Сколько участников получили уведомление',
+    example: 3,
+  })
+  notified: number;
+
+  @ApiProperty({
+    description:
+      'Сколько должников нашлось всего. Больше `notified`, когда уведомление уже лежало непрочитанным: второе не шлём, но и «некому» сказать нельзя',
+    example: 3,
+  })
+  recipients: number;
 }
 
 /**
