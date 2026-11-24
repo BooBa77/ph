@@ -353,6 +353,23 @@ const stopEvents = feed.onEvent((event, row) => {
     return
   }
 
+  /**
+   * Сообщение переписали (24.11.2026) — заменяем тело уже показанной
+   * строки, а не дописываем второе: заказчик просил, чтобы вместо просьбы
+   * подтвердить в переписке оказалось объяснение «время вышло». Прокрутка
+   * и «Прочитано» тут не при чём: сообщение не новое, место не меняется.
+   */
+  if (event.kind === 'message_updated') {
+    const { messageId, body } = event
+
+    if (messageId === undefined || body === undefined) return
+
+    messages.value = messages.value.map((message) =>
+      message.id === messageId ? { ...message, body } : message,
+    )
+    return
+  }
+
   const incoming = row?.lastMessage
   const list = listEl.value
   /**

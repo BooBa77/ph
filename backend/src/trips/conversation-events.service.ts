@@ -2,14 +2,19 @@ import { Injectable } from '@nestjs/common';
 import { Observable, Subject } from 'rxjs';
 
 /**
- * Что произошло в переписке: пришло сообщение или диалог прочитали.
+ * Что произошло в переписке: пришло сообщение, диалог прочитали или
+ * сообщение переписали.
  *
- * Двух видов достаточно обоим экранам. `message` двигает строку ленты
+ * Трёх видов достаточно обоим экранам. `message` двигает строку ленты
  * (текст, время, непрочитанное) и дописывает открытый диалог; `read` —
  * единственный способ показать «Прочитано» без перезагрузки: отметка
- * прочтения живёт в `conversation_members` и никак иначе не видна.
+ * прочтения живёт в `conversation_members` и никак иначе не видна;
+ * `message_updated` (24.11.2026) — у уже показанного сообщения сменился
+ * текст, и вторым сообщением это показывать нельзя. Сейчас так делает
+ * только автосогласие через 72 часа: `settleExpiredCompensations`
+ * переписывает `messages.body` уведомления о переводе.
  */
-export type ConversationEventKind = 'message' | 'read';
+export type ConversationEventKind = 'message' | 'read' | 'message_updated';
 
 /**
  * Событие переписки для подписчиков потока (SSE).
@@ -24,6 +29,11 @@ export type ConversationEventKind = 'message' | 'read';
  * `actorId` нужен клиенту, чтобы **не перечитывать своё же действие**:
  * ответ `POST /messages` уже вернул сообщение, а своя отметка прочтения
  * уже обнулила счётчик. Чужие действия — наоборот, повод обновиться.
+ *
+ * **У `message_updated` человека-актора нет** (24.11.2026): текст переписало
+ * автосогласие через 72 часа, а не человек. Поэтому здесь пустая строка —
+ * она не совпадёт ни с чьим id, и событие применят все подписчики, включая
+ * того, кто сам открыл «Бухгалтерию» и запустил расчёт.
  */
 export interface ConversationEvent {
   /** id диалога строкой: в базе `bigint`, TypeORM отдаёт его строкой. */
@@ -31,6 +41,18 @@ export interface ConversationEvent {
   kind: ConversationEventKind;
   actorId: string;
   at: string;
+  /**
+   * Только у `message_updated`: какое сообщение и каким текстом стало.
+   *
+   * Здесь текст, а не «перечитай сам», — в отличие от `message`. Причина
+   * в том, что сообщение уже лежит в открытом диалоге: клиенту нужно
+   * заменить тело конкретной строки, а история листается страницами
+   * по 50, и переписанное сообщение может быть на любой из них. Сам текст
+   * от смотрящего не зависит (это `messages.body`), поэтому кадру он
+   * не противоречит.
+   */
+  messageId?: string;
+  body?: string;
 }
 
 /**
@@ -93,6 +115,31 @@ export class ConversationEventsService {
    */
   emitRead(recipientIds: string[], conversationId: string, actorId: string): void {
     this.send(recipientIds, { kind: 'read', conversationId, actorId });
+  }
+
+  /**
+   * Текст сообщения переписан — всем участникам диалога.
+   *
+   * Заказчик (24.11.2026): открытый диалог получателя должен показать новый
+   * текст уведомления о переводе сам, без перезагрузки. Событие значит
+   * «сообщение изменилось», а не «пришло новое», поэтому `messageId` и
+   * `body` едут в кадре, а `actorId` пустой: человека-актора у автосогласия
+   * нет, и «своё действие не перечитываем» сюда не относится.
+   */
+  emitMessageUpdated(
+    recipientIds: string[],
+    conversationId: string,
+    message: { id: string; body: string },
+  ): void {
+    this.send(recipientIds, {
+      kind: 'message_updated',
+      conversationId,
+      // Пустая строка — «действовал не человек». См. комментарий у
+      // `ConversationEvent.actorId`.
+      actorId: '',
+      messageId: message.id,
+      body: message.body,
+    });
   }
 
   private send(

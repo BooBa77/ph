@@ -3,12 +3,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import RightRail from '@/components/layout/RightRail.vue'
+import { useConversationsStore } from '@/stores/conversations'
 import type { Conversation } from '@/types/conversations'
 
 const { push, api, actions } = vi.hoisted(() => ({
   push: vi.fn(),
   api: {
     listConversations: vi.fn(),
+    getConversation: vi.fn(),
     listConversationMessages: vi.fn(),
     markConversationRead: vi.fn(),
     sendConversationMessage: vi.fn(),
@@ -464,6 +466,65 @@ describe('RightRail', () => {
     // Раскрытия нет: быстрый чат остался у чатов похода.
     expect(wrapper.find('[data-test="rail-input"]').exists()).toBe(false)
     expect(api.listConversationMessages).not.toHaveBeenCalled()
+
+    wrapper.unmount()
+  })
+
+  /**
+   * Переписанный текст (24.11.2026): автосогласие через 72 часа меняет тело
+   * уведомления о переводе. Строку ленты стор перечитывает сам, а раскрытие
+   * держит свой список — в нём тело надо заменить, а не дописать второе
+   * сообщение.
+   */
+  it('показывает новый текст сообщения после события «изменилось»', async () => {
+    api.listConversations.mockResolvedValue({
+      conversations: [
+        tripConversation({
+          unreadCount: 0,
+          lastMessage: message('30', 'Анна перевела тебе 1000 ₽'),
+        }),
+      ],
+    })
+    api.listConversationMessages.mockResolvedValue({
+      messages: [message('30', 'Анна перевела тебе 1000 ₽')],
+      hasMore: false,
+    })
+
+    const wrapper = mountRail()
+    await flushPromises()
+
+    await wrapper.find('[data-test="rail-row-5"] button').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.text()).toContain('Анна перевела тебе 1000 ₽')
+
+    // Стор перечитывает строку: сервер вернул переписанный текст и снятое
+    // действие, непрочитанного не прибавилось.
+    const fresh = tripConversation({
+      unreadCount: 0,
+      lastMessage: message('30', 'Время ожидания подтверждения вышло'),
+    })
+    api.getConversation.mockResolvedValue(fresh)
+
+    const feed = useConversationsStore()
+    await feed.applyEvent({
+      conversationId: '5',
+      kind: 'message_updated',
+      actorId: '',
+      at: '2026-11-24T09:30:00.000Z',
+      messageId: '30',
+      body: 'Время ожидания подтверждения вышло',
+    })
+    await flushPromises()
+
+    // И подпись строки, и раскрытие показывают новый текст.
+    expect(wrapper.find('[data-test="rail-row-5"]').text()).toContain(
+      'Время ожидания подтверждения вышло',
+    )
+    const items = wrapper.findAll('[data-test^="rail-messages-"] li')
+    expect(items).toHaveLength(1)
+    expect(items[0]?.text()).toContain('Время ожидания подтверждения вышло')
+    expect(feed.rows[0]?.unreadCount).toBe(0)
 
     wrapper.unmount()
   })

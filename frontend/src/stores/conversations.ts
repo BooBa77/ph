@@ -129,6 +129,33 @@ export const useConversationsStore = defineStore('conversations', () => {
       return
     }
 
+    /**
+     * Текст сообщения переписали (24.11.2026) — например, автосогласие
+     * через 72 часа заменило просьбу подтвердить объяснением «время вышло».
+     *
+     * **Новое сообщение не пришло**, поэтому счётчик не растёт: строку
+     * перечитываем, но непрочитанное в ней остаётся серверным. Строка
+     * нужна целиком, а не только новый текст: вместе с телом поменялось
+     * и действие — перевод уже `confirmed`, и «Подтверждаю» должно уйти.
+     */
+    if (event.kind === 'message_updated') {
+      if (!row) {
+        await refresh()
+        notify(event, rows.value.find((item) => item.id === id) ?? null)
+        return
+      }
+
+      try {
+        Object.assign(row, await getConversation(id))
+      } catch {
+        // Запрос не прошёл — текст, пришедший в кадре, экран диалога всё
+        // равно заменит, а лента догонит следующим опросом.
+      }
+
+      notify(event, row)
+      return
+    }
+
     if (!row) {
       await refresh()
       notify(event, rows.value.find((item) => item.id === id) ?? null)

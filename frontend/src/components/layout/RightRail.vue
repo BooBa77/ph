@@ -305,9 +305,33 @@ const releaseFeed = feed.hold()
  * (её и так дописывает ответ ручки) дублем не придёт.
  */
 const stopEvents = feed.onEvent((event, row) => {
+  if (!row) return
+
+  /**
+   * Текст уже показанного сообщения переписали (24.11.2026). Саму строку
+   * ленты стор перечитал — подпись под заголовком берётся из `lastMessage`,
+   * — а в раскрытии список свой, и его надо поправить здесь. Второе
+   * сообщение не появляется: заменяем тело у того же id.
+   */
+  if (event.kind === 'message_updated') {
+    const { messageId, body } = event
+    const current = previews.value[row.id]
+
+    if (!current || messageId === undefined || body === undefined) return
+    if (!current.some((message) => message.id === messageId)) return
+
+    previews.value = {
+      ...previews.value,
+      [row.id]: current.map((message) =>
+        message.id === messageId ? { ...message, body } : message,
+      ),
+    }
+    return
+  }
+
   const incoming = row?.lastMessage
 
-  if (event.kind !== 'message' || !row || !incoming) return
+  if (event.kind !== 'message' || !incoming) return
 
   const current = previews.value[row.id]
 

@@ -287,6 +287,47 @@ describe('MessageView', () => {
     expect(feed.rows[0]?.unreadCount).toBe(0)
   })
 
+  /**
+   * Переписанный текст (24.11.2026): автосогласие через 72 часа заменило
+   * уведомление о переводе объяснением «время вышло». Открытый диалог
+   * обязан заменить тело уже показанного сообщения, а не дописать второе,
+   * и счётчик непрочитанного при этом не растёт.
+   */
+  it('заменяет текст уже показанного сообщения из события', async () => {
+    const { wrapper } = await openScreen()
+
+    const feed = useConversationsStore()
+    feed.rows = [conversation({ id: '7', unreadCount: 0, lastMessage: message() })]
+
+    mocks.getConversation.mockResolvedValue(
+      conversation({
+        lastMessage: message({
+          body: 'Анна перевела тебе 1000 ₽. Так как время ожидания вышло…',
+        }),
+      }),
+    )
+
+    await feed.applyEvent({
+      conversationId: '7',
+      kind: 'message_updated',
+      actorId: '',
+      at: '2026-11-24T09:30:00.000Z',
+      messageId: '1',
+      body: 'Анна перевела тебе 1000 ₽. Так как время ожидания вышло…',
+    })
+    await flushPromises()
+
+    const items = wrapper.findAll('[data-test^="message-1"]')
+    // Одно сообщение на месте — второго не появилось.
+    expect(items).toHaveLength(1)
+    expect(items[0]?.text()).toContain('Так как время ожидания вышло')
+    expect(items[0]?.text()).not.toContain('Привет')
+    // Счётчик не вырос: сообщение не новое.
+    expect(feed.rows[0]?.unreadCount).toBe(0)
+    // Историю не перечитывали.
+    expect(mocks.listConversationMessages).toHaveBeenCalledTimes(1)
+  })
+
   it('отметка прочтения собеседника из события рисует «Прочитано»', async () => {
     mocks.listConversationMessages.mockResolvedValue({
       messages: [message({ id: '5', senderId: 'me', body: 'Ты тут?' })],

@@ -114,6 +114,66 @@ describe('ConversationEventsService', () => {
     subscription.unsubscribe();
   });
 
+  /**
+   * Переписанный текст (24.11.2026): автосогласие через 72 часа меняет
+   * `messages.body`, и открытый диалог должен заменить тело уже показанного
+   * сообщения. Поэтому в кадре есть `messageId` и `body`, а `actorId` пуст:
+   * человека-актора нет, и событие применяют все — включая того, кто сам
+   * открыл «Бухгалтерию» и запустил расчёт.
+   */
+  it('отдаёт «сообщение изменилось» с id и новым текстом', () => {
+    const service = new ConversationEventsService();
+    const received: ConversationEvent[] = [];
+
+    const subscription = service
+      .stream('user-1')
+      .subscribe((event) => received.push(event));
+
+    service.emitMessageUpdated(['user-1'], '1268', {
+      id: '346',
+      body: 'Борис перевёл тебе 1000 ₽. Так как время ожидания подтверждения вышло…',
+    });
+
+    expect(received).toEqual([
+      {
+        conversationId: '1268',
+        kind: 'message_updated',
+        actorId: '',
+        at: expect.any(String),
+        messageId: '346',
+        body: 'Борис перевёл тебе 1000 ₽. Так как время ожидания подтверждения вышло…',
+      },
+    ]);
+
+    subscription.unsubscribe();
+  });
+
+  it('переписанный текст доходит до обоих участников диалога', () => {
+    const service = new ConversationEventsService();
+    const sender: ConversationEvent[] = [];
+    const recipient: ConversationEvent[] = [];
+    const stranger: ConversationEvent[] = [];
+
+    const a = service.stream('user-1').subscribe((event) => sender.push(event));
+    const b = service.stream('user-2').subscribe((event) => recipient.push(event));
+    const c = service.stream('user-3').subscribe((event) => stranger.push(event));
+
+    // Событие шлётся с пустым `actorId`: «своё действие не перечитываем»
+    // здесь не работает, иначе открывший «Бухгалтерию» не увидел бы текст.
+    service.emitMessageUpdated(['user-1', 'user-2'], '1268', {
+      id: '346',
+      body: 'Новый текст',
+    });
+
+    expect(sender).toHaveLength(1);
+    expect(recipient).toHaveLength(1);
+    expect(stranger).toHaveLength(0);
+
+    a.unsubscribe();
+    b.unsubscribe();
+    c.unsubscribe();
+  });
+
   it('после отписки последнего подписчика событие никуда не идёт', () => {
     const service = new ConversationEventsService();
     const received: ConversationEvent[] = [];

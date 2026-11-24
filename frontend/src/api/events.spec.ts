@@ -113,6 +113,45 @@ describe('parseConversationFrame', () => {
     ).toEqual(conversationEvent({ kind: 'read', actorId: 'user-2' }))
   })
 
+  /**
+   * Переписанный текст (24.11.2026): в кадре id сообщения и новый текст,
+   * `actorId` пуст — автосогласие действует без человека, и событие
+   * применяют все.
+   */
+  it('читает «сообщение изменилось» вместе с id и текстом', () => {
+    const payload = conversationEvent({
+      kind: 'message_updated',
+      actorId: '',
+      messageId: '346',
+      body: 'Время ожидания подтверждения вышло',
+    })
+
+    expect(parseConversationFrame(conversationFrame(payload))).toEqual(payload)
+  })
+
+  it('отбрасывает «сообщение изменилось» без id или текста', () => {
+    // Заменять в открытом диалоге нечего — кадр бесполезен, а без текста
+    // пришлось бы перечитывать историю страницами.
+    expect(
+      parseConversationFrame(
+        conversationFrame(
+          conversationEvent({ kind: 'message_updated', actorId: '', body: 'Текст' }),
+        ),
+      ),
+    ).toBeNull()
+    expect(
+      parseConversationFrame(
+        conversationFrame(
+          conversationEvent({
+            kind: 'message_updated',
+            actorId: '',
+            messageId: '346',
+          }),
+        ),
+      ),
+    ).toBeNull()
+  })
+
   it('не принимает кадр похода и неизвестный вид', () => {
     // Имя события чужое — это не переписка.
     expect(parseConversationFrame(frame(event()))).toBeNull()

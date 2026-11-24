@@ -1,6 +1,8 @@
 import { flushPromises, mount } from '@vue/test-utils'
+import { createPinia, setActivePinia } from 'pinia'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useConversationsStore } from '@/stores/conversations'
 import type { TripChat as ChatInfo, TripMessage } from '@/types/trips'
 import TripChat from '@/views/trips/TripChat.vue'
 
@@ -58,8 +60,14 @@ function chat(overrides: Partial<ChatInfo> = {}): ChatInfo {
 }
 
 async function mountChat() {
+  // С 24.11.2026 чат слушает события переписки через стор ленты: ему нужна
+  // Pinia, даже если поток открыт колонкой, а не здесь.
+  const pinia = createPinia()
+  setActivePinia(pinia)
+
   const wrapper = mount(TripChat, {
     props: { tripId: '7', kind: 'trip_guest' },
+    global: { plugins: [pinia] },
   })
   await flushPromises()
 
@@ -143,5 +151,38 @@ describe('TripChat', () => {
     const wrapper = await mountChat()
 
     expect(wrapper.find('[data-test="chat-mute"]').exists()).toBe(false)
+  })
+
+  /**
+   * Переписанный текст (24.11.2026): событие `message_updated` меняет тело
+   * уже показанного сообщения, а не дописывает второе. Диалог узнаётся по
+   * id из `GET /trips/:id/chats` — в адресе экрана его нет.
+   */
+  it('заменяет текст сообщения из события переписки', async () => {
+    mocks.listTripMessages.mockResolvedValue({
+      messages: [message({ id: '1', body: 'Старый текст' })],
+      hasMore: false,
+    })
+    mocks.listTripChats.mockResolvedValue([chat()])
+
+    const wrapper = await mountChat()
+
+    expect(wrapper.find('[data-test="chat-messages"]').text()).toContain('Старый текст')
+
+    const feed = useConversationsStore()
+    await feed.applyEvent({
+      conversationId: '44',
+      kind: 'message_updated',
+      actorId: '',
+      at: '2026-11-24T09:30:00.000Z',
+      messageId: '1',
+      body: 'Новый текст',
+    })
+    await flushPromises()
+
+    const items = wrapper.findAll('[data-test="chat-messages"] li')
+    expect(items).toHaveLength(1)
+    expect(items[0]?.text()).toContain('Новый текст')
+    expect(items[0]?.text()).not.toContain('Старый текст')
   })
 })

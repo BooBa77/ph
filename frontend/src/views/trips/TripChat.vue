@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 
 import { setConversationMuted } from '@/api/conversations'
 import { ApiError } from '@/api/errors'
 import { listTripChats, listTripMessages, sendTripMessage } from '@/api/trips'
 import MarkdownEditor from '@/components/ui/MarkdownEditor.vue'
+import { useConversationsStore } from '@/stores/conversations'
 import { markdownToHtml } from '@/utils/markdown'
 import { CHAT_KIND_LABELS, type ChatKind, type TripChat as ChatInfo, type TripMessage } from '@/types/trips'
 
@@ -120,6 +121,37 @@ async function loadChatState(): Promise<void> {
 }
 
 onMounted(loadChatState)
+
+/**
+ * Переписанный текст в открытом чате (24.11.2026).
+ *
+ * Поток событий переписки держит стор ленты (`stores/conversations.ts`) —
+ * здесь только наблюдатель, своего соединения чат не открывает. Событие
+ * `message_updated` значит «сообщение изменилось»: заменяем тело уже
+ * показанной строки, а не дописываем вторую. Новые сообщения и «прочитано»
+ * этот слушатель не трогает: живость самого чата похода — отдельный шаг.
+ *
+ * Диалог узнаётся по id из `GET /trips/:id/chats`: у чата похода нет
+ * своего id в адресе экрана.
+ */
+const feed = useConversationsStore()
+
+const stopEvents = feed.onEvent((event) => {
+  const conversationId = chat.value?.id
+
+  if (!conversationId || event.kind !== 'message_updated') return
+  if (String(event.conversationId) !== conversationId) return
+
+  const { messageId, body } = event
+
+  if (messageId === undefined || body === undefined) return
+
+  messages.value = messages.value.map((message) =>
+    message.id === messageId ? { ...message, body } : message,
+  )
+})
+
+onUnmounted(stopEvents)
 
 /**
  * Переключить «Уведомлять об этом чате».

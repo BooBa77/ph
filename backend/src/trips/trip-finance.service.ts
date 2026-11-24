@@ -119,6 +119,26 @@ const MONEY_SETTLED_TAIL =
   'Если поступления тебе не было, свяжись с отправителем за рамками ph.';
 
 /**
+ * Уведомление, у которого автосогласие переписало текст (24.11.2026).
+ *
+ * Нужно, чтобы `getView` разослал событие переписки **после** записи:
+ * диалог, открытый у участников, должен показать новый текст, а сам
+ * `TripFinanceService` о личном диалоге иначе ничего бы не знал.
+ */
+interface RewrittenMessage {
+  conversationId: string;
+  messageId: string;
+  body: string;
+  recipientIds: string[];
+}
+
+/** Итог автосогласия: что подтвердилось и какие тексты переписаны. */
+interface Settlement {
+  confirmed: boolean;
+  rewritten: RewrittenMessage[];
+}
+
+/**
  * Уникальный индекс `UQ_trip_expenses_client` сработал на вставке.
  *
  * Значит тот же чек уже создало параллельное устройство или повторный
@@ -179,10 +199,29 @@ export class TripFinanceService {
     // вкладки, а не кроном: отдельного планировщика в проекте нет, а баланс
     // обязан сойтись в тот момент, когда его смотрят. Повторный вызов ничего
     // не меняет — строки уже `confirmed`.
-    const settled = await this.settleExpiredCompensations(manager, trip);
+    const settlement = await this.settleExpiredCompensations(manager, trip);
     const view = await this.buildView(manager, trip, userId);
 
-    if (settled) this.events.emitFinance(String(tripId), userId);
+    if (settlement.confirmed) this.events.emitFinance(String(tripId), userId);
+
+    /**
+     * Переписанный текст — событием переписки (24.11.2026).
+     *
+     * Автосогласие меняет `messages.body` у уведомления о переводе, но сам
+     * диалог об этом не узнаёт: открытый экран получателя показывал бы
+     * старую просьбу подтвердить до перезагрузки. Событие шлём **после**
+     * записи текста — до неё клиент перечитал бы строку со старым телом.
+     * Получатели — участники диалога, без «своего действия»: человека-актора
+     * здесь нет, и тот, кто открыл «Бухгалтерию», тоже должен увидеть новый
+     * текст.
+     */
+    for (const rewritten of settlement.rewritten) {
+      this.conversations.emitMessageUpdated(
+        rewritten.recipientIds,
+        rewritten.conversationId,
+        { id: rewritten.messageId, body: rewritten.body },
+      );
+    }
 
     return view;
   }
@@ -2649,20 +2688,23 @@ export class TripFinanceService {
    * объяснение «время вышло, перевод засчитан». Кнопок к этому моменту нет —
    * `message_actions` уже `confirmed`, — но текст должен объяснить, почему.
    *
-   * `true` — что-то подтвердилось, и вызывающему стоит разослать SSE.
+   * Возвращает, подтвердилось ли что-нибудь (`confirmed` — вызывающему стоит
+   * разослать событие вкладки) и какие сообщения переписаны (`rewritten` —
+   * по ним уходит событие переписки, см. `getView`).
    */
   private async settleExpiredCompensations(
     manager: EntityManager,
     trip: Trip,
-  ): Promise<boolean> {
+  ): Promise<Settlement> {
     const tripId = String(trip.id);
     const pending = await manager.find(TripCompensation, {
       where: { tripId, status: 'pending', kind: 'compensation' },
     });
-    if (pending.length === 0) return false;
+
+    const settlement: Settlement = { confirmed: false, rewritten: [] };
+    if (pending.length === 0) return settlement;
 
     const deadline = Date.now() - AUTO_CONFIRM_MS;
-    let settled = false;
 
     for (const row of pending) {
       if (row.createdAt.getTime() > deadline) continue;
@@ -2683,11 +2725,9 @@ export class TripFinanceService {
       row.status = 'confirmed';
       row.confirmedAt = new Date(row.createdAt.getTime() + AUTO_CONFIRM_MS);
       await manager.save(row);
+      settlement.confirmed = true;
 
-      if (actions[0] === undefined) {
-        settled = true;
-        continue;
-      }
+      if (actions[0] === undefined) continue;
 
       await manager.query(
         `UPDATE "message_actions"
@@ -2707,14 +2747,43 @@ export class TripFinanceService {
           sender?.gender,
         ) + MONEY_SETTLED_TAIL;
 
-      await manager.query(
-        `UPDATE "messages" SET "body" = $2 WHERE "action_id" = $1`,
+      /**
+       * `RETURNING`: у действия может быть не одно сообщение (копия после
+       * «посмотри ещё раз»), и переписаны должны быть все. Из ответа же
+       * берём id диалога — по нему разойдётся событие переписки.
+       *
+       * TypeORM на `UPDATE` отдаёт не строки, а пару `[строки, сколько]` —
+       * поэтому разбираем ответ, а не идём по нему циклом.
+       */
+      const [updated] = (await manager.query(
+        `UPDATE "messages" SET "body" = $2 WHERE "action_id" = $1
+          RETURNING "id", "conversation_id"`,
         [actions[0].id, body],
-      );
+      )) as [Array<{ id: string; conversation_id: string }>, number];
 
-      settled = true;
+      for (const message of updated) {
+        const conversationId = String(message.conversation_id);
+        const members = await manager.find(ConversationMember, {
+          where: { conversationId },
+        });
+        const recipientIds = members.map((member) => member.userId);
+
+        // Строки состава у личного диалога есть всегда (`directConversationOf`
+        // их чинит), но если их почему-то нет, автор перевода и получатель
+        // известны из самой компенсации — событие обязано дойти до обоих.
+        if (recipientIds.length === 0) {
+          recipientIds.push(row.fromUserId, row.toUserId);
+        }
+
+        settlement.rewritten.push({
+          conversationId,
+          messageId: String(message.id),
+          body,
+          recipientIds,
+        });
+      }
     }
 
-    return settled;
+    return settlement;
   }
 }

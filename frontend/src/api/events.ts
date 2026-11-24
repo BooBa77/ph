@@ -51,21 +51,32 @@ export interface TripEvent {
 }
 
 /**
- * Что произошло в переписке: пришло сообщение или диалог прочитали.
+ * Что произошло в переписке: пришло сообщение, диалог прочитали или
+ * сообщение переписали.
  *
  * `ConversationDto` здесь не едет намеренно: он зависит от смотрящего
  * (`unreadCount`, `peer`, `peerLastReadAt`), и один объект на всех отдал бы
  * чужое непрочитанное. По `conversationId` клиент находит строку и
  * дотягивает её одним `GET /api/conversations/:id`.
+ *
+ * Исключение — `message_updated`: `messageId` и `body` в кадре есть, потому
+ * что переписанное сообщение уже лежит в открытом диалоге и заменить надо
+ * именно его тело. От смотрящего эти два поля не зависят.
  */
-export type ConversationEventKind = 'message' | 'read'
+export type ConversationEventKind = 'message' | 'read' | 'message_updated'
 
 export interface ConversationEvent {
   conversationId: string
   kind: ConversationEventKind
-  /** Кто действовал: своё действие клиент уже применил и не перечитывает. */
+  /**
+   * Кто действовал: своё действие клиент уже применил и не перечитывает.
+   * У `message_updated` человека-актора нет — пустая строка.
+   */
   actorId: string
   at: string
+  /** Только у `message_updated`: какое сообщение и каким текстом стало. */
+  messageId?: string
+  body?: string
 }
 
 /** Паузы переподключения по попыткам; последняя повторяется. */
@@ -192,19 +203,30 @@ function isTripEvent(value: unknown): value is TripEvent {
 }
 
 /** Виды событий переписки: всё остальное — не наше. */
-const CONVERSATION_EVENT_KINDS: readonly ConversationEventKind[] = ['message', 'read']
+const CONVERSATION_EVENT_KINDS: readonly ConversationEventKind[] = [
+  'message',
+  'read',
+  'message_updated',
+]
 
 function isConversationEvent(value: unknown): value is ConversationEvent {
   if (typeof value !== 'object' || value === null) return false
 
   const event = value as Partial<ConversationEvent>
 
-  return (
+  const base =
     typeof event.conversationId === 'string' &&
     CONVERSATION_EVENT_KINDS.includes(event.kind as ConversationEventKind) &&
     typeof event.actorId === 'string' &&
     typeof event.at === 'string'
-  )
+
+  if (!base) return false
+
+  // Переписанное сообщение без id и текста бесполезно: заменить в открытом
+  // диалоге нечего, а лента перечитает строку и так. Такой кадр — ошибка.
+  if (event.kind !== 'message_updated') return true
+
+  return typeof event.messageId === 'string' && typeof event.body === 'string'
 }
 
 /**

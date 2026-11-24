@@ -3,12 +3,14 @@ import { flushPromises, mount } from '@vue/test-utils'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import MobileMessages from '@/components/layout/MobileMessages.vue'
+import { useConversationsStore } from '@/stores/conversations'
 import type { Conversation } from '@/types/conversations'
 
 const { push, api, actions } = vi.hoisted(() => ({
   push: vi.fn(),
   api: {
     listConversations: vi.fn(),
+    getConversation: vi.fn(),
     markConversationRead: vi.fn(),
     sendConversationMessage: vi.fn(),
   },
@@ -305,6 +307,63 @@ describe('MobileMessages', () => {
     await flushPromises()
 
     expect(push).toHaveBeenCalledWith({ path: '/trips/3', query: { tab: 'finance' } })
+
+    wrapper.unmount()
+  })
+
+  /**
+   * Переписанный текст (24.11.2026): автосогласие через 72 часа меняет тело
+   * уведомления. Подпись строки берётся из `lastMessage`, поэтому панель
+   * показывает новый текст после того, как стор перечитал строку, и счётчик
+   * непрочитанного от этого не растёт.
+   */
+  it('показывает новый текст сообщения, не наращивая непрочитанное', async () => {
+    // Личный диалог: у чата похода подпись — название вкладки, а не текст
+    // сообщения, поэтому переписанное уведомление проверяем на личном.
+    api.listConversations.mockResolvedValue({
+      conversations: [
+        conversation({
+          id: '1',
+          unreadCount: 0,
+          lastMessage: message('10', 'Анна перевела тебе 1000 ₽'),
+        }),
+      ],
+    })
+
+    const wrapper = mountPanel()
+    await flushPromises()
+
+    await wrapper.find('[data-test="mobile-messages-button"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="mobile-messages-row-1"]').text()).toContain(
+      'Анна перевела тебе 1000 ₽',
+    )
+
+    api.getConversation.mockResolvedValue(
+      conversation({
+        id: '1',
+        unreadCount: 0,
+        lastMessage: message('10', 'Время ожидания подтверждения вышло'),
+      }),
+    )
+
+    const feed = useConversationsStore()
+    await feed.applyEvent({
+      conversationId: '1',
+      kind: 'message_updated',
+      actorId: '',
+      at: '2026-11-24T09:30:00.000Z',
+      messageId: '10',
+      body: 'Время ожидания подтверждения вышло',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="mobile-messages-row-1"]').text()).toContain(
+      'Время ожидания подтверждения вышло',
+    )
+    expect(feed.rows[0]?.unreadCount).toBe(0)
+    expect(wrapper.find('[data-test="mobile-messages-badge"]').exists()).toBe(false)
 
     wrapper.unmount()
   })

@@ -10,6 +10,8 @@ import { EmailCodeService } from './../src/email/services/email-code.service';
 import { SmtpService } from './../src/email/services/smtp.service';
 import { ORGANIZER_ROLE_CODE } from './../src/trips/trip.types';
 import { TripEventsService } from './../src/trips/trip-events.service';
+import { ConversationEventsService } from './../src/trips/conversation-events.service';
+import type { ConversationEvent } from './../src/trips/conversation-events.service';
 
 /**
  * «Бухгалтерия» похода — e2e на живом приложении и живой базе (11.11.2026).
@@ -255,6 +257,12 @@ describe('Бухгалтерия похода (e2e)', () => {
       const userIds = [a, b, c, d, e, g]
         .filter(Boolean)
         .map((person) => person.id);
+
+      // Адресатом действия бывает и человек без аккаунта (личное сообщение
+      // о переводе «Дяде Вите»): без его id в списке действия оставались бы
+      // и держали `FK_message_actions_target` при удалении людей.
+      if (virtualPersonId) userIds.push(virtualPersonId);
+
       await dataSource.query(
         `DELETE FROM message_actions WHERE "target_user_id" = ANY($1::uuid[])`,
         [userIds],
@@ -2052,8 +2060,11 @@ describe('Бухгалтерия похода (e2e)', () => {
         [actions[0]!.id],
       )) as Array<{ body: string }>;
 
-      expect(messages[0]?.body).toContain('перевели 50 ₽');
-      expect(messages[0]?.body).toContain('подтверди получение');
+      // Текст с 24.11.2026 — «Борис перевёл тебе 50 ₽ за поход «…»»:
+      // род глагола берётся у отправителя, а просьбы «подтверди получение»
+      // в тексте нет — кнопку рисует действие, а не строка.
+      expect(messages[0]?.body).toContain('перевёл тебе 50 ₽');
+      expect(messages[0]?.body).toContain('за поход');
     });
 
     it('«Получено» в личном сообщении закрывает перевод', async () => {
@@ -2100,7 +2111,25 @@ describe('Бухгалтерия похода (e2e)', () => {
         [trip9],
       );
 
+      /**
+       * Переписанный текст — событием переписки (24.11.2026).
+       *
+       * Подписываемся на потоки участников до чтения вкладки: автосогласие
+       * закрывается именно при чтении, и кадр должен дойти до обеих сторон
+       * каждого диалога — без «своё действие не перечитываем», потому что
+       * человека-актора нет.
+       */
+      const conversationEvents = app.get(ConversationEventsService);
+      const received: ConversationEvent[] = [];
+      const streams = [a, c, d].map((person) =>
+        conversationEvents
+          .stream(person.id)
+          .subscribe((event) => received.push(event)),
+      );
+
       const settled = await view(trip9, a);
+
+      for (const subscription of streams) subscription.unsubscribe();
 
       expect(
         compensationsOf(settled.body).every(
@@ -2113,6 +2142,28 @@ describe('Бухгалтерия похода (e2e)', () => {
       expect(riskOf(settled.body, d)).toBeUndefined();
       // C в «пока думаю» и в нуле — строки тоже нет.
       expect(memberOf(settled.body, c)).toBeUndefined();
+
+      // Два перевода истекли — значит два уведомления переписаны, и каждое
+      // дошло до обоих участников диалога: 2 диалога × 2 человека.
+      const updates = received.filter(
+        (event) => event.kind === 'message_updated',
+      );
+      expect(updates).toHaveLength(4);
+      expect(new Set(updates.map((event) => event.conversationId)).size).toBe(2);
+
+      for (const event of updates) {
+        // Актора-человека нет: строка не совпадёт ни с чьим id.
+        expect(event.actorId).toBe('');
+        expect(event.messageId).toEqual(expect.any(String));
+        expect(event.body).toContain('время ожидания подтверждения вышло');
+
+        // Текст в базе — тот же, что уехал в кадре.
+        const [stored] = (await dataSource.query(
+          `SELECT "body" FROM "messages" WHERE "id" = $1`,
+          [event.messageId],
+        )) as Array<{ body: string }>;
+        expect(stored?.body).toBe(event.body);
+      }
     });
 
     it('«Удержать» ушедшему с закрытым расчётом недоступно', async () => {
