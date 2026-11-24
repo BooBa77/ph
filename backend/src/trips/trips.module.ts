@@ -9,6 +9,7 @@ import { ConversationMember } from './entities/conversation-member.entity';
 import { GeoObject } from './entities/geo-object.entity';
 import { Message } from './entities/message.entity';
 import { MessageAction } from './entities/message-action.entity';
+import { Notification } from './entities/notification.entity';
 import { Role } from './entities/role.entity';
 import { RoleTabPermission } from './entities/role-tab-permission.entity';
 import { TripDateVariant } from './entities/trip-date-variant.entity';
@@ -63,6 +64,8 @@ import { VehiclesService } from './vehicles.service';
 import { ConversationsController } from './conversations.controller';
 import { ConversationsService } from './conversations.service';
 import { ConversationEventsService } from './conversation-events.service';
+import { NotificationsController } from './notifications.controller';
+import { NotificationsService } from './notifications.service';
 import { MessageActionsController } from './message-actions.controller';
 import { MessageActionsService } from './message-actions.service';
 import { ObjectsController } from './objects.controller';
@@ -121,6 +124,7 @@ import { ObjectsService } from './objects.service';
       ConversationMember,
       Message,
       MessageAction,
+      Notification,
       CalendarActivityType,
     ]),
     UsersModule,
@@ -140,6 +144,7 @@ import { ObjectsService } from './objects.service';
     ObjectsController,
     MessageActionsController,
     ConversationsController,
+    NotificationsController,
   ],
   providers: [
     // Глобальный перехватчик: поднимает отметку свежести похода на любой
@@ -163,6 +168,8 @@ import { ObjectsService } from './objects.service';
     ConversationsService,
     // Канал событий переписки: ключ — человек, а не диалог (24.11.2026).
     ConversationEventsService,
+    // Уведомления правой панели (24.11.2026, §14 `messages.md`).
+    NotificationsService,
   ],
   exports: [
     TripsService,
@@ -178,6 +185,7 @@ import { ObjectsService } from './objects.service';
     MessageActionsService,
     ConversationsService,
     ConversationEventsService,
+    NotificationsService,
   ],
 })
 export class TripsModule {}

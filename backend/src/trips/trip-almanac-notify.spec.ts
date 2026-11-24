@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { DataSource, EntityManager } from 'typeorm';
 
 import {
@@ -22,6 +22,10 @@ import type { Trip } from './entities/trip.entity';
  * (автора в ней нет вовсе), замок берётся до проверки, второе уведомление
  * не вставляется. Гонку и совместную работу двух авторов проверяет e2e
  * `diary` — там настоящая база и настоящие параллельные запросы.
+ *
+ * С 24.11.2026 (§14) функция заводит ещё и карточку `notifications`:
+ * здесь проверяется, что она создаётся в той же транзакции и что сигнал
+ * `notifications` уходит после COMMIT.
  */
 const ANNA = '9bd2e553-4321-4877-a6ab-71b991d942b1';
 const BORIS = '4c644442-9738-4fed-8a82-393bcce699da';
@@ -95,6 +99,12 @@ function stub({
     },
   };
 
+  /** Заглушка сервиса уведомлений: карточки и сигнал после COMMIT. */
+  const notifications = {
+    upsertAlmanac: vi.fn(async () => undefined),
+    emitChanged: vi.fn(),
+  };
+
   const dataSource = {
     manager,
     transaction: async (run: (scope: EntityManager) => Promise<void>) => {
@@ -105,6 +115,7 @@ function stub({
 
   return {
     dataSource: dataSource as unknown as DataSource,
+    notifications,
     queries,
     inserts,
     log,
@@ -121,9 +132,9 @@ function unreadQuery(queries: Query[]): Query {
 
 describe('уведомление альманаха: дедупликация', () => {
   it('берёт транзакционный замок диалога до проверки непрочитанного', async () => {
-    const { dataSource, queries } = stub({ unread: false });
+    const { dataSource, notifications, queries } = stub({ unread: false });
 
-    await notifyAlmanacUpdated(dataSource, TRIP, ANNA);
+    await notifyAlmanacUpdated(dataSource, notifications, TRIP, ANNA);
 
     expect(queries[0].sql).toContain('pg_advisory_xact_lock');
     expect(queries[0].params).toEqual([`almanac-notify:${CONVERSATION}`]);
@@ -131,9 +142,9 @@ describe('уведомление альманаха: дедупликация', 
   });
 
   it('проверяет непрочитанное по получателю, а не по автору правки', async () => {
-    const { dataSource, queries } = stub({ unread: true });
+    const { dataSource, notifications, queries } = stub({ unread: true });
 
-    await notifyAlmanacUpdated(dataSource, TRIP, ANNA);
+    await notifyAlmanacUpdated(dataSource, notifications, TRIP, ANNA);
 
     const check = unreadQuery(queries);
 
@@ -144,27 +155,35 @@ describe('уведомление альманаха: дедупликация', 
   });
 
   it('не шлёт второе, если непрочитанное уже лежит — от любого автора', async () => {
-    const { dataSource, inserts } = stub({ unread: true });
+    const { dataSource, notifications, inserts } = stub({ unread: true });
 
-    await notifyAlmanacUpdated(dataSource, TRIP, ANNA);
+    await notifyAlmanacUpdated(dataSource, notifications, TRIP, ANNA);
 
     expect(inserts).toEqual([]);
   });
 
-  it('шлёт одно, если непрочитанного нет', async () => {
-    const { dataSource, inserts } = stub({ unread: false });
+  it('шлёт одно, если непрочитанного нет, и заводит карточку уведомления', async () => {
+    const { dataSource, notifications, inserts } = stub({ unread: false });
 
-    await notifyAlmanacUpdated(dataSource, TRIP, ANNA);
+    await notifyAlmanacUpdated(dataSource, notifications, TRIP, ANNA);
 
     expect(inserts).toEqual([
       { conversationId: CONVERSATION, senderId: ANNA, body: BODY },
     ]);
+    // Карточка — в той же транзакции: ключ по походу, получатель без автора.
+    expect(notifications.upsertAlmanac).toHaveBeenCalledWith(expect.anything(), {
+      tripId: '193',
+      tripName: 'Хамар-Дабан',
+      recipientIds: [BORIS],
+    });
+    // Сигнал в поток — после COMMIT.
+    expect(notifications.emitChanged).toHaveBeenCalledWith([BORIS]);
   });
 
   it('дубль получателя не даёт второго уведомления: проверка видит вставку', async () => {
     // Так выглядит гонка на уровне транзакции: второй проход по тому же
     // человеку уже находит непрочитанное, которое вставил первый.
-    const { dataSource, inserts } = stub({
+    const { dataSource, notifications, inserts } = stub({
       unread: false,
       unreadAfterInsert: true,
       participants: [
@@ -174,13 +193,13 @@ describe('уведомление альманаха: дедупликация', 
       ],
     });
 
-    await notifyAlmanacUpdated(dataSource, TRIP, ANNA);
+    await notifyAlmanacUpdated(dataSource, notifications, TRIP, ANNA);
 
     expect(inserts).toHaveLength(1);
   });
 
-  it('автору и отказнику не шлёт', async () => {
-    const { dataSource, queries, inserts } = stub({
+  it('автору и отказнику не шлёт — ни сообщения, ни карточки', async () => {
+    const { dataSource, notifications, queries, inserts } = stub({
       unread: false,
       participants: [
         { userId: ANNA, status: 'going' },
@@ -188,10 +207,12 @@ describe('уведомление альманаха: дедупликация', 
       ],
     });
 
-    await notifyAlmanacUpdated(dataSource, TRIP, ANNA);
+    await notifyAlmanacUpdated(dataSource, notifications, TRIP, ANNA);
 
     expect(queries).toEqual([]);
     expect(inserts).toEqual([]);
+    expect(notifications.upsertAlmanac).not.toHaveBeenCalled();
+    expect(notifications.emitChanged).not.toHaveBeenCalled();
   });
 });
 
@@ -209,17 +230,17 @@ describe('уведомление альманаха: дедупликация', 
  */
 describe('уведомление альманаха: кадр в поток переписки', () => {
   it('отдаёт кадр на обоих участников диалога — и после коммита', async () => {
-    const { dataSource, log } = stub({ unread: false });
-    const notifications: AlmanacNotification[] = [];
+    const { dataSource, notifications, log } = stub({ unread: false });
+    const frames: AlmanacNotification[] = [];
 
-    await notifyAlmanacUpdated(dataSource, TRIP, ANNA, (created) => {
+    await notifyAlmanacUpdated(dataSource, notifications, TRIP, ANNA, (created) => {
       log.push('emit');
-      notifications.push(created);
+      frames.push(created);
     });
 
     // Диалог — пара людей: автор правки тоже получает кадр (вторая вкладка,
     // телефон), а «своё» клиент узнаёт по `actorId`, который подставит сервис.
-    expect(notifications).toEqual([
+    expect(frames).toEqual([
       { conversationId: CONVERSATION, participantIds: [ANNA, BORIS] },
     ]);
     // Сначала COMMIT, потом кадр: иначе подписчик перечитает диалог
@@ -228,10 +249,10 @@ describe('уведомление альманаха: кадр в поток пе
   });
 
   it('не отдаёт кадр, если непрочитанное уже лежало — вставки не было', async () => {
-    const { dataSource } = stub({ unread: true });
+    const { dataSource, notifications } = stub({ unread: true });
     let emitted = 0;
 
-    await notifyAlmanacUpdated(dataSource, TRIP, ANNA, () => {
+    await notifyAlmanacUpdated(dataSource, notifications, TRIP, ANNA, () => {
       emitted += 1;
     });
 
@@ -239,10 +260,10 @@ describe('уведомление альманаха: кадр в поток пе
   });
 
   it('работает без слушателя: старые вызовы не ломаются', async () => {
-    const { dataSource, inserts } = stub({ unread: false });
+    const { dataSource, notifications, inserts } = stub({ unread: false });
 
     await expect(
-      notifyAlmanacUpdated(dataSource, TRIP, ANNA),
+      notifyAlmanacUpdated(dataSource, notifications, TRIP, ANNA),
     ).resolves.toBeUndefined();
     expect(inserts).toHaveLength(1);
   });

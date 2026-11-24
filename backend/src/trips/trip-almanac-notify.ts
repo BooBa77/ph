@@ -5,6 +5,7 @@ import { ConversationMember } from './entities/conversation-member.entity';
 import { Message } from './entities/message.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import type { Trip } from './entities/trip.entity';
+import type { NotificationsService } from './notifications.service';
 import { tripNameOf } from './trip-name';
 
 /**
@@ -95,6 +96,7 @@ export type AlmanacNotifyListener = (notification: AlmanacNotification) => void;
 
 export async function notifyAlmanacUpdated(
   dataSource: DataSource,
+  notifications: NotificationsService,
   trip: Trip,
   authorId: string,
   onCreated?: AlmanacNotifyListener,
@@ -139,6 +141,20 @@ export async function notifyAlmanacUpdated(
         participantIds: [authorId, recipientId],
       });
     }
+
+    /**
+     * Карточка «Альманах» — каждому получателю (24.11.2026, §14).
+     *
+     * Не привязана к тому, легло ли новое сообщение: уведомление живёт
+     * своей жизнью, а сообщение-история дедуплицируется отдельно. Ключ
+     * `almanac:<поход>` — одна карточка на поход; новая редакция обновляет
+     * её, «ОК» удаляет, следующая редакция создаёт заново.
+     */
+    await notifications.upsertAlmanac(transaction, {
+      tripId: String(trip.id),
+      tripName,
+      recipientIds: recipients,
+    });
   });
 
   // Кадры — только после COMMIT: подписчик перечитывает строку сразу
@@ -146,6 +162,10 @@ export async function notifyAlmanacUpdated(
   for (const notification of created) {
     onCreated?.(notification);
   }
+
+  // Сигнал «перечитай уведомления» — тоже после COMMIT и тоже по факту:
+  // карточка обновилась у всех получателей, даже если сообщение не вставилось.
+  notifications.emitChanged(recipients);
 }
 
 /**

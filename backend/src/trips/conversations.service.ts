@@ -25,6 +25,7 @@ import { Message } from './entities/message.entity';
 import { Trip } from './entities/trip.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { ConversationEventsService } from './conversation-events.service';
+import { NotificationsService } from './notifications.service';
 import { tripNameOf } from './trip-name';
 import { User } from '../users/entities/user.entity';
 
@@ -56,6 +57,12 @@ export class ConversationsService {
      * легло в базу, а отметить прочитанным значит знать состав диалога.
      */
     private readonly events: ConversationEventsService,
+    /**
+     * Уведомления правой панели (24.11.2026): новое сообщение даёт карточку
+     * «об этом чате», прочтение — убирает её. Логика самих карточек живёт
+     * в `NotificationsService`, здесь только вызовы.
+     */
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Диалоги, которые видит человек, с последним сообщением и непрочитанным. */
@@ -264,6 +271,15 @@ export class ConversationsService {
      * событие «прочитано» до коммита было бы неправдой.
      */
     this.events.emitRead(recipients, String(conversationId), userId);
+
+    /**
+     * Открыли чат — карточка уведомления исчезает (§14.2).
+     *
+     * Удаление без архива: следующее новое сообщение создаст её заново.
+     * Своё событие `notifications` уходит только если строка была —
+     * иначе панель перечитывалась бы на каждое открытие чата впустую.
+     */
+    await this.notifications.closeForConversation(conversationId, userId);
   }
 
   /**
@@ -367,6 +383,16 @@ export class ConversationsService {
       conversation.id,
       userId,
     );
+
+    /**
+     * Карточка уведомления — после сообщения (24.11.2026, §14).
+     *
+     * Уведомление не заменяет сообщение в этом шаге: старая лента ещё
+     * читает `messages`, панель уведомлений — новую таблицу (двойная
+     * запись). Дедупликация — по диалогу, так что пять сообщений подряд
+     * обновят одну карточку.
+     */
+    await this.notifications.notifyChatMessage(conversation.id, userId, body);
 
     return TripMessageDto.from(saved, userId);
   }

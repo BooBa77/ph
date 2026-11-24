@@ -803,19 +803,34 @@ describe('Дневник похода (e2e)', () => {
 
     const conversation = await conversationWith(watcher.token, organizerId);
 
-    // Кадр — сигнал без DTO: только диалог, вид, автор и время.
-    expect(watcherFrames).toHaveLength(1);
-    expect(watcherFrames[0]).toMatchObject({
+    // Кадров теперь два (24.11.2026, §14): сообщение-история и сигнал
+    // «перечитай уведомления». Оба — без DTO.
+    expect(watcherFrames).toHaveLength(2);
+
+    const messageFrame = watcherFrames.find((frame) => frame.kind === 'message');
+    expect(messageFrame).toMatchObject({
       conversationId: String(conversation.id),
       kind: 'message',
       actorId: organizerId,
     });
-    expect(watcherFrames[0]?.at).toEqual(expect.any(String));
+    expect(messageFrame?.at).toEqual(expect.any(String));
 
-    // Автор тоже получает кадр (вторая вкладка, телефон): «своё действие
-    // не перечитываем» клиент решает по `actorId`, он здесь свой.
+    const notificationFrame = watcherFrames.find(
+      (frame) => frame.kind === 'notifications',
+    );
+    expect(notificationFrame).toMatchObject({
+      kind: 'notifications',
+      conversationId: '',
+      actorId: '',
+    });
+    expect(notificationFrame?.at).toEqual(expect.any(String));
+
+    // Автор тоже получает кадр сообщения (вторая вкладка, телефон):
+    // «своё действие не перечитываем» клиент решает по `actorId`, он здесь
+    // свой. Карточки уведомления у автора нет — сигнала ему не шлём.
     expect(organizerFrames).toHaveLength(1);
     expect(organizerFrames[0]?.actorId).toBe(organizerId);
+    expect(organizerFrames.some((frame) => frame.kind === 'notifications')).toBe(false);
 
     // Кадр пришёл после COMMIT: строка уже видна чтением, и она одна.
     expect(await unreadWith(watcher.token, organizerId)).toBe(1);

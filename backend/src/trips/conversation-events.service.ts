@@ -13,8 +13,17 @@ import { Observable, Subject } from 'rxjs';
  * текст, и вторым сообщением это показывать нельзя. Сейчас так делает
  * только автосогласие через 72 часа: `settleExpiredCompensations`
  * переписывает `messages.body` уведомления о переводе.
+ *
+ * `notifications` (24.11.2026) — сигнал «перечитай уведомления»: появилась
+ * карточка, закрылась или ушла в архив. Отдельного потока для уведомлений
+ * нет (§14.2 `topics/messages.md`): панель живёт на том же соединении,
+ * что и переписка. DTO в кадре нет — только вид.
  */
-export type ConversationEventKind = 'message' | 'read' | 'message_updated';
+export type ConversationEventKind =
+  | 'message'
+  | 'read'
+  | 'message_updated'
+  | 'notifications';
 
 /**
  * Событие переписки для подписчиков потока (SSE).
@@ -36,7 +45,10 @@ export type ConversationEventKind = 'message' | 'read' | 'message_updated';
  * того, кто сам открыл «Бухгалтерию» и запустил расчёт.
  */
 export interface ConversationEvent {
-  /** id диалога строкой: в базе `bigint`, TypeORM отдаёт его строкой. */
+  /**
+   * id диалога строкой: в базе `bigint`, TypeORM отдаёт его строкой.
+   * У вида `notifications` пуст: карточка не всегда привязана к диалогу.
+   */
   conversationId: string;
   kind: ConversationEventKind;
   actorId: string;
@@ -139,6 +151,27 @@ export class ConversationEventsService {
       actorId: '',
       messageId: message.id,
       body: message.body,
+    });
+  }
+
+  /**
+   * Уведомления изменились — получателям.
+   *
+   * Кадр-сигнал: `kind: 'notifications'`, `conversationId` пуст (карточка
+   * не всегда привязана к диалогу — деньги и альманах живут без него),
+   * `actorId` пуст: систему человеком не назовёшь, а «своё действие
+   * не перечитываем» здесь не работает — карточку изменил тот же человек,
+   * который её закрыл, и панель всё равно должна обновиться.
+   *
+   * Клиент по этому кадру перечитывает `GET /api/notifications` целиком:
+   * секции маленькие, а состав карточки зависит от смотрящего
+   * (`unreadCount`, `preview`), поэтому DTO в кадр не кладётся.
+   */
+  emitNotifications(recipientIds: string[]): void {
+    this.send(recipientIds, {
+      kind: 'notifications',
+      conversationId: '',
+      actorId: '',
     });
   }
 

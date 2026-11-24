@@ -65,6 +65,7 @@ import {
 } from './finance';
 import { TripEventsService } from './trip-events.service';
 import { ConversationEventsService } from './conversation-events.service';
+import { NotificationsService } from './notifications.service';
 import { TripsService } from './trips.service';
 import { tripNameOf } from './trip-name';
 import { UsersService } from '../users/users.service';
@@ -132,10 +133,12 @@ interface RewrittenMessage {
   recipientIds: string[];
 }
 
-/** Итог автосогласия: что подтвердилось и какие тексты переписаны. */
+/** Итог автосогласия: что подтвердилось, какие тексты и карточки ушли в архив. */
 interface Settlement {
   confirmed: boolean;
   rewritten: RewrittenMessage[];
+  /** Получатели, чьи денежные уведомления ушли в архив по сроку 72 часа. */
+  archivedRecipients: string[];
 }
 
 /**
@@ -186,6 +189,12 @@ export class TripFinanceService {
     private readonly trips: TripsService,
     private readonly events: TripEventsService,
     private readonly conversations: ConversationEventsService,
+    /**
+     * Уведомления правой панели (24.11.2026, §14). Деньги — единственный
+     * вид, который уходит в архив: перевод по подтверждению или сроку
+     * 72 часа, запрос платежа — по оплате.
+     */
+    private readonly notifications: NotificationsService,
     private readonly users: UsersService,
   ) {}
 
@@ -200,6 +209,9 @@ export class TripFinanceService {
     // обязан сойтись в тот момент, когда его смотрят. Повторный вызов ничего
     // не меняет — строки уже `confirmed`.
     const settlement = await this.settleExpiredCompensations(manager, trip);
+    // Долг закрыт оплатой — запрос платежа уходит в архив. Проверяется
+    // при чтении вкладки, как и автосогласие: остаток считается здесь же.
+    const paid = await this.settlePaymentRequests(manager, trip, userId);
     const view = await this.buildView(manager, trip, userId);
 
     if (settlement.confirmed) this.events.emitFinance(String(tripId), userId);
@@ -221,6 +233,20 @@ export class TripFinanceService {
         rewritten.conversationId,
         { id: rewritten.messageId, body: rewritten.body },
       );
+    }
+
+    /**
+     * Денежные карточки, ушедшие в архив (24.11.2026, §14.2).
+     *
+     * Сигнал `notifications` — после записи, чтобы панель перечитала
+     * секции и карточка исчезла без перезагрузки. Получатели — те, чьи
+     * строки действительно обновились: чужие панели не трогаем.
+     */
+    for (const recipientId of new Set([
+      ...settlement.archivedRecipients,
+      ...paid,
+    ])) {
+      this.notifications.emitChanged([recipientId]);
     }
 
     return view;
@@ -466,6 +492,9 @@ export class TripFinanceService {
     const senderId = fromUserId ?? userId;
     const sender = await this.users.findById(senderId);
 
+    /** Кому после COMMIT слать сигнал «перечитай уведомления». */
+    const notificationRecipients: string[] = [];
+
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
       await this.assertGoing(manager, String(trip.id), userId);
@@ -568,7 +597,15 @@ export class TripFinanceService {
       //
       // Дед-лайн (72 часа) с этого шага действует для всех, а не только для
       // `declined`: `settleExpiredCompensations` больше не смотрит на статус.
-      await this.postCompensationMessage(
+      /**
+       * Карточка «Денежный перевод» — в той же транзакции (24.11.2026, §14).
+       *
+       * Старое личное сообщение остаётся (двойная запись, пока панель
+       * не переехала), но кнопки «Подтвердить» в новой панели живут
+       * на карточке. Ключ — `money_transfer:<перевод>`: один перевод —
+       * одна карточка у получателя.
+       */
+      const posted = await this.postCompensationMessage(
         manager,
         trip,
         senderId,
@@ -577,10 +614,31 @@ export class TripFinanceService {
         sender?.gender,
       );
 
+      await this.notifications.notifyMoneyTransfer(manager, {
+        recipientUserId: compensation.toUserId,
+        tripId: String(trip.id),
+        compensationId: String(compensation.id),
+        conversationId: posted.conversationId,
+        body: posted.body,
+      });
+
+      notificationRecipients.push(compensation.toUserId);
+
+      // Оплата только что созданным переводом могла закрыть долг —
+      // запрос платежа уходит в архив сразу, не дожидаясь вкладки.
+      notificationRecipients.push(
+        ...(await this.settlePaymentRequests(manager, trip, senderId)),
+      );
+
       return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
+
+    for (const recipientId of new Set(notificationRecipients)) {
+      this.notifications.emitChanged([recipientId]);
+    }
+
     return view;
   }
 
@@ -595,6 +653,9 @@ export class TripFinanceService {
     tripId: number,
     compensationId: number,
   ): Promise<TripFinanceDto> {
+    /** Чьи денежные карточки ушли в архив — сигнал после COMMIT. */
+    let archivedRecipients: string[] = [];
+
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
 
@@ -635,6 +696,14 @@ export class TripFinanceService {
       // и без этого кнопки «Подтверждаю» висели бы в ленте после расчёта.
       await this.closeLinkedAction(manager, compensation.id);
 
+      // Денежная карточка — в архив по причине «подтвердил человек»
+      // (24.11.2026, §14.2): из панели она исчезает, из истории — нет.
+      archivedRecipients = await this.notifications.archiveCompensation(
+        manager,
+        compensation.id,
+        'confirmed',
+      );
+
       // Залог — тот же перевод, но у него есть покрытие (v3, 18.11.2026):
       // сумма сверх недостачи становится обычным переводом, а состояние
       // `held` ставится только тогда, когда залог покрыт целиком.
@@ -670,6 +739,11 @@ export class TripFinanceService {
     });
 
     this.events.emitFinance(String(tripId), userId);
+
+    for (const recipientId of new Set([...archivedRecipients, userId])) {
+      this.notifications.emitChanged([recipientId]);
+    }
+
     return view;
   }
 
@@ -684,6 +758,9 @@ export class TripFinanceService {
     tripId: number,
     compensationId: number,
   ): Promise<TripFinanceDto> {
+    /** Кому после COMMIT слать сигнал «перечитай уведомления». */
+    const notificationRecipients: string[] = [];
+
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
       await this.assertGoing(manager, String(trip.id), userId);
@@ -716,10 +793,20 @@ export class TripFinanceService {
       // удаляется вместе с сообщениями, как в «мой косяк» у `MessageActionsService`.
       await this.dropLinkedActions(manager, compensation.id);
 
+      // Карточка перевода уходит вместе с компенсацией (FK CASCADE):
+      // подтверждать отменённые деньги нечем. Получателя запоминаем,
+      // чтобы после COMMIT обновить его панель.
+      notificationRecipients.push(compensation.toUserId);
+
       return this.buildView(manager, trip, userId);
     });
 
     this.events.emitFinance(String(tripId), userId);
+
+    for (const recipientId of new Set([...notificationRecipients, userId])) {
+      this.notifications.emitChanged([recipientId]);
+    }
+
     return view;
   }
 
@@ -806,6 +893,18 @@ export class TripFinanceService {
           actionId: action.id,
         });
 
+        /**
+         * Карточка «Запрос платежа» — в той же транзакции (24.11.2026, §14).
+         *
+         * Ключ `payment_request:<поход>`: повторное нажатие обновляет
+         * карточку, а не заводит вторую. Закрывает её только оплата.
+         */
+        await this.notifications.notifyPaymentRequest(manager, {
+          recipientUserId: recipient.userId,
+          tripId: String(trip.id),
+          tripName,
+        });
+
         sent.push({
           conversationId: String(conversation.id),
           recipientId: recipient.userId,
@@ -823,6 +922,8 @@ export class TripFinanceService {
         item.conversationId,
         userId,
       );
+      // Панель уведомлений получателя — тем же кадром-сигналом.
+      this.notifications.emitChanged([item.recipientId]);
     }
 
     return { ...view, notified: sent.length, recipients };
@@ -863,6 +964,53 @@ export class TripFinanceService {
 
       return rest < 0 || (hasDeposit && rest === 0);
     });
+  }
+
+  /**
+   * Долг закрыт — «Запрос платежа» уходит в архив (24.11.2026, §14.2).
+   *
+   * Критерий тот же, что у `paymentRequestRecipients`, только наоборот:
+   * карточка висит, пока остаток отрицательный (или ровно ноль при
+   * установленном залоге). Остаток считается `remainingFromEntities` —
+   * второго расчёта денег быть не должно.
+   *
+   * Возвращает получателей, чьи карточки обновились: вызывающий шлёт
+   * сигнал после COMMIT. Пусто — ничего не меняли и молчим.
+   */
+  private async settlePaymentRequests(
+    manager: EntityManager,
+    trip: Trip,
+    userId: string,
+  ): Promise<string[]> {
+    const tripId = String(trip.id);
+    const { expenses, compensations } = await this.loadMoney(manager, tripId);
+    const participants = await this.goingParticipants(manager, tripId);
+    const memberIds = participants.map((item) => item.userId);
+
+    const adjustments = await manager.find(TripDepositAdjustment, {
+      where: { tripId },
+    });
+    const remaining = remainingFromEntities(
+      expenses,
+      compensations,
+      memberIds,
+      adjustments.map((row) => ({
+        userId: row.userId,
+        amountRub: row.amountRub,
+      })),
+    );
+
+    const rest = remaining.get(userId) ?? 0;
+    const hasDeposit = trip.depositRub !== null && trip.depositRub > 0;
+    const stillDue = rest < 0 || (hasDeposit && rest === 0);
+
+    if (stillDue) return [];
+
+    return this.notifications.archivePaymentRequestsFor(
+      manager,
+      tripId,
+      userId,
+    );
   }
 
   /** Лежит ли у получателя непрочитанное сообщение ровно с таким текстом. */
@@ -2591,7 +2739,7 @@ export class TripFinanceService {
     compensation: TripCompensation,
     senderName: string,
     senderGender: string | null | undefined,
-  ): Promise<void> {
+  ): Promise<{ conversationId: string; body: string }> {
     const conversation = await this.directConversationOf(
       manager,
       senderId,
@@ -2612,17 +2760,23 @@ export class TripFinanceService {
       }),
     );
 
+    const body = moneyMessageText(
+      compensation.amountRub,
+      await tripNameOf(manager, trip),
+      senderName,
+      senderGender,
+    );
+
     await manager.insert(Message, {
       conversationId: conversation.id,
       senderId,
-      body: moneyMessageText(
-        compensation.amountRub,
-        await tripNameOf(manager, trip),
-        senderName,
-        senderGender,
-      ),
+      body,
       actionId: action.id,
     });
+
+    // Текст возвращается вызывающему: карточка уведомления показывает
+    // ту же формулировку, что и личное сообщение (24.11.2026).
+    return { conversationId: String(conversation.id), body };
   }
 
   /**
@@ -2701,7 +2855,11 @@ export class TripFinanceService {
       where: { tripId, status: 'pending', kind: 'compensation' },
     });
 
-    const settlement: Settlement = { confirmed: false, rewritten: [] };
+    const settlement: Settlement = {
+      confirmed: false,
+      rewritten: [],
+      archivedRecipients: [],
+    };
     if (pending.length === 0) return settlement;
 
     const deadline = Date.now() - AUTO_CONFIRM_MS;
@@ -2726,6 +2884,17 @@ export class TripFinanceService {
       row.confirmedAt = new Date(row.createdAt.getTime() + AUTO_CONFIRM_MS);
       await manager.save(row);
       settlement.confirmed = true;
+
+      // Карточка перевода — в архив «истекли 72 часа» (§14.2). Даже если
+      // сообщения-действия уже нет, карточка живёт своей строкой и должна
+      // закрыться: иначе она висела бы в панели с кнопкой «Подтвердить».
+      settlement.archivedRecipients.push(
+        ...(await this.notifications.archiveCompensation(
+          manager,
+          row.id,
+          'expired72',
+        )),
+      );
 
       if (actions[0] === undefined) continue;
 

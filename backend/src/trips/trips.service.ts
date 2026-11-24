@@ -94,6 +94,7 @@ import {
 import { nextWeekendRange } from './weekend';
 import { TripEventsService } from './trip-events.service';
 import { ConversationsService } from './conversations.service';
+import { NotificationsService } from './notifications.service';
 import { readTripCacheState } from './trip-cache-state';
 import { recalculateCommonEaterShares } from './trip-finance-shares';
 
@@ -249,6 +250,13 @@ export class TripsService {
      * состав диалога для личных.
      */
     private readonly conversations: ConversationsService,
+    /**
+     * Уведомления правой панели (24.11.2026, §14). Сообщение в чат похода
+     * пишется здесь мимо `ConversationsService.sendMessage`, поэтому
+     * карточку «об этом чате» заводим явно — иначе панель не узнала бы
+     * о новом сообщении из вкладки чата.
+     */
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -3684,6 +3692,10 @@ export class TripsService {
 
     // После вставки: событие — сигнал «перечитай», а не сами данные.
     await this.conversations.notifyMessage(chat.id, userId);
+
+    // Карточка уведомления о чате: двойная запись, пока панель не переехала
+    // на уведомления целиком (фронтенд — следующий шаг, §14.4).
+    await this.notifications.notifyChatMessage(chat.id, userId, body);
 
     return TripMessageDto.from(saved, userId);
   }

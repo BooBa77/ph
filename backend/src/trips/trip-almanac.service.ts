@@ -17,6 +17,7 @@ import type { AlmanacPlacement } from './entities/trip-almanac-entry.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { returningRows } from './query-rows';
 import { ConversationEventsService } from './conversation-events.service';
+import { NotificationsService } from './notifications.service';
 import { notifyAlmanacUpdated } from './trip-almanac-notify';
 import type { Trip } from './entities/trip.entity';
 import { TripsService } from './trips.service';
@@ -56,6 +57,8 @@ export class TripAlmanacService {
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
     private readonly events: ConversationEventsService,
+    /** Уведомления правой панели: «Альманах» — карточка, а не сообщение. */
+    private readonly notifications: NotificationsService,
   ) {}
 
   /**
@@ -259,7 +262,7 @@ export class TripAlmanacService {
    * клиент решает по `actorId`. Тот же порядок у `sendMessage`.
    */
   private async notifyAlmanac(trip: Trip, userId: string): Promise<void> {
-    await notifyAlmanacUpdated(this.dataSource, trip, userId, (created) => {
+    await notifyAlmanacUpdated(this.dataSource, this.notifications, trip, userId, (created) => {
       this.events.emitMessage(
         created.participantIds,
         created.conversationId,
