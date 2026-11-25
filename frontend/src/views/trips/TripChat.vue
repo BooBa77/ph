@@ -136,6 +136,16 @@ onMounted(loadChatState)
  */
 const feed = useConversationsStore()
 
+/**
+ * Держать ленту, пока чат открыт (25.11.2026).
+ *
+ * Правая колонка и мобильная панель с 24.11.2026 держат стор уведомлений:
+ * до этого поток переписки был открыт и на вкладке чата, а после переезда
+ * его перестал открывать кто-либо, и наблюдатель ниже молчал. `hold()`
+ * заводит поток на первого держателя и снимает на последнем.
+ */
+const releaseFeed = feed.hold()
+
 const stopEvents = feed.onEvent((event) => {
   const conversationId = chat.value?.id
 
@@ -152,6 +162,7 @@ const stopEvents = feed.onEvent((event) => {
 })
 
 onUnmounted(stopEvents)
+onUnmounted(releaseFeed)
 
 /**
  * Переключить «Уведомлять об этом чате».
