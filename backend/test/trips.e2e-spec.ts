@@ -8,6 +8,7 @@ import { AppModule } from './../src/app.module';
 import { configureApp } from './../src/app.setup';
 import { EmailCodeService } from './../src/email/services/email-code.service';
 import { SmtpService } from './../src/email/services/smtp.service';
+import { ConversationEventsService } from './../src/trips/conversation-events.service';
 import { COORGANIZER_ROLE_CODE } from './../src/trips/trip-tabs';
 import { ORGANIZER_ROLE_CODE } from './../src/trips/trip.types';
 
@@ -1883,6 +1884,201 @@ describe('Походы (e2e)', () => {
       expect(after?.action?.kind).toBe('payment_request');
     });
 
+    /**
+     * Правка и удаление своего сообщения (25.11.2026, §10 п.9).
+     *
+     * Права — на сервере: чужое, системное и денежное не правится (403),
+     * несуществующее — 404. Удаление физическое, поэтому непрочитанное
+     * у собеседника уменьшается само, а в поток событий уходят
+     * `message_updated` (с `actorId` автора) и `message_deleted`.
+     */
+    it('своё сообщение правится и удаляется, чужое и системное — нет', async () => {
+      const own = await request(app.getHttpServer())
+        .post('/api/conversations/direct')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ userId: strangerId })
+        .expect(200);
+
+      const conversationId = own.body.id as string;
+
+      const sent = await request(app.getHttpServer())
+        .post(`/api/conversations/${conversationId}/messages`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ body: '  черновик  ' })
+        .expect(201);
+
+      const messageId = sent.body.id as string;
+
+      const events = app.get(ConversationEventsService);
+      const received: Array<{
+        kind: string;
+        actorId: string;
+        messageId?: string;
+        body?: string;
+      }> = [];
+      const subscription = events
+        .stream(strangerId)
+        .subscribe((event) => received.push(event));
+
+      const systemId = String(
+        (
+          await dataSource.query(
+            `INSERT INTO messages (conversation_id, sender_id, body)
+             VALUES ($1, NULL, 'системная строка') RETURNING id`,
+            [conversationId],
+          )
+        )[0].id,
+      );
+
+      const actionId = (
+        await dataSource.query(
+          `INSERT INTO message_actions (kind, target_user_id, payload, state)
+           VALUES ('money_received', $1, $2::jsonb, 'pending') RETURNING id`,
+          [strangerId, JSON.stringify({ amountRub: 10 })],
+        )
+      )[0].id as string;
+
+      const moneyMessageId = String(
+        (
+          await dataSource.query(
+            `INSERT INTO messages (conversation_id, sender_id, body, action_id)
+             VALUES ($1, $2, 'перевод', $3) RETURNING id`,
+            [conversationId, userId, actionId],
+          )
+        )[0].id,
+      );
+
+      try {
+        const edited = await request(app.getHttpServer())
+          .patch(`/api/conversations/${conversationId}/messages/${messageId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ body: '  исправлено  ' })
+          .expect(200);
+
+        expect(edited.body.body).toBe('исправлено');
+        expect(edited.body.senderId).toBe(userId);
+
+        await vi.waitFor(() =>
+          expect(
+            received.some(
+              (event) =>
+                event.kind === 'message_updated' &&
+                event.actorId === userId &&
+                event.messageId === messageId &&
+                event.body === 'исправлено',
+            ),
+          ).toBe(true),
+        );
+
+        // Чужое править нельзя; несуществующее — 404; пустое — 400.
+        await request(app.getHttpServer())
+          .patch(`/api/conversations/${conversationId}/messages/${messageId}`)
+          .set('Authorization', `Bearer ${strangerToken}`)
+          .send({ body: 'моё теперь' })
+          .expect(403);
+
+        await request(app.getHttpServer())
+          .patch(`/api/conversations/${conversationId}/messages/999999999`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ body: 'нет такого' })
+          .expect(404);
+
+        await request(app.getHttpServer())
+          .patch(`/api/conversations/${conversationId}/messages/${messageId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ body: '   ' })
+          .expect(400);
+
+        // Системное — история событий, у него нет автора.
+        await request(app.getHttpServer())
+          .patch(`/api/conversations/${conversationId}/messages/${systemId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ body: 'теперь моя' })
+          .expect(403);
+
+        await request(app.getHttpServer())
+          .delete(`/api/conversations/${conversationId}/messages/${systemId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(403);
+
+        // Денежное сообщение — условия перевода, а не реплика человека.
+        await request(app.getHttpServer())
+          .patch(`/api/conversations/${conversationId}/messages/${moneyMessageId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ body: 'перевод отменён' })
+          .expect(403);
+
+        await request(app.getHttpServer())
+          .delete(`/api/conversations/${conversationId}/messages/${moneyMessageId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(403);
+
+        const unreadOf = async (token: string): Promise<number> => {
+          const response = await request(app.getHttpServer())
+            .get('/api/conversations')
+            .set('Authorization', `Bearer ${token}`)
+            .expect(200);
+
+          return (
+            (
+              response.body.conversations as Array<{
+                id: string;
+                unreadCount: number;
+              }>
+            ).find((item) => item.id === conversationId)?.unreadCount ?? 0
+          );
+        };
+
+        const unreadBefore = await unreadOf(strangerToken);
+
+        await request(app.getHttpServer())
+          .delete(`/api/conversations/${conversationId}/messages/${messageId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(204);
+
+        await vi.waitFor(() =>
+          expect(
+            received.some(
+              (event) =>
+                event.kind === 'message_deleted' &&
+                event.actorId === userId &&
+                event.messageId === messageId,
+            ),
+          ).toBe(true),
+        );
+
+        const page = await request(app.getHttpServer())
+          .get(`/api/conversations/${conversationId}/messages`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(200);
+
+        expect(
+          (page.body.messages as Array<{ id: string }>).map(
+            (message) => message.id,
+          ),
+        ).not.toContain(messageId);
+
+        // Удалённой строки нет — непрочитанное у собеседника стало меньше.
+        expect(await unreadOf(strangerToken)).toBe(unreadBefore - 1);
+
+        // Повторное удаление — 404, а не тихий успех.
+        await request(app.getHttpServer())
+          .delete(`/api/conversations/${conversationId}/messages/${messageId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .expect(404);
+      } finally {
+        subscription.unsubscribe();
+        await dataSource
+          .query(`DELETE FROM messages WHERE id = ANY($1::bigint[])`, [
+            [systemId, moneyMessageId],
+          ])
+          .catch(() => undefined);
+        await dataSource
+          .query(`DELETE FROM message_actions WHERE id = $1`, [actionId])
+          .catch(() => undefined);
+      }
+    });
+
     it('без токена диалоги закрыты', async () => {
       await request(app.getHttpServer()).get('/api/conversations').expect(401);
     });
@@ -2087,6 +2283,108 @@ describe('Походы (e2e)', () => {
         'сообщение 1',
       ]);
       expect(third.hasMore).toBe(false);
+    });
+
+    /**
+     * Гость публичного похода (25.11.2026, §10 п.9).
+     *
+     * Он пишет в гостевой чат без строки состава, поэтому ручка
+     * `/conversations/:id/messages/:messageId` ответила бы ему 403 —
+     * правит и удаляет он через `/trips/:id/messages/:messageId`.
+     * Чужое не трогается даже организатором.
+     */
+    it('гость правит и удаляет своё сообщение в гостевом чате, чужое — нет', async () => {
+      const created = await createTrip({ announcement: 'Правка гостевого чата' });
+      const tripId = created.body.id as string;
+
+      const sent = await send(
+        tripId,
+        strangerToken,
+        'trip_guest',
+        '  ошипка  ',
+      ).expect(201);
+      const messageId = sent.body.id as string;
+
+      const guestChatId = (
+        await request(app.getHttpServer())
+          .get(`/api/trips/${tripId}/chats`)
+          .set('Authorization', `Bearer ${strangerToken}`)
+          .expect(200)
+      ).body.chats.find(
+        (chat: { kind: string }) => chat.kind === 'trip_guest',
+      ).id as string;
+
+      // Через ручку диалогов гостю нельзя: строки состава у него нет.
+      await request(app.getHttpServer())
+        .patch(`/api/conversations/${guestChatId}/messages/${messageId}`)
+        .set('Authorization', `Bearer ${strangerToken}`)
+        .send({ body: 'исправлено' })
+        .expect(403);
+
+      const events = app.get(ConversationEventsService);
+      const received: Array<{
+        kind: string;
+        actorId: string;
+        messageId?: string;
+        body?: string;
+      }> = [];
+      const subscription = events
+        .stream(userId)
+        .subscribe((event) => received.push(event));
+
+      try {
+        const edited = await request(app.getHttpServer())
+          .patch(`/api/trips/${tripId}/messages/${messageId}`)
+          .set('Authorization', `Bearer ${strangerToken}`)
+          .send({ kind: 'trip_guest', body: '  исправлено  ' })
+          .expect(200);
+
+        expect(edited.body.body).toBe('исправлено');
+        expect(edited.body.senderId).toBe(strangerId);
+
+        // Организатор видит правку гостя событием — без перезагрузки.
+        await vi.waitFor(() =>
+          expect(
+            received.some(
+              (event) =>
+                event.kind === 'message_updated' &&
+                event.actorId === strangerId &&
+                event.messageId === messageId,
+            ),
+          ).toBe(true),
+        );
+
+        // Чужое сообщение не правит даже организатор.
+        await request(app.getHttpServer())
+          .patch(`/api/trips/${tripId}/messages/${messageId}`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ kind: 'trip_guest', body: 'чужое' })
+          .expect(403);
+
+        await request(app.getHttpServer())
+          .delete(`/api/trips/${tripId}/messages/${messageId}?kind=trip_guest`)
+          .set('Authorization', `Bearer ${strangerToken}`)
+          .expect(204);
+
+        const guest = await read(tripId, strangerToken, 'kind=trip_guest');
+
+        expect(guest.messages.map((message) => message.body)).not.toContain(
+          'исправлено',
+        );
+
+        // Повтор — 404; вид чата без доступа — 403.
+        await request(app.getHttpServer())
+          .delete(`/api/trips/${tripId}/messages/${messageId}?kind=trip_guest`)
+          .set('Authorization', `Bearer ${strangerToken}`)
+          .expect(404);
+
+        await request(app.getHttpServer())
+          .delete(`/api/trips/${tripId}/messages/${messageId}?kind=trip_members`)
+          .set('Authorization', `Bearer ${strangerToken}`)
+          .expect(403);
+      } finally {
+        subscription.unsubscribe();
+      }
     });
 
     it('пустое сообщение, неизвестный чат и мусор в параметрах — 400', async () => {

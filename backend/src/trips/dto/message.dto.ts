@@ -267,3 +267,48 @@ export class SendTripMessageDto {
   @MaxLength(4000, { message: 'Сообщение не должно превышать 4000 символов' })
   body: string;
 }
+
+/**
+ * Тело `PATCH /api/trips/:id/messages/:messageId` (25.11.2026).
+ *
+ * `kind` нужен, потому что у чата похода нет своего id в адресе экрана:
+ * пара «поход + вид» и есть адрес. Текст проверяется теми же правилами,
+ * что и отправка.
+ */
+export class EditTripMessageDto {
+  @ApiProperty({
+    description: 'В каком чате правим',
+    enum: CHAT_KINDS,
+    example: 'trip_members',
+  })
+  @IsIn(CHAT_KINDS, { message: 'Недопустимый вид чата' })
+  kind: ChatKind;
+
+  @ApiProperty({
+    description: 'Новый текст: markdown (GFM), как при отправке',
+    example: 'Возьму палатку, горелку и котёл',
+    minLength: 1,
+    maxLength: 4000,
+  })
+  @IsString({ message: 'Сообщение должно быть строкой' })
+  @MinLength(1, { message: 'Сообщение не может быть пустым' })
+  @MaxLength(4000, { message: 'Сообщение не должно превышать 4000 символов' })
+  body: string;
+}
+
+/**
+ * Параметры `DELETE /api/trips/:id/messages/:messageId`.
+ *
+ * У `DELETE` нет тела, а вид чата нужен — без него не найти диалог: тот же
+ * id сообщения мог бы принадлежать другому чату похода, и проверка «это мой
+ * поход» не заменила бы проверку «это мой чат».
+ */
+export class TripMessageKindQueryDto {
+  @ApiProperty({
+    description: 'Из какого чата удаляем',
+    enum: CHAT_KINDS,
+    example: 'trip_guest',
+  })
+  @IsIn(CHAT_KINDS, { message: 'Недопустимый вид чата' })
+  kind: ChatKind;
+}

@@ -3,8 +3,15 @@ import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue'
 
 import { setConversationMuted } from '@/api/conversations'
 import { ApiError } from '@/api/errors'
-import { listTripChats, listTripMessages, sendTripMessage } from '@/api/trips'
+import {
+  deleteTripMessage,
+  editTripMessage,
+  listTripChats,
+  listTripMessages,
+  sendTripMessage,
+} from '@/api/trips'
 import MarkdownEditor from '@/components/ui/MarkdownEditor.vue'
+import { useAuthStore } from '@/stores/auth'
 import { useConversationsStore } from '@/stores/conversations'
 import { markdownToHtml } from '@/utils/markdown'
 import { CHAT_KIND_LABELS, type ChatKind, type TripChat as ChatInfo, type TripMessage } from '@/types/trips'
@@ -42,7 +49,120 @@ const draft = ref('')
 
 const listEl = ref<HTMLElement | null>(null)
 
+/**
+ * Правка и удаление своего сообщения в чате похода (25.11.2026).
+ *
+ * Те же правила, что на экране диалога: правится одна строка за раз, чужое
+ * и системное не трогается, денежные сообщения сервер не даст править.
+ * Подтверждение удаления — на месте, а не `window.confirm`: нативный диалог
+ * блокирует вкладку и живую проверку через CDP.
+ */
+const editingId = ref<string | null>(null)
+const editDraft = ref('')
+const isSavingEdit = ref(false)
+const deletingId = ref<string | null>(null)
+const isDeleting = ref(false)
+
+const auth = useAuthStore()
+
+/** Мой id: по нему отличаем свои сообщения от чужих. */
+const myId = computed(() => auth.user?.id ?? null)
+
 const title = computed(() => CHAT_KIND_LABELS[props.kind])
+
+/** Своё ли сообщение: системное автора не имеет и своим не бывает. */
+function isOwn(message: TripMessage): boolean {
+  return message.senderId !== null && message.senderId === myId.value
+}
+
+/** Можно ли править и удалять: только своё и только реплику. */
+function canModify(message: TripMessage): boolean {
+  if (message.isSystem || !isOwn(message)) return false
+
+  return message.action === null || message.action === undefined
+}
+
+function startEdit(message: TripMessage): void {
+  if (!canModify(message) || isSavingEdit.value) return
+
+  editingId.value = message.id
+  editDraft.value = message.body
+  deletingId.value = null
+  error.value = null
+}
+
+function cancelEdit(): void {
+  editingId.value = null
+  editDraft.value = ''
+}
+
+/**
+ * Сохранить правку: ответ ручки — уже новое сообщение, история не
+ * перечитывается. Собеседнику текст приходит кадром `message_updated`.
+ */
+async function saveEdit(): Promise<void> {
+  const messageId = editingId.value
+  const body = editDraft.value.trim()
+
+  if (!messageId || !body || isSavingEdit.value) return
+
+  isSavingEdit.value = true
+  error.value = null
+
+  try {
+    const updated = await editTripMessage(
+      props.tripId,
+      props.kind,
+      messageId,
+      body,
+    )
+
+    messages.value = messages.value.map((message) =>
+      message.id === updated.id ? updated : message,
+    )
+    editingId.value = null
+    editDraft.value = ''
+  } catch (problem) {
+    error.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось изменить сообщение'
+  } finally {
+    isSavingEdit.value = false
+  }
+}
+
+function askDelete(message: TripMessage): void {
+  if (!canModify(message) || isDeleting.value) return
+
+  deletingId.value = message.id
+  editingId.value = null
+  error.value = null
+}
+
+function cancelDelete(): void {
+  deletingId.value = null
+}
+
+/** Удалить сообщение физически: строки в базе и в списке больше нет. */
+async function confirmDelete(): Promise<void> {
+  const messageId = deletingId.value
+
+  if (!messageId || isDeleting.value) return
+
+  isDeleting.value = true
+  error.value = null
+
+  try {
+    await deleteTripMessage(props.tripId, props.kind, messageId)
+
+    messages.value = messages.value.filter((message) => message.id !== messageId)
+    deletingId.value = null
+  } catch (problem) {
+    error.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось удалить сообщение'
+  } finally {
+    isDeleting.value = false
+  }
+}
 
 /** Время сообщения: «14:05». Полную дату здесь не показываем — шум. */
 function time(iso: string): string {
@@ -69,6 +189,9 @@ async function scrollToBottom() {
 async function load() {
   isLoading.value = true
   error.value = null
+  editingId.value = null
+  editDraft.value = ''
+  deletingId.value = null
 
   try {
     const page = await listTripMessages(props.tripId, props.kind)
@@ -149,12 +272,32 @@ const releaseFeed = feed.hold()
 const stopEvents = feed.onEvent((event) => {
   const conversationId = chat.value?.id
 
-  if (!conversationId || event.kind !== 'message_updated') return
+  if (
+    !conversationId ||
+    (event.kind !== 'message_updated' && event.kind !== 'message_deleted')
+  ) {
+    return
+  }
+
   if (String(event.conversationId) !== conversationId) return
 
-  const { messageId, body } = event
+  const { messageId } = event
 
-  if (messageId === undefined || body === undefined) return
+  if (messageId === undefined) return
+
+  if (event.kind === 'message_deleted') {
+    // Удалённой строки в базе нет — убираем её и из списка, а не черкаем.
+    messages.value = messages.value.filter((message) => message.id !== messageId)
+
+    if (editingId.value === messageId) cancelEdit()
+    if (deletingId.value === messageId) deletingId.value = null
+
+    return
+  }
+
+  const { body } = event
+
+  if (body === undefined) return
 
   messages.value = messages.value.map((message) =>
     message.id === messageId ? { ...message, body } : message,
@@ -211,7 +354,7 @@ async function toggleMuted(): Promise<void> {
       class="flex max-h-80 flex-col gap-2 overflow-y-auto"
       data-test="chat-messages"
     >
-      <li v-for="message in messages" :key="message.id">
+      <li v-for="message in messages" :key="message.id" :data-test="`chat-message-${message.id}`">
         <div v-if="message.isSystem" class="text-center text-xs text-muted">
           {{ message.body }}
         </div>
@@ -222,7 +365,93 @@ async function toggleMuted(): Promise<void> {
             </span>
             <span class="text-xs text-muted">{{ time(message.createdAt) }}</span>
           </div>
-          <div class="chat-message text-sm leading-relaxed text-text" v-html="bodyHtml(message)" />
+
+          <div
+            v-if="editingId === message.id"
+            class="mt-1 flex flex-col gap-2"
+            data-test="chat-edit-form"
+          >
+            <textarea
+              v-model="editDraft"
+              rows="2"
+              class="w-full resize-y rounded-xl border border-border bg-field px-3 py-2 text-sm text-text outline-none focus:border-primary"
+              aria-label="Новый текст сообщения"
+              data-test="chat-edit-input"
+              @keydown.enter.exact.prevent="saveEdit"
+            />
+            <div class="flex justify-end gap-3 text-xs">
+              <button
+                type="button"
+                class="cursor-pointer text-muted"
+                data-test="chat-edit-cancel"
+                @click="cancelEdit"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                class="cursor-pointer text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="!editDraft.trim() || isSavingEdit"
+                data-test="chat-edit-save"
+                @click="saveEdit"
+              >
+                Сохранить
+              </button>
+            </div>
+          </div>
+
+          <div
+            v-else
+            class="chat-message text-sm leading-relaxed text-text"
+            v-html="bodyHtml(message)"
+          />
+
+          <div
+            v-if="deletingId === message.id"
+            class="mt-1 flex flex-wrap items-center justify-end gap-2 text-xs"
+            data-test="chat-delete-row"
+          >
+            <span class="text-muted">Удалить сообщение?</span>
+            <button
+              type="button"
+              class="cursor-pointer text-muted"
+              data-test="chat-delete-cancel"
+              @click="cancelDelete"
+            >
+              Отмена
+            </button>
+            <button
+              type="button"
+              class="cursor-pointer text-primary disabled:cursor-not-allowed disabled:opacity-50"
+              :disabled="isDeleting"
+              data-test="chat-delete-confirm"
+              @click="confirmDelete"
+            >
+              Удалить
+            </button>
+          </div>
+
+          <div
+            v-else-if="canModify(message) && editingId !== message.id"
+            class="mt-1 flex items-center justify-end gap-3 text-xs text-muted"
+          >
+            <button
+              type="button"
+              class="cursor-pointer underline-offset-2 hover:text-text hover:underline"
+              data-test="chat-edit"
+              @click="startEdit(message)"
+            >
+              Изменить
+            </button>
+            <button
+              type="button"
+              class="cursor-pointer underline-offset-2 hover:text-text hover:underline"
+              data-test="chat-delete"
+              @click="askDelete(message)"
+            >
+              Удалить
+            </button>
+          </div>
         </div>
       </li>
     </ol>

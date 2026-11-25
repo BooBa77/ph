@@ -152,6 +152,30 @@ describe('parseConversationFrame', () => {
     ).toBeNull()
   })
 
+  /**
+   * Удаление своего сообщения (25.11.2026): вид `message_deleted`, тела
+   * в кадре нет — его больше нет в базе. `actorId` заполнен: удалить может
+   * только автор, и по нему клиент отличает своё действие от чужого.
+   */
+  it('читает «сообщение удалено» с id и автором', () => {
+    const payload = conversationEvent({
+      kind: 'message_deleted',
+      actorId: 'user-2',
+      messageId: '346',
+    })
+
+    expect(parseConversationFrame(conversationFrame(payload))).toEqual(payload)
+  })
+
+  it('отбрасывает «сообщение удалено» без id', () => {
+    // Убирать в открытом диалоге нечего — такой кадр только сбил бы стор.
+    expect(
+      parseConversationFrame(
+        conversationFrame(conversationEvent({ kind: 'message_deleted', actorId: 'user-2' })),
+      ),
+    ).toBeNull()
+  })
+
   it('не принимает кадр похода и неизвестный вид', () => {
     // Имя события чужое — это не переписка.
     expect(parseConversationFrame(frame(event()))).toBeNull()

@@ -32,6 +32,8 @@ const mocks = vi.hoisted(() => ({
   sendConversationMessage: vi.fn(),
   setConversationMuted: vi.fn(),
   respondToAction: vi.fn(),
+  editConversationMessage: vi.fn(),
+  deleteConversationMessage: vi.fn(),
 }))
 
 vi.mock('@/api/conversations', () => ({
@@ -41,6 +43,8 @@ vi.mock('@/api/conversations', () => ({
   markConversationRead: mocks.markConversationRead,
   sendConversationMessage: mocks.sendConversationMessage,
   setConversationMuted: mocks.setConversationMuted,
+  editConversationMessage: mocks.editConversationMessage,
+  deleteConversationMessage: mocks.deleteConversationMessage,
 }))
 
 vi.mock('@/api/message-actions', () => ({
@@ -138,6 +142,10 @@ describe('MessageView', () => {
     )
     mocks.setConversationMuted.mockResolvedValue(undefined)
     mocks.respondToAction.mockResolvedValue(action({ state: 'confirmed' }))
+    mocks.editConversationMessage.mockResolvedValue(
+      message({ id: '1', body: 'Исправлено' }),
+    )
+    mocks.deleteConversationMessage.mockResolvedValue(undefined)
   })
 
   it('шапка личного диалога — имя собеседника, переписка на месте', async () => {
@@ -559,5 +567,178 @@ describe('MessageView', () => {
 
     expect(router.currentRoute.value.path).toBe('/trips/3')
     expect(router.currentRoute.value.query).toEqual({ tab: 'finance' })
+  })
+
+  /**
+   * Правка и удаление своего сообщения (25.11.2026, §10 п.9).
+   *
+   * Чужое и системное не трогается, сообщение с денежным действием — тоже:
+   * текст уведомления о переводе человеку не принадлежит. Кнопки живут
+   * только у своих реплик, поэтому чужую строку невозможно даже открыть
+   * на правку.
+   */
+  it('у чужого сообщения нет «Изменить» и «Удалить»', async () => {
+    const { wrapper } = await openScreen()
+
+    expect(wrapper.find('[data-test="message-edit"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="message-delete"]').exists()).toBe(false)
+  })
+
+  it('своё сообщение правится на месте', async () => {
+    mocks.listConversationMessages.mockResolvedValue({
+      messages: [message({ id: '5', senderId: 'me', body: 'Опечатка' })],
+      hasMore: false,
+    })
+    mocks.editConversationMessage.mockResolvedValue(
+      message({ id: '5', senderId: 'me', body: 'Исправлено' }),
+    )
+
+    const { wrapper } = await openScreen()
+
+    await wrapper.find('[data-test="message-edit"]').trigger('click')
+    await flushPromises()
+
+    const input = wrapper.find('[data-test="message-edit-input"]')
+    expect((input.element as HTMLTextAreaElement).value).toBe('Опечатка')
+
+    await input.setValue('  Исправлено  ')
+    await wrapper.find('[data-test="message-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.editConversationMessage).toHaveBeenCalledWith('7', '5', 'Исправлено')
+    // Строка та же, второго сообщения не появилось.
+    expect(wrapper.findAll('[data-test^="message-5"]')).toHaveLength(1)
+    expect(wrapper.find('[data-test="message-5"]').text()).toContain('Исправлено')
+    expect(wrapper.find('[data-test="message-5"]').text()).not.toContain('Опечатка')
+    expect(wrapper.find('[data-test="message-edit-input"]').exists()).toBe(false)
+  })
+
+  it('отмена правки возвращает прежний текст', async () => {
+    mocks.listConversationMessages.mockResolvedValue({
+      messages: [message({ id: '5', senderId: 'me', body: 'Как было' })],
+      hasMore: false,
+    })
+
+    const { wrapper } = await openScreen()
+
+    await wrapper.find('[data-test="message-edit"]').trigger('click')
+    await wrapper.find('[data-test="message-edit-input"]').setValue('Не сохранять')
+    await wrapper.find('[data-test="message-edit-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.editConversationMessage).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="message-5"]').text()).toContain('Как было')
+    expect(wrapper.find('[data-test="message-edit-input"]').exists()).toBe(false)
+  })
+
+  it('ошибку правки показывает словами сервера', async () => {
+    mocks.listConversationMessages.mockResolvedValue({
+      messages: [message({ id: '5', senderId: 'me', body: 'Опечатка' })],
+      hasMore: false,
+    })
+    mocks.editConversationMessage.mockRejectedValue(
+      new ApiError(403, 'Можно менять только своё сообщение', null),
+    )
+
+    const { wrapper } = await openScreen()
+
+    await wrapper.find('[data-test="message-edit"]').trigger('click')
+    await wrapper.find('[data-test="message-edit-input"]').setValue('Чужое')
+    await wrapper.find('[data-test="message-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="message-error"]').text()).toContain(
+      'Можно менять только своё сообщение',
+    )
+    // Форма осталась открытой: текст не потерян.
+    expect(wrapper.find('[data-test="message-edit-input"]').exists()).toBe(true)
+  })
+
+  it('удаление спрашивает подтверждение и убирает строку', async () => {
+    mocks.listConversationMessages.mockResolvedValue({
+      messages: [
+        message({ id: '4', senderId: 'me', body: 'Уберу' }),
+        message({ id: '5', senderId: 'me', body: 'Останусь' }),
+      ],
+      hasMore: false,
+    })
+
+    const { wrapper } = await openScreen()
+
+    await wrapper.find('[data-test="message-4"] [data-test="message-delete"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="message-delete-confirm"]').exists()).toBe(true)
+    expect(mocks.deleteConversationMessage).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test="message-delete-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.deleteConversationMessage).toHaveBeenCalledWith('7', '4')
+    expect(wrapper.find('[data-test="message-4"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="message-list"]').text()).toContain('Останусь')
+    // Строку ленты перечитали: своё событие стор не применяет.
+    expect(mocks.listConversations).toHaveBeenCalled()
+  })
+
+  it('отмена удаления оставляет сообщение', async () => {
+    mocks.listConversationMessages.mockResolvedValue({
+      messages: [message({ id: '4', senderId: 'me', body: 'Уберу' })],
+      hasMore: false,
+    })
+
+    const { wrapper } = await openScreen()
+
+    await wrapper.find('[data-test="message-delete"]').trigger('click')
+    await wrapper.find('[data-test="message-delete-cancel"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.deleteConversationMessage).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="message-4"]').exists()).toBe(true)
+  })
+
+  it('сообщение с денежным действием не правится и не удаляется', async () => {
+    mocks.listConversationMessages.mockResolvedValue({
+      messages: [
+        message({
+          id: '5',
+          senderId: 'me',
+          body: 'Анна перевела тебе 1000 ₽',
+          action: action({ targetUserId: 'peer' }),
+        }),
+      ],
+      hasMore: false,
+    })
+
+    const { wrapper } = await openScreen()
+
+    expect(wrapper.find('[data-test="message-edit"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="message-delete"]').exists()).toBe(false)
+  })
+
+  /**
+   * Удаление приходит событием (25.11.2026): строка исчезает у собеседника
+   * и во второй вкладке автора без перезагрузки. Счётчик после удаления
+   * серверный — удалённой строки в базе нет.
+   */
+  it('убирает строку по событию «сообщение удалено»', async () => {
+    const { wrapper } = await openScreen()
+
+    const feed = useConversationsStore()
+    feed.rows = [conversation({ id: '7', unreadCount: 1, lastMessage: message() })]
+
+    await feed.applyEvent({
+      conversationId: '7',
+      kind: 'message_deleted',
+      actorId: 'peer',
+      at: '2026-11-25T09:30:00.000Z',
+      messageId: '1',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="message-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="message-list"]').exists()).toBe(false)
+    // Строку ленты перечитали — непрочитанное и последнее сообщение серверные.
+    expect(mocks.getConversation).toHaveBeenCalledTimes(2)
   })
 })

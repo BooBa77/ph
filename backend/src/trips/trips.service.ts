@@ -16,6 +16,7 @@ import { UsersService } from '../users/users.service';
 import type { CreateVirtualUserDto } from '../users/dto/virtual-user.dto';
 import { CreateTripDto } from './dto/create-trip.dto';
 import {
+  EditTripMessageDto,
   SendTripMessageDto,
   TripChatDto,
   TripChatListDto,
@@ -3698,5 +3699,51 @@ export class TripsService {
     await this.notifications.notifyChatMessage(chat.id, userId, body);
 
     return TripMessageDto.from(saved, userId);
+  }
+
+  /**
+   * Изменить своё сообщение в чате похода (25.11.2026).
+   *
+   * Адрес — пара «поход + вид чата», как у отправки и чтения: у чата похода
+   * нет своего id в адресе экрана, а у гостя публичного похода нет строки
+   * состава, без которой `/conversations/:id/...` ответил бы 403. Дальше —
+   * общее ядро `ConversationsService.editMessageIn`: права на сообщение
+   * проверяются в одном месте.
+   */
+  async editMessage(
+    userId: string,
+    id: number,
+    messageId: string,
+    dto: EditTripMessageDto,
+  ): Promise<TripMessageDto> {
+    const manager = this.dataSource.manager;
+    const trip = await this.findVisibleTrip(manager, userId, id);
+    const chat = await this.findChatForUser(manager, trip, userId, dto.kind);
+
+    return this.conversations.editMessageIn(
+      chat,
+      userId,
+      messageId,
+      dto.body,
+    );
+  }
+
+  /**
+   * Удалить своё сообщение в чате похода — физически (25.11.2026).
+   *
+   * Вид чата нужен и здесь: без него не найти диалог, а проверка «мой ли
+   * поход» не заменяет проверку «мой ли чат».
+   */
+  async deleteMessage(
+    userId: string,
+    id: number,
+    messageId: string,
+    kind: ChatKind,
+  ): Promise<void> {
+    const manager = this.dataSource.manager;
+    const trip = await this.findVisibleTrip(manager, userId, id);
+    const chat = await this.findChatForUser(manager, trip, userId, kind);
+
+    return this.conversations.deleteMessageIn(chat, userId, messageId);
   }
 }

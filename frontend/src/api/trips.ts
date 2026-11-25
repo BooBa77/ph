@@ -432,6 +432,42 @@ export async function sendTripMessage(
   })
 }
 
+/**
+ * PATCH /api/trips/:id/messages/:messageId — изменить своё сообщение
+ * (25.11.2026).
+ *
+ * Вид чата здесь не «на всякий случай»: у чата похода нет своего id
+ * в адресе экрана, и пара «поход + вид» — единственный способ найти диалог.
+ * Чужое и системное сервер не даст (403), как и в личном диалоге.
+ */
+export async function editTripMessage(
+  tripId: string,
+  kind: ChatKind,
+  messageId: string,
+  body: string,
+): Promise<TripMessage> {
+  return apiFetch<TripMessage>(`/trips/${tripId}/messages/${messageId}`, {
+    method: 'PATCH',
+    body: JSON.stringify({ kind, body }),
+  })
+}
+
+/**
+ * DELETE /api/trips/:id/messages/:messageId — удалить своё сообщение
+ * (25.11.2026).
+ *
+ * Вид чата — в query: у `DELETE` нет тела, а без него не найти диалог.
+ */
+export async function deleteTripMessage(
+  tripId: string,
+  kind: ChatKind,
+  messageId: string,
+): Promise<void> {
+  return apiFetch<void>(`/trips/${tripId}/messages/${messageId}?kind=${kind}`, {
+    method: 'DELETE',
+  })
+}
+
 // ─────────────────────── питание похода ───────────────────────
 
 /** GET /api/trips/:id/meal-plan — раскладка и фасовка целиком. */

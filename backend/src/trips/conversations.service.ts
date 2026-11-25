@@ -11,6 +11,7 @@ import {
   ConversationListDto,
   ConversationMessageQueryDto,
   ConversationPeerDto,
+  type EditConversationMessageDto,
   type OpenDirectDto,
   type SendConversationMessageDto,
 } from './dto/conversation.dto';
@@ -419,6 +420,188 @@ export class ConversationsService {
       conversation.id,
       actorId,
     );
+  }
+
+  /**
+   * Отредактировать своё сообщение в личном диалоге или чате похода (25.11.2026).
+   *
+   * Права проверяются здесь, а не в контроллере: `accessible()` — тот же
+   * вход, что у чтения и отправки, а сверх него сообщение должно быть
+   * **своим**. Системное (`sender_id IS NULL`) не правится никогда: это
+   * история событий, а не реплика человека. Сообщение с денежным действием
+   * тоже не правится — текст уведомления о переводе человеку не принадлежит,
+   * и подменить его значило бы поменять условия денег.
+   */
+  async editMessage(
+    userId: string,
+    conversationId: number,
+    messageId: string,
+    dto: EditConversationMessageDto,
+  ): Promise<TripMessageDto> {
+    const manager = this.dataSource.manager;
+    const conversation = await this.accessible(
+      manager,
+      userId,
+      conversationId,
+    );
+
+    return this.editMessageIn(conversation, userId, messageId, dto.body);
+  }
+
+  /**
+   * Ядро правки — для обоих входов: `/conversations/:id/...` и
+   * `/trips/:id/...`.
+   *
+   * Второй вход нужен гостю публичного похода: он пишет в гостевой чат, но
+   * строки состава у него нет, и `accessible()` ответил бы ему 403.
+   * `TripsService` находит чат по паре «поход + вид» (там же проверка
+   * доступа гостя) и зовёт этот метод — проверка «моё ли сообщение»
+   * остаётся одна на оба входа.
+   */
+  async editMessageIn(
+    conversation: Conversation,
+    userId: string,
+    messageId: string,
+    body: string,
+  ): Promise<TripMessageDto> {
+    const value = body.trim();
+    if (value.length === 0) {
+      throw new BadRequestException('Сообщение не может состоять из пробелов');
+    }
+
+    const manager = this.dataSource.manager;
+    const message = await this.ownMessage(
+      manager,
+      conversation,
+      userId,
+      messageId,
+    );
+
+    // Тот же текст — не ошибка, но и события нет: переписывать нечего.
+    if (message.body === value) return TripMessageDto.from(message, userId);
+
+    message.body = value;
+    await manager.save(message);
+
+    /**
+     * Кадр `message_updated` — после записи (24.11.2026, вид уже был).
+     *
+     * `actorId` — человек, а не пустая строка: правивший уже получил новый
+     * текст ответом ручки, и второй раз ему его применять не нужно. Для
+     * собеседника это обычное чужое действие, и открытая переписка
+     * заменит тело строки без перезагрузки.
+     */
+    this.events.emitMessageUpdated(
+      await this.participantsOf(manager, conversation),
+      conversation.id,
+      { id: message.id, body: message.body },
+      userId,
+    );
+
+    return TripMessageDto.from(message, userId);
+  }
+
+  /**
+   * Удалить своё сообщение — физически (25.11.2026).
+   *
+   * **Почему без пометки «удалено».** Заказчик просил «удалить», а не
+   * «скрыть»: оставленная строка «сообщение удалено» занимает место в
+   * переписке и продолжает считаться непрочитанной у собеседника, хотя
+   * читать в ней нечего. Физическое удаление не требует миграции, а
+   * `unreadCount` считается по строкам `messages` — после удаления он сам
+   * становится честным. Листание по `id` разрыва не замечает: курсор
+   * `before` — это «всё, что меньше id», и пропавшая строка просто
+   * не встретится.
+   *
+   * «Прочитано» не ломается: метка живёт на диалог, а не на сообщение;
+   * после удаления последнего своего сообщения «Прочитано» переезжает на
+   * предыдущее — оно тоже прочитано, если собеседник дочитал до удалённого.
+   */
+  async deleteMessage(
+    userId: string,
+    conversationId: number,
+    messageId: string,
+  ): Promise<void> {
+    const manager = this.dataSource.manager;
+    const conversation = await this.accessible(
+      manager,
+      userId,
+      conversationId,
+    );
+
+    return this.deleteMessageIn(conversation, userId, messageId);
+  }
+
+  /** Ядро удаления — те же два входа, что у правки. */
+  async deleteMessageIn(
+    conversation: Conversation,
+    userId: string,
+    messageId: string,
+  ): Promise<void> {
+    const manager = this.dataSource.manager;
+    const message = await this.ownMessage(
+      manager,
+      conversation,
+      userId,
+      messageId,
+    );
+
+    const result = await manager.delete(Message, {
+      id: message.id,
+      conversationId: conversation.id,
+    });
+
+    // Строку нашли мгновением раньше, но параллельный DELETE мог её
+    // забрать: честнее ответить 404, чем разослать событие о несуществующем.
+    if (!result.affected) {
+      throw new NotFoundException('Сообщение не найдено');
+    }
+
+    this.events.emitMessageDeleted(
+      await this.participantsOf(manager, conversation),
+      conversation.id,
+      message.id,
+      userId,
+    );
+  }
+
+  /**
+   * Найти сообщение для правки и удаления и проверить, что оно своё.
+   *
+   * Порядок отказов важен: сначала «есть ли такое сообщение в этом
+   * диалоге» (404), потом «моё ли» (403) — чужое сообщение не должно
+   * превращаться в «не найдено» только потому, что его автор другой.
+   * Системное сообщение — тоже 403: у него нет автора, и разрешать его
+   * править некому.
+   */
+  private async ownMessage(
+    manager: EntityManager,
+    conversation: Conversation,
+    userId: string,
+    messageId: string,
+  ): Promise<Message> {
+    const message = await manager.findOne(Message, {
+      where: { id: String(messageId), conversationId: conversation.id },
+      relations: { sender: true, action: true },
+    });
+
+    if (!message) {
+      throw new NotFoundException('Сообщение не найдено');
+    }
+
+    if (message.senderId === null) {
+      throw new ForbiddenException('Системное сообщение изменить нельзя');
+    }
+
+    if (message.senderId !== userId) {
+      throw new ForbiddenException('Можно менять только своё сообщение');
+    }
+
+    if (message.actionId !== null) {
+      throw new ForbiddenException('Денежное сообщение менять нельзя');
+    }
+
+    return message;
   }
 
   /**

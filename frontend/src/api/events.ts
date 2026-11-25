@@ -51,17 +51,18 @@ export interface TripEvent {
 }
 
 /**
- * Что произошло в переписке: пришло сообщение, диалог прочитали или
- * сообщение переписали.
+ * Что произошло в переписке: пришло сообщение, диалог прочитали,
+ * сообщение переписали или удалили.
  *
  * `ConversationDto` здесь не едет намеренно: он зависит от смотрящего
  * (`unreadCount`, `peer`, `peerLastReadAt`), и один объект на всех отдал бы
  * чужое непрочитанное. По `conversationId` клиент находит строку и
  * дотягивает её одним `GET /api/conversations/:id`.
  *
- * Исключение — `message_updated`: `messageId` и `body` в кадре есть, потому
- * что переписанное сообщение уже лежит в открытом диалоге и заменить надо
- * именно его тело. От смотрящего эти два поля не зависят.
+ * Исключение — `message_updated` и `message_deleted`: `messageId` в кадре
+ * есть (у правки ещё и `body`), потому что сообщение уже лежит в открытом
+ * диалоге и менять надо именно эту строку. От смотрящего эти поля
+ * не зависят.
  *
  * `notifications` (24.11.2026) — сигнал «перечитай уведомления»: появилась
  * карточка панели, закрылась или ушла в архив. Отдельного потока для
@@ -73,6 +74,7 @@ export type ConversationEventKind =
   | 'message'
   | 'read'
   | 'message_updated'
+  | 'message_deleted'
   | 'notifications'
 
 export interface ConversationEvent {
@@ -80,11 +82,15 @@ export interface ConversationEvent {
   kind: ConversationEventKind
   /**
    * Кто действовал: своё действие клиент уже применил и не перечитывает.
-   * У `message_updated` человека-актора нет — пустая строка.
+   * У системного `message_updated` (автосогласие через 72 часа) актора нет —
+   * пустая строка; у правки и удаления человеком здесь его id.
    */
   actorId: string
   at: string
-  /** Только у `message_updated`: какое сообщение и каким текстом стало. */
+  /**
+   * Только у `message_updated` и `message_deleted`: какое сообщение
+   * изменилось или исчезло. У правки вместе с id едет новый текст.
+   */
   messageId?: string
   body?: string
 }
@@ -217,6 +223,7 @@ const CONVERSATION_EVENT_KINDS: readonly ConversationEventKind[] = [
   'message',
   'read',
   'message_updated',
+  'message_deleted',
   'notifications',
 ]
 
@@ -233,11 +240,18 @@ function isConversationEvent(value: unknown): value is ConversationEvent {
 
   if (!base) return false
 
-  // Переписанное сообщение без id и текста бесполезно: заменить в открытом
-  // диалоге нечего, а лента перечитает строку и так. Такой кадр — ошибка.
-  if (event.kind !== 'message_updated') return true
+  /**
+   * Правка и удаление без id сообщения бесполезны: заменить в открытом
+   * диалоге нечего, а лента перечитает строку и так. Такой кадр — ошибка.
+   * У правки нужен и текст: `message_deleted` тела не несёт.
+   */
+  if (event.kind !== 'message_updated' && event.kind !== 'message_deleted') {
+    return true
+  }
 
-  return typeof event.messageId === 'string' && typeof event.body === 'string'
+  if (typeof event.messageId !== 'string') return false
+
+  return event.kind !== 'message_updated' || typeof event.body === 'string'
 }
 
 /**

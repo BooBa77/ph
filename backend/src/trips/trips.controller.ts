@@ -26,9 +26,11 @@ import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import { CreateTripDto } from './dto/create-trip.dto';
 import { TripCacheStateDto } from './dto/trip-cache-state.dto';
 import {
+  EditTripMessageDto,
   SendTripMessageDto,
   TripChatListDto,
   TripMessageDto,
+  TripMessageKindQueryDto,
   TripMessageListDto,
   TripMessageQueryDto,
 } from './dto/message.dto';
@@ -543,5 +545,52 @@ export class TripsController {
     @Body() dto: SendTripMessageDto,
   ): Promise<TripMessageDto> {
     return this.tripsService.sendMessage(authUser.id, id, dto);
+  }
+
+  /**
+   * Изменить своё сообщение в чате похода (25.11.2026).
+   *
+   * Отдельная ручка, а не `/conversations/:id/messages/:messageId`: гость
+   * публичного похода пишет в гостевой чат, но в составе похода его нет,
+   * и ручка диалогов ответила бы ему 403. Права на само сообщение — общие
+   * с личным диалогом, через `ConversationsService`.
+   */
+  @Patch(':id/messages/:messageId')
+  @ApiOperation({ summary: 'Изменить своё сообщение в чате похода' })
+  @ApiOkResponse({ type: TripMessageDto })
+  async editMessage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @Body() dto: EditTripMessageDto,
+  ): Promise<TripMessageDto> {
+    return this.tripsService.editMessage(
+      authUser.id,
+      id,
+      String(messageId),
+      dto,
+    );
+  }
+
+  /**
+   * Удалить своё сообщение в чате похода (25.11.2026).
+   *
+   * Вид чата — в query: у `DELETE` нет тела, а без вида не найти диалог.
+   */
+  @Delete(':id/messages/:messageId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Удалить своё сообщение в чате похода' })
+  async deleteMessage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @Query() query: TripMessageKindQueryDto,
+  ): Promise<void> {
+    return this.tripsService.deleteMessage(
+      authUser.id,
+      id,
+      String(messageId),
+      query.kind,
+    );
   }
 }

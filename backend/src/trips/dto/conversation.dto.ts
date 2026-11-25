@@ -270,3 +270,23 @@ export class SendConversationMessageDto {
   @MaxLength(4000, { message: 'Сообщение не должно превышать 4000 символов' })
   body: string;
 }
+
+/**
+ * Тело `PATCH /api/conversations/:id/messages/:messageId` (25.11.2026).
+ *
+ * Правила текста те же, что у отправки: одна проверка на обе ручки — иначе
+ * правкой можно было бы положить в базу пустоту или простыню, которую
+ * отправка не пропускает. `kind` здесь не нужен: диалог выбран id.
+ */
+export class EditConversationMessageDto {
+  @ApiProperty({
+    description: 'Новый текст: markdown (GFM), как при отправке',
+    example: 'Буду к девяти',
+    minLength: 1,
+    maxLength: 4000,
+  })
+  @IsString({ message: 'Сообщение должно быть строкой' })
+  @MinLength(1, { message: 'Сообщение не может быть пустым' })
+  @MaxLength(4000, { message: 'Сообщение не должно превышать 4000 символов' })
+  body: string;
+}

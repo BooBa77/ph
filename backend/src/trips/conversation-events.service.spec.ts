@@ -174,6 +174,72 @@ describe('ConversationEventsService', () => {
     c.unsubscribe();
   });
 
+  /**
+   * Правка своего сообщения человеком (25.11.2026).
+   *
+   * Тот же вид `message_updated`, но `actorId` заполнен: правивший уже
+   * получил текст ответом `PATCH` и второй раз его не применяет. Собеседник
+   * отличает действие от системного переписывания именно по этому полю.
+   */
+  it('у правки человеком заполнен actorId', () => {
+    const service = new ConversationEventsService();
+    const received: ConversationEvent[] = [];
+
+    const subscription = service
+      .stream('user-2')
+      .subscribe((event) => received.push(event));
+
+    service.emitMessageUpdated(
+      ['user-1', 'user-2'],
+      '1268',
+      { id: '346', body: 'Поправил опечатку' },
+      'user-1',
+    );
+
+    expect(received).toEqual([
+      {
+        conversationId: '1268',
+        kind: 'message_updated',
+        actorId: 'user-1',
+        at: expect.any(String),
+        messageId: '346',
+        body: 'Поправил опечатку',
+      },
+    ]);
+
+    subscription.unsubscribe();
+  });
+
+  /**
+   * Удаление своего сообщения (25.11.2026).
+   *
+   * Отдельный вид, а не `message_updated` с пустым телом: открытый диалог
+   * должен убрать строку, а не показать пузырь без текста. Тела в кадре
+   * нет — его больше нет в базе.
+   */
+  it('отдаёт «сообщение удалено» с id и автором', () => {
+    const service = new ConversationEventsService();
+    const received: ConversationEvent[] = [];
+
+    const subscription = service
+      .stream('user-1')
+      .subscribe((event) => received.push(event));
+
+    service.emitMessageDeleted(['user-1'], '1268', '346', 'user-2');
+
+    expect(received).toEqual([
+      {
+        conversationId: '1268',
+        kind: 'message_deleted',
+        actorId: 'user-2',
+        at: expect.any(String),
+        messageId: '346',
+      },
+    ]);
+
+    subscription.unsubscribe();
+  });
+
   it('после отписки последнего подписчика событие никуда не идёт', () => {
     const service = new ConversationEventsService();
     const received: ConversationEvent[] = [];

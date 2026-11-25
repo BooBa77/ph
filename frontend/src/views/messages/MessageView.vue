@@ -3,6 +3,8 @@ import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, useRoute, useRouter } from 'vue-router'
 
 import {
+  deleteConversationMessage,
+  editConversationMessage,
   getConversation,
   listConversationMessages,
   markConversationRead,
@@ -73,6 +75,14 @@ import { markdownToHtml } from '@/utils/markdown'
  * прокрутка к новым, но отметка «здесь началось новое» не прыгает под
  * пальцем. При следующем открытии (или перезагрузке) `unreadCount` уже 0,
  * и разделителя нет.
+ *
+ * **Правка и удаление своего сообщения (25.11.2026).** Под своими репликами
+ * живут «Изменить» и «Удалить»; чужие и системные не трогаются, а сообщения
+ * с денежным действием сервер не даст править (403) — это история перевода,
+ * а не реплика человека. Правка заменяет тело на месте, удаление физическое:
+ * строка исчезает у обоих, потому что приходит кадром `message_deleted`.
+ * Подтверждение удаления — на месте, а не `window.confirm`: нативный диалог
+ * заблокировал бы вкладку живой проверки.
  */
 const route = useRoute()
 const router = useRouter()
@@ -105,6 +115,23 @@ const isAnswering = ref(false)
 const actionError = ref<string | null>(null)
 
 const listEl = ref<HTMLElement | null>(null)
+
+/**
+ * Правка и удаление своего сообщения (25.11.2026).
+ *
+ * Редактируется одно сообщение за раз: второе поле на экране сбивало бы
+ * с толку, а открытая форма правки — это ещё и «я сейчас занят этой
+ * строкой». Удаление спрашивает подтверждение **на месте**, а не
+ * `window.confirm`: нативный диалог блокирует вкладку, и живая проверка
+ * через CDP не смогла бы нажать «Удалить» (диалог ждёт `Page.
+ * handleJavaScriptDialog`). Кнопка превращается в «Удалить?» с двумя
+ * ответами — так же наглядно и проверяемо.
+ */
+const editingId = ref<string | null>(null)
+const editDraft = ref('')
+const isSavingEdit = ref(false)
+const deletingId = ref<string | null>(null)
+const isDeleting = ref(false)
 
 /**
  * Граница прочтения, снятая из диалога при открытии (25.11.2026).
@@ -155,6 +182,116 @@ const actionTitle = computed(() => {
 /** Свои сообщения — по правому краю. */
 function isOwn(message: TripMessage): boolean {
   return message.senderId !== null && message.senderId === myId.value
+}
+
+/**
+ * Можно ли править и удалять это сообщение (25.11.2026).
+ *
+ * Только своё и только реплику. Системное (`senderId === null`) — история
+ * событий чата, у неё нет автора. Сообщение с денежным действием не
+ * трогаем: текст уведомления о переводе принадлежит серверу, и подменить
+ * его значит поменять условия денег — то же правило стоит на сервере
+ * (`ownMessage` в `ConversationsService`).
+ */
+function canModify(message: TripMessage): boolean {
+  if (message.isSystem || !isOwn(message)) return false
+
+  return message.action === null || message.action === undefined
+}
+
+/** Открыть форму правки у одного сообщения; удаление и правка — не вместе. */
+function startEdit(message: TripMessage): void {
+  if (!canModify(message) || isSavingEdit.value) return
+
+  editingId.value = message.id
+  editDraft.value = message.body
+  deletingId.value = null
+  error.value = null
+}
+
+/** Закрыть форму правки без сохранения. */
+function cancelEdit(): void {
+  editingId.value = null
+  editDraft.value = ''
+}
+
+/**
+ * Сохранить правку.
+ *
+ * Ответ ручки — уже новое сообщение, поэтому перечитывать историю незачем:
+ * заменяем строку в списке. Собеседнику текст уезжает кадром
+ * `message_updated`, а `actorId` в нём — мой, и свой же кадр экран
+ * не применяет (иначе тело заменилось бы дважды без нужды).
+ */
+async function saveEdit(): Promise<void> {
+  const row = conversation.value
+  const messageId = editingId.value
+  const body = editDraft.value.trim()
+
+  if (!row || !messageId || !body || isSavingEdit.value) return
+
+  isSavingEdit.value = true
+  error.value = null
+
+  try {
+    const updated = await editConversationMessage(row.id, messageId, body)
+
+    messages.value = messages.value.map((message) =>
+      message.id === updated.id ? updated : message,
+    )
+    editingId.value = null
+    editDraft.value = ''
+  } catch (problem) {
+    error.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось изменить сообщение'
+  } finally {
+    isSavingEdit.value = false
+  }
+}
+
+/** Спросить подтверждение удаления на месте — без нативного диалога. */
+function askDelete(message: TripMessage): void {
+  if (!canModify(message) || isDeleting.value) return
+
+  deletingId.value = message.id
+  editingId.value = null
+  error.value = null
+}
+
+function cancelDelete(): void {
+  deletingId.value = null
+}
+
+/**
+ * Удалить сообщение — физически (25.11.2026).
+ *
+ * Строки в базе не остаётся, поэтому убираем её и из списка. Строку ленты
+ * перечитываем: если удалили последнее сообщение, её `lastMessage` и
+ * непрочитанное уже неверны, а сервер считает их по оставшимся строкам.
+ * Своё событие стор не применяет (`actorId` — мой), поэтому без
+ * перечитывания лента врала бы до минуты опроса.
+ */
+async function confirmDelete(): Promise<void> {
+  const row = conversation.value
+  const messageId = deletingId.value
+
+  if (!row || !messageId || isDeleting.value) return
+
+  isDeleting.value = true
+  error.value = null
+
+  try {
+    await deleteConversationMessage(row.id, messageId)
+
+    messages.value = messages.value.filter((message) => message.id !== messageId)
+    deletingId.value = null
+    await feed.refresh()
+  } catch (problem) {
+    error.value =
+      problem instanceof ApiError ? problem.message : 'Не удалось удалить сообщение'
+  } finally {
+    isDeleting.value = false
+  }
 }
 
 /**
@@ -303,6 +440,9 @@ async function open(id: string): Promise<void> {
   replyDraft.value = ''
   actionError.value = null
   isAnswering.value = false
+  editingId.value = null
+  editDraft.value = ''
+  deletingId.value = null
   readBoundary.value = null
   hasUnread.value = false
 
@@ -638,6 +778,27 @@ const stopEvents = feed.onEvent((event, row) => {
     return
   }
 
+  /**
+   * Сообщение удалили (25.11.2026) — убираем строку, а не перечёркиваем.
+   *
+   * Удаление физическое, поэтому в базе её уже нет: оставленная строка
+   * показывала бы собеседнику то, чего не существует, и продолжала бы
+   * считаться местом в переписке. Если открыта форма правки или
+   * подтверждение удаления этой строки — закрываем: объекта больше нет.
+   */
+  if (event.kind === 'message_deleted') {
+    const { messageId } = event
+
+    if (messageId === undefined) return
+
+    messages.value = messages.value.filter((message) => message.id !== messageId)
+
+    if (editingId.value === messageId) cancelEdit()
+    if (deletingId.value === messageId) deletingId.value = null
+
+    return
+  }
+
   const incoming = row?.lastMessage
   const list = listEl.value
   /**
@@ -857,11 +1018,14 @@ watch(
           <div
             v-else
             class="max-w-[85%] rounded-xl px-3 py-2"
-            :class="
+            :class="[
+              // Форма правки — на всю ширину: в узком пузыре текст
+              // обрезался бы, а править его вслепую нельзя.
+              editingId === message.id ? 'w-full max-w-full' : '',
               isOwn(message)
                 ? 'self-end border border-primary/40 bg-primary/10'
-                : 'self-start bg-field'
-            "
+                : 'self-start bg-field',
+            ]"
             :data-test="`message-${message.id}`"
           >
             <div
@@ -872,9 +1036,96 @@ watch(
             </div>
 
             <div
+              v-if="editingId === message.id"
+              class="flex flex-col gap-2"
+              data-test="message-edit-form"
+            >
+              <textarea
+                v-model="editDraft"
+                rows="2"
+                class="w-full resize-y rounded-xl border border-border bg-field px-3 py-2 text-sm text-text outline-none focus:border-primary"
+                aria-label="Новый текст сообщения"
+                data-test="message-edit-input"
+                @keydown.enter.exact.prevent="saveEdit"
+              />
+              <div class="flex justify-end gap-3 text-xs">
+                <button
+                  type="button"
+                  class="cursor-pointer text-muted"
+                  data-test="message-edit-cancel"
+                  @click="cancelEdit"
+                >
+                  Отмена
+                </button>
+                <button
+                  type="button"
+                  class="cursor-pointer text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                  :disabled="!editDraft.trim() || isSavingEdit"
+                  data-test="message-edit-save"
+                  @click="saveEdit"
+                >
+                  Сохранить
+                </button>
+              </div>
+            </div>
+
+            <div
+              v-else
               class="chat-message text-sm leading-relaxed text-text"
               v-html="bodyHtml(message)"
             />
+
+            <!--
+              Удаление спрашивает подтверждение на месте (25.11.2026):
+              нативный `window.confirm` блокирует вкладку, и живая проверка
+              через CDP не смогла бы нажать кнопку.
+            -->
+            <div
+              v-if="deletingId === message.id"
+              class="mt-1 flex flex-wrap items-center justify-end gap-2 text-xs"
+              data-test="message-delete-row"
+            >
+              <span class="text-muted">Удалить сообщение?</span>
+              <button
+                type="button"
+                class="cursor-pointer text-muted"
+                data-test="message-delete-cancel"
+                @click="cancelDelete"
+              >
+                Отмена
+              </button>
+              <button
+                type="button"
+                class="cursor-pointer text-primary disabled:cursor-not-allowed disabled:opacity-50"
+                :disabled="isDeleting"
+                data-test="message-delete-confirm"
+                @click="confirmDelete"
+              >
+                Удалить
+              </button>
+            </div>
+
+            <div
+              v-else-if="canModify(message) && editingId !== message.id"
+              class="mt-1 flex items-center justify-end gap-3 text-xs text-muted"
+            >
+              <button
+                type="button"
+                class="cursor-pointer underline-offset-2 hover:text-text hover:underline"
+                data-test="message-edit"
+                @click="startEdit(message)"
+              >
+                Изменить
+              </button>
+              <button
+                type="button"
+                class="cursor-pointer underline-offset-2 hover:text-text hover:underline"
+                data-test="message-delete"
+                @click="askDelete(message)"
+              >
+                Удалить
+              </button>
+            </div>
 
             <div class="mt-1 flex items-baseline justify-end gap-2 text-xs text-muted">
               <span data-test="message-read" v-if="showReadMark(message)">Прочитано</span>

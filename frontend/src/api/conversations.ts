@@ -68,6 +68,42 @@ export function sendConversationMessage(
   })
 }
 
+/**
+ * PATCH /api/conversations/:id/messages/:messageId — изменить своё сообщение
+ * (25.11.2026).
+ *
+ * Чужое и системное сервер не даст (403), сообщения с денежным действием —
+ * тоже: текст уведомления о переводе человеку не принадлежит. Новый текст
+ * приходит в ответе и уезжает собеседнику кадром `message_updated`.
+ */
+export function editConversationMessage(
+  conversationId: string,
+  messageId: string,
+  body: string,
+): Promise<TripMessage> {
+  return apiFetch<TripMessage>(
+    `/conversations/${conversationId}/messages/${messageId}`,
+    { method: 'PATCH', body: JSON.stringify({ body }) },
+  )
+}
+
+/**
+ * DELETE /api/conversations/:id/messages/:messageId — удалить своё сообщение
+ * (25.11.2026).
+ *
+ * Удаление физическое: ответ 204, возвращать нечего. В открытой переписке
+ * обоих появляется кадр `message_deleted`, и строка исчезает без
+ * перезагрузки.
+ */
+export function deleteConversationMessage(
+  conversationId: string,
+  messageId: string,
+): Promise<void> {
+  return apiFetch<void>(`/conversations/${conversationId}/messages/${messageId}`, {
+    method: 'DELETE',
+  })
+}
+
 /** POST /api/conversations/:id/read — отметить диалог прочитанным. */
 export function markConversationRead(conversationId: string): Promise<void> {
   return apiFetch<void>(`/conversations/${conversationId}/read`, {

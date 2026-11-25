@@ -22,16 +22,27 @@ const mocks = vi.hoisted(() => ({
   sendTripMessage: vi.fn(),
   listTripChats: vi.fn(),
   setConversationMuted: vi.fn(),
+  editTripMessage: vi.fn(),
+  deleteTripMessage: vi.fn(),
+  listConversations: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
   listTripMessages: mocks.listTripMessages,
   sendTripMessage: mocks.sendTripMessage,
   listTripChats: mocks.listTripChats,
+  editTripMessage: mocks.editTripMessage,
+  deleteTripMessage: mocks.deleteTripMessage,
 }))
 
 vi.mock('@/api/conversations', () => ({
   setConversationMuted: mocks.setConversationMuted,
+  listConversations: mocks.listConversations,
+}))
+
+/** Мой id: по нему чат отличает свои сообщения от чужих (25.11.2026). */
+vi.mock('@/stores/auth', () => ({
+  useAuthStore: () => ({ user: { id: 'u-1' } }),
 }))
 
 function message(overrides: Partial<TripMessage> = {}): TripMessage {
@@ -80,6 +91,9 @@ describe('TripChat', () => {
     mocks.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })
     mocks.listTripChats.mockResolvedValue([])
     mocks.setConversationMuted.mockResolvedValue(undefined)
+    mocks.editTripMessage.mockResolvedValue(message({ body: 'Исправлено' }))
+    mocks.deleteTripMessage.mockResolvedValue(undefined)
+    mocks.listConversations.mockResolvedValue({ conversations: [] })
   })
 
   it('показывает сообщения из чата', async () => {
@@ -184,5 +198,104 @@ describe('TripChat', () => {
     expect(items).toHaveLength(1)
     expect(items[0]?.text()).toContain('Новый текст')
     expect(items[0]?.text()).not.toContain('Старый текст')
+  })
+
+  /**
+   * Правка и удаление своего сообщения в чате похода (25.11.2026).
+   *
+   * Чужие и системные строки не трогаются, денежные — тоже. Адрес ручки —
+   * пара «поход + вид чата»: у чата похода нет своего id в адресе экрана,
+   * а гость публичного похода не состоит в диалоге по составу.
+   */
+  it('своё сообщение правится через ручку чата похода', async () => {
+    mocks.listTripMessages.mockResolvedValue({
+      messages: [message({ id: '1', body: 'Опечатка' })],
+      hasMore: false,
+    })
+    mocks.listTripChats.mockResolvedValue([chat()])
+    mocks.editTripMessage.mockResolvedValue(message({ id: '1', body: 'Исправлено' }))
+
+    const wrapper = await mountChat()
+
+    await wrapper
+      .find('[data-test="chat-message-1"] [data-test="chat-edit"]')
+      .trigger('click')
+    await flushPromises()
+
+    const input = wrapper.find('[data-test="chat-edit-input"]')
+    expect((input.element as HTMLTextAreaElement).value).toBe('Опечатка')
+
+    await input.setValue('  Исправлено  ')
+    await wrapper.find('[data-test="chat-edit-save"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.editTripMessage).toHaveBeenCalledWith(
+      '7',
+      'trip_guest',
+      '1',
+      'Исправлено',
+    )
+    expect(wrapper.find('[data-test="chat-message-1"]').text()).toContain('Исправлено')
+    expect(wrapper.find('[data-test="chat-edit-input"]').exists()).toBe(false)
+  })
+
+  it('у чужого сообщения нет «Изменить» и «Удалить»', async () => {
+    mocks.listTripMessages.mockResolvedValue({
+      messages: [message({ id: '2', senderId: 'u-2', senderName: 'Ваня' })],
+      hasMore: false,
+    })
+
+    const wrapper = await mountChat()
+
+    expect(wrapper.find('[data-test="chat-edit"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="chat-delete"]').exists()).toBe(false)
+  })
+
+  it('удаление спрашивает подтверждение и убирает строку', async () => {
+    mocks.listTripMessages.mockResolvedValue({
+      messages: [message({ id: '3', body: 'Уберу' })],
+      hasMore: false,
+    })
+
+    const wrapper = await mountChat()
+
+    await wrapper
+      .find('[data-test="chat-message-3"] [data-test="chat-delete"]')
+      .trigger('click')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="chat-delete-confirm"]').exists()).toBe(true)
+    expect(mocks.deleteTripMessage).not.toHaveBeenCalled()
+
+    await wrapper.find('[data-test="chat-delete-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.deleteTripMessage).toHaveBeenCalledWith('7', 'trip_guest', '3')
+    expect(wrapper.find('[data-test="chat-message-3"]').exists()).toBe(false)
+  })
+
+  it('убирает строку по событию «сообщение удалено»', async () => {
+    mocks.listTripMessages.mockResolvedValue({
+      messages: [message({ id: '1', body: 'Пропадёт' })],
+      hasMore: false,
+    })
+    mocks.listTripChats.mockResolvedValue([chat()])
+
+    const wrapper = await mountChat()
+
+    expect(wrapper.find('[data-test="chat-message-1"]').exists()).toBe(true)
+
+    const feed = useConversationsStore()
+    await feed.applyEvent({
+      conversationId: '44',
+      kind: 'message_deleted',
+      actorId: 'u-2',
+      at: '2026-11-25T09:30:00.000Z',
+      messageId: '1',
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="chat-message-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="chat-empty"]').exists()).toBe(true)
   })
 })

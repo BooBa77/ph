@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Param,
   ParseIntPipe,
+  Patch,
   Post,
   Query,
   Req,
@@ -24,6 +25,7 @@ import {
   ConversationDto,
   ConversationListDto,
   ConversationMessageQueryDto,
+  EditConversationMessageDto,
   OpenDirectDto,
   SendConversationMessageDto,
 } from './dto/conversation.dto';
@@ -170,6 +172,53 @@ export class ConversationsController {
     @Body() dto: SendConversationMessageDto,
   ): Promise<TripMessageDto> {
     return this.conversationsService.sendMessage(authUser.id, id, dto);
+  }
+
+  /**
+   * Изменить своё сообщение (25.11.2026).
+   *
+   * Права — на сервере: чужое и системное не правится (403), сообщения
+   * с денежным действием тоже — текст уведомления о переводе человеку
+   * не принадлежит. Новый текст уезжает в поток `message_updated`, поэтому
+   * правку видит и вторая вкладка, и собеседник, без перезагрузки.
+   */
+  @Patch(':id/messages/:messageId')
+  @ApiOperation({ summary: 'Изменить своё сообщение' })
+  @ApiOkResponse({ type: TripMessageDto })
+  async editMessage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+    @Body() dto: EditConversationMessageDto,
+  ): Promise<TripMessageDto> {
+    return this.conversationsService.editMessage(
+      authUser.id,
+      id,
+      String(messageId),
+      dto,
+    );
+  }
+
+  /**
+   * Удалить своё сообщение (25.11.2026).
+   *
+   * Физически: строки в `messages` не остаётся, поэтому непрочитанное
+   * у собеседника пересчитывается само, а в открытой переписке обоих
+   * появляется кадр `message_deleted`. Ответ — 204: возвращать нечего.
+   */
+  @Delete(':id/messages/:messageId')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: 'Удалить своё сообщение' })
+  async deleteMessage(
+    @CurrentUser() authUser: AuthUser,
+    @Param('id', ParseIntPipe) id: number,
+    @Param('messageId', ParseIntPipe) messageId: number,
+  ): Promise<void> {
+    return this.conversationsService.deleteMessage(
+      authUser.id,
+      id,
+      String(messageId),
+    );
   }
 
   /**
