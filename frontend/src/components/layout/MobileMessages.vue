@@ -72,8 +72,21 @@ const hasSystem = computed(() => notifications.system.length > 0)
 /** У личной секции есть что показать. */
 const hasPersonal = computed(() => notifications.personal.length > 0)
 
-/** Шапка панели: всего активных карточек. */
+/** Всего активных карточек: по нему решается, закрывать ли пустую панель. */
 const total = computed(() => notifications.total)
+
+/** Шапка панели: заголовок и счётчик **своей** секции (25.11.2026). */
+const activeTitle = computed(() =>
+  activeSection.value === 'personal'
+    ? PERSONAL_SECTION_TITLE
+    : SYSTEM_SECTION_TITLE,
+)
+
+const activeCount = computed(() =>
+  activeSection.value === 'personal'
+    ? notifications.personalCount
+    : notifications.systemCount,
+)
 
 /** «99+» вместо четырёхзначного числа, которое на бейдже не читается. */
 function labelOf(count: number): string {
@@ -177,12 +190,18 @@ onUnmounted(() => {
       <button
         v-if="hasSystem"
         type="button"
-        class="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full bg-primary text-white shadow-2xl transition-transform active:scale-95"
-        aria-label="Системные уведомления"
+        class="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full border-2 border-primary bg-surface text-primary shadow-2xl transition-transform active:scale-95"
+        aria-label="Уведомления"
         data-test="mobile-notifications-system"
         @click="openSection('system')"
       >
-        <span class="block h-6 w-6"><SidebarIcon name="alert" /></span>
+        <!--
+          Крупный контурный треугольник с «!», почти на весь круг
+          (44 из 56 px): 25.11.2026 заказчик снял заливку кнопки и попросил
+          именно такой знак. Иконка масштабируется целиком — штрих толстеет
+          вместе с ней и остаётся читаемым.
+        -->
+        <span class="block h-11 w-11"><SidebarIcon name="alert" /></span>
 
         <span
           class="absolute -top-1 -right-1 min-w-6 rounded-full border border-primary bg-white px-1.5 py-0.5 text-center text-xs font-semibold leading-none text-primary"
@@ -195,11 +214,12 @@ onUnmounted(() => {
       <button
         v-if="hasPersonal"
         type="button"
-        class="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full bg-primary text-white shadow-2xl transition-transform active:scale-95"
-        aria-label="Личные сообщения"
+        class="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full border-2 border-primary bg-surface text-primary shadow-2xl transition-transform active:scale-95"
+        aria-label="Сообщения"
         data-test="mobile-notifications-personal"
         @click="openSection('personal')"
       >
+        <!-- Конверт тоже без заливки; окончательный вид — позже (заказчик). -->
         <span class="block h-6 w-6"><SidebarIcon name="mail" /></span>
 
         <span
@@ -228,14 +248,18 @@ onUnmounted(() => {
           tabindex="-1"
         >
           <div class="flex items-center gap-2 border-b border-border px-4 py-3">
-            <span class="text-sm font-medium text-text">Уведомления</span>
+            <span class="text-sm font-medium text-text" data-test="mobile-messages-title">
+              {{ activeTitle }}
+            </span>
 
+            <!-- Счётчик своей секции, а не сводный: третье число в шапке
+                 заставляло складывать в уме и расходилось с иконками. -->
             <span
-              v-if="total > 0"
+              v-if="activeCount > 0"
               class="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-white"
-              data-test="mobile-messages-total"
+              data-test="mobile-messages-count"
             >
-              {{ total }}
+              {{ activeCount }}
             </span>
 
             <button
@@ -282,6 +306,7 @@ onUnmounted(() => {
                 :items="notifications.system"
                 :open="activeSection === 'system'"
                 :expanded-id="expandedId"
+                :show-header="activeSection !== 'system'"
                 test-prefix="mobile-messages"
                 @toggle="toggleSection('system')"
                 @expand="expand"
@@ -294,6 +319,7 @@ onUnmounted(() => {
                 :items="notifications.personal"
                 :open="activeSection === 'personal'"
                 :expanded-id="expandedId"
+                :show-header="activeSection !== 'personal'"
                 test-prefix="mobile-messages"
                 @toggle="toggleSection('personal')"
                 @expand="expand"

@@ -75,6 +75,9 @@ async function mountRail() {
 beforeEach(() => {
   vi.clearAllMocks()
   setActivePinia(createPinia())
+  // Свёрнутость секций живёт в localStorage: иначе тест «берёт из хранилища»
+  // менял бы поведение следующим.
+  window.localStorage.clear()
   subscribeConversationEvents.mockReturnValue(() => undefined)
   answer([card()], [personal])
 })
@@ -85,7 +88,7 @@ afterEach(() => {
 })
 
 describe('RightRail — две секции уведомлений', () => {
-  it('рисует обе секции со счётчиками в порядке системные → личные', async () => {
+  it('рисует две секции со счётчиками в порядке уведомления → сообщения', async () => {
     const rail = await mountRail()
 
     const sections = rail.findAll('[data-test^="rail-section-"]')
@@ -93,9 +96,13 @@ describe('RightRail — две секции уведомлений', () => {
       'rail-section-system',
       'rail-section-personal',
     ])
+    // Заголовки «Уведомления» и «Сообщения» — свои у каждой секции.
+    expect(rail.get('[data-test="rail-toggle-system"]').text()).toContain('Уведомления')
+    expect(rail.get('[data-test="rail-toggle-personal"]').text()).toContain('Сообщения')
     expect(rail.get('[data-test="rail-count-system"]').text()).toBe('1')
     expect(rail.get('[data-test="rail-count-personal"]').text()).toBe('1')
-    expect(rail.get('[data-test="rail-total"]').text()).toBe('2')
+    // Общего заголовка и общего счётчика больше нет.
+    expect(rail.find('[data-test="rail-total"]').exists()).toBe(false)
   })
 
   /**
@@ -111,13 +118,12 @@ describe('RightRail — две секции уведомлений', () => {
     expect(rail.find('[data-test="rail-section-personal"]').exists()).toBe(false)
   })
 
-  it('без уведомлений пишет «Пока тихо» и не рисует счётчика', async () => {
+  it('без уведомлений пишет «Пока тихо» и не рисует секций', async () => {
     answer([], [])
 
     const rail = await mountRail()
 
     expect(rail.get('[data-test="rail-empty"]').text()).toBe('Пока тихо.')
-    expect(rail.find('[data-test="rail-total"]').exists()).toBe(false)
     expect(rail.findAll('[data-test^="rail-section-"]')).toHaveLength(0)
   })
 
@@ -145,16 +151,32 @@ describe('RightRail — две секции уведомлений', () => {
     expect(rail.find('[data-test="rail-confirm"]').exists()).toBe(false)
   })
 
-  it('секция сворачивается по заголовку, не теряя счётчик', async () => {
+  it('секции сворачиваются независимо и помнят это в localStorage', async () => {
+    window.localStorage.clear()
     const rail = await mountRail()
 
     await rail.get('[data-test="rail-toggle-system"]').trigger('click')
 
+    // Свернули «Уведомления» — карточки системной секции скрыты, счётчик цел.
     expect(rail.find('[data-test="rail-card-1"]').exists()).toBe(false)
     expect(rail.get('[data-test="rail-count-system"]').text()).toBe('1')
+    // «Сообщения» остались открытыми: секции не зависят друг от друга.
+    expect(rail.find('[data-test="rail-card-2"]').exists()).toBe(true)
+    expect(window.localStorage.getItem('ph.notifications.section.system.open')).toBe('0')
+    expect(window.localStorage.getItem('ph.notifications.section.personal.open')).toBeNull()
 
     await rail.get('[data-test="rail-toggle-system"]').trigger('click')
     expect(rail.find('[data-test="rail-card-1"]').exists()).toBe(true)
+    expect(window.localStorage.getItem('ph.notifications.section.system.open')).toBe('1')
+  })
+
+  it('свёрнутость берёт из localStorage при создании', async () => {
+    window.localStorage.setItem('ph.notifications.section.system.open', '0')
+
+    const rail = await mountRail()
+
+    expect(rail.find('[data-test="rail-card-1"]').exists()).toBe(false)
+    expect(rail.find('[data-test="rail-card-2"]').exists()).toBe(true)
   })
 
   it('ошибку загрузки показывает вместо списка', async () => {

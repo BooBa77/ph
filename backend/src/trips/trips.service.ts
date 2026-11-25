@@ -93,6 +93,7 @@ import {
   type TripWhen,
 } from './trip.types';
 import { nextWeekendRange } from './weekend';
+import { tripNameOf } from './trip-name';
 import { TripEventsService } from './trip-events.service';
 import { ConversationsService } from './conversations.service';
 import { NotificationsService } from './notifications.service';
@@ -1684,7 +1685,7 @@ export class TripsService {
     id: number,
     dto: UpdateTripDto,
   ): Promise<TripResponseDto> {
-    const { response, gearChanged, depositChanged, datesChanged } =
+    const { response, gearChanged, depositChanged, datesChanged, financeRecipients } =
       await this.dataSource.transaction(async (manager) => {
         const trip = await this.findManagedTrip(manager, userId, id);
 
@@ -1812,6 +1813,48 @@ export class TripsService {
 
         const saved = await manager.save(trip);
 
+        /**
+         * Установка, изменение и снятие залога — общегрупповое уведомление
+         * (25.11.2026, §14 `messages.md`, §2.5 `finance.md`).
+         *
+         * Заказчик: залог — не персональный «ты должен», а новость для
+         * группы: каждый сам решает в «Бухгалтерии», покрыть его расходами
+         * или переводом. Карточка одна на поход
+         * (`trip_finance:<поход>:deposit`): повторная правка суммы её
+         * обновляет, снятие залога — удаляет.
+         *
+         * Автор действия карточку не получает, люди без аккаунта — тоже.
+         * Новым участникам после установки залога карточку не создаём:
+         * она заводится здесь, а не при вступлении в поход.
+         */
+        const financeRecipients: string[] = [];
+
+        if (previousDepositRub !== saved.depositRub) {
+          if (saved.depositRub !== null && saved.depositRub > 0) {
+            const recipientIds = await this.notifications.tripFinanceRecipients(
+              manager,
+              String(saved.id),
+              userId,
+            );
+
+            await this.notifications.notifyTripFinanceDeposit(manager, {
+              tripId: String(saved.id),
+              tripName: await tripNameOf(manager, saved),
+              amountRub: saved.depositRub,
+              recipientIds,
+            });
+
+            financeRecipients.push(...recipientIds);
+          } else {
+            financeRecipients.push(
+              ...(await this.notifications.dropTripFinanceDeposit(
+                manager,
+                String(saved.id),
+              )),
+            );
+          }
+        }
+
         if (dto.routeText !== undefined) {
           await this.syncRouteElements(manager, saved.id, saved.routeText);
         }
@@ -1929,6 +1972,7 @@ export class TripsService {
           gearChanged: conflictText !== null,
           depositChanged: previousDepositRub !== saved.depositRub,
           datesChanged,
+          financeRecipients,
         };
       },
     );
@@ -1941,6 +1985,13 @@ export class TripsService {
     // Правили в «Правке похода» — вкладка должна узнать об этом по SSE,
     // а не ждать перезагрузки.
     if (depositChanged) this.events.emitFinance(String(id), userId);
+
+    // Карточка «Установлен залог» появилась или исчезла — панель получателя
+    // перечитывает уведомления. Кадр уходит после COMMIT: до него открытая
+    // панель показала бы карточку, которой ещё нет.
+    for (const recipientId of new Set(financeRecipients)) {
+      this.notifications.emitChanged([recipientId]);
+    }
 
     /**
      * Смена дат двигает плашки пустой таблицы «Ночёвок» (19.11.2026):

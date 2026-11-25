@@ -42,7 +42,16 @@ const sections = computed(() => {
 </script>
 
 <template>
-  <nav class="hidden md:flex md:flex-col" aria-label="Разделы сайта">
+  <!--
+    Колонка липкая (25.11.2026): меню стоит на месте, пока основная часть
+    прокручивается. `top` учитывает шапку (68 px) и верхний отступ каркаса
+    (32 px на `md`) — те же числа, что у правой колонки. `overflow-y` на
+    случай, если пунктов станет больше, чем высота окна.
+  -->
+  <nav
+    class="hidden md:sticky md:top-[100px] md:flex md:max-h-[calc(100vh-7.5rem)] md:flex-col md:self-start md:overflow-y-auto"
+    aria-label="Разделы сайта"
+  >
     <RouterLink
       v-for="section in sections"
       :key="section.to"

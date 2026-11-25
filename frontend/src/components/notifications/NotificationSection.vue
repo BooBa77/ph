@@ -3,13 +3,14 @@ import NotificationCard from '@/components/notifications/NotificationCard.vue'
 import type { AppNotification, NotificationSection } from '@/types/notifications'
 
 /**
- * Сворачиваемая секция панели уведомлений (§14.1).
+ * Сворачиваемая секция панели уведомлений (§14.1; независимые секции —
+ * 25.11.2026).
  *
- * Секций ровно две — «Системные уведомления» и «Личные сообщения» — и они
- * одинаковы по устройству: заголовок со счётчиком, сворачивание, список
- * карточек. Общий компонент вместо двух копий разметки: колонка и мобильная
- * панель показывают одни и те же секции, и правка в одной копии иначе
- * разошлась бы с другой.
+ * Секций ровно две — «Уведомления» и «Сообщения» — и они одинаковы по
+ * устройству: заголовок со счётчиком, сворачивание, список карточек. Общий
+ * компонент вместо двух копий разметки: колонка и мобильная панель
+ * показывают одни и те же секции, и правка в одной копии иначе разошлась бы
+ * с другой.
  *
  * **Пустая секция не рисуется.** Заказчик: «нет уведомлений в секции — нет
  * и её иконки» (это про мобилу, но пустая строка с нулём — тот же шум
@@ -18,15 +19,26 @@ import type { AppNotification, NotificationSection } from '@/types/notifications
  * **Раскрытая карточка одна на всю панель**, поэтому `expandedId` приходит
  * сверху и карточка лишь сообщает о клике: иначе вторая секция могла бы
  * раскрыть свою, оставив открытой чужую.
+ *
+ * **`showHeader` (25.11.2026).** Мобильная панель открывается на своей
+ * секции и уже называет её в шапке. Второй такой же заголовок внутри
+ * панели — дубль, поэтому активная секция рисует только карточки;
+ * у второй заголовок остаётся, и по нему переключаются.
  */
-defineProps<{
-  section: NotificationSection
-  title: string
-  items: AppNotification[]
-  open: boolean
-  expandedId: string | null
-  testPrefix: string
-}>()
+withDefaults(
+  defineProps<{
+    section: NotificationSection
+    title: string
+    items: AppNotification[]
+    open: boolean
+    expandedId: string | null
+    testPrefix: string
+    showHeader?: boolean
+  }>(),
+  // `Boolean`-проп без значения Vue приводит к `false`, а заголовок нужен
+  // по умолчанию: колонка не передаёт `showHeader` вовсе.
+  { showHeader: true },
+)
 
 const emit = defineEmits<{ toggle: []; expand: [id: string] }>()
 </script>
@@ -38,6 +50,7 @@ const emit = defineEmits<{ toggle: []; expand: [id: string] }>()
     :data-test="`${testPrefix}-section-${section}`"
   >
     <button
+      v-if="showHeader !== false"
       type="button"
       class="flex w-full cursor-pointer items-center gap-2 rounded-lg px-1 py-1 text-left hover:bg-bg"
       :aria-expanded="open"

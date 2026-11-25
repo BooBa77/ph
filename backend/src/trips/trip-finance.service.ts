@@ -108,6 +108,29 @@ function moneyMessageText(
 }
 
 /**
+ * Текст карточки, когда перевод ушёл человеку без аккаунта (25.11.2026).
+ *
+ * Заказчик: «{Отправитель} перевёл(а) твоему участнику ({Виктор}) {amount} ₽
+ * за поход «{trip}»». Карточка приходит **владельцу** виртуального, а не
+ * самому виртуальному: входить в приложение тому нечем. Поэтому текст
+ * отличает «твой участник» от «ты» и называет имя — иначе владелец не
+ * понял бы, за кого перевод. Род не уточняется: «перевёл(а)» — так
+ * сформулировал заказчик, и это короче, чем собирать два варианта ради
+ * одной скобки.
+ */
+function moneyVirtualMessageText(
+  amountRub: number,
+  tripName: string,
+  senderName: string,
+  participantName: string,
+): string {
+  return (
+    `${senderName} перевёл(а) твоему участнику (${participantName}) ` +
+    `${amountRub} ₽ за поход «${tripName}».`
+  );
+}
+
+/**
  * Дописанное к уведомлению, когда срок ожидания истёк (24.11.2026).
  *
  * Заказчик: «Так как время ожидания подтверждения вышло, перевод засчитан
@@ -604,25 +627,58 @@ export class TripFinanceService {
        * а не диалоги, и двойная запись выключена. Ключ —
        * `money_transfer:<перевод>`: один перевод — одна карточка
        * у получателя.
+       *
+       * **Получатель без аккаунта (25.11.2026).** Перевод виртуальному —
+       * личный, но вход у него только у владельца. Карточка уходит
+       * владельцу, диалог с виртуальным не создаётся, `conversation_id`
+       * пуст: поле «Сообщение отправителю» на такой карточке не рисуется.
+       * Правило заказчика: «переводы личные; семейные связи — только
+       * в расчёте балансов».
        */
-      const conversation = await this.compensationConversation(
-        manager,
-        trip,
-        senderId,
-        compensation,
-        sender?.displayName ?? '',
-        sender?.gender,
-      );
+      const recipientVirtual = recipient.user?.isVirtual === true;
+      const virtualOwnerId = recipientVirtual
+        ? (recipient.user?.virtualOwnerUserId ?? null)
+        : null;
 
-      await this.notifications.notifyMoneyTransfer(manager, {
-        recipientUserId: compensation.toUserId,
-        tripId: String(trip.id),
-        compensationId: String(compensation.id),
-        conversationId: conversation.conversationId,
-        body: conversation.body,
-      });
+      let notifyUserId: string | null = compensation.toUserId;
+      let notifyConversationId: string | null = null;
+      let notifyBody: string;
 
-      notificationRecipients.push(compensation.toUserId);
+      if (recipientVirtual) {
+        notifyUserId = virtualOwnerId;
+        notifyBody = moneyVirtualMessageText(
+          amountRub,
+          await tripNameOf(manager, trip),
+          sender?.displayName ?? '',
+          recipient.user?.displayName ?? '',
+        );
+      } else {
+        const conversation = await this.compensationConversation(
+          manager,
+          trip,
+          senderId,
+          compensation,
+          sender?.displayName ?? '',
+          sender?.gender,
+        );
+
+        notifyConversationId = conversation.conversationId;
+        notifyBody = conversation.body;
+      }
+
+      // Виртуальный без владельца — карточку класть некуда; владелец-автор
+      // не уведомляется о собственном действии.
+      if (notifyUserId !== null && notifyUserId !== senderId) {
+        await this.notifications.notifyMoneyTransfer(manager, {
+          recipientUserId: notifyUserId,
+          tripId: String(trip.id),
+          compensationId: String(compensation.id),
+          conversationId: notifyConversationId,
+          body: notifyBody,
+        });
+
+        notificationRecipients.push(notifyUserId);
+      }
 
       // Оплата только что созданным переводом могла закрыть долг —
       // запрос платежа уходит в архив сразу, не дожидаясь вкладки.
@@ -675,10 +731,23 @@ export class TripFinanceService {
         await this.assertGoing(manager, String(trip.id), userId);
       }
 
+      /**
+       * Подтверждает получатель — и только он (25.11.2026).
+       *
+       * Заказчик: «переводы личные; семейные связи учитываются только при
+       * расчёте балансов». Раньше родной получателя мог подтвердить перевод
+       * «за семью» — теперь нет: Михаил подтверждает только сам, а Сергей
+       * получает `403`. Исключение — человек без аккаунта: за виртуального
+       * действует владелец, иначе подтвердить некому.
+       *
+       * Залог (`deposit`) не тронут: семейное право там осталось, потому
+       * что залог — не личный перевод долга, а общий расчёт похода.
+       */
       if (
         compensation.toUserId !== userId &&
-        !(await this.isFamilyOf(manager, compensation.toUserId, userId)) &&
-        !(await this.isManagedVirtual(manager, compensation.toUserId, userId))
+        !(await this.isManagedVirtual(manager, compensation.toUserId, userId)) &&
+        (compensation.kind === 'compensation' ||
+          !(await this.isFamilyOf(manager, compensation.toUserId, userId)))
       ) {
         throw new ForbiddenException(
           'Подтвердить получение может только получатель',
@@ -770,10 +839,18 @@ export class TripFinanceService {
         lock: { mode: 'pessimistic_write' },
       });
       if (!compensation) throw new NotFoundException('Компенсация не найдена');
+      /**
+       * Отменить ожидающий перевод может только отправитель (25.11.2026).
+       *
+       * Семейное право отмены снято так же, как подтверждение: переводы
+       * личные. Человек без аккаунта — исключение: за него действует
+       * владелец. У залога (`deposit`) семейное право осталось.
+       */
       if (
         compensation.fromUserId !== userId &&
-        !(await this.isFamilyOf(manager, compensation.fromUserId, userId)) &&
-        !(await this.isManagedVirtual(manager, compensation.fromUserId, userId))
+        !(await this.isManagedVirtual(manager, compensation.fromUserId, userId)) &&
+        (compensation.kind === 'compensation' ||
+          !(await this.isFamilyOf(manager, compensation.fromUserId, userId)))
       ) {
         throw new ForbiddenException(
           'Отменить компенсацию может только отправитель',
@@ -811,37 +888,32 @@ export class TripFinanceService {
   }
 
   /**
-   * «Отправить уведомления о компенсации» (24.11.2026).
+   * «Компенсируйте расходы» — общегрупповое уведомление (25.11.2026).
    *
-   * Заказчик: «В разделе Поход/Бухгалтерия кнопка, доступная организаторам
-   * „Отправить уведомления о компенсации“. По ней улетают уведомления
-   * участникам с отрицательным балансом и участникам с нулевым балансом при
-   * установленном залоге — „Организатор запросил платёж по походу Витязь“
-   * с кнопкой „Перейти“. Переход — раздел Бухгалтерия похода».
+   * Заказчик пересмотрел прежнюю кнопку «Отправить уведомления
+   * о компенсации»: вместо персональных «Запрос платежа» должникам
+   * участники получают групповую карточку «Расходы по походу «…»
+   * распределены. Проверь свой баланс в „Бухгалтерии“ — там видно, кому
+   * и сколько перевести». Никаких «ты должен»: сколько и кому, человек
+   * решает сам во вкладке.
    *
-   * **Кому.** Идущим участникам, у кого остаток с учётом ожидающих переводов
-   * отрицательный; при установленном залоге — ещё и тем, у кого он ровно
-   * ноль. Ожидающие переводы учитываются, иначе просьба пришла бы человеку,
-   * который только что перевёл. Люди без аккаунта пропускаются: входить
-   * в приложение им нечем, уведомление некуда положить.
+   * **Кому.** Всем идущим, кроме автора действия и людей без аккаунта.
+   * Должники не считаются — иначе это был бы прежний персональный
+   * запрос платежа с другим заголовком.
    *
-   * **Кнопка «Перейти»** — карточка уведомления `payment_request` с
-   * `trip_id` похода: ответа она не требует, а переходит в «Бухгалтерию».
+   * **Дедупликация.** `trip_finance:<поход>:expenses`: повторное нажатие
+   * обновляет ту же карточку. Новый участник получает её только при
+   * повторном нажатии — карточка заводится здесь, а не при вступлении.
    *
-   * **Сообщений больше нет (24.11.2026).** Раньше здесь в личный диалог
-   * писалась строка с действием `payment_request`; панель перестала читать
-   * диалоги (§14.4 п.2), и двойная запись выключена. Осталась карточка
-   * `notifications`, а её дедупликацию держит уникальный индекс
-   * `payment_request:<поход>`: повторное нажатие обновляет одну карточку,
-   * а не заводит вторую. Проверка «такое же непрочитанное уже лежит»
-   * и `message_actions` ушли вместе с сообщением.
+   * **Права прежние:** организатор и соорганизатор, пока сам идёт.
+   * Карточка закрывается «ОК» без архива: это напоминание, а не долг,
+   * который надо «оплатить» в карточке.
    */
   async requestPayments(
     userId: string,
     tripId: number,
   ): Promise<TripFinanceNotifyDto> {
     const sent: string[] = [];
-    let recipients = 0;
 
     const view = await this.dataSource.transaction(async (manager) => {
       const trip = await this.trips.getVisibleTrip(userId, tripId);
@@ -862,80 +934,30 @@ export class TripFinanceService {
       }
 
       const tripName = await tripNameOf(manager, trip);
-      const debtors = await this.paymentRequestRecipients(manager, trip);
-      recipients = debtors.filter((row) => row.userId !== userId).length;
+      const recipientIds = await this.notifications.tripFinanceRecipients(
+        manager,
+        String(trip.id),
+        userId,
+      );
 
-      for (const recipient of debtors) {
-        if (recipient.userId === userId) continue;
-        if (recipient.user?.isVirtual === true) continue;
+      await this.notifications.notifyTripFinanceExpenses(manager, {
+        tripId: String(trip.id),
+        tripName,
+        recipientIds,
+      });
 
-        // Диалог нужен ради «Перейти» и возможного ответа: карточка без
-        // `conversation_id` не смогла бы открыть переписку. Сообщение
-        // в него не пишется.
-        await this.directConversationOf(manager, userId, recipient.userId);
-
-        /**
-         * Карточка «Запрос платежа» — в той же транзакции (24.11.2026, §14).
-         *
-         * Ключ `payment_request:<поход>`: повторное нажатие обновляет
-         * карточку, а не заводит вторую. Закрывает её только оплата.
-         */
-        await this.notifications.notifyPaymentRequest(manager, {
-          recipientUserId: recipient.userId,
-          tripId: String(trip.id),
-          tripName,
-        });
-
-        sent.push(recipient.userId);
-      }
+      sent.push(...recipientIds);
 
       return this.buildView(manager, trip, userId);
     });
 
     // Событие — после коммита: до него открытая панель получателя показала бы
-    // карточку, которой ещё нет. Сообщений нет — кадра переписки тоже нет.
+    // карточку, которой ещё нет.
     for (const recipientId of sent) {
       this.notifications.emitChanged([recipientId]);
     }
 
-    return { ...view, notified: sent.length, recipients };
-  }
-
-  /**
-   * Кому просить платёж: отрицательный остаток, а при залоге — и ноль.
-   *
-   * Остаток — `remainingFromEntities`, та же функция, что считает «с учётом
-   * ожидающих» на вкладке: второго расчёта денег быть не должно.
-   */
-  private async paymentRequestRecipients(
-    manager: EntityManager,
-    trip: Trip,
-  ): Promise<TripParticipant[]> {
-    const tripId = String(trip.id);
-    const { expenses, compensations } = await this.loadMoney(manager, tripId);
-    const participants = await this.goingParticipants(manager, tripId);
-    const memberIds = participants.map((item) => item.userId);
-
-    const adjustments = await manager.find(TripDepositAdjustment, {
-      where: { tripId },
-    });
-    const remaining = remainingFromEntities(
-      expenses,
-      compensations,
-      memberIds,
-      adjustments.map((row) => ({
-        userId: row.userId,
-        amountRub: row.amountRub,
-      })),
-    );
-
-    const hasDeposit = trip.depositRub !== null && trip.depositRub > 0;
-
-    return participants.filter((participant) => {
-      const rest = remaining.get(participant.userId) ?? 0;
-
-      return rest < 0 || (hasDeposit && rest === 0);
-    });
+    return { ...view, notified: sent.length, recipients: sent.length };
   }
 
   /**
@@ -1243,14 +1265,19 @@ export class TripFinanceService {
       compensations: compensations.map((compensation) => {
         const dto = TripCompensationDto.from(compensation, viewerId);
 
-        // Семья действует как один кошелёк: «папа перевёл за всех» —
-        // значит отменить это может любой из семьи отправителя, а получить
-        // подтверждение — любой из семьи получателя. Перевод человека
-        // без аккаунта отменяет тот, кто его ведёт.
+        // Семья действует как один кошелёк только в **залоге** (25.11.2026):
+        // личный перевод подтверждает сам получатель, отменяет сам
+        // отправитель. За виртуального по-прежнему действует владелец.
         if (compensation.status === 'pending') {
-          if (myFamilySet.has(compensation.fromUserId)) dto.canCancel = true;
+          const familyInvolved = compensation.kind !== 'compensation';
+
+          if (familyInvolved && myFamilySet.has(compensation.fromUserId)) {
+            dto.canCancel = true;
+          }
           if (managedIds.has(compensation.fromUserId)) dto.canCancel = true;
-          if (myFamilySet.has(compensation.toUserId)) dto.canConfirm = true;
+          if (familyInvolved && myFamilySet.has(compensation.toUserId)) {
+            dto.canConfirm = true;
+          }
           if (managedIds.has(compensation.toUserId)) dto.canConfirm = true;
         }
 

@@ -1,3 +1,4 @@
+import { createPinia, setActivePinia } from 'pinia'
 import { flushPromises, mount } from '@vue/test-utils'
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
@@ -57,7 +58,16 @@ function makeGuest(overrides: Partial<GuestTrip> = {}): GuestTrip {
 }
 
 async function mountView(): Promise<ReturnType<typeof mount>> {
-  const wrapper = mount(GuestTripView, { props: { tripId: '7' } })
+  /**
+   * Чат похода (`TripChat`) берёт `useAuthStore` в setup, поэтому «Гостевой»
+   * без Pinia не монтируется: Vue ловит ошибку стора, и секции чата в дереве
+   * не оказывается. Тесты секций обязаны давать приложению тот же контекст,
+   * что даёт `App.vue`.
+   */
+  const wrapper = mount(GuestTripView, {
+    props: { tripId: '7' },
+    global: { plugins: [createPinia()] },
+  })
   await flushPromises()
 
   return wrapper
@@ -66,6 +76,7 @@ async function mountView(): Promise<ReturnType<typeof mount>> {
 describe('GuestTripView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    setActivePinia(createPinia())
     window.localStorage.clear()
     mocked.fetchGuestTrip.mockResolvedValue(makeGuest())
     mocked.listTripMessages.mockResolvedValue({ messages: [], hasMore: false })

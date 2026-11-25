@@ -66,6 +66,46 @@ describe('стор уведомлений', () => {
     expect(store.error).toBeNull()
   })
 
+  /**
+   * Порядок — правило клиента (25.11.2026): сервер отдаёт «свежие сверху»,
+   * а панель ставит деньги выше альманаха, альманах выше чата; в личных
+   * сначала непрочитанные. Список показывают две поверхности — сортировка
+   * живёт в сторе, чтобы они не разошлись.
+   */
+  it('сортирует «Уведомления» по приоритету, а «Сообщения» — непрочитанные вперёд', async () => {
+    listNotifications.mockResolvedValue({
+      system: [
+        card({ id: 'chat', kind: 'trip_chat' }),
+        card({ id: 'almanac', kind: 'almanac' }),
+        card({ id: 'money' }),
+      ],
+      personal: [
+        card({
+          id: 'read',
+          kind: 'direct_chat',
+          section: 'personal',
+          unreadCount: 0,
+          updatedAt: '2026-11-25T12:00:00.000Z',
+        }),
+        card({
+          id: 'unread',
+          kind: 'direct_chat',
+          section: 'personal',
+          unreadCount: 1,
+          updatedAt: '2026-11-25T08:00:00.000Z',
+        }),
+      ],
+      systemCount: 3,
+      personalCount: 2,
+    })
+
+    const store = useNotificationsStore()
+    await store.refresh()
+
+    expect(store.system.map((item) => item.id)).toEqual(['money', 'almanac', 'chat'])
+    expect(store.personal.map((item) => item.id)).toEqual(['unread', 'read'])
+  })
+
   it('ошибку загрузки показывает текстом, а не пустым списком', async () => {
     listNotifications.mockRejectedValue(new Error('сеть'))
 

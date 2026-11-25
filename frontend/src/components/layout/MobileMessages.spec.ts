@@ -131,23 +131,46 @@ describe('MobileMessages — две иконки уведомлений', () => 
    * Иконка открывает панель **на своей секции**: раскрыта та, по которой
    * нажали, вторая свёрнута.
    */
-  it('иконка системных открывает панель с раскрытой системной секцией', async () => {
+  it('иконка системных открывает панель с раскрытой секцией «Уведомления»', async () => {
     const panel = await mountPanel()
 
     await panel.get('[data-test="mobile-notifications-system"]').trigger('click')
 
     expect(panel.find('[data-test="mobile-messages-panel"]').exists()).toBe(true)
+    expect(panel.get('[data-test="mobile-messages-title"]').text()).toBe('Уведомления')
+    expect(panel.get('[data-test="mobile-messages-count"]').text()).toBe('1')
     expect(panel.find('[data-test="mobile-messages-card-1"]').exists()).toBe(true)
     expect(panel.find('[data-test="mobile-messages-card-2"]').exists()).toBe(false)
   })
 
-  it('иконка личных открывает панель с раскрытой личной секцией', async () => {
+  it('иконка личных открывает панель с раскрытой секцией «Сообщения»', async () => {
     const panel = await mountPanel()
 
     await panel.get('[data-test="mobile-notifications-personal"]').trigger('click')
 
+    expect(panel.get('[data-test="mobile-messages-title"]').text()).toBe('Сообщения')
     expect(panel.find('[data-test="mobile-messages-card-2"]').exists()).toBe(true)
     expect(panel.find('[data-test="mobile-messages-card-1"]').exists()).toBe(false)
+  })
+
+  /**
+   * 25.11.2026: круг иконок без заливки. Треугольник — крупный контурный
+   * (44 px в кнопке 56 px), конверт тоже без заливки.
+   */
+  it('иконки без заливки, у треугольника обводка primary', async () => {
+    const panel = await mountPanel()
+
+    const system = panel.get('[data-test="mobile-notifications-system"]')
+    const personalButton = panel.get('[data-test="mobile-notifications-personal"]')
+
+    expect(system.classes()).toContain('bg-surface')
+    expect(system.classes()).not.toContain('bg-primary')
+    expect(system.classes()).toContain('border-primary')
+    expect(personalButton.classes()).toContain('bg-surface')
+    expect(personalButton.classes()).not.toContain('bg-primary')
+
+    expect(system.get('span.block').classes()).toContain('h-11')
+    expect(personalButton.get('span.block').classes()).toContain('h-6')
   })
 
   it('карточки в панели те же, что в колонке: «ОК» закрывает и перечитывает', async () => {

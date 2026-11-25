@@ -6,6 +6,10 @@ import type { ConversationEvent } from '@/api/events'
 import { ApiError } from '@/api/errors'
 import { listNotifications } from '@/api/notifications'
 import type { AppNotification } from '@/types/notifications'
+import {
+  sortPersonalNotifications,
+  sortSystemNotifications,
+} from '@/utils/notifications'
 
 /** Как часто перечитывать уведомления, пока панель открыта. */
 const REFRESH_MS = 60_000
@@ -22,8 +26,10 @@ const REFRESH_MS = 60_000
  *
  * **Почему здесь нет `rows`/`visible`/`muted`.** Панель больше не лента
  * диалогов (§14.1): пустых строк чатов нет, заглушение осталось настройкой
- * диалога и на панель не влияет. Два списка приходят готовыми, сортировку
- * делает сервер (`updated_at DESC`).
+ * диалога и на панель не влияет. Два списка приходят готовыми, а порядок
+ * задаёт клиент: «Уведомления» — по шкале приоритета (`utils/notifications`),
+ * «Сообщения» — непрочитанные, затем свежие. Сортировка живёт в сторе,
+ * а не в каждой секции: список показывают и колонка, и мобильная панель.
  *
  * **Живость — тот же поток, что у переписки.** Отдельного соединения нет:
  * в `GET /api/conversations/events` приходит вид `notifications`, и по нему
@@ -47,8 +53,8 @@ export const useNotificationsStore = defineStore('notifications', () => {
     try {
       const data = await listNotifications()
 
-      system.value = data.system
-      personal.value = data.personal
+      system.value = sortSystemNotifications(data.system)
+      personal.value = sortPersonalNotifications(data.personal)
       error.value = null
     } catch (problem) {
       error.value =

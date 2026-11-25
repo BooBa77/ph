@@ -16,17 +16,25 @@ import { TripCompensation } from './trip-compensation.entity';
 import { Trip } from './trip.entity';
 
 /**
- * Виды уведомлений (24.11.2026, §14 `messages.md`).
+ * Виды уведомлений (24.11.2026; `trip_finance` — 25.11.2026, §14 `messages.md`).
  *
- * Пять штук — ровно то, что заказчик назвал в правой панели: деньги,
- * альманах, чаты похода и личные сообщения. `kind` без CHECK в базе?
- * Нет — здесь CHECK есть: вид уведомления определяет и раздел, и набор
- * кнопок, и клиент не должен получать незнакомый вид молча. Новый вид —
- * строка в этом списке и миграция на CHECK, это осознанный шаг.
+ * Шесть штук: деньги, альманах, чаты похода, личные сообщения и
+ * **общегрупповое уведомление о деньгах похода** (`trip_finance`).
+ * `kind` без CHECK в базе? Нет — здесь CHECK есть: вид уведомления
+ * определяет и раздел, и набор кнопок, и клиент не должен получать
+ * незнакомый вид молча. Новый вид — строка в этом списке и миграция
+ * на CHECK, это осознанный шаг.
+ *
+ * **`payment_request` остался только для старых данных.** С 25.11.2026
+ * запрос платежа и уведомление о залоге — это `trip_finance`: не «ты
+ * должен», а «загляни в „Бухгалтерию“ и реши сам». Новые карточки
+ * `payment_request` не создаются (миграция 102 расширила CHECK, а не
+ * заменила вид — легаси-строки должны остаться читаемыми).
  */
 export const NOTIFICATION_KINDS = [
   'money_transfer',
   'payment_request',
+  'trip_finance',
   'almanac',
   'trip_chat',
   'direct_chat',
@@ -89,7 +97,7 @@ export type ArchiveReason = (typeof ARCHIVE_REASONS)[number];
 @Index('IDX_notifications_recipient_active', ['recipientUserId', 'archivedAt'])
 @Check(
   'chk_notifications_kind',
-  `"kind" IN ('money_transfer', 'payment_request', 'almanac', 'trip_chat', 'direct_chat')`,
+  `"kind" IN ('money_transfer', 'payment_request', 'trip_finance', 'almanac', 'trip_chat', 'direct_chat')`,
 )
 @Check(
   'chk_notifications_archive',

@@ -3,31 +3,38 @@ import { computed, onUnmounted, ref } from 'vue'
 
 import NotificationSection from '@/components/notifications/NotificationSection.vue'
 import { useNotificationsStore } from '@/stores/notifications'
+import type { NotificationSection as Section } from '@/types/notifications'
 import {
   PERSONAL_SECTION_TITLE,
   SYSTEM_SECTION_TITLE,
+  readSectionOpen,
+  writeSectionOpen,
 } from '@/utils/notifications'
 
 /**
- * Правая колонка — два списка уведомлений вместо ленты диалогов (24.11.2026).
+ * Правая колонка — две **независимые** секции уведомлений (25.11.2026).
  *
- * Заказчик пересмотрел назначение панели: «правая панель показывает два
- * списка уведомлений вместо диалогов». Спецификация — §14
- * `topics/messages.md`. Отсюда всё, чего здесь больше нет:
+ * Заказчик после живого теста: общий заголовок «Уведомления» со счётчиком
+ * лишний, а секции должны жить сами по себе — «Уведомления» (деньги,
+ * альманах, чаты похода) и «Сообщения» (личные диалоги). Каждая со своим
+ * заголовком, счётчиком, chevron и **своим состоянием свёрнутости
+ * в `localStorage`** (`utils/notifications.ts`). Свернуть «Уведомления»,
+ * оставив «Сообщения» открытыми, — нормальный сценарий; прежний один флаг
+ * этого не умел.
  *
- * - **строк чатов без события.** Карточка появляется только тогда, когда
- *   есть что показать: новое сообщение, перевод, просьба о платеже, новая
- *   редакция альманаха. Пустых «Пока пусто» в списке не остаётся;
- * - **«Скрыть чат» и «Скрытые чаты».** Заглушение — настройка диалога
- *   (`conversation_members.muted_at`), и на панель она больше не влияет:
- *   уведомление либо есть, либо его нет;
- * - **«Открыть чат» отдельной строкой.** Переход живёт на карточке своего
- *   типа: у личного сообщения — «Открыть чат», у альманаха и просьбы
- *   о платеже — «Перейти».
+ * **Пустая секция не рисуется**, а если пусты обе — «Пока тихо». Общего
+ * счётчика в шапке больше нет: два счётчика у заголовков давали третий,
+ * сводный, ради которого человеку приходилось складывать в уме.
  *
  * **Ширина 352 px** (24.11.2026, было 288): заказчик просил увеличить
  * правую колонку за счёт левого сайдбара. Колонка меню в `App.vue` сузилась
  * на столько же, поэтому контент страницы почти не потерял.
+ *
+ * **Липкость (25.11.2026).** Панель стоит на месте при прокрутке основной
+ * колонки: `sticky` на самой `aside`, а не на внутренней карточке — иначе
+ * высота `aside` равнялась бы содержимому и липнуть было бы нечему. Если
+ * панель выше окна, внутренний блок получает свой `max-height`
+ * и `overflow-y`, чтобы её можно было прокрутить.
  *
  * **Живёт на сторе, а не на запросе.** Ту же панель показывает мобильная
  * версия (`MobileMessages.vue`), и оба компонента всегда в разметке: прячет
@@ -40,19 +47,24 @@ const notifications = useNotificationsStore()
 const expandedId = ref<string | null>(null)
 
 /**
- * Свёрнутость секций. Обе развёрнуты по умолчанию: карточек мало, и прятать
- * их за кликом незачем. Состояние живёт в памяти вкладки, а не
- * в `localStorage`: это не настройка, а текущий вид панели.
+ * Свёрнутость секций — своя у каждой и переживает перезагрузку.
+ *
+ * Состояние читается из `localStorage` при создании, а не при монтировании:
+ * компонент живёт всё время, пока открыто приложение, и повторное чтение
+ * при каждом заходе на страницу только путало бы.
  */
-const systemOpen = ref(true)
-const personalOpen = ref(true)
+const systemOpen = ref(readSectionOpen('system'))
+const personalOpen = ref(readSectionOpen('personal'))
+
+function toggleSection(section: Section): void {
+  const target = section === 'system' ? systemOpen : personalOpen
+  target.value = !target.value
+  writeSectionOpen(section, target.value)
+}
 
 const isEmpty = computed(
   () => notifications.system.length === 0 && notifications.personal.length === 0,
 )
-
-/** Счётчик в шапке: активные карточки обеих секций. */
-const total = computed(() => notifications.total)
 
 /**
  * Выбор карточки.
@@ -77,21 +89,18 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <aside class="hidden xl:block xl:w-88 xl:shrink-0" data-test="right-rail">
+  <!--
+    `sticky` — на `aside`: колонка стоит при прокрутке основной части.
+    `top` учитывает липкую шапку (68 px) и верхний отступ каркаса (32 px
+    на `md`), иначе панель уехала бы под шапку.
+  -->
+  <aside
+    class="hidden xl:sticky xl:top-[100px] xl:block xl:w-88 xl:shrink-0 xl:self-start"
+    data-test="right-rail"
+  >
     <div
-      class="flex max-h-[calc(100vh-7rem)] flex-col gap-2 overflow-y-auto rounded-xl border border-border bg-surface p-3 xl:sticky xl:top-4"
+      class="flex max-h-[calc(100vh-7.5rem)] flex-col gap-2 overflow-y-auto rounded-xl border border-border bg-surface p-3"
     >
-      <div class="flex items-baseline justify-between gap-2">
-        <h2 class="text-sm font-medium text-text">Уведомления</h2>
-        <span
-          v-if="total > 0"
-          class="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-white"
-          data-test="rail-total"
-        >
-          {{ total }}
-        </span>
-      </div>
-
       <p v-if="notifications.isLoading" class="text-sm text-muted" data-test="rail-loading">
         Загружаем…
       </p>
@@ -105,6 +114,10 @@ onUnmounted(() => {
       </p>
 
       <template v-else>
+        <!--
+          Секции независимы: каждая сама решает, рисоваться ли (пустая —
+          нет), и каждая помнит свою свёрнутость.
+        -->
         <NotificationSection
           section="system"
           :title="SYSTEM_SECTION_TITLE"
@@ -112,7 +125,7 @@ onUnmounted(() => {
           :open="systemOpen"
           :expanded-id="expandedId"
           test-prefix="rail"
-          @toggle="systemOpen = !systemOpen"
+          @toggle="toggleSection('system')"
           @expand="expand"
         />
 
@@ -123,7 +136,7 @@ onUnmounted(() => {
           :open="personalOpen"
           :expanded-id="expandedId"
           test-prefix="rail"
-          @toggle="personalOpen = !personalOpen"
+          @toggle="toggleSection('personal')"
           @expand="expand"
         />
       </template>

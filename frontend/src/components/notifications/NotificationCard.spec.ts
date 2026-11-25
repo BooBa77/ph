@@ -106,12 +106,44 @@ beforeEach(() => {
 })
 
 describe('NotificationCard', () => {
-  it('свёрнутая карточка показывает только заголовок и не рисует действий', () => {
+  it('свёрнутая карточка показывает заголовок и превью, но не действия', () => {
     const wrapper = mountCard(notification(), { expanded: false })
 
     expect(wrapper.get('[data-test="rail-title-1"]').text()).toBe('Денежный перевод')
+    expect(wrapper.get('[data-test="rail-preview-1"]').text()).toBe(
+      'Анна перевела тебе 1 000 ₽ за поход «Хамар-Дабан».',
+    )
     expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(false)
     expect(wrapper.find('[data-test="rail-reply-input"]').exists()).toBe(false)
+  })
+
+  it('превью в свёрнутой карточке обрезано до 50 символов', () => {
+    const long = 'а'.repeat(80)
+    const wrapper = mountCard(
+      notification({ kind: 'almanac', body: long, conversationId: null }),
+      { expanded: false },
+    )
+
+    expect(wrapper.get('[data-test="rail-preview-1"]').text()).toBe(
+      `${'а'.repeat(50)}...`,
+    )
+  })
+
+  /**
+   * Заказчик: «превью дублируется при раскрытии». Поэтому в раскрытом виде
+   * строки-превью нет вовсе: у нечата — полный `body`, у чата — сообщения.
+   */
+  it('в раскрытии строки-превью нет, а у нечата виден полный текст', () => {
+    const body =
+      'Расходы по походу «Пик Черского» распределены. Проверь свой баланс ' +
+      'в «Бухгалтерии» — там видно, кому и сколько перевести.'
+
+    const wrapper = mountCard(
+      notification({ kind: 'trip_finance', title: 'Компенсируйте расходы', body }),
+    )
+
+    expect(wrapper.find('[data-test="rail-preview-1"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain(body)
   })
 
   it('у перевода — «Подтвердить» и поле «Сообщение отправителю», но не «ОК»', () => {
@@ -216,6 +248,8 @@ describe('NotificationCard', () => {
     expect(wrapper.get('[data-test="rail-title-2"]').text()).toBe('Борис')
     expect(wrapper.get('[data-test="rail-unread-2"]').text()).toBe('2')
     expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(false)
+    // Последнее сообщение не повторяется подписью: в раскрытии её нет.
+    expect(wrapper.find('[data-test="rail-preview-2"]').exists()).toBe(false)
 
     await wrapper.get('[data-test="rail-reply-input"]').setValue('Буду')
     await wrapper.get('[data-test="rail-reply-send"]').trigger('click')
@@ -228,6 +262,55 @@ describe('NotificationCard', () => {
 
     await wrapper.get('[data-test="rail-open-chat"]').trigger('click')
     expect(push).toHaveBeenCalledWith('/messages/1268')
+  })
+
+  it('у общегрупповых денег — «Перейти в бухгалтерию» и «ОК» без архива', async () => {
+    const wrapper = mountCard(
+      notification({
+        id: '6',
+        kind: 'trip_finance',
+        title: 'Установлен залог',
+        body:
+          'В походе «Пик Черского» установлен залог 300 ₽ с человека. ' +
+          'Залог можно покрыть расходами или переводом — подробности ' +
+          'в «Бухгалтерии».',
+        conversationId: null,
+        compensationId: null,
+      }),
+    )
+
+    expect(wrapper.get('[data-test="rail-go-finance"]').text()).toBe(
+      'Перейти в бухгалтерию',
+    )
+    // Деньги-архив здесь не при чём: карточка закрывается «ОК» без архива.
+    expect(wrapper.find('[data-test="rail-ok"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(false)
+
+    await wrapper.get('[data-test="rail-go-finance"]').trigger('click')
+    expect(push).toHaveBeenCalledWith({ path: '/trips/193', query: { tab: 'finance' } })
+
+    await wrapper.get('[data-test="rail-ok"]').trigger('click')
+    await flushPromises()
+    expect(notificationsApi.closeNotification).toHaveBeenCalledWith('6')
+  })
+
+  /**
+   * 25.11.2026: перевод виртуальному приходит его владельцу, диалога с
+   * человеком без аккаунта нет. Поле «Сообщение отправителю» рисовать
+   * некуда — его нет, а «Подтвердить» остаётся.
+   */
+  it('у перевода владельцу виртуального нет поля «Сообщение отправителю»', () => {
+    const wrapper = mountCard(
+      notification({
+        id: '7',
+        kind: 'money_transfer',
+        body: 'Анна перевёл(а) твоему участнику (Виктор) 300 ₽ за поход «Пик Черского».',
+        conversationId: null,
+      }),
+    )
+
+    expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="rail-reply-input"]').exists()).toBe(false)
   })
 
   it('у чата похода нет «Открыть чат»: переход — только у личного', async () => {

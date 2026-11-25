@@ -9,7 +9,13 @@ import { closeNotification } from '@/api/notifications'
 import { useNotificationsStore } from '@/stores/notifications'
 import type { AppNotification } from '@/types/notifications'
 import { conversationTime } from '@/utils/conversations'
-import { chatUnreadOf, isChatNotification, openAlmanacSection } from '@/utils/notifications'
+import {
+  chatUnreadOf,
+  isChatNotification,
+  notificationPreview,
+  openAlmanacSection,
+  plainText,
+} from '@/utils/notifications'
 
 /**
  * Карточка уведомления — одна на колонку и мобильную панель (24.11.2026).
@@ -51,9 +57,35 @@ const item = computed(() => props.notification)
 const isChat = computed(() => isChatNotification(item.value))
 const isTransfer = computed(() => item.value.kind === 'money_transfer')
 const isPaymentRequest = computed(() => item.value.kind === 'payment_request')
+const isTripFinance = computed(() => item.value.kind === 'trip_finance')
 const isAlmanac = computed(() => item.value.kind === 'almanac')
 const isDirectChat = computed(() => item.value.kind === 'direct_chat')
 const unread = computed(() => chatUnreadOf(item.value))
+
+/**
+ * Подпись под заголовком — только в свёрнутом виде (25.11.2026).
+ *
+ * Заказчик: превью «дублируется при раскрытии» и «не ограничено».
+ * Поэтому у свёрнутой карточки — простой текст до 50 символов с «...»,
+ * у раскрытой строки-превью нет вовсе: у нечата виден полный `body`,
+ * у чата — последние 1–3 сообщения. Дубля последнего сообщения не бывает.
+ */
+const preview = computed(() =>
+  props.expanded ? '' : notificationPreview(item.value),
+)
+
+/**
+ * Поле ответа рисуется, только когда есть куда ответить.
+ *
+ * У «Сообщения отправителю» это диалог перевода. У перевода владельцу
+ * виртуального диалога нет вовсе (25.11.2026): писать некому — человека
+ * без аккаунта в приложении нет, поэтому и поля нет.
+ */
+const canReply = computed(
+  () =>
+    item.value.conversationId !== null &&
+    (isChat.value || isTransfer.value),
+)
 
 /** Подтверждение возможно, только если сервер дал и поход, и перевод. */
 const canConfirm = computed(
@@ -63,8 +95,9 @@ const canConfirm = computed(
     item.value.compensationId !== null,
 )
 
+/** Простой текст: пробелы и переводы строк схлопнуты в один. */
 function plain(text: string): string {
-  return text.replace(/\s+/g, ' ').trim()
+  return plainText(text)
 }
 
 function describe(problem: unknown, fallback: string): string {
@@ -205,12 +238,17 @@ function openDirectChat(): void {
         </span>
 
         <!--
-          У чатов подпись — последнее сообщение из превью, а у денег,
-          просьбы и альманаха — текст карточки. Превью показывается
-          в раскрытии целиком, но одну строку видно и в заголовке.
+          Подпись — только у свёрнутой карточки. У чата это последнее
+          сообщение, обрезанное до 50 символов, у денег и альманаха —
+          тело. В раскрытии строки нет: там полный текст или сообщения,
+          и дубль последнего был бы именно тем, на что жаловался заказчик.
         -->
-        <span class="mt-0.5 line-clamp-2 block text-xs text-muted">
-          {{ isChat ? plain(item.preview.at(-1)?.body ?? item.body) : plain(item.body) }}
+        <span
+          v-if="preview"
+          class="mt-0.5 block text-xs text-muted"
+          :data-test="`${testPrefix}-preview-${item.id}`"
+        >
+          {{ preview }}
         </span>
       </span>
 
@@ -254,14 +292,14 @@ function openDirectChat(): void {
           <span class="block text-xs font-medium text-text">
             {{ message.senderName ?? 'Кто-то' }}
           </span>
-          <span class="line-clamp-3 block text-xs leading-relaxed text-text">
+          <span class="block text-xs leading-relaxed text-text">
             {{ plain(message.body) }}
           </span>
         </li>
       </ol>
 
       <!-- Поле ответа: «Сообщение отправителю» у денег, быстрый ответ у чатов. -->
-      <div v-if="isChat || isTransfer" class="flex gap-1">
+      <div v-if="canReply" class="flex gap-1">
         <input
           v-model="draft"
           type="text"
@@ -303,6 +341,21 @@ function openDirectChat(): void {
           Перейти
         </button>
 
+        <!--
+          Общегрупповое уведомление о деньгах похода (25.11.2026): не «ты
+          должен», а приглашение разобраться самому. «ОК» закрывает карточку
+          без архива — это напоминание, а не долг.
+        -->
+        <button
+          v-if="isTripFinance"
+          type="button"
+          class="cursor-pointer rounded-lg bg-primary px-2 py-1 text-xs font-medium text-white"
+          :data-test="`${testPrefix}-go-finance`"
+          @click="goFinance()"
+        >
+          Перейти в бухгалтерию
+        </button>
+
         <button
           v-if="isAlmanac"
           type="button"
@@ -314,7 +367,7 @@ function openDirectChat(): void {
         </button>
 
         <button
-          v-if="isChat || isAlmanac"
+          v-if="isChat || isAlmanac || isTripFinance"
           type="button"
           class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="isBusy"

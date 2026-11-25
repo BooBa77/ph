@@ -44,8 +44,14 @@ const profilePath = computed(() => appStore.lastProfilePath)
 </script>
 
 <template>
+  <!--
+    Шапка липкая (25.11.2026): при прокрутке она стоит сверху, а контент
+    уходит под неё. `z-30` — ниже мобильных оверлеев (`z-40`) и выше
+    липких вкладок похода (`z-20`), чтобы они не перекрывали шапку.
+    Знак свисает под полосу и рисуется поверх контента своим `z-10`.
+  -->
   <header
-    class="relative flex items-center justify-between gap-3 border-b border-border bg-surface py-3 pr-1 pl-4 md:pr-4"
+    class="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border bg-surface py-3 pr-1 pl-4 md:pr-4"
   >
     <RouterLink
       to="/"

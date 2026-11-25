@@ -49,7 +49,11 @@ describe('Бухгалтерия похода (e2e)', () => {
   let trip10: string;
   /** Поход для проверки подтверждения с карточки (свой, чтобы не менять trip9). */
   let cardTrip: string;
+  /** Общегрупповые уведомления: залог и «Компенсируйте расходы» (25.11.2026). */
+  let financeNotifyTrip: string;
   let virtualPersonId: string;
+  /** Виртуальный участник похода общегрупповых уведомлений (25.11.2026). */
+  let financeVirtualId: string;
   let lastCode: string | null = null;
 
   interface Person {
@@ -261,6 +265,7 @@ describe('Бухгалтерия похода (e2e)', () => {
           trip9,
           trip10,
           cardTrip,
+          financeNotifyTrip,
         ].filter(Boolean),
       ]);
       // Личные сообщения о компенсациях живут вне похода: диалог не уходит
@@ -274,6 +279,7 @@ describe('Бухгалтерия похода (e2e)', () => {
       // о переводе «Дяде Вите»): без его id в списке действия оставались бы
       // и держали `FK_message_actions_target` при удалении людей.
       if (virtualPersonId) userIds.push(virtualPersonId);
+      if (financeVirtualId) userIds.push(financeVirtualId);
 
       await dataSource.query(
         `DELETE FROM message_actions WHERE "target_user_id" = ANY($1::uuid[])`,
@@ -289,6 +295,11 @@ describe('Бухгалтерия похода (e2e)', () => {
       if (virtualPersonId) {
         await dataSource.query('DELETE FROM users WHERE id = $1', [
           virtualPersonId,
+        ]);
+      }
+      if (financeVirtualId) {
+        await dataSource.query('DELETE FROM users WHERE id = $1', [
+          financeVirtualId,
         ]);
       }
       await dataSource.query('DELETE FROM users WHERE id = ANY($1::uuid[])', [
@@ -1014,12 +1025,16 @@ describe('Бухгалтерия похода (e2e)', () => {
       expect(after.body.me.suggestions).toEqual([]);
     });
 
-    it('родной отправителя может отменить перевод, посторонний — нет', async () => {
+    it('отменить перевод может только отправитель; родной — нет', async () => {
       const [compensation] = (await view(trip3, b)).body.compensations;
       expect(compensation.fromUserId).toBe(c.id);
 
-      // Б не отправитель строки, но он родной В — семья платит одним кошельком.
-      expect(compensation.canCancel).toBe(true);
+      /**
+       * 25.11.2026: переводы личные. Б — родной отправителя В, но отменить
+       * чужой перевод больше не может: семейное право осталось только
+       * у залога, а балансы и расчёт компенсаций семьи не тронуты.
+       */
+      expect(compensation.canCancel).toBe(false);
 
       await auth(
         request(app.getHttpServer()).delete(
@@ -1033,10 +1048,18 @@ describe('Бухгалтерия похода (e2e)', () => {
           `/api/trips/${trip3}/finance/compensations/${compensation.id}`,
         ),
         b.token,
+      ).expect(403);
+
+      // Сам отправитель — может: это его перевод.
+      await auth(
+        request(app.getHttpServer()).delete(
+          `/api/trips/${trip3}/finance/compensations/${compensation.id}`,
+        ),
+        c.token,
       ).expect(200);
     });
 
-    it('родной получателя может подтвердить получение', async () => {
+    it('подтвердить перевод может только получатель; родной — нет', async () => {
       // Отменённый перевод не возвращается — семья платит его заново.
       const created = await auth(
         request(app.getHttpServer()).post(
@@ -1058,12 +1081,23 @@ describe('Бухгалтерия похода (e2e)', () => {
         b.token,
       ).expect(403);
 
-      // Г — родной А: семья получателя подтверждает получение сама.
-      const confirmed = await auth(
+      /**
+       * Г — родной получателя А, но с 25.11.2026 семейное подтверждение
+       * снято: «переводы личные; семейные связи — только в расчёте
+       * балансов». Михаил подтверждает только сам, Сергей получает 403.
+       */
+      await auth(
         request(app.getHttpServer()).post(
           `/api/trips/${trip3}/finance/compensations/${compensation.id}/confirm`,
         ),
         g.token,
+      ).expect(403);
+
+      const confirmed = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${trip3}/finance/compensations/${compensation.id}/confirm`,
+        ),
+        a.token,
       ).expect(200);
 
       expect(
@@ -1335,6 +1369,34 @@ describe('Бухгалтерия похода (e2e)', () => {
         (item: { toUserId: string }) => item.toUserId === virtualPersonId,
       );
       expect(compensation.status).toBe('pending');
+
+      /**
+       * Карточка уходит **владельцу** виртуального (25.11.2026): у самого
+       * виртуального входа нет, диалог с ним не создаётся, а текст
+       * называет участника по имени. «Переводы личные»: карточка — это
+       * личное уведомление владельцу, а не групповое.
+       */
+      const [card] = (await dataSource.query(
+        `SELECT "recipient_user_id", "conversation_id", "body"
+           FROM "notifications" WHERE "compensation_id" = $1`,
+        [compensation.id],
+      )) as Array<{
+        recipient_user_id: string;
+        conversation_id: string | null;
+        body: string;
+      }>;
+
+      expect(card).toMatchObject({ recipient_user_id: b.id });
+      expect(card!.conversation_id).toBeNull();
+      expect(card!.body).toContain('перевёл(а) твоему участнику (Дядя Витя)');
+      expect(card!.body).toContain('300 ₽');
+
+      // Самому виртуальному карточки нет: входить в приложение ему нечем.
+      const virtualCards = (await dataSource.query(
+        `SELECT "id" FROM "notifications" WHERE "recipient_user_id" = $1`,
+        [virtualPersonId],
+      )) as Array<{ id: string }>;
+      expect(virtualCards).toHaveLength(0);
 
       // Получатель — виртуальный, войти не может; подтверждает ведущий.
       const asManager = await view(trip4, b);
@@ -1900,6 +1962,176 @@ describe('Бухгалтерия похода (e2e)', () => {
         await setDecision(trip7, a, g, 'forfeited').expect(400);
         await setDecision(trip7, a, g, 'returned').expect(400);
       });
+    });
+  });
+
+  /**
+   * Общегрупповые уведомления о деньгах (25.11.2026).
+   *
+   * Заказчик отказался от персональных «запросов платежа»: установка залога
+   * и распределение расходов — новость для всей группы, а участник сам
+   * решает в «Бухгалтерии», чем покрыть. Проверяем то, чего не видит юнит:
+   * кому реально достаётся карточка (автору — нет, виртуальным — нет,
+   * владельцу виртуального — как участнику), дедупликацию по ключу,
+   * обновление суммы, снятие залога и «ОК» без архива.
+   */
+  describe('общегрупповые уведомления о деньгах', () => {
+    interface CardRow {
+      id: string;
+      recipient_user_id: string;
+      kind: string;
+      title: string;
+      body: string;
+      dedup_key: string;
+      conversation_id: string | null;
+      archived_at: string | null;
+    }
+
+    let virtualViktorId: string;
+
+    const patchTrip = (person: Person, body: Record<string, unknown>) =>
+      auth(
+        request(app.getHttpServer()).patch(`/api/trips/${financeNotifyTrip}`),
+        person.token,
+      ).send(body);
+
+    const askCompensation = (person: Person) =>
+      auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${financeNotifyTrip}/finance/payment-requests`,
+        ),
+        person.token,
+      );
+
+    const cardsOf = async (kind: string): Promise<CardRow[]> =>
+      (await dataSource.query(
+        `SELECT "id", "recipient_user_id", "kind", "title", "body",
+                "dedup_key", "conversation_id", "archived_at"
+           FROM "notifications"
+          WHERE "trip_id" = $1 AND "kind" = $2
+          ORDER BY "recipient_user_id"`,
+        [financeNotifyTrip, kind],
+      )) as CardRow[];
+
+    const recipientsOf = (rows: CardRow[]): string[] =>
+      rows.map((row) => row.recipient_user_id).sort();
+
+    beforeAll(async () => {
+      financeNotifyTrip = await createTrip('Уведомления: залог и расходы');
+      await addGoing(financeNotifyTrip, b);
+      await addGoing(financeNotifyTrip, c);
+
+      // Виртуальный участник: ведёт его Б, карточку за него получает он сам.
+      const created = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${financeNotifyTrip}/participants/virtual`,
+        ),
+        b.token,
+      )
+        .send({ displayName: 'Виктор' })
+        .expect(201);
+
+      virtualViktorId = created.body.userId as string;
+      // В уборке виртуальный удаляется первым: на нём `FK_users_virtual_owner`.
+      financeVirtualId = virtualViktorId;
+    });
+
+    it('установка залога: карточка всем идущим, кроме автора и виртуальных', async () => {
+      await patchTrip(a, { depositRub: 300 }).expect(200);
+
+      const cards = await cardsOf('trip_finance');
+
+      expect(recipientsOf(cards)).toEqual([b.id, c.id].sort());
+      expect(cards[0]).toMatchObject({
+        title: 'Установлен залог',
+        dedup_key: `trip_finance:${financeNotifyTrip}:deposit`,
+        conversation_id: null,
+        archived_at: null,
+      });
+      expect(cards[0].body).toContain('установлен залог 300 ₽ с человека');
+      expect(cards[0].body).toContain('Залог можно покрыть расходами');
+
+      // Виртуальному карточки нет: входить в приложение ему нечем.
+      expect(recipientsOf(cards)).not.toContain(virtualViktorId);
+    });
+
+    it('повторное изменение суммы обновляет ту же карточку', async () => {
+      await patchTrip(a, { depositRub: 350 }).expect(200);
+
+      const cards = await cardsOf('trip_finance');
+
+      expect(cards).toHaveLength(2);
+      expect(cards.every((card) => card.body.includes('350 ₽'))).toBe(true);
+    });
+
+    it('новому участнику карточка не создаётся, пока залог не изменят', async () => {
+      await addGoing(financeNotifyTrip, d);
+
+      expect(recipientsOf(await cardsOf('trip_finance'))).not.toContain(d.id);
+
+      // Повторное объявление суммы — и новый участник карточку получает.
+      await patchTrip(a, { depositRub: 400 }).expect(200);
+
+      expect(recipientsOf(await cardsOf('trip_finance'))).toContain(d.id);
+    });
+
+    it('снятие залога удаляет карточку', async () => {
+      await patchTrip(a, { depositRub: null }).expect(200);
+
+      expect(await cardsOf('trip_finance')).toHaveLength(0);
+    });
+
+    it('«Компенсируйте расходы» — группе, а не должникам', async () => {
+      const response = await askCompensation(a).expect(200);
+
+      expect(response.body.notified).toBe(3);
+      expect(response.body.recipients).toBe(3);
+
+      const cards = await cardsOf('trip_finance');
+
+      // Все идущие, кроме автора: Б, В и Г. Виртуальный пропущен.
+      expect(recipientsOf(cards)).toEqual([b.id, c.id, d.id].sort());
+      expect(cards[0]).toMatchObject({
+        title: 'Компенсируйте расходы',
+        dedup_key: `trip_finance:${financeNotifyTrip}:expenses`,
+        conversation_id: null,
+      });
+      expect(cards[0].body).toContain('Расходы по походу');
+      expect(cards[0].body).toContain('Проверь свой баланс');
+
+      // Новых «Запросов платежа» больше не бывает.
+      expect(await cardsOf('payment_request')).toHaveLength(0);
+    });
+
+    it('повторное нажатие обновляет ту же карточку', async () => {
+      await askCompensation(a).expect(200);
+
+      expect(await cardsOf('trip_finance')).toHaveLength(3);
+    });
+
+    it('«ОК» закрывает карточку без архива', async () => {
+      const [mine] = (await cardsOf('trip_finance')).filter(
+        (card) => card.recipient_user_id === b.id,
+      );
+
+      await auth(
+        request(app.getHttpServer()).post(
+          `/api/notifications/${mine.id}/close`,
+        ),
+        b.token,
+      ).expect(204);
+
+      const left = (await cardsOf('trip_finance')).filter(
+        (card) => card.recipient_user_id === b.id,
+      );
+
+      expect(left).toHaveLength(0);
+      // Это не архив: строки просто нет.
+      const archived = (await dataSource.query(
+        `SELECT "id" FROM "notifications" WHERE "id" = $1`,
+        [mine.id],
+      )) as Array<{ id: string }>;
+      expect(archived).toHaveLength(0);
     });
   });
 

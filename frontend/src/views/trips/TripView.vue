@@ -964,9 +964,13 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
         закладок или кнопок, а то сливается с текстом». Теперь это
         сегментированная панель: у каждой вкладки рамка и фон, у активной —
         заливка темой.
+
+        С 25.11.2026 полоса липкая и стоит **под шапкой** (68 px): при
+        прокрутке вкладки остаются на виду, а `z-20` держит их под шапкой
+        и над содержимым. Фон непрозрачный — под полосой проезжает контент.
       -->
       <nav
-        class="hidden flex-wrap gap-1.5 rounded-2xl border border-border bg-surface p-1.5 md:flex"
+        class="sticky top-[68px] z-20 hidden flex-wrap gap-1.5 rounded-2xl border border-border bg-surface p-1.5 md:flex"
         aria-label="Разделы похода"
       >
         <button

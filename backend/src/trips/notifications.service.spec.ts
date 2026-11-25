@@ -61,6 +61,7 @@ describe('уведомления: чистые правила', () => {
   it('делит виды на системные и личные', () => {
     expect(sectionOf('money_transfer')).toBe('system');
     expect(sectionOf('payment_request')).toBe('system');
+    expect(sectionOf('trip_finance')).toBe('system');
     expect(sectionOf('almanac')).toBe('system');
     expect(sectionOf('trip_chat')).toBe('system');
     expect(sectionOf('direct_chat')).toBe('personal');
@@ -365,21 +366,132 @@ describe('уведомления: денежные карточки', () => {
     const manager = { query } as unknown as EntityManager;
     const service = new NotificationsService(asDataSource({}), eventBus());
 
-    await service.notifyPaymentRequest(manager, {
-      recipientUserId: BORIS,
+    await service.notifyTripFinanceExpenses(manager, {
       tripId: '193',
       tripName: 'Хамар-Дабан',
+      recipientIds: [BORIS],
     });
 
     expect(query.mock.calls[0][1]).toEqual([
       BORIS,
-      'payment_request',
-      'Запрос платежа',
-      'Организатор запросил платёж по походу «Хамар-Дабан».',
-      'payment_request:193',
+      'trip_finance',
+      'Компенсируйте расходы',
+      'Расходы по походу «Хамар-Дабан» распределены. Проверь свой баланс ' +
+        'в «Бухгалтерии» — там видно, кому и сколько перевести.',
+      'trip_finance:193:expenses',
       null,
       '193',
       null,
     ]);
+  });
+});
+
+/**
+ * Общегрупповые уведомления о деньгах (25.11.2026).
+ *
+ * Заказчик отказался от персональных «запросов платежа»: залог и
+ * распределение расходов — новость для всей группы, участник сам решает
+ * в «Бухгалтерии», чем покрыть. Здесь — получатели, тексты и то, что
+ * такие карточки закрываются «ОК» без архива.
+ */
+describe('уведомления: общегрупповые деньги', () => {
+  it('рассылает карточку всем идущим, кроме автора и виртуальных', async () => {
+    const find = vi.fn(async () => [
+      { userId: BORIS, user: { isVirtual: false } },
+      { userId: VIRTUAL, user: { isVirtual: true } },
+    ]);
+    const manager = { find } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    const recipients = await service.tripFinanceRecipients(
+      manager,
+      '193',
+      ANNA,
+    );
+
+    expect(recipients).toEqual([BORIS]);
+
+    // Автор исключён на уровне запроса: уведомление о своём действии
+    // человеку не нужно.
+    const options = find.mock.calls[0][1] as {
+      where: { tripId: string; status: string; userId: unknown };
+    };
+    expect(options.where.tripId).toBe('193');
+    expect(options.where.status).toBe('going');
+    expect(options.where.userId).toBeDefined();
+  });
+
+  it('карточка залога: заголовок, сумма и ключ похода', async () => {
+    const query = vi.fn(async () => []);
+    const manager = { query } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyTripFinanceDeposit(manager, {
+      tripId: '810',
+      tripName: 'Пик Черского',
+      amountRub: 300,
+      recipientIds: [BORIS],
+    });
+
+    expect(query.mock.calls[0][1]).toEqual([
+      BORIS,
+      'trip_finance',
+      'Установлен залог',
+      'В походе «Пик Черского» установлен залог 300 ₽ с человека. ' +
+        'Залог можно покрыть расходами или переводом — подробности ' +
+        'в «Бухгалтерии».',
+      'trip_finance:810:deposit',
+      null,
+      '810',
+      null,
+    ]);
+  });
+
+  it('снятие залога удаляет карточку и отдаёт получателей', async () => {
+    const query = vi.fn(async () => [
+      { recipient_user_id: BORIS },
+      { recipient_user_id: ANNA },
+    ]);
+    const manager = { query } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    const recipients = await service.dropTripFinanceDeposit(manager, '810');
+
+    expect(recipients).toEqual([BORIS, ANNA]);
+    expect(query.mock.calls[0][0]).toContain('DELETE FROM "notifications"');
+    expect(query.mock.calls[0][1]).toEqual(['trip_finance:810:deposit']);
+  });
+
+  it('«ОК» закрывает общегрупповую карточку без архива', async () => {
+    const manager = {
+      findOne: vi.fn(async () =>
+        notification({
+          kind: 'trip_finance',
+          title: 'Компенсируйте расходы',
+          dedupKey: 'trip_finance:810:expenses',
+        }),
+      ),
+      delete: vi.fn(async () => undefined),
+    };
+    const events = eventBus();
+    const service = new NotificationsService(asDataSource(manager), events);
+
+    await service.close(BORIS, '1');
+
+    expect(manager.delete).toHaveBeenCalledWith(Notification, { id: '1' });
+    expect(events.emitNotifications).toHaveBeenCalledWith([BORIS]);
+  });
+
+  it('в архив общегрупповая карточка не уходит', async () => {
+    const manager = {
+      findOne: vi.fn(async () =>
+        notification({ kind: 'trip_finance', dedupKey: 'trip_finance:810:deposit' }),
+      ),
+    };
+    const service = new NotificationsService(asDataSource(manager), eventBus());
+
+    await expect(service.archive(BORIS, '1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
   });
 });

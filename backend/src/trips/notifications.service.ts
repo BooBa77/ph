@@ -29,7 +29,25 @@ import { returningRows } from './query-rows';
 import { tripNameOf } from './trip-name';
 
 /** Денежные виды: только они уходят в архив и не закрываются «ОК». */
-const MONEY_KINDS: NotificationKind[] = ['money_transfer', 'payment_request'];
+const MONEY_KINDS: NotificationKind[] = [
+  'money_transfer',
+  'payment_request',
+];
+
+/**
+ * Ключ карточки о залоге и о расходах.
+ *
+ * Оба вида — одна карточка на поход и на событие: повторная правка суммы
+ * залога или повторное «Отправить уведомления о компенсации» обновляют её,
+ * а не заводят вторую. `deposit`/`expenses` — не часть ключа события,
+ * а различитель двух денежных поводов внутри одного похода.
+ */
+function tripFinanceKey(
+  tripId: string,
+  kind: 'deposit' | 'expenses',
+): string {
+  return `trip_finance:${tripId}:${kind}`;
+}
 
 /** Виды чатов: их карточки показывают последние сообщения и непрочитанное. */
 const CHAT_KINDS: NotificationKind[] = ['trip_chat', 'direct_chat'];
@@ -87,10 +105,11 @@ interface NotificationInsert {
 /**
  * Уведомления правой панели (24.11.2026, §14 `topics/messages.md`).
  *
- * **Что здесь есть.** Пять видов, два раздела, дедупликация ключом,
+ * **Что здесь есть.** Шесть видов, два раздела, дедупликация ключом,
  * закрытие без архива и архив денежных. Создание разбросано по владельцам
- * событий (деньги — `TripFinanceService`, альманах — `trip-almanac-notify`,
- * чаты — `ConversationsService` и `TripsService`), потому что только они
+ * событий (деньги — `TripFinanceService`, залог и расходы — он же и
+ * `TripsService`, альманах — `trip-almanac-notify`, чаты —
+ * `ConversationsService` и `TripsService`), потому что только они
  * знают контекст: имя похода, собеседника, текст перевода. Собирает
  * строки и решает, кому их видно, — этот сервис.
  *
@@ -283,6 +302,12 @@ export class NotificationsService {
    *
    * Текст — тот же, что у личного сообщения: заказчик назвал формулировку
    * дословно, и второй её вариант разошёлся бы с первым при первой правке.
+   *
+   * **Получатель-виртуальный (25.11.2026).** У человека без аккаунта входа
+   * нет, поэтому карточка уходит его владельцу, а `conversation_id` пуст:
+   * диалога с виртуальным не заводят, и поле «Сообщение отправителю» на
+   * такой карточке не рисуется. Текст называет участника по имени, чтобы
+   * владелец понял, за кого перевод.
    */
   async notifyMoneyTransfer(
     manager: EntityManager,
@@ -290,7 +315,7 @@ export class NotificationsService {
       recipientUserId: string;
       tripId: string;
       compensationId: string;
-      conversationId: string;
+      conversationId: string | null;
       body: string;
     },
   ): Promise<void> {
@@ -307,23 +332,127 @@ export class NotificationsService {
   }
 
   /**
-   * Просьба организатора о платеже — в транзакции `requestPayments`.
+   * «Установлен залог» — всем идущим (25.11.2026).
    *
-   * Ключ — поход: должнику одна карточка, сколько бы раз организатор
-   * ни нажимал кнопку. «Перейти» карточку не закрывает — только оплата.
+   * Заказчик: «установили залог — карточка всем идущим, кроме автора
+   * действия и виртуальных». Это **не** персональное «ты должен»:
+   * участник сам решает в «Бухгалтерии», покрыть залог расходами или
+   * переводом. Поэтому нет ни должников, ни суммы к оплате — только
+   * сумма залога и переход во вкладку.
+   *
+   * Ключ `trip_finance:<поход>:deposit`: повторное изменение суммы
+   * обновляет ту же карточку. Снятие залога удаляет её — `dropDeposit`.
    */
-  async notifyPaymentRequest(
+  async notifyTripFinanceDeposit(
     manager: EntityManager,
-    params: { recipientUserId: string; tripId: string; tripName: string },
+    params: {
+      tripId: string;
+      tripName: string;
+      amountRub: number;
+      recipientIds: readonly string[];
+    },
   ): Promise<void> {
-    await this.upsert(manager, {
-      recipientUserId: params.recipientUserId,
-      kind: 'payment_request',
-      title: 'Запрос платежа',
-      body: `Организатор запросил платёж по походу «${params.tripName}».`,
-      dedupKey: `payment_request:${params.tripId}`,
-      tripId: params.tripId,
+    for (const recipientId of params.recipientIds) {
+      await this.upsert(manager, {
+        recipientUserId: recipientId,
+        kind: 'trip_finance',
+        title: 'Установлен залог',
+        body:
+          `В походе «${params.tripName}» установлен залог ` +
+          `${params.amountRub} ₽ с человека. Залог можно покрыть расходами ` +
+          'или переводом — подробности в «Бухгалтерии».',
+        dedupKey: tripFinanceKey(params.tripId, 'deposit'),
+        tripId: params.tripId,
+      });
+    }
+  }
+
+  /**
+   * Залог снят — карточки «Установлен залог» больше нет.
+   *
+   * Возвращает получателей, чтобы вызывающий после COMMIT разослал
+   * сигнал «перечитай уведомления»: удаление строки само по себе кадр
+   * не порождает.
+   */
+  async dropTripFinanceDeposit(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<string[]> {
+    const rows = returningRows<{ recipient_user_id: string }>(
+      await manager.query(
+        `DELETE FROM "notifications"
+          WHERE "dedup_key" = $1
+        RETURNING "recipient_user_id"`,
+        [tripFinanceKey(tripId, 'deposit')],
+      ),
+    );
+
+    return rows.map((row) => row.recipient_user_id);
+  }
+
+  /**
+   * «Компенсируйте расходы» — всем идущим (25.11.2026).
+   *
+   * Заказчик: «Расходы по походу распределены. Проверь свой баланс
+   * в „Бухгалтерии“ — там видно, кому и сколько перевести». Получатели —
+   * **все идущие**, а не только должники: групповое уведомление не считает
+   * долги и не выбирает, кому интересно. Повторное нажатие обновляет
+   * карточку; новый участник получает её только при повторном нажатии,
+   * потому что карточка заводится здесь, а не при вступлении.
+   */
+  async notifyTripFinanceExpenses(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      tripName: string;
+      recipientIds: readonly string[];
+    },
+  ): Promise<void> {
+    for (const recipientId of params.recipientIds) {
+      await this.upsert(manager, {
+        recipientUserId: recipientId,
+        kind: 'trip_finance',
+        title: 'Компенсируйте расходы',
+        body:
+          `Расходы по походу «${params.tripName}» распределены. ` +
+          'Проверь свой баланс в «Бухгалтерии» — там видно, кому и сколько ' +
+          'перевести.',
+        dedupKey: tripFinanceKey(params.tripId, 'expenses'),
+        tripId: params.tripId,
+      });
+    }
+  }
+
+  /**
+   * Кому адресованы общегрупповые денежные уведомления.
+   *
+   * Все, кто **идёт** на этот момент, кроме автора действия и людей без
+   * аккаунта. Владелец виртуального получает карточку как обычный
+   * участник — если сам идёт; самому виртуальному карточка не нужна:
+   * войти в приложение ему нечем (та же логика, что у чатов).
+   *
+   * Должники здесь **не считаются** (решение 25.11.2026): это не
+   * персональный запрос платежа, а сообщение группе о том, что деньги
+   * похода распределены.
+   */
+  async tripFinanceRecipients(
+    manager: EntityManager,
+    tripId: string,
+    exceptUserId: string,
+  ): Promise<string[]> {
+    const participants = await manager.find(TripParticipant, {
+      where: { tripId, status: 'going', userId: Not(exceptUserId) },
+      relations: { user: true },
+      order: { createdAt: 'ASC', userId: 'ASC' },
     });
+
+    return [
+      ...new Set(
+        participants
+          .filter((row) => row.user?.isVirtual !== true)
+          .map((row) => row.userId),
+      ),
+    ];
   }
 
   /**
