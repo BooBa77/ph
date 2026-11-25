@@ -58,6 +58,12 @@ export interface AppNotification {
   compensationId: string | null
   /** Непрочитанных в этом чате; только у чатов, иначе `null`. */
   unreadCount: number | null
+  /**
+   * Смотрящий вышел из похода; только у перевода, иначе `null`
+   * (25.11.2026). «Бухгалтерия» ушедшему закрыта, поэтому подтверждение
+   * доступно только в карточке — по этому флагу она объясняет почему.
+   */
+  viewerDeclined: boolean | null
   /** Последние сообщения чата; пусто у денег и альманаха. */
   preview: NotificationPreview[]
   createdAt: string

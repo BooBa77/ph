@@ -78,6 +78,15 @@ export class NotificationDto {
   unreadCount: number | null;
 
   @ApiProperty({
+    description:
+      'Получатель карточки вышел из похода: «Бухгалтерия» ему закрыта, ' +
+      'подтвердить перевод он может только из карточки. Только у перевода, ' +
+      'иначе null',
+    nullable: true,
+  })
+  viewerDeclined: boolean | null;
+
+  @ApiProperty({
     description: 'Последние сообщения чата (до 3); только у чатов',
     type: [NotificationPreviewDto],
   })

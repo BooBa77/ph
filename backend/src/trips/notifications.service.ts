@@ -148,9 +148,13 @@ export class NotificationsService {
       order: { updatedAt: 'DESC' },
     });
 
+    // Вышел ли смотрящий из похода — один запрос на весь список: от этого
+    // зависит объяснение в карточке перевода (25.11.2026).
+    const declinedTrips = await this.declinedTripsOf(manager, userId, rows);
+
     const dtos: NotificationDto[] = [];
     for (const row of rows) {
-      dtos.push(await this.toDto(manager, row));
+      dtos.push(await this.toDto(manager, row, declinedTrips));
     }
 
     const system = dtos.filter((dto) => dto.section === 'system');
@@ -596,6 +600,7 @@ export class NotificationsService {
   private async toDto(
     manager: EntityManager,
     row: Notification,
+    declinedTrips: ReadonlySet<string>,
   ): Promise<NotificationDto> {
     const isChat = CHAT_KINDS.includes(row.kind) && row.conversationId !== null;
 
@@ -617,10 +622,48 @@ export class NotificationsService {
       tripId: row.tripId,
       compensationId: row.compensationId,
       unreadCount,
+      /**
+       * Ушёл ли смотрящий из похода — только для перевода (25.11.2026).
+       * «Бухгалтерия» ему закрыта (`assertParticipant`), а подтвердить
+       * получение он теперь может прямо в карточке: клиент по этому флагу
+       * объясняет, почему кнопка здесь, а не во вкладке.
+       */
+      viewerDeclined:
+        row.kind === 'money_transfer' && row.tripId !== null
+          ? declinedTrips.has(row.tripId)
+          : null,
       preview,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     };
+  }
+
+  /**
+   * Походы, из которых смотрящий вышел (`declined`).
+   *
+   * Считается для списка целиком, а не для каждой карточки: походов
+   * у человека немного, но лишний запрос на каждое уведомление — это та же
+   * N+1, которую здесь уже даёт непрочитанное у чатов.
+   */
+  private async declinedTripsOf(
+    manager: EntityManager,
+    userId: string,
+    rows: readonly Notification[],
+  ): Promise<Set<string>> {
+    const tripIds = [
+      ...new Set(
+        rows
+          .filter((row) => row.kind === 'money_transfer' && row.tripId !== null)
+          .map((row) => row.tripId!),
+      ),
+    ];
+    if (tripIds.length === 0) return new Set();
+
+    const participants = await manager.find(TripParticipant, {
+      where: { userId, tripId: In(tripIds), status: 'declined' },
+    });
+
+    return new Set(participants.map((participant) => participant.tripId));
   }
 
   /**

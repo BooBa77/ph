@@ -28,6 +28,7 @@ function card(overrides: Partial<AppNotification> = {}): AppNotification {
     tripId: '193',
     compensationId: '55',
     unreadCount: null,
+    viewerDeclined: null,
     preview: [],
     createdAt: '2026-11-24T10:00:00.000Z',
     updatedAt: '2026-11-24T10:00:00.000Z',

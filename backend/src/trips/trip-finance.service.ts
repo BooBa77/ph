@@ -723,11 +723,27 @@ export class TripFinanceService {
       });
       if (!compensation) throw new NotFoundException('Компенсация не найдена');
 
-      // Обычную компенсацию подтверждает идущий. Залог — не компенсация:
-      // организатор может быть «не иду», но деньги залога всё равно
-      // принимает он. Поэтому для `deposit` проверка «идёт» снята,
-      // а право остаётся у получателя (или его семьи / ведущего).
-      if (compensation.kind !== 'deposit') {
+      /**
+       * «Идёт» больше не требуется тому, кому перевод адресован
+       * (25.11.2026).
+       *
+       * Ушедший теряет «Бухгалтерию», но деньги адресованы ему, и только он
+       * может сказать «получил». Раньше карточка с кнопкой «Подтвердить»
+       * отвечала ему `403` и оставляла один выход — автосогласие через
+       * 72 часа; заказчик выбрал вариант «разрешить подтверждение
+       * получателю-`declined`».
+       *
+       * Проверка «идёт» осталась для **чужих**: того, кто к переводу не
+       * относится, она отсекает до проверки получателя и сохраняет прежний
+       * текст отказа. Залог — не компенсация: организатор может быть «не
+       * иду», но деньги залога всё равно принимает он, поэтому для
+       * `deposit` «идёт» не спрашивается вовсе.
+       */
+      const recipientParty =
+        compensation.toUserId === userId ||
+        (await this.isManagedVirtual(manager, compensation.toUserId, userId));
+
+      if (compensation.kind !== 'deposit' && !recipientParty) {
         await this.assertGoing(manager, String(trip.id), userId);
       }
 
@@ -744,8 +760,7 @@ export class TripFinanceService {
        * что залог — не личный перевод долга, а общий расчёт похода.
        */
       if (
-        compensation.toUserId !== userId &&
-        !(await this.isManagedVirtual(manager, compensation.toUserId, userId)) &&
+        !recipientParty &&
         (compensation.kind === 'compensation' ||
           !(await this.isFamilyOf(manager, compensation.toUserId, userId)))
       ) {

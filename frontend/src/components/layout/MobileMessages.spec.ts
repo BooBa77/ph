@@ -35,6 +35,7 @@ function card(overrides: Partial<AppNotification> = {}): AppNotification {
     tripId: '193',
     compensationId: '55',
     unreadCount: null,
+    viewerDeclined: null,
     preview: [],
     createdAt: '2026-11-24T10:00:00.000Z',
     updatedAt: '2026-11-24T10:00:00.000Z',
@@ -171,6 +172,26 @@ describe('MobileMessages — две иконки уведомлений', () => 
 
     expect(system.get('span.block').classes()).toContain('h-11')
     expect(personalButton.get('span.block').classes()).toContain('h-6')
+  })
+
+  /**
+   * 25.11.2026, замечание заказчика: иконки стоят **вертикально**.
+   * Столбик задаётся контейнером (`flex-col`), у кнопок порядок прежний:
+   * сверху «Уведомления», под ней «Сообщения».
+   */
+  it('две иконки стоят вертикально', async () => {
+    const panel = await mountPanel()
+
+    const stack = panel.get('[data-test="mobile-notifications-system"]').element
+      .parentElement as HTMLElement
+
+    expect(stack.className).toContain('flex-col')
+    expect(stack.className).not.toContain('flex-row')
+    expect(
+      Array.from(stack.querySelectorAll('button')).map((button) =>
+        button.getAttribute('data-test'),
+      ),
+    ).toEqual(['mobile-notifications-system', 'mobile-notifications-personal'])
   })
 
   it('карточки в панели те же, что в колонке: «ОК» закрывает и перечитывает', async () => {

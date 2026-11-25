@@ -49,6 +49,8 @@ describe('Бухгалтерия похода (e2e)', () => {
   let trip10: string;
   /** Поход для проверки подтверждения с карточки (свой, чтобы не менять trip9). */
   let cardTrip: string;
+  /** Перевод подтверждает сам ушедший получатель (25.11.2026). */
+  let withdrawnTrip: string;
   /** Общегрупповые уведомления: залог и «Компенсируйте расходы» (25.11.2026). */
   let financeNotifyTrip: string;
   let virtualPersonId: string;
@@ -265,6 +267,7 @@ describe('Бухгалтерия похода (e2e)', () => {
           trip9,
           trip10,
           cardTrip,
+          withdrawnTrip,
           financeNotifyTrip,
         ].filter(Boolean),
       ]);
@@ -2366,6 +2369,98 @@ describe('Бухгалтерия похода (e2e)', () => {
         [String(pending.id)],
       )) as Array<{ archived_reason: string | null }>;
       expect(card?.archived_reason).toBe('confirmed');
+    });
+
+    /**
+     * Выбор заказчика 25.11.2026: подтверждение доступно получателю-`declined`.
+     *
+     * «Бухгалтерию» ушедший не откроет, но деньги адресованы ему, и только
+     * он может сказать «получил». До этого шага кнопка на карточке отвечала
+     * `403`, а перевод закрывался только автосогласием через 72 часа.
+     */
+    it('ушедший подтверждает перевод сам, с карточки', async () => {
+      withdrawnTrip = await createTrip('Ушедший подтверждает сам');
+      await addGoing(withdrawnTrip, b);
+      await addGoing(withdrawnTrip, c);
+      await addGoing(withdrawnTrip, d);
+
+      // D оплатил общий стол: ему должны, значит перевести ему можно.
+      await addExpense(withdrawnTrip, d, {
+        amountRub: 300,
+        split: 'all',
+        description: 'Общий стол',
+        spentAt: '2026-11-20',
+      });
+
+      await decline(withdrawnTrip, d).expect(200);
+      await decline(withdrawnTrip, c).expect(200);
+
+      const sent = await compensate(withdrawnTrip, a, d.id, 50).expect(201);
+      const pending = compensationsOf(sent.body).find(
+        (row) => row.toUserId === d.id && row.status === 'pending',
+      )!;
+
+      // «Бухгалтерия» ушедшему по-прежнему закрыта — подтверждение только
+      // в карточке, и карточка помечена признаком для объяснения.
+      await view(withdrawnTrip, d, 403);
+
+      const cards = await auth(
+        request(app.getHttpServer()).get('/api/notifications'),
+        d.token,
+      ).expect(200);
+      const card = (
+        cards.body.system as Array<{
+          kind: string;
+          compensationId: string | null;
+          conversationId: string | null;
+          viewerDeclined: boolean | null;
+        }>
+      ).find((row) => row.compensationId === String(pending.id));
+
+      expect(card).toMatchObject({
+        kind: 'money_transfer',
+        viewerDeclined: true,
+      });
+      // Диалог с отправителем есть: поле «Сообщение отправителю» рисуется.
+      expect(card!.conversationId).toEqual(expect.any(String));
+
+      // Чужой ушедший (C) подтвердить перевод не может: прежний отказ.
+      await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${withdrawnTrip}/finance/compensations/${pending.id}/confirm`,
+        ),
+        c.token,
+      ).expect(403);
+
+      const confirmed = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${withdrawnTrip}/finance/compensations/${pending.id}/confirm`,
+        ),
+        d.token,
+      ).expect(200);
+
+      expect(
+        (confirmed.body.compensations as CompensationRow[]).find(
+          (row) => row.id === pending.id,
+        ),
+      ).toMatchObject({ status: 'confirmed' });
+
+      // Карточка ушла в архив, из панели исчезла.
+      const after = await auth(
+        request(app.getHttpServer()).get('/api/notifications'),
+        d.token,
+      ).expect(200);
+      expect(
+        (after.body.system as Array<{ compensationId: string | null }>).some(
+          (row) => row.compensationId === String(pending.id),
+        ),
+      ).toBe(false);
+
+      const [archived] = (await dataSource.query(
+        `SELECT "archived_reason" FROM "notifications" WHERE "compensation_id" = $1`,
+        [String(pending.id)],
+      )) as Array<{ archived_reason: string | null }>;
+      expect(archived?.archived_reason).toBe('confirmed');
     });
 
     it('«пока думаю» с ненулевым балансом остаётся в балансах', async () => {

@@ -31,6 +31,7 @@ function notification(overrides: Partial<AppNotification> = {}): AppNotification
     tripId: '193',
     compensationId: '55',
     unreadCount: null,
+    viewerDeclined: null,
     preview: [],
     createdAt: '2026-11-24T10:00:00.000Z',
     updatedAt: '2026-11-24T10:00:00.000Z',
@@ -117,7 +118,32 @@ describe('NotificationCard', () => {
     expect(wrapper.find('[data-test="rail-reply-input"]').exists()).toBe(false)
   })
 
-  it('превью в свёрнутой карточке обрезано до 50 символов', () => {
+  /**
+   * 25.11.2026, замечание заказчика: «заголовки у всех уведомлений должны
+   * быть жирные; про залог и требование компенсации не bold». Раньше вес
+   * зависел от непрочитанного, а у денег и альманаха его не бывает —
+   * такие карточки выглядели бледнее чатов.
+   */
+  it('заголовок жирный у любого вида, а не только у непрочитанного', () => {
+    for (const kind of ['money_transfer', 'trip_finance', 'almanac'] as const) {
+      const wrapper = mountCard(
+        notification({
+          kind,
+          title: 'Заголовок',
+          conversationId: null,
+          compensationId: null,
+        }),
+        { expanded: false },
+      )
+
+      expect(
+        wrapper.get('[data-test="rail-title-1"]').classes(),
+        `жирный для ${kind}`,
+      ).toContain('font-semibold')
+    }
+  })
+
+  it('превью в свёрнутой карточке обрезано до 75 символов', () => {
     const long = 'а'.repeat(80)
     const wrapper = mountCard(
       notification({ kind: 'almanac', body: long, conversationId: null }),
@@ -125,7 +151,7 @@ describe('NotificationCard', () => {
     )
 
     expect(wrapper.get('[data-test="rail-preview-1"]').text()).toBe(
-      `${'а'.repeat(50)}...`,
+      `${'а'.repeat(75)}...`,
     )
   })
 
@@ -299,6 +325,35 @@ describe('NotificationCard', () => {
    * человеком без аккаунта нет. Поле «Сообщение отправителю» рисовать
    * некуда — его нет, а «Подтвердить» остаётся.
    */
+  /**
+   * 25.11.2026: перевод человеку, который вышел из похода.
+   *
+   * Деньги его, и подтвердить получение может только он, но «Бухгалтерия»
+   * ему закрыта — кнопка живёт в карточке, и карточка это объясняет.
+   */
+  it('у перевода ушедшему — объяснение, «Подтвердить» и поле отправителю', () => {
+    const wrapper = mountCard(notification({ viewerDeclined: true }))
+
+    expect(wrapper.get('[data-test="rail-declined-hint"]').text()).toContain(
+      'Ты не идёшь в этом походе',
+    )
+    expect(wrapper.get('[data-test="rail-declined-hint"]').text()).toContain(
+      'через 72 часа',
+    )
+    // Права не расширены: поле ответа и сама кнопка на месте.
+    expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="rail-reply-input"]').attributes('placeholder')).toBe(
+      'Сообщение отправителю:',
+    )
+  })
+
+  it('у перевода идущему объяснения про закрытую бухгалтерию нет', () => {
+    const wrapper = mountCard(notification({ viewerDeclined: false }))
+
+    expect(wrapper.find('[data-test="rail-declined-hint"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(true)
+  })
+
   it('у перевода владельцу виртуального нет поля «Сообщение отправителю»', () => {
     const wrapper = mountCard(
       notification({

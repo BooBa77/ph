@@ -92,16 +92,20 @@ describe('уведомления: чистые правила', () => {
 describe('уведомления: список для панели', () => {
   it('раскладывает активные карточки по секциям и считает их', async () => {
     const manager = {
-      find: vi.fn(async () => [
-        notification({ id: '1', kind: 'money_transfer', title: 'Денежный перевод' }),
-        notification({
-          id: '2',
-          kind: 'direct_chat',
-          title: 'Анна',
-          conversationId: '10',
-          dedupKey: 'direct_chat:10',
-        }),
-      ]),
+      find: vi.fn(async (entity: unknown) =>
+        entity === TripParticipant
+          ? []
+          : [
+              notification({ id: '1', kind: 'money_transfer', title: 'Денежный перевод' }),
+              notification({
+                id: '2',
+                kind: 'direct_chat',
+                title: 'Анна',
+                conversationId: '10',
+                dedupKey: 'direct_chat:10',
+              }),
+            ],
+      ),
       query: vi.fn(async (sql: string) => {
         if (sql.includes('count(*)')) return [{ count: 2 }];
         if (sql.includes('FROM "messages" m')) {
@@ -135,6 +139,39 @@ describe('уведомления: список для панели', () => {
     expect(list.personal[0].unreadCount).toBe(2);
     expect(list.personal[0].preview).toHaveLength(1);
     expect(list.personal[0].preview[0].body).toHaveLength(301);
+    // Признак «вышел из похода» — только у перевода.
+    expect(list.system[0].viewerDeclined).toBe(false);
+    expect(list.personal[0].viewerDeclined).toBeNull();
+  });
+
+  /**
+   * 25.11.2026: «Бухгалтерия» ушедшему закрыта, но подтвердить перевод он
+   * может прямо в карточке. Клиенту нужен признак, чтобы объяснить это
+   * словами, — сервер считает его по составу похода.
+   */
+  it('помечает перевод человеку, вышедшему из похода', async () => {
+    const manager = {
+      find: vi.fn(async (entity: unknown) =>
+        entity === TripParticipant
+          ? [{ userId: BORIS, tripId: '193', status: 'declined' }]
+          : [
+              notification({
+                id: '1',
+                kind: 'money_transfer',
+                tripId: '193',
+                compensationId: '55',
+              }),
+            ],
+      ),
+      query: vi.fn(async () => []),
+    };
+
+    const service = new NotificationsService(asDataSource(manager), eventBus());
+    const list = await service.listMine(BORIS);
+
+    expect(list.system[0].viewerDeclined).toBe(true);
+    // Запрос состава — один на список, а не на каждую карточку.
+    expect(manager.find).toHaveBeenCalledTimes(2);
   });
 });
 

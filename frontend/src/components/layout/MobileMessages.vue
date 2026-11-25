@@ -183,9 +183,12 @@ onUnmounted(() => {
       Две иконки, а не одна: «треугольник с !» — системные уведомления,
       конверт — личные. Счётчик у каждой свой; секция без карточек кнопки
       не имеет вовсе.
+      25.11.2026, замечание заказчика: иконки стоят **вертикально** — друг
+      под другом. Горизонтальная пара отнимала ширину у контента и на узком
+      экране наезжала на карточки; столбик растёт вверх от нижнего края.
     -->
     <div
-      class="fixed right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-40 flex items-center gap-2"
+      class="fixed right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-40 flex flex-col items-center gap-2"
     >
       <button
         v-if="hasSystem"

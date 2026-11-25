@@ -63,6 +63,17 @@ const isDirectChat = computed(() => item.value.kind === 'direct_chat')
 const unread = computed(() => chatUnreadOf(item.value))
 
 /**
+ * Перевод человеку, который уже вышел из похода (25.11.2026).
+ *
+ * «Бухгалтерия» ушедшему закрыта, но деньги адресованы ему, и только он
+ * может сказать «получил». Сервер это разрешает, а карточка объясняет
+ * словами, почему кнопка здесь, и что будет без ответа.
+ */
+const isWithdrawnTransfer = computed(
+  () => isTransfer.value && item.value.viewerDeclined === true,
+)
+
+/**
  * Подпись под заголовком — только в свёрнутом виде (25.11.2026).
  *
  * Заказчик: превью «дублируется при раскрытии» и «не ограничено».
@@ -225,9 +236,16 @@ function openDirectChat(): void {
     >
       <span class="min-w-0 flex-1">
         <span class="flex items-baseline gap-2">
+          <!--
+            Заголовок карточки всегда жирный (25.11.2026, замечание
+            заказчика: «заголовки у всех уведомлений должны быть жирные;
+            про залог и требование компенсации не bold»). Прежнее правило
+            «жирный только у непрочитанного» работало для чатов, но у денег
+            и альманаха непрочитанного не бывает — они выглядели бледно.
+            Непрочитанное по-прежнему показывает счётчик, а не вес шрифта.
+          -->
           <span
-            class="truncate text-sm text-text"
-            :class="unread > 0 ? 'font-semibold' : ''"
+            class="truncate text-sm font-semibold text-text"
             :data-test="`${testPrefix}-title-${item.id}`"
           >
             {{ item.title }}
@@ -277,6 +295,21 @@ function openDirectChat(): void {
       -->
       <p v-if="!isChat" class="text-xs leading-relaxed text-text">
         {{ plain(item.body) }}
+      </p>
+
+      <!--
+        Перевод ушедшему: «Бухгалтерия» закрыта, подтвердить можно только
+        здесь. Вторая половина фразы — про срок автосогласия, чтобы человек
+        понимал, что будет, если не ответить.
+      -->
+      <p
+        v-if="isWithdrawnTransfer"
+        class="text-xs leading-relaxed text-muted"
+        :data-test="`${testPrefix}-declined-hint`"
+      >
+        Ты не идёшь в этом походе — «Бухгалтерия» тебе закрыта. Подтвердить
+        получение можно здесь; без ответа перевод засчитается сам через
+        72 часа.
       </p>
 
       <ol
