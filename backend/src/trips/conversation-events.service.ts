@@ -13,6 +13,8 @@ import { Observable, Subject } from 'rxjs';
  * текст, и вторым сообщением это показывать нельзя. Так делает автосогласие
  * через 72 часа (`settleExpiredCompensations` переписывает `messages.body`
  * уведомления о переводе) и человек, правящий своё сообщение (25.11.2026).
+ * В кадре едут id, новый текст и `editedAt` — время правки автором
+ * (`null`, если текст изменила система).
  * `message_deleted` (25.11.2026) — сообщение убрали физически: в открытом
  * диалоге строку надо не перечеркнуть, а убрать, поэтому это отдельный вид,
  * а не `message_updated` с пустым телом.
@@ -72,6 +74,16 @@ export interface ConversationEvent {
    */
   messageId?: string;
   body?: string;
+  /**
+   * Только у `message_updated`: когда сообщение правил человек (25.11.2026).
+   *
+   * У правки автором — ISO-время правки, у системного переписывания
+   * (`null`) — сообщение изменила система, а не человек. Поле есть всегда,
+   * чтобы клиент не угадывал по отсутствию ключа: `null` и «ключа нет» —
+   * разные вещи, и новый фронтенд должен строить пометку «изменено» на
+   * одном явном значении.
+   */
+  editedAt?: string | null;
 }
 
 /**
@@ -150,11 +162,16 @@ export class ConversationEventsService {
    * своего сообщения человеком `actorId` — его id: ответ `PATCH` уже принёс
    * новый текст, и правившему второй раз перечитывать незачем. Собеседнику
    * кадр нужен в обоих случаях.
+   *
+   * **`editedAt` (25.11.2026).** Время правки едет в кадре вместе с телом:
+   * «изменено» — такая же часть показанной строки, как текст, и вторым
+   * запросом её добывать незачем. У системного переписывания — `null`:
+   * пометку ставит только правка автора.
    */
   emitMessageUpdated(
     recipientIds: string[],
     conversationId: string,
-    message: { id: string; body: string },
+    message: { id: string; body: string; editedAt?: string | null },
     actorId = '',
   ): void {
     this.send(recipientIds, {
@@ -165,6 +182,7 @@ export class ConversationEventsService {
       actorId,
       messageId: message.id,
       body: message.body,
+      editedAt: message.editedAt ?? null,
     });
   }
 

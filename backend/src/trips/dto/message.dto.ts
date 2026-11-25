@@ -78,6 +78,25 @@ export class TripMessageDto {
   createdAt: string;
 
   /**
+   * Когда автор отредактировал это сообщение (25.11.2026).
+   *
+   * `null` — не правили, в том числе сразу после отправки. Время ставит
+   * сервер при правке; `createdAt` и место в переписке при этом не меняются.
+   * Клиенту поле нужно, чтобы показать «изменено»: без него отличить
+   * исправленную реплику от исходной было бы нечем.
+   *
+   * Системные сообщения и переписанный автосогласием текст уведомления
+   * о переводе остаются `null`: это не правка автора, а действие системы.
+   */
+  @ApiProperty({
+    description:
+      'Когда сообщение правил автор. null — не правили (в том числе системное)',
+    example: '2026-11-25T09:30:00.000Z',
+    nullable: true,
+  })
+  editedAt: string | null;
+
+  /**
    * Действие, которое показывает сообщение: кнопки «Да»/«Нет».
    *
    * Кнопки рисуются только адресату, поэтому canRespond считается
@@ -100,6 +119,7 @@ export class TripMessageDto {
       body: message.body,
       isSystem: message.senderId === null,
       createdAt: message.createdAt.toISOString(),
+      editedAt: message.editedAt ? message.editedAt.toISOString() : null,
       action: message.action
         ? MessageActionDto.from(
             message.action,

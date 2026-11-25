@@ -478,9 +478,19 @@ export class ConversationsService {
     );
 
     // Тот же текст — не ошибка, но и события нет: переписывать нечего.
+    // Время правки тоже не двигаем: «изменено» значит «текст другой»,
+    // а не «автор нажал «Сохранить»».
     if (message.body === value) return TripMessageDto.from(message, userId);
 
     message.body = value;
+    /**
+     * Время правки — отдельной колонкой (25.11.2026).
+     *
+     * `created_at` не трогаем: он задаёт порядок переписки и курсор `before`,
+     * и правка переставила бы сообщение в конец беседы. `edited_at`
+     * обновляется на каждой правке, чтобы «изменено» показывало последнюю.
+     */
+    message.editedAt = new Date();
     await manager.save(message);
 
     /**
@@ -489,12 +499,17 @@ export class ConversationsService {
      * `actorId` — человек, а не пустая строка: правивший уже получил новый
      * текст ответом ручки, и второй раз ему его применять не нужно. Для
      * собеседника это обычное чужое действие, и открытая переписка
-     * заменит тело строки без перезагрузки.
+     * заменит тело строки без перезагрузки. Вместе с телом едет `editedAt`:
+     * «изменено» — часть строки, и отдельный запрос за временем не нужен.
      */
     this.events.emitMessageUpdated(
       await this.participantsOf(manager, conversation),
       conversation.id,
-      { id: message.id, body: message.body },
+      {
+        id: message.id,
+        body: message.body,
+        editedAt: message.editedAt.toISOString(),
+      },
       userId,
     );
 

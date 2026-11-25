@@ -1908,6 +1908,10 @@ describe('Походы (e2e)', () => {
         .expect(201);
 
       const messageId = sent.body.id as string;
+      const createdAt = sent.body.createdAt as string;
+
+      // Только что отправленное — ещё не правили.
+      expect(sent.body.editedAt).toBeNull();
 
       const events = app.get(ConversationEventsService);
       const received: Array<{
@@ -1915,6 +1919,7 @@ describe('Походы (e2e)', () => {
         actorId: string;
         messageId?: string;
         body?: string;
+        editedAt?: string | null;
       }> = [];
       const subscription = events
         .stream(strangerId)
@@ -1957,6 +1962,13 @@ describe('Походы (e2e)', () => {
 
         expect(edited.body.body).toBe('исправлено');
         expect(edited.body.senderId).toBe(userId);
+        // Правка ставит время, но не переставляет сообщение: `createdAt`
+        // остаётся прежним, порядок в переписке — по `id`.
+        expect(edited.body.createdAt).toBe(createdAt);
+        expect(edited.body.editedAt).toEqual(expect.any(String));
+        expect(
+          new Date(edited.body.editedAt as string).getTime(),
+        ).toBeGreaterThanOrEqual(new Date(createdAt).getTime());
 
         await vi.waitFor(() =>
           expect(
@@ -1965,7 +1977,10 @@ describe('Походы (e2e)', () => {
                 event.kind === 'message_updated' &&
                 event.actorId === userId &&
                 event.messageId === messageId &&
-                event.body === 'исправлено',
+                event.body === 'исправлено' &&
+                // Время правки едет в кадре: клиенту не нужен второй
+                // запрос, чтобы нарисовать «изменено».
+                event.editedAt === edited.body.editedAt,
             ),
           ).toBe(true),
         );
@@ -2077,6 +2092,102 @@ describe('Походы (e2e)', () => {
           .query(`DELETE FROM message_actions WHERE id = $1`, [actionId])
           .catch(() => undefined);
       }
+    });
+
+    /**
+     * Удаление последнего сообщения (25.11.2026, §10 п.9).
+     *
+     * После физического удаления `lastMessage` диалога — это предыдущее
+     * сообщение, а не пустота: список и экран читают его одним запросом.
+     * «Прочитано» живёт на диалоге (`peerLastReadAt`) и удалением не
+     * двигается, а непрочитанное у собеседника пересчитывается по
+     * оставшимся строкам. Удалили оба своих — диалог пуст.
+     */
+    it('удаление последнего сообщения отдаёт предыдущее и не трогает «Прочитано»', async () => {
+      // Свежая пара: у неё нет истории от прошлых проверок, поэтому
+      // «последнее» и «пусто» здесь означают ровно то, что проверяем.
+      const own = await request(app.getHttpServer())
+        .post('/api/conversations/direct')
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ userId: coorgId })
+        .expect(200);
+
+      const conversationId = own.body.id as string;
+
+      // Собеседник прочитал диалог до сообщений: у автора есть «Прочитано»,
+      // и удаление не должно его сдвинуть.
+      await request(app.getHttpServer())
+        .post(`/api/conversations/${conversationId}/read`)
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .expect(204);
+
+      const send = (body: string) =>
+        request(app.getHttpServer())
+          .post(`/api/conversations/${conversationId}/messages`)
+          .set('Authorization', `Bearer ${accessToken}`)
+          .send({ body })
+          .expect(201);
+
+      const first = await send('первое');
+      const second = await send('второе');
+
+      const before = await request(app.getHttpServer())
+        .get(`/api/conversations/${conversationId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(before.body.lastMessage.id).toBe(second.body.id);
+      expect(before.body.peerLastReadAt).toEqual(expect.any(String));
+
+      const peerReadAt = before.body.peerLastReadAt as string;
+
+      await request(app.getHttpServer())
+        .delete(
+          `/api/conversations/${conversationId}/messages/${second.body.id}`,
+        )
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
+
+      const after = await request(app.getHttpServer())
+        .get(`/api/conversations/${conversationId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(after.body.lastMessage.id).toBe(first.body.id);
+      expect(after.body.lastMessage.body).toBe('первое');
+      expect(after.body.peerLastReadAt).toBe(peerReadAt);
+
+      const peerList = await request(app.getHttpServer())
+        .get('/api/conversations')
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .expect(200);
+
+      const row = (
+        peerList.body.conversations as Array<{
+          id: string;
+          unreadCount: number;
+          lastMessage: { id: string } | null;
+        }>
+      ).find((item) => item.id === conversationId);
+
+      // Из двух непрочитанных осталось одно — удалённой строки нет.
+      expect(row?.unreadCount).toBe(1);
+      expect(row?.lastMessage?.id).toBe(first.body.id);
+
+      await request(app.getHttpServer())
+        .delete(
+          `/api/conversations/${conversationId}/messages/${first.body.id}`,
+        )
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(204);
+
+      const empty = await request(app.getHttpServer())
+        .get(`/api/conversations/${conversationId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(200);
+
+      expect(empty.body.lastMessage).toBeNull();
+      expect(empty.body.peerLastReadAt).toBe(peerReadAt);
     });
 
     it('без токена диалоги закрыты', async () => {
@@ -2304,6 +2415,9 @@ describe('Походы (e2e)', () => {
         '  ошипка  ',
       ).expect(201);
       const messageId = sent.body.id as string;
+      const createdAt = sent.body.createdAt as string;
+
+      expect(sent.body.editedAt).toBeNull();
 
       const guestChatId = (
         await request(app.getHttpServer())
@@ -2327,6 +2441,7 @@ describe('Походы (e2e)', () => {
         actorId: string;
         messageId?: string;
         body?: string;
+        editedAt?: string | null;
       }> = [];
       const subscription = events
         .stream(userId)
@@ -2341,6 +2456,8 @@ describe('Походы (e2e)', () => {
 
         expect(edited.body.body).toBe('исправлено');
         expect(edited.body.senderId).toBe(strangerId);
+        expect(edited.body.createdAt).toBe(createdAt);
+        expect(edited.body.editedAt).toEqual(expect.any(String));
 
         // Организатор видит правку гостя событием — без перезагрузки.
         await vi.waitFor(() =>
@@ -2349,7 +2466,8 @@ describe('Походы (e2e)', () => {
               (event) =>
                 event.kind === 'message_updated' &&
                 event.actorId === strangerId &&
-                event.messageId === messageId,
+                event.messageId === messageId &&
+                event.editedAt === edited.body.editedAt,
             ),
           ).toBe(true),
         );
@@ -2371,6 +2489,22 @@ describe('Походы (e2e)', () => {
         expect(guest.messages.map((message) => message.body)).not.toContain(
           'исправлено',
         );
+
+        // Удалённое было последним в чате — `lastMessage` стал пустым,
+        // а не остался висеть ссылкой на несуществующую строку.
+        const chats = await request(app.getHttpServer())
+          .get(`/api/trips/${tripId}/chats`)
+          .set('Authorization', `Bearer ${strangerToken}`)
+          .expect(200);
+
+        const guestChat = (
+          chats.body.chats as Array<{
+            kind: string;
+            lastMessage: { id: string } | null;
+          }>
+        ).find((chat) => chat.kind === 'trip_guest');
+
+        expect(guestChat?.lastMessage).toBeNull();
 
         // Повтор — 404; вид чата без доступа — 403.
         await request(app.getHttpServer())

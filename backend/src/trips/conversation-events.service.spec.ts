@@ -142,6 +142,10 @@ describe('ConversationEventsService', () => {
         at: expect.any(String),
         messageId: '346',
         body: 'Борис перевёл тебе 1000 ₽. Так как время ожидания подтверждения вышло…',
+        // Текст переписала система, а не автор: пометку «изменено» ставить
+        // не по чему. Поле есть всегда, чтобы клиент не угадывал по
+        // отсутствию ключа.
+        editedAt: null,
       },
     ]);
 
@@ -180,8 +184,12 @@ describe('ConversationEventsService', () => {
    * Тот же вид `message_updated`, но `actorId` заполнен: правивший уже
    * получил текст ответом `PATCH` и второй раз его не применяет. Собеседник
    * отличает действие от системного переписывания именно по этому полю.
+   *
+   * Вместе с телом едет `editedAt` (25.11.2026): «изменено» — часть
+   * показанной строки, и открытый диалог рисует её по кадру, не делая
+   * второй запрос за временем.
    */
-  it('у правки человеком заполнен actorId', () => {
+  it('у правки человеком заполнены actorId и editedAt', () => {
     const service = new ConversationEventsService();
     const received: ConversationEvent[] = [];
 
@@ -189,10 +197,12 @@ describe('ConversationEventsService', () => {
       .stream('user-2')
       .subscribe((event) => received.push(event));
 
+    const editedAt = '2026-11-25T09:30:00.000Z';
+
     service.emitMessageUpdated(
       ['user-1', 'user-2'],
       '1268',
-      { id: '346', body: 'Поправил опечатку' },
+      { id: '346', body: 'Поправил опечатку', editedAt },
       'user-1',
     );
 
@@ -204,6 +214,7 @@ describe('ConversationEventsService', () => {
         at: expect.any(String),
         messageId: '346',
         body: 'Поправил опечатку',
+        editedAt,
       },
     ]);
 
