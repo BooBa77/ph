@@ -63,6 +63,7 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
     unreadCount: 0,
     muted: false,
     peerLastReadAt: null,
+    myLastReadAt: null,
     ...overrides,
   }
 }
@@ -152,6 +153,65 @@ describe('MessageView', () => {
     await openScreen()
 
     expect(mocks.markConversationRead).toHaveBeenCalledWith('7')
+  })
+
+  /**
+   * Разделитель «Новые сообщения» (25.11.2026).
+   *
+   * Граница берётся из диалога (`myLastReadAt`), а не из DOM и не из
+   * счётчика после прочтения: экран отмечает диалог прочитанным сразу,
+   * поэтому запоминать границу нужно до `POST /read`.
+   */
+  it('ставит «Новые сообщения» перед первым непрочитанным и переживает отметку прочтения', async () => {
+    mocks.getConversation.mockResolvedValue(
+      conversation({
+        unreadCount: 2,
+        myLastReadAt: '2026-11-23T09:30:00.000Z',
+      }),
+    )
+    mocks.listConversationMessages.mockResolvedValue({
+      messages: [
+        message({ id: '1', body: 'Старое', createdAt: '2026-11-23T09:00:00.000Z' }),
+        message({ id: '2', body: 'Новое', createdAt: '2026-11-23T10:00:00.000Z' }),
+        message({ id: '3', body: 'Ещё новее', createdAt: '2026-11-23T10:05:00.000Z' }),
+      ],
+      hasMore: false,
+    })
+
+    const { wrapper } = await openScreen()
+
+    const list = wrapper.find('[data-test="message-list"]')
+
+    expect(list.findAll('[data-test="message-unread"]')).toHaveLength(1)
+    expect(wrapper.find('[data-test="message-unread"]').text()).toContain('Новые сообщения')
+    // Разделитель стоит ровно перед первым непрочитанным, а не над старым.
+    const html = list.html()
+
+    expect(html.indexOf('message-unread')).toBeLessThan(html.indexOf('data-test="message-2"'))
+    expect(html.indexOf('data-test="message-1"')).toBeLessThan(html.indexOf('message-unread'))
+    // Отметка прочтения ушла, но разделитель остался на месте: он про
+    // момент входа, а счётчик сервер уже обнулил.
+    expect(mocks.markConversationRead).toHaveBeenCalledWith('7')
+  })
+
+  it('после прочтения — без новых — разделителя нет', async () => {
+    mocks.getConversation.mockResolvedValue(
+      conversation({
+        unreadCount: 0,
+        myLastReadAt: '2026-11-23T10:30:00.000Z',
+      }),
+    )
+    mocks.listConversationMessages.mockResolvedValue({
+      messages: [
+        message({ id: '1', body: 'Старое', createdAt: '2026-11-23T09:00:00.000Z' }),
+        message({ id: '2', body: 'Прочитанное', createdAt: '2026-11-23T10:00:00.000Z' }),
+      ],
+      hasMore: false,
+    })
+
+    const { wrapper } = await openScreen()
+
+    expect(wrapper.find('[data-test="message-unread"]').exists()).toBe(false)
   })
 
   it('чат похода подписан походом со ссылкой на него', async () => {

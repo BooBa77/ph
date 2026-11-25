@@ -499,6 +499,16 @@ export class ConversationsService {
         ?.createdAt ??
       null;
 
+    /**
+     * Та же граница уходит клиенту `myLastReadAt` (25.11.2026).
+     *
+     * Экран диалога показывает разделитель «Новые сообщения» и
+     * прокручивается к первому непрочитанному, а отметку прочтения ставит
+     * сразу при открытии — после неё первое непрочитанное уже не вычислить.
+     * Поэтому граница приходит вместе с `unreadCount`, и экран запоминает
+     * её до `POST /read`. Второго расчёта нет намеренно: разделитель обязан
+     * совпасть со счётчиком на том же сообщении.
+     */
     const unreadCount = await this.countUnread(
       manager,
       conversation.id,
@@ -526,6 +536,7 @@ export class ConversationsService {
         : null,
       muted: Boolean(context.member?.mutedAt),
       peerLastReadAt,
+      myLastReadAt: since,
     });
 
     /**

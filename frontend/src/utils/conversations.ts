@@ -1,5 +1,5 @@
 import type { Conversation } from '@/types/conversations'
-import type { MessageAction } from '@/types/trips'
+import type { MessageAction, TripMessage } from '@/types/trips'
 
 /**
  * Общие правила ленты сообщений: порядок строк и их подписи.
@@ -141,4 +141,36 @@ export function conversationTime(iso: string | undefined): string {
 /** Куда ведёт строка: личный диалог — экраном, чат похода — своей вкладкой. */
 export function isDirectConversation(row: Conversation): boolean {
   return row.tripId === null
+}
+
+/**
+ * Где начинаются новые сообщения (25.11.2026).
+ *
+ * Индекс первого сообщения, которое человек ещё не читал: чужое и созданное
+ * позже границы прочтения. Граница приходит из диалога (`myLastReadAt`) и
+ * снимается **до** `POST /read`; своих сообщений считать не нужно, как и
+ * системных строк — сервер непрочитанное считает ровно по этому правилу
+ * (`countUnread`), и разделитель обязан совпасть со счётчиком.
+ *
+ * `null` — новых нет. Если граница ушла за загруженную страницу
+ * (непрочитанных больше, чем пришло сообщений), первым непрочитанным
+ * оказывается первое загруженное: разделитель встанет над ним, а не
+ * пропадёт, и прокрутка покажет то, что реально пришло.
+ */
+export function firstUnreadIndex(
+  messages: TripMessage[],
+  boundary: string | null,
+  myId: string | null,
+): number | null {
+  for (let index = 0; index < messages.length; index += 1) {
+    const message = messages[index]
+
+    if (!message || message.isSystem) continue
+    if (message.senderId === null || message.senderId === myId) continue
+    if (boundary !== null && message.createdAt <= boundary) continue
+
+    return index
+  }
+
+  return null
 }

@@ -7,6 +7,7 @@ import {
   conversationHeading,
   conversationSubtitle,
   conversationTime,
+  firstUnreadIndex,
   hasPendingAction,
   hasRowAction,
   isPaymentRequest,
@@ -91,6 +92,7 @@ function conversation(overrides: Partial<Conversation> = {}): Conversation {
     unreadCount: 1,
     muted: false,
     peerLastReadAt: null,
+    myLastReadAt: null,
     ...overrides,
   }
 }
@@ -234,5 +236,68 @@ describe('utils/conversations', () => {
     expect(hasRowAction(row)).toBe(false)
     expect(isPaymentRequest(row)).toBe(false)
     expect(hasPendingAction(row)).toBe(false)
+  })
+
+  /**
+   * Разделитель «Новые сообщения» (25.11.2026): граница — моя метка
+   * прочтения из диалога, снятая до `POST /read`.
+   */
+  describe('firstUnreadIndex', () => {
+    const own = (id: string, createdAt: string) => ({
+      ...message(id, 'моё', createdAt),
+      senderId: 'me',
+    })
+    const system = (id: string, createdAt: string) => ({
+      ...message(id, 'служебное', createdAt),
+      senderId: null,
+      isSystem: true,
+    })
+
+    it('ставит разделитель перед первым чужим после границы', () => {
+      const list = [
+        message('1', 'старое', '2026-11-23T09:00:00.000Z'),
+        message('2', 'тоже старое', '2026-11-23T09:05:00.000Z'),
+        message('3', 'новое', '2026-11-23T10:00:00.000Z'),
+        message('4', 'ещё новее', '2026-11-23T10:05:00.000Z'),
+      ]
+
+      expect(firstUnreadIndex(list, '2026-11-23T09:30:00.000Z', 'me')).toBe(2)
+    })
+
+    it('не считает своими и системными: свои сообщения и служебные строки не новые', () => {
+      const list = [
+        message('1', 'старое', '2026-11-23T09:00:00.000Z'),
+        own('2', '2026-11-23T10:00:00.000Z'),
+        system('3', '2026-11-23T10:01:00.000Z'),
+        message('4', 'новое', '2026-11-23T10:02:00.000Z'),
+      ]
+
+      expect(firstUnreadIndex(list, '2026-11-23T09:30:00.000Z', 'me')).toBe(3)
+    })
+
+    it('без границы считает новым первое чужое сообщение', () => {
+      const list = [own('1', '2026-11-23T09:00:00.000Z'), message('2', 'привет')]
+
+      expect(firstUnreadIndex(list, null, 'me')).toBe(1)
+    })
+
+    it('когда непрочитанных больше страницы — разделитель над первым показанным', () => {
+      const list = [
+        message('1', 'первое на странице', '2026-11-23T10:00:00.000Z'),
+        message('2', 'второе', '2026-11-23T10:05:00.000Z'),
+      ]
+
+      expect(firstUnreadIndex(list, '2026-11-22T09:00:00.000Z', 'me')).toBe(0)
+    })
+
+    it('новых нет — null', () => {
+      const list = [
+        own('1', '2026-11-23T09:00:00.000Z'),
+        message('2', 'прочитанное', '2026-11-23T09:10:00.000Z'),
+      ]
+
+      expect(firstUnreadIndex(list, '2026-11-23T09:30:00.000Z', 'me')).toBeNull()
+      expect(firstUnreadIndex([], '2026-11-23T09:30:00.000Z', 'me')).toBeNull()
+    })
   })
 })

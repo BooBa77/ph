@@ -19,6 +19,7 @@ import type { TripMessage } from '@/types/trips'
 import { tripTabOf } from '@/utils/chatTabs'
 import {
   conversationHeading,
+  firstUnreadIndex,
   isPaymentRequest,
   rowAction,
 } from '@/utils/conversations'
@@ -63,6 +64,15 @@ import { markdownToHtml } from '@/utils/markdown'
  * что и лента, — `Conversation.action` (`rowAction`), одно и выбранное
  * сервером. Свой ответ стор не применяет (`actorId` — мой), поэтому после
  * ответа экран сам перечитывает диалог и строку ленты.
+ *
+ * **Разделитель «Новые сообщения» (25.11.2026).** Граница прочтения
+ * приходит в диалоге (`myLastReadAt`) и запоминается **до** `POST /read`:
+ * сам экран отмечает диалог прочитанным сразу при открытии, и после этого
+ * первое непрочитанное уже не вычислить. Разделитель ставится по этой
+ * границе и остаётся на месте, пока экран открыт, — как в мессенджерах:
+ * прокрутка к новым, но отметка «здесь началось новое» не прыгает под
+ * пальцем. При следующем открытии (или перезагрузке) `unreadCount` уже 0,
+ * и разделителя нет.
  */
 const route = useRoute()
 const router = useRouter()
@@ -95,6 +105,19 @@ const isAnswering = ref(false)
 const actionError = ref<string | null>(null)
 
 const listEl = ref<HTMLElement | null>(null)
+
+/**
+ * Граница прочтения, снятая из диалога при открытии (25.11.2026).
+ *
+ * Хранится отдельно от `conversation`, потому что перечитывание диалога
+ * после ответа (`reloadAfterAnswer`) приносит уже обнулённое непрочитанное
+ * и сдвинутую метку — разделитель же относится к тому моменту, когда
+ * человек вошёл в переписку.
+ */
+const readBoundary = ref<string | null>(null)
+
+/** Были ли при открытии непрочитанные: без них разделитель не нужен. */
+const hasUnread = ref(false)
 
 /** Мой id: по нему отличаем свои сообщения от чужих. */
 const myId = computed(() => auth.user?.id ?? null)
@@ -133,6 +156,19 @@ const actionTitle = computed(() => {
 function isOwn(message: TripMessage): boolean {
   return message.senderId !== null && message.senderId === myId.value
 }
+
+/**
+ * Перед каким сообщением рисовать «Новые сообщения» (25.11.2026).
+ *
+ * `null` — новых не было: экран ведёт себя как раньше, к последнему
+ * сообщению. Граница — та, что пришла в диалоге до отметки прочтения;
+ * если диалог перечитали (ответ на перевод), она не пересчитывается.
+ */
+const unreadFromIndex = computed<number | null>(() => {
+  if (!hasUnread.value) return null
+
+  return firstUnreadIndex(messages.value, readBoundary.value, myId.value)
+})
 
 /**
  * Последнее своё сообщение — единственное, на котором рисуется «Прочитано».
@@ -219,6 +255,38 @@ async function scrollToBottom(): Promise<void> {
 }
 
 /**
+ * Прокрутить к разделителю «Новые сообщения» (25.11.2026).
+ *
+ * Не к самому первому непрочитанному сообщению, а чуть выше — к разделителю:
+ * так видно, что это новые, а не продолжение старого разговора. Считаем
+ * смещение сами, а не `scrollIntoView`: тот прокрутил бы и страницу, а
+ * список живёт в своей рамке и выше него есть шапка с карточкой действия.
+ *
+ * `false` — разделителя нет (новых не было): вызывающий уводит к последнему.
+ */
+async function scrollToFirstUnread(): Promise<boolean> {
+  await nextTick()
+
+  const list = listEl.value
+  const divider = list?.querySelector<HTMLElement>('[data-test="message-unread"]')
+
+  if (!list || !divider) return false
+
+  // Небольшой отступ, чтобы подпись не прилипала к краю рамки.
+  const gap = 8
+
+  const top =
+    divider.getBoundingClientRect().top -
+    list.getBoundingClientRect().top +
+    list.scrollTop -
+    gap
+
+  list.scrollTop = Math.max(0, top)
+
+  return true
+}
+
+/**
  * Первое открытие: диалог, первая страница сообщений, отметка прочтения.
  *
  * Отметку ставим последней и молча: непрочитанное — счётчик в колонке,
@@ -235,6 +303,8 @@ async function open(id: string): Promise<void> {
   replyDraft.value = ''
   actionError.value = null
   isAnswering.value = false
+  readBoundary.value = null
+  hasUnread.value = false
 
   try {
     conversation.value = await getConversation(id)
@@ -246,6 +316,18 @@ async function open(id: string): Promise<void> {
     isLoading.value = false
     return
   }
+
+  /**
+   * Границу прочтения запоминаем сразу, до отметки прочтения.
+   *
+   * Ниже экран зовёт `POST /read`, и после него диалог уже «прочитан»:
+   * первое непрочитанное пришлось бы вычислять по DOM или догадываться.
+   * Признак «были непрочитанные» берём из того же ответа: у чата похода,
+   * который ни разу не открывали, граница — момент вступления в состав,
+   * и разделитель без счётчика встал бы там, где нового нет.
+   */
+  readBoundary.value = conversation.value.myLastReadAt ?? null
+  hasUnread.value = conversation.value.unreadCount > 0
 
   try {
     const page = await listConversationMessages(id, { limit: PAGE_SIZE })
@@ -259,7 +341,10 @@ async function open(id: string): Promise<void> {
     isLoading.value = false
   }
 
-  await scrollToBottom()
+  // Новые — к первому непрочитанному, иначе прежнее поведение: к последнему.
+  const moved = await scrollToFirstUnread()
+
+  if (!moved) await scrollToBottom()
 
   try {
     await markConversationRead(id)
@@ -506,12 +591,23 @@ function back(): void {
 /**
  * Живое сообщение в открытом диалоге (24.11.2026).
  *
- * Подписка живёт, пока экран на экране: поток уже открыт сторо́м ленты,
- * поэтому это наблюдатель, а не соединение. `actorId` сравниваем со своим —
- * своё сообщение дописано ответом `POST /messages`, и второй раз его
- * вставлять нельзя.
+ * `actorId` сравниваем со своим — своё сообщение дописано ответом
+ * `POST /messages`, и второй раз его вставлять нельзя.
  */
 const feed = useConversationsStore()
+
+/**
+ * Держать ленту, пока экран открыт (25.11.2026).
+ *
+ * Правая колонка и мобильная панель с 24.11.2026 держат стор **уведомлений**,
+ * а не переписки. Пока ленту держали они, поток `GET /conversations/events`
+ * был открыт и на экране диалога; после переезда панели его не открывал
+ * никто, и наблюдатель ниже молчал: чужое сообщение не дописывалось,
+ * «Прочитано» не появлялось, а пришедшее сообщение не отмечалось
+ * прочитанным. `hold()` возвращает отписку и заводит поток только на
+ * первого держателя — второй экран второго соединения не создаст.
+ */
+const releaseFeed = feed.hold()
 
 const stopEvents = feed.onEvent((event, row) => {
   const openId = conversation.value?.id
@@ -562,6 +658,7 @@ const stopEvents = feed.onEvent((event, row) => {
 })
 
 onUnmounted(stopEvents)
+onUnmounted(releaseFeed)
 
 watch(
   () => route.params.id,
@@ -735,6 +832,22 @@ watch(
             :data-test="`message-day-${index}`"
           >
             {{ day(message.createdAt) }}
+          </p>
+
+          <!--
+            Разделитель «Новые сообщения» (25.11.2026): стоит перед первым
+            непрочитанным, граница — из диалога, снятая до `POST /read`.
+            Пока экран открыт, он не двигается: человек дочитывает то, что
+            пришло, и подпись не перескакивает под пальцем.
+          -->
+          <p
+            v-if="index === unreadFromIndex"
+            class="flex items-center gap-2 text-center text-xs text-primary"
+            data-test="message-unread"
+          >
+            <span class="h-px flex-1 bg-primary/40" />
+            Новые сообщения
+            <span class="h-px flex-1 bg-primary/40" />
           </p>
 
           <div v-if="message.isSystem" class="text-center text-xs text-muted">

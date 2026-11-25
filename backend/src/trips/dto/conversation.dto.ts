@@ -130,6 +130,28 @@ export class ConversationDto {
   peerLastReadAt: string | null;
 
   /**
+   * Моя граница прочтения — та же, по которой считается `unreadCount`.
+   *
+   * Экран `/messages/:id` ставит разделитель «Новые сообщения» и
+   * прокручивается к первому непрочитанному, но сам же сразу зовёт
+   * `POST /read` — после него «первое непрочитанное» уже не вычислить.
+   * Поэтому граница приходит **в диалоге** вместе с `unreadCount`, и экран
+   * запоминает её до отметки прочтения.
+   *
+   * Значение — ровно то, от которого сервер отсчитывает непрочитанное:
+   * `conversation_members.last_read_at`, а у чата похода, который человек
+   * ни разу не открывал, — момент вступления в состав (иначе «всё
+   * непрочитано» показало бы всю историю похода). `null` — не читал
+   * и в состав похода не вступал; тогда непрочитанного нет.
+   */
+  @ApiProperty({
+    description:
+      'Моя метка прочтения: от неё отсчитан unreadCount. null — не читал',
+    nullable: true,
+  })
+  myLastReadAt: string | null;
+
+  /**
    * Подпись чата: имя собеседника или название чата похода.
    *
    * Личные подписываются именем собеседника — оно приходит в `peer`, а не
@@ -159,6 +181,8 @@ export class ConversationDto {
       muted?: boolean;
       /** Когда собеседник последний раз читал диалог. */
       peerLastReadAt?: Date | null;
+      /** Моя граница прочтения — от неё отсчитан `unreadCount`. */
+      myLastReadAt?: Date | null;
     },
   ): ConversationDto {
     return {
@@ -175,6 +199,7 @@ export class ConversationDto {
       tripTitle: options.tripTitle ?? null,
       muted: options.muted === true,
       peerLastReadAt: options.peerLastReadAt?.toISOString() ?? null,
+      myLastReadAt: options.myLastReadAt?.toISOString() ?? null,
     };
   }
 }

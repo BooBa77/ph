@@ -75,6 +75,7 @@ describe('PersonProfile', () => {
       unreadCount: 0,
       muted: false,
       peerLastReadAt: null,
+      myLastReadAt: null,
     })
   })
 

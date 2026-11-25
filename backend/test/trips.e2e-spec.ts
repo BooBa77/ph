@@ -1742,8 +1742,11 @@ describe('Походы (e2e)', () => {
 
       const conversationId = own.body.id as string;
 
-      /** Непрочитанное в этом диалоге глазами постороннего. */
-      const unreadForStranger = async (): Promise<number> => {
+      /** Строка диалога глазами постороннего: счётчик и моя метка прочтения. */
+      const rowForStranger = async (): Promise<{
+        unreadCount: number;
+        myLastReadAt: string | null;
+      } | null> => {
         const response = await request(app.getHttpServer())
           .get('/api/conversations')
           .set('Authorization', `Bearer ${strangerToken}`)
@@ -1754,10 +1757,15 @@ describe('Походы (e2e)', () => {
             response.body.conversations as Array<{
               id: string;
               unreadCount: number;
+              myLastReadAt: string | null;
             }>
-          ).find((item) => item.id === conversationId)?.unreadCount ?? 0
+          ).find((item) => item.id === conversationId) ?? null
         );
       };
+
+      /** Непрочитанное в этом диалоге глазами постороннего. */
+      const unreadForStranger = async (): Promise<number> =>
+        (await rowForStranger())?.unreadCount ?? 0;
 
       // База в e2e общая, и в этом же диалоге могли остаться сообщения
       // прошлых тестов — поэтому сравниваем «до и после», а не с единицей.
@@ -1775,7 +1783,19 @@ describe('Походы (e2e)', () => {
         .set('Authorization', `Bearer ${strangerToken}`)
         .expect(204);
 
-      expect(await unreadForStranger()).toBe(0);
+      const afterRead = await rowForStranger();
+
+      expect(afterRead?.unreadCount).toBe(0);
+      /**
+       * Граница прочтения приходит в диалоге, а не только счётчиком
+       * (25.11.2026). По ней экран `/messages/:id` ставит разделитель
+       * «Новые сообщения» **до** `POST /read`: после отметки первое
+       * непрочитанное уже не вычислить.
+       */
+      expect(typeof afterRead?.myLastReadAt).toBe('string');
+      expect(Date.parse(afterRead?.myLastReadAt ?? '')).toBeGreaterThan(
+        Date.now() - 60_000,
+      );
     });
 
     /**
