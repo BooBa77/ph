@@ -6,6 +6,7 @@ import {
 import { DataSource, type EntityManager, In, IsNull } from 'typeorm';
 
 import { User } from '../users/entities/user.entity';
+import type { UserGender } from '../users/gender.types';
 import { ConversationEventsService } from './conversation-events.service';
 import { Conversation } from './entities/conversation.entity';
 import { ConversationMember } from './entities/conversation-member.entity';
@@ -28,10 +29,20 @@ import {
 } from './dto/notification.dto';
 import {
   almanacChangedText,
+  almanacCreatedText,
   chatAnnounce,
   depositText,
   notificationPriority,
+  participantJoinedText,
+  participantLeftText,
   paymentRequestText,
+  roleAssignedText,
+  roleRemovedText,
+  tripDatesText,
+  tripExpenseText,
+  tripGoalText,
+  tripRouteText,
+  type NotificationText,
 } from './notification-text';
 import { type ParticipantStatus } from './trip.types';
 import { returningRows } from './query-rows';
@@ -69,6 +80,11 @@ const ACTIVE_STATUSES: ParticipantStatus[] = ['going', 'maybe', 'helping'];
 /** Ключ карточки о залоге: одна на поход (§2.3). */
 function tripDepositKey(tripId: string): string {
   return `trip_deposit:${tripId}`;
+}
+
+/** Получатели без повторов: один человек — одна карточка. */
+function uniqueIds(ids: readonly string[]): string[] {
+  return [...new Set(ids)];
 }
 
 /** Виды чатов: их карточки показывают последние сообщения и непрочитанное. */
@@ -611,6 +627,222 @@ export class NotificationsService {
   }
 
   /**
+   * Перенос дат — `trip_dates` (§3.2).
+   *
+   * Карточка одна на поход: повторный перенос обновляет её, а не заводит
+   * вторую. Текст называет автора правки, а не поход — имя похода уже
+   * в заголовке секции (§3.0).
+   */
+  async notifyTripDates(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      authorUserId: string;
+      startsAt: Date | null;
+      endsAt: Date | null;
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    const author = await this.userSummary(manager, params.authorUserId);
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'trip_dates',
+      ...tripDatesText(
+        author.displayName,
+        author.gender,
+        params.startsAt,
+        params.endsAt,
+      ),
+      dedupKey: `trip_dates:${params.tripId}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /** Смена цели — `trip_goal` (§3.4): одна карточка на поход. */
+  async notifyTripGoal(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      goalName: string;
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'trip_goal',
+      ...tripGoalText(params.goalName),
+      dedupKey: `trip_goal:${params.tripId}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /** Изменение маршрута — `trip_route` (§3.5): одна карточка на поход. */
+  async notifyTripRoute(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      routeText: string;
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'trip_route',
+      ...tripRouteText(params.routeText),
+      dedupKey: `trip_route:${params.tripId}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /**
+   * Новый участник — `participant_joined` (§3.8).
+   *
+   * Ключ содержит человека: второй новый участник — вторая карточка,
+   * а повторный перевод того же человека в «иду» обновляет первую.
+   */
+  async notifyParticipantJoined(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      subjectUserId: string;
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    const subject = await this.userSummary(manager, params.subjectUserId);
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'participant_joined',
+      ...participantJoinedText(subject.displayName, subject.gender),
+      dedupKey: `participant_joined:${params.tripId}:${params.subjectUserId}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /** Отказ от участия — `participant_left` (§3.9). */
+  async notifyParticipantLeft(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      subjectUserId: string;
+      status: ParticipantStatus;
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    const subject = await this.userSummary(manager, params.subjectUserId);
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'participant_left',
+      ...participantLeftText(subject.displayName, subject.gender, params.status),
+      dedupKey: `participant_left:${params.tripId}:${params.subjectUserId}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /** Роль назначена — `role_assigned` (§3.15), ключ на человека и роль. */
+  async notifyRoleAssigned(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      subjectUserId: string;
+      role: { code: string; name: string };
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    const subject = await this.userSummary(manager, params.subjectUserId);
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'role_assigned',
+      ...roleAssignedText(subject.displayName, subject.gender, params.role),
+      dedupKey: `role_assigned:${params.tripId}:${params.subjectUserId}:${params.role.code}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /** Роль снята — `role_removed` (§3.16). */
+  async notifyRoleRemoved(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      subjectUserId: string;
+      role: { code: string; name: string };
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    const subject = await this.userSummary(manager, params.subjectUserId);
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'role_removed',
+      ...roleRemovedText(subject.displayName, subject.gender, params.role),
+      dedupKey: `role_removed:${params.tripId}:${params.subjectUserId}:${params.role.code}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /**
+   * Общественный расход — `trip_expense` (§3.17).
+   *
+   * Ключ — id расхода: два чека дают две карточки, их закрывает двойная
+   * галочка. Повторная отправка офлайн-чека с тем же `clientId` до сюда
+   * не доходит: `insertExpense` возвращает «уже было» и уведомление
+   * не создаёт.
+   */
+  async notifyTripExpense(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      expenseId: string;
+      payerUserId: string;
+      description: string;
+      amountRub: number;
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    const payer = await this.userSummary(manager, params.payerUserId);
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'trip_expense',
+      ...tripExpenseText(
+        payer.displayName,
+        payer.gender,
+        params.description,
+        params.amountRub,
+      ),
+      dedupKey: `trip_expense:${params.expenseId}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /**
    * «Запрос платежа» — снова адресный: только должникам (§3.6).
    *
    * Решение 26.11.2026 отменяет групповое «всем идущим» 25.11.2026.
@@ -711,28 +943,71 @@ export class NotificationsService {
   }
 
   /**
-   * Новая редакция альманаха — уведомления участникам (в их транзакции).
+   * Альманах создан — `almanac_created` (§3.18), одна карточка на поход.
    *
-   * Вид `almanac_changed` (миграция 103), ключ `almanac_changed:<поход>`:
-   * «ОК» удаляет карточку, следующая редакция заводит её заново, а до
-   * закрытия — обновляет существующую. Текст прежний (п.8 решения
-   * заказчика): меняется только код вида.
+   * «ОК» её закрывает, и следующая редакция уже не возвращает создание:
+   * дальше идёт `almanac_changed`. Получатели приходят готовыми — активный
+   * состав без организатора, который и создал альманах.
+   */
+  async upsertAlmanacCreated(
+    manager: EntityManager,
+    params: { tripId: string; recipientIds: readonly string[] },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'almanac_created',
+      ...almanacCreatedText(),
+      dedupKey: `almanac_created:${params.tripId}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /**
+   * Новая редакция альманаха — `almanac_changed` (§3.19).
+   *
+   * Текст называет автора правки; имя похода не повторяется — его даёт
+   * заголовок секции. Получатели, у которых ещё висит активная карточка
+   * `almanac_created` этого похода, пропускаются: создание и первая правка
+   * одному человеку не нужны двумя строками. Возвращаются те, кому карточка
+   * действительно записана, — по ним вызывающий шлёт кадр после COMMIT.
    */
   async upsertAlmanac(
     manager: EntityManager,
-    params: { tripId: string; tripName: string; recipientIds: string[] },
-  ): Promise<void> {
-    const text = almanacChangedText(params.tripName);
+    params: {
+      tripId: string;
+      authorUserId: string;
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const candidates = uniqueIds(params.recipientIds);
+    if (candidates.length === 0) return [];
 
-    for (const recipientId of params.recipientIds) {
-      await this.upsert(manager, {
-        recipientUserId: recipientId,
-        kind: 'almanac_changed',
-        ...text,
-        dedupKey: `almanac_changed:${params.tripId}`,
-        tripId: params.tripId,
-      });
-    }
+    const createdKey = `almanac_created:${params.tripId}`;
+    const held = await manager.find(Notification, {
+      where: {
+        recipientUserId: In(candidates),
+        kind: 'almanac_created',
+        dedupKey: createdKey,
+        archivedAt: IsNull(),
+      },
+      select: { recipientUserId: true },
+    });
+    const skip = new Set(held.map((row) => row.recipientUserId));
+    const recipients = candidates.filter((id) => !skip.has(id));
+    if (recipients.length === 0) return [];
+
+    const author = await this.userSummary(manager, params.authorUserId);
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'almanac_changed',
+      ...almanacChangedText(author.displayName, author.gender),
+      dedupKey: `almanac_changed:${params.tripId}`,
+      recipientIds: recipients,
+    });
   }
 
   /**
@@ -849,6 +1124,58 @@ export class NotificationsService {
   }
 
   // ─────────────────────────────── внутреннее ───────────────────────────────
+
+  /**
+   * Записать одну и ту же карточку списку получателей.
+   *
+   * Дедупликация — ключом, не проверкой перед вставкой (§2.3): повторное
+   * событие обновляет строку, а `ON CONFLICT` держит гонку двух вкладок.
+   * Возвращаются получатели, чтобы вызывающий после COMMIT разослал кадр
+   * «перечитай уведомления» ровно им.
+   */
+  private async notifyTripCards(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      kind: NotificationKind;
+      dedupKey: string;
+      recipientIds: readonly string[];
+    } & NotificationText,
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+
+    for (const recipientId of recipients) {
+      await this.upsert(manager, {
+        recipientUserId: recipientId,
+        kind: params.kind,
+        title: params.title,
+        announce: params.announce,
+        body: params.body,
+        dedupKey: params.dedupKey,
+        tripId: params.tripId,
+      });
+    }
+
+    return recipients;
+  }
+
+  /**
+   * Имя и пол человека для текста карточки.
+   *
+   * Пол берётся из профиля (`users.gender`); `null` остаётся для строки,
+   * вставленной в обход профиля, и текст получает форму «сделал(а)».
+   */
+  private async userSummary(
+    manager: EntityManager,
+    userId: string,
+  ): Promise<{ displayName: string; gender: UserGender | null }> {
+    const user = await manager.findOne(User, { where: { id: userId } });
+
+    return {
+      displayName: user?.displayName ?? 'Участник',
+      gender: user?.gender ?? null,
+    };
+  }
 
   private async toDto(
     manager: EntityManager,

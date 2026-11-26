@@ -294,16 +294,27 @@ export class TripFinanceService {
     tripId: number,
     dto: SaveTripExpenseDto,
   ): Promise<TripFinanceDto> {
-    const view = await this.dataSource.transaction(async (manager) => {
-      const trip = await this.trips.getVisibleTrip(userId, tripId);
-      await this.assertGoing(manager, String(trip.id), userId);
+    const { view, notificationRecipients } =
+      await this.dataSource.transaction(async (manager) => {
+        const trip = await this.trips.getVisibleTrip(userId, tripId);
+        await this.assertGoing(manager, String(trip.id), userId);
 
-      await this.insertExpense(manager, trip, userId, dto);
+        const inserted = await this.insertExpense(manager, trip, userId, dto);
 
-      return this.buildView(manager, trip, userId);
-    });
+        return {
+          view: await this.buildView(manager, trip, userId),
+          notificationRecipients: inserted.recipientIds,
+        };
+      });
 
     this.events.emitFinance(String(tripId), userId);
+
+    // Карточка «Общественный расход» (§3.17) записана в транзакции —
+    // сигнал уходит после COMMIT, чтобы панель прочитала готовую строку.
+    if (notificationRecipients.length > 0) {
+      this.notifications.emitChanged(notificationRecipients);
+    }
+
     return view;
   }
 
@@ -352,13 +363,19 @@ export class TripFinanceService {
 
     const results: TripExpenseSyncResultDto[] = [];
     let created = false;
+    // Кому после COMMIT уйдёт «перечитай уведомления»: у пачки чеков
+    // карточек может быть столько же, сколько и строк.
+    const notificationRecipients = new Set<string>();
 
     for (const entry of dto.entries) {
       try {
         const inserted = await this.dataSource.transaction(async (manager) =>
           this.insertExpense(manager, trip, userId, entry),
         );
-        created = created || inserted;
+        created = created || inserted.created;
+        for (const recipientId of inserted.recipientIds) {
+          notificationRecipients.add(recipientId);
+        }
         results.push({ clientId: entry.clientId, status: 'accepted' });
       } catch (problem) {
         if (isClientDuplicate(problem)) {
@@ -392,6 +409,10 @@ export class TripFinanceService {
 
     // Сигнал — один на пачку: другие вкладки перечитают вкладку целиком.
     if (created) this.events.emitFinance(String(tripId), userId);
+
+    if (notificationRecipients.size > 0) {
+      this.notifications.emitChanged([...notificationRecipients]);
+    }
 
     return { ...view, results };
   }
@@ -2610,24 +2631,29 @@ export class TripFinanceService {
   }
 
   /**
-   * Создать строку расхода и её доли; `true` — строка действительно новая.
+   * Создать строку расхода и её доли; `created` — строка действительно новая.
    *
    * Общая часть онлайн-создания и синхронизации очереди (19.11.2026):
    * правила одни и те же, и вторая копия разошлась бы с первой на первой
    * правке. Уже существующий `clientId` — не ошибка, а повторная отправка:
-   * возвращаем `false`, чтобы синхронизация пометила чек принятым.
+   * возвращаем `created: false`, чтобы синхронизация пометила чек принятым.
+   *
+   * Заодно здесь собирается карточка «Общественный расход» (§3.17): это
+   * владелец события, и текст обязан родиться там же, где строка. Суммы,
+   * доли и балансы не трогаются — уведомление только читает записанное.
+   * Получатели возвращаются вызывающему: кадр в поток уходит после COMMIT.
    */
   private async insertExpense(
     manager: EntityManager,
     trip: Trip,
     userId: string,
     dto: SaveTripExpenseDto,
-  ): Promise<boolean> {
+  ): Promise<{ created: boolean; recipientIds: string[] }> {
     if (dto.clientId !== undefined) {
       const existing = await manager.findOne(TripExpense, {
         where: { tripId: String(trip.id), clientId: dto.clientId },
       });
-      if (existing) return false;
+      if (existing) return { created: false, recipientIds: [] };
     }
 
     const payerId = dto.payerUserId ?? userId;
@@ -2649,7 +2675,27 @@ export class TripFinanceService {
 
     await this.saveShares(manager, saved.id, shares);
 
-    return true;
+    /**
+     * Получатели — активный состав без плательщика (§4.1): он и так знает,
+     * что заплатил. `actorUserId` — именно плательщик, а не отправитель
+     * запроса: за виртуального действует ведущий, и его же надо исключить.
+     */
+    const recipientIds = await this.notifications.tripAudience(
+      manager,
+      String(trip.id),
+      { actorUserId: payerId },
+    );
+
+    const notified = await this.notifications.notifyTripExpense(manager, {
+      tripId: String(trip.id),
+      expenseId: String(saved.id),
+      payerUserId: payerId,
+      description: saved.description,
+      amountRub: saved.amountRub,
+      recipientIds,
+    });
+
+    return { created: true, recipientIds: notified };
   }
 
   private async saveShares(

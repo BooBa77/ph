@@ -16,8 +16,17 @@ import {
 } from './notifications.service';
 import {
   almanacChangedText,
+  almanacCreatedText,
   depositText,
+  participantJoinedText,
+  participantLeftText,
   paymentRequestText,
+  roleAssignedText,
+  roleRemovedText,
+  tripDatesText,
+  tripExpenseText,
+  tripGoalText,
+  tripRouteText,
 } from './notification-text';
 
 /**
@@ -31,6 +40,7 @@ import {
 
 const ANNA = '9bd2e553-4321-4877-a6ab-71b991d942b1';
 const BORIS = '4c644442-9738-4fed-8a82-393bcce699da';
+const VERA = '0f5bbd57-4c1e-4c1e-9f5d-1e36f2f6e3a1';
 const VIKTOR = '0d0f2b7e-0000-4000-8000-000000000001';
 const OWNER = '53a1b2c3-0000-4000-8000-000000000002';
 
@@ -92,7 +102,7 @@ describe('уведомления: чистые правила', () => {
     });
   });
 
-  it('тексты залога и альманаха не меняются, но получают анонс', () => {
+  it('тексты залога и альманаха: анонс отдельно, автор в тексте', () => {
     expect(depositText('Пик Черского', 300)).toEqual({
       title: 'Установлен залог',
       announce:
@@ -104,9 +114,82 @@ describe('уведомления: чистые правила', () => {
         'Залог можно покрыть расходами или переводом — подробности ' +
         'в «Бухгалтерии».',
     });
-    expect(almanacChangedText('Пик Черского').body).toBe(
-      'В походе «Пик Черского» новая редакция альманаха',
-    );
+    expect(almanacChangedText('Анна', 'f')).toEqual({
+      title: 'Альманах',
+      announce: 'Альманах похода изменён',
+      body: 'Анна дополнила альманах похода',
+    });
+    expect(almanacCreatedText()).toEqual({
+      title: 'Альманах',
+      announce: 'создан альманах похода',
+      body: 'Организатор создал альманах похода из записей участников',
+    });
+  });
+
+  it('тексты новых типов — по §3.2, §3.4, §3.5 и §3.8–§3.17', () => {
+    expect(
+      tripDatesText(
+        'Анна',
+        'f',
+        new Date('2026-12-01T00:00:00Z'),
+        new Date('2026-12-05T00:00:00Z'),
+      ),
+    ).toEqual({
+      title: 'Перенос похода',
+      announce: 'Новые даты: 01.12.2026 - 05.12.2026',
+      body:
+        'Анна изменила даты похода. Нужно пересмотреть разделы Трансфер, ' +
+        'Ночёвки, Питание.',
+    });
+    expect(tripGoalText('Пик Черского')).toEqual({
+      title: 'Смена цели похода',
+      announce: 'Пик Черского',
+      body:
+        'Нас невозможно сбить с пути, нам пофигу куда идти. Что-то ' +
+        'не сложилось, но мы не унываем и теперь это — Пик Черского',
+    });
+    expect(tripRouteText('Тропа вдоль реки')).toEqual({
+      title: 'Изменение маршрута похода',
+      announce: 'Тропа вдоль реки',
+      body: 'Тропа вдоль реки',
+    });
+    expect(participantJoinedText('Борис', 'm')).toEqual({
+      title: 'Новый участник',
+      announce: 'Борис',
+      body: 'Борис готов участвовать',
+    });
+    expect(participantLeftText('Анна', 'f', 'declined')).toEqual({
+      title: 'Отказ от участия',
+      announce: 'Анна',
+      body: 'Анна не может принять участие в походе и покинула группу.',
+    });
+    expect(participantLeftText('Анна', 'f', 'maybe')).toEqual({
+      title: 'Отказ от участия',
+      announce: 'Анна',
+      body: 'Анна не может принять участие в походе',
+    });
+    expect(
+      roleAssignedText('Борис', 'm', { code: 'doctor', name: 'Медик' }),
+    ).toEqual({
+      title: 'Медик похода',
+      announce: 'Борис назначен медиком похода',
+      body: 'Борис назначен медиком похода',
+    });
+    expect(
+      roleRemovedText('Анна', 'f', {
+        code: 'technicalLeader',
+        name: 'Технический лидер',
+      }),
+    ).toEqual({
+      title: 'Снятие роли',
+      announce: 'Анна освобождена от роли технического лидера',
+      body: 'Анна освобождена от роли технического лидера',
+    });
+    expect(tripExpenseText('Анна', 'f', 'Продукты', 300)).toEqual({
+      title: 'Общественный расход',
+      announce: 'Анна Продукты 300 руб.',
+      body: 'Анна оплатила Продукты 300 руб.',
+    });
   });
 });
 
@@ -696,25 +779,262 @@ describe('уведомления: денежные карточки', () => {
 
   it('альманах — вид almanac_changed и ключ похода', async () => {
     const query = vi.fn(async () => []);
-    const manager = { query } as unknown as EntityManager;
+    const find = vi.fn(async () => []);
+    const findOne = vi.fn(async (entity: unknown) =>
+      entity === User
+        ? { id: ANNA, displayName: 'Анна', gender: 'f' }
+        : null,
+    );
+    const manager = { query, find, findOne } as unknown as EntityManager;
     const service = new NotificationsService(asDataSource({}), eventBus());
 
     await service.upsertAlmanac(manager, {
       tripId: '810',
-      tripName: 'Пик Черского',
+      authorUserId: ANNA,
       recipientIds: [BORIS],
     });
 
     expect(query.mock.calls[0][1]).toEqual([
       BORIS,
       'almanac_changed',
-      'Альманах «Пик Черского»',
-      'В походе «Пик Черского» новая редакция альманаха',
-      'В походе «Пик Черского» новая редакция альманаха',
+      'Альманах',
+      'Альманах похода изменён',
+      'Анна дополнила альманах похода',
       'almanac_changed:810',
       null,
       '810',
       null,
     ]);
+  });
+});
+
+/**
+ * Генераторы новых типов (часть 3, 26.11.2026).
+ *
+ * Каждый тест проверяет три вещи сразу: вид и ключ дедупликации (§2.3),
+ * готовый текст (анонс и содержимое часто разные) и адресатов — состав
+ * приходит снаружи, его считает владелец события через `tripAudience`.
+ * Здесь же видно, что один человек получает одну карточку, даже если
+ * в списке он оказался дважды.
+ */
+describe('уведомления: генераторы новых типов', () => {
+  const USERS: Record<string, { displayName: string; gender: 'm' | 'f' }> = {
+    [ANNA]: { displayName: 'Анна', gender: 'f' },
+    [BORIS]: { displayName: 'Борис', gender: 'm' },
+    [VERA]: { displayName: 'Вера', gender: 'f' },
+  };
+
+  function eventManager(held: Array<{ recipientUserId: string }> = []) {
+    const query = vi.fn(async () => []);
+    const findOne = vi.fn(
+      async (entity: unknown, options?: { where?: { id?: string } }) => {
+        if (entity !== User) return null;
+        const person = USERS[options?.where?.id ?? ''];
+        return person ? { id: options?.where?.id, ...person } : null;
+      },
+    );
+    const find = vi.fn(async (entity: unknown) =>
+      entity === Notification ? held : [],
+    );
+    const manager = { query, find, findOne } as unknown as EntityManager;
+
+    return { manager, query, find, findOne };
+  }
+
+  const insets = (query: ReturnType<typeof vi.fn>) =>
+    query.mock.calls
+      .filter((call) => String(call[0]).includes('INSERT INTO "notifications"'))
+      .map((call) => call[1] as unknown[]);
+
+  it('перенос дат: одна карточка на поход, анонс — диапазон', async () => {
+    const { manager, query } = eventManager();
+    const events = eventBus();
+    const service = new NotificationsService(asDataSource({}), events);
+
+    await service.notifyTripDates(manager, {
+      tripId: '193',
+      authorUserId: ANNA,
+      startsAt: new Date('2026-12-01T00:00:00Z'),
+      endsAt: new Date('2026-12-05T00:00:00Z'),
+      recipientIds: [BORIS, VERA, BORIS],
+    });
+
+    const rows = insets(query);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual([
+      BORIS,
+      'trip_dates',
+      'Перенос похода',
+      'Новые даты: 01.12.2026 - 05.12.2026',
+      'Анна изменила даты похода. Нужно пересмотреть разделы Трансфер, ' +
+        'Ночёвки, Питание.',
+      'trip_dates:193',
+      null,
+      '193',
+      null,
+    ]);
+    expect(events.emitNotifications).not.toHaveBeenCalled();
+  });
+
+  it('смена цели и маршрута: ключи по походу, анонс отдельно', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyTripGoal(manager, {
+      tripId: '193',
+      goalName: 'Пик Черского',
+      recipientIds: [BORIS],
+    });
+    await service.notifyTripRoute(manager, {
+      tripId: '193',
+      routeText: 'Тропа вдоль реки',
+      recipientIds: [BORIS],
+    });
+
+    const rows = insets(query);
+    expect(rows[0][1]).toBe('trip_goal');
+    expect(rows[0][2]).toBe('Смена цели похода');
+    expect(rows[0][3]).toBe('Пик Черского');
+    expect(rows[0][5]).toBe('trip_goal:193');
+    expect(rows[1][1]).toBe('trip_route');
+    expect(rows[1][3]).toBe('Тропа вдоль реки');
+    expect(rows[1][5]).toBe('trip_route:193');
+  });
+
+  it('новый участник и отказ: ключ с человеком, пол в тексте', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyParticipantJoined(manager, {
+      tripId: '193',
+      subjectUserId: BORIS,
+      recipientIds: [ANNA],
+    });
+    await service.notifyParticipantLeft(manager, {
+      tripId: '193',
+      subjectUserId: VERA,
+      status: 'declined',
+      recipientIds: [ANNA],
+    });
+
+    const rows = insets(query);
+    expect(rows[0]).toEqual([
+      ANNA,
+      'participant_joined',
+      'Новый участник',
+      'Борис',
+      'Борис готов участвовать',
+      `participant_joined:193:${BORIS}`,
+      null,
+      '193',
+      null,
+    ]);
+    expect(rows[1][1]).toBe('participant_left');
+    expect(rows[1][4]).toBe(
+      'Вера не может принять участие в походе и покинула группу.',
+    );
+    expect(rows[1][5]).toBe(`participant_left:193:${VERA}`);
+  });
+
+  it('роли: назначение и снятие — ключ на человека и роль', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+    const role = { code: 'doctor', name: 'Медик' };
+
+    await service.notifyRoleAssigned(manager, {
+      tripId: '193',
+      subjectUserId: BORIS,
+      role,
+      recipientIds: [ANNA],
+    });
+    await service.notifyRoleRemoved(manager, {
+      tripId: '193',
+      subjectUserId: VERA,
+      role,
+      recipientIds: [ANNA],
+    });
+
+    const rows = insets(query);
+    expect(rows[0][2]).toBe('Медик похода');
+    expect(rows[0][4]).toBe('Борис назначен медиком похода');
+    expect(rows[0][5]).toBe(`role_assigned:193:${BORIS}:doctor`);
+    expect(rows[1][2]).toBe('Снятие роли');
+    expect(rows[1][4]).toBe('Вера освобождена от роли медика');
+    expect(rows[1][5]).toBe(`role_removed:193:${VERA}:doctor`);
+  });
+
+  it('общественный расход: ключ по расходу, «руб.» в тексте', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyTripExpense(manager, {
+      tripId: '193',
+      expenseId: '55',
+      payerUserId: ANNA,
+      description: 'Продукты',
+      amountRub: 300,
+      recipientIds: [BORIS],
+    });
+
+    expect(insets(query)[0]).toEqual([
+      BORIS,
+      'trip_expense',
+      'Общественный расход',
+      'Анна Продукты 300 руб.',
+      'Анна оплатила Продукты 300 руб.',
+      'trip_expense:55',
+      null,
+      '193',
+      null,
+    ]);
+  });
+
+  it('альманах создан: одна карточка на поход', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.upsertAlmanacCreated(manager, {
+      tripId: '193',
+      recipientIds: [BORIS, VERA],
+    });
+
+    const rows = insets(query);
+    expect(rows.map((row) => row[0])).toEqual([BORIS, VERA]);
+    expect(rows[0][2]).toBe('Альманах');
+    expect(rows[0][3]).toBe('создан альманах похода');
+    expect(rows[0][5]).toBe('almanac_created:193');
+  });
+
+  it('альманах изменён: у кого висит «создан», тому не шлём', async () => {
+    const { manager, query } = eventManager([{ recipientUserId: BORIS }]);
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    const recipients = await service.upsertAlmanac(manager, {
+      tripId: '193',
+      authorUserId: ANNA,
+      recipientIds: [BORIS, VERA],
+    });
+
+    expect(recipients).toEqual([VERA]);
+    const rows = insets(query);
+    expect(rows).toHaveLength(1);
+    expect(rows[0][0]).toBe(VERA);
+    expect(rows[0][4]).toBe('Анна дополнила альманах похода');
+  });
+
+  it('пустой список получателей не пишет и не шлёт кадр', async () => {
+    const { manager, query } = eventManager();
+    const events = eventBus();
+    const service = new NotificationsService(asDataSource({}), events);
+
+    expect(
+      await service.notifyTripGoal(manager, {
+        tripId: '193',
+        goalName: 'Пик Черского',
+        recipientIds: [],
+      }),
+    ).toEqual([]);
+    expect(query).not.toHaveBeenCalled();
+    expect(events.emitNotifications).not.toHaveBeenCalled();
   });
 });

@@ -137,7 +137,7 @@ export class TripAlmanacService {
       );
     }
 
-    await this.notifyAlmanac(trip, userId);
+    await this.notifyAlmanac(trip, userId, { created: true });
 
     return this.getAlmanac(userId, tripId);
   }
@@ -253,8 +253,18 @@ export class TripAlmanacService {
    * не существует; о карточке подписчиков извещает сам
    * `notifyAlmanacUpdated` (`notifications.emitChanged` после записи).
    */
-  private async notifyAlmanac(trip: Trip, userId: string): Promise<void> {
-    await notifyAlmanacUpdated(this.dataSource, this.notifications, trip, userId);
+  private async notifyAlmanac(
+    trip: Trip,
+    userId: string,
+    options: { created?: boolean } = {},
+  ): Promise<void> {
+    await notifyAlmanacUpdated(
+      this.dataSource,
+      this.notifications,
+      trip,
+      userId,
+      options,
+    );
   }
 
   /** Участник похода, а не отказавшийся. */

@@ -1,8 +1,7 @@
-import { DataSource } from 'typeorm';
+import { DataSource, type EntityManager } from 'typeorm';
 
 import type { Trip } from './entities/trip.entity';
 import type { NotificationsService } from './notifications.service';
-import { tripNameOf } from './trip-name';
 
 /**
  * «Альманах похода обновлён» — карточка уведомления участникам (22.11.2026;
@@ -12,25 +11,19 @@ import { tripNameOf } from './trip-name';
  * отправляется уведомление „Альманах похода {имя похода} обновлён“, если
  * у пользователя уже есть такое непрочитанное, новых ему не шлём».
  *
- * **Что изменилось 24.11.2026.** Уведомление переехало из личных диалогов
- * в таблицу `notifications` (§14 `topics/messages.md`), панель больше
- * не читает диалоги, поэтому двойная запись выключена: это место больше
- * **не пишет `messages`**. Старые строки «Альманах похода … обновлён»
- * остаются историей диалога — их не удаляют.
+ * **Что изменилось 26.11.2026.** Появился вид `almanac_created` (§3.18):
+ * первое содержимое, добавленное организатором, — это «создан альманах»,
+ * а всё последующее — «изменён». Различить их можно только по состоянию
+ * альманаха целиком: вызывающий говорит, что это **создание** (`created`),
+ * а здесь проверяется, что содержимое действительно первое и автор —
+ * организатор. Если первым добавил участник, «создан» не появляется:
+ * сразу идёт «изменён».
  *
- * Вместе с сообщением ушли и три механизма, которые существовали только
- * ради него:
- *
- * 1. **Проверка «одно непрочитанное на человека на поход».** Её заменил
- *    уникальный индекс `(recipient_user_id, dedup_key)` и
- *    `ON CONFLICT DO UPDATE`: ключ `almanac:<поход>` — ровно одна карточка
- *    на поход, сколько бы раз альманах ни правили.
- * 2. **`pg_advisory_xact_lock` по диалогу.** Он сериализовал «прочитай и
- *    вставь»; у `upsertAlmanac` проверки перед вставкой нет, поэтому и
- *    замка не нужно.
- * 3. **Кадр `message` в поток переписки.** Сообщения нет — нет и кадра.
- *    О том, что карточка изменилась, подписчиков уведомляет
- *    `notifications.emitChanged` в конце этой функции.
+ * Вместе с сообщением ушли три механизма, которые существовали только
+ * ради него: проверка «одно непрочитанное на человека на поход» (её
+ * заменил уникальный индекс `(recipient_user_id, dedup_key)`),
+ * `pg_advisory_xact_lock` по диалогу (у `upsertAlmanac` проверки перед
+ * вставкой нет) и кадр `message` в поток переписки (сообщения нет).
  *
  * Автору правки карточка не заводится (он и так знает), отказникам
  * (`declined`) — тоже: они уже не в походе.
@@ -40,6 +33,7 @@ export async function notifyAlmanacUpdated(
   notifications: NotificationsService,
   trip: Trip,
   authorId: string,
+  options: { created?: boolean } = {},
 ): Promise<void> {
   const manager = dataSource.manager;
 
@@ -49,29 +43,59 @@ export async function notifyAlmanacUpdated(
    * всех, кроме `declined`, — приглашённый и виртуальный получали
    * карточку, хотя первый ещё не участник, а второй не может войти.
    */
-  const recipients = await notifications.tripAudience(
+  const candidates = await notifications.tripAudience(
     manager,
     String(trip.id),
     { actorUserId: authorId },
   );
 
-  if (recipients.length === 0) return;
+  if (candidates.length === 0) return;
 
-  const tripName = await tripNameOf(manager, trip);
+  const created =
+    options.created === true &&
+    String(trip.organizerUserId) === String(authorId) &&
+    (await almanacContentCount(manager, String(trip.id))) === 1;
 
-  await notifications.upsertAlmanac(manager, {
-    tripId: String(trip.id),
-    tripName,
-    recipientIds: recipients,
-  });
+  const recipients = created
+    ? await notifications.upsertAlmanacCreated(manager, {
+        tripId: String(trip.id),
+        recipientIds: candidates,
+      })
+    : await notifications.upsertAlmanac(manager, {
+        tripId: String(trip.id),
+        authorUserId: authorId,
+        recipientIds: candidates,
+      });
 
   /**
    * Сигнал «перечитай уведомления» — после записи, а не из транзакции.
    *
-   * Шлём всегда, а не только при создании: `upsertAlmanac` обновляет
-   * существующую карточку, и её текст (новое имя похода, время редакции)
-   * мог измениться. Клиент перечитывает ответ целиком, лишний кадр ему
-   * ничего не стоит.
+   * Шлём по фактическим получателям: при `almanac_changed` часть состава
+   * пропускается, если у неё ещё висит активное «создан альманах».
    */
-  notifications.emitChanged(recipients);
+  if (recipients.length > 0) notifications.emitChanged(recipients);
+}
+
+/**
+ * Сколько содержимого уже лежит в альманахе похода.
+ *
+ * Считаются обе половины: помеченные дневниковые записи и воспоминания.
+ * Вызывается **после** вставки, поэтому «1» и значит «это содержимое
+ * первое». Удалённая дневниковая строка не в счёт — она не показывается
+ * в альманахе (`deleted_at IS NULL`).
+ */
+async function almanacContentCount(
+  manager: EntityManager,
+  tripId: string,
+): Promise<number> {
+  const rows = (await manager.query(
+    `SELECT (
+       (SELECT count(*) FROM "trip_almanac_entries" WHERE "trip_id" = $1) +
+       (SELECT count(*) FROM "trip_diary_entries"
+         WHERE "trip_id" = $1 AND "shared_with_trip" AND "deleted_at" IS NULL)
+     )::int AS "count"`,
+    [tripId],
+  )) as Array<{ count: number }>;
+
+  return Number(rows[0]?.count ?? 0);
 }

@@ -133,6 +133,44 @@ function sameInstant(left: Date | null, right: Date | null): boolean {
   return left.getTime() === right.getTime();
 }
 
+/**
+ * Совпадают ли наборы вариантов дат.
+ *
+ * Варианты — «замена целиком»: у строки нет стабильного внешнего
+ * идентификатора, поэтому «те же варианты» сравниваются по значениям,
+ * а не по id. Нужно это для права на даты: соорганизатор присылает форму
+ * целиком, и `PATCH` с прежними вариантами не должен получать 403.
+ */
+function sameDateVariants(
+  left: readonly {
+    year?: number | null;
+    month?: number | null;
+    day?: number | null;
+    durationDays?: number | null;
+    durationDelta?: number;
+  }[],
+  right: readonly {
+    year?: number | null;
+    month?: number | null;
+    day?: number | null;
+    durationDays?: number | null;
+    durationDelta?: number;
+  }[],
+): boolean {
+  if (left.length !== right.length) return false;
+
+  return left.every((variant, index) => {
+    const other = right[index];
+    return (
+      (variant.year ?? null) === (other.year ?? null) &&
+      (variant.month ?? null) === (other.month ?? null) &&
+      (variant.day ?? null) === (other.day ?? null) &&
+      (variant.durationDays ?? null) === (other.durationDays ?? null) &&
+      (variant.durationDelta ?? 0) === (other.durationDelta ?? 0)
+    );
+  });
+}
+
 /** Как статус участия читается в системном сообщении чата. */
 function statusText(status: ParticipantStatus): string {  switch (status) {
     case 'going':
@@ -804,7 +842,7 @@ export class TripsService {
     targetUserId: string,
     dto: SetParticipantRolesDto,
   ): Promise<TripParticipantDto> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const trip = await this.findVisibleTrip(manager, userId, id);
 
       const editable = await this.editableTabs(manager, trip, userId);
@@ -912,6 +950,10 @@ export class TripsService {
         .filter((roleId) => roleId !== organizerRole?.id);
       if (organizerRole) roleIds.push(organizerRole.id);
 
+      // Прежний набор — до удаления: по разнице с новым решается, какие
+      // роли назначены, а какие сняты (§3.15–§3.16).
+      const previousRoles = await this.loadRoles(manager, trip.id, targetUserId);
+
       await manager.delete(TripParticipantRole, {
         tripId: trip.id,
         userId: targetUserId,
@@ -929,12 +971,68 @@ export class TripsService {
 
       const savedRoles = await this.loadRoles(manager, trip.id, targetUserId);
 
-      return TripParticipantDto.from(
-        participant,
-        savedRoles,
-        trip.organizerUserId,
-      );
+      /**
+       * Разница ролей — карточки «назначена» и «снята» (§3.15–§3.16).
+       *
+       * Каждая пара «человек + роль» — своя карточка: назначили медика и
+       * завхоза — две строки, их закрывает двойная галочка. Снятие роли
+       * у уже вышедшего человека не показываем: «медик ушёл из похода» —
+       * это §3.9, а не снятие роли.
+       */
+      const previousCodes = new Set(previousRoles.map((role) => role.code));
+      const savedCodes = new Set(savedRoles.map((role) => role.code));
+      const added = savedRoles.filter((role) => !previousCodes.has(role.code));
+      const removed = previousRoles.filter((role) => !savedCodes.has(role.code));
+
+      const notificationRecipients: string[] = [];
+      if (
+        participant.status !== 'declined' &&
+        (added.length > 0 || removed.length > 0)
+      ) {
+        const recipientIds = await this.notifications.tripAudience(
+          manager,
+          String(trip.id),
+          { actorUserId: userId, exceptUserIds: [targetUserId] },
+        );
+
+        for (const role of added) {
+          notificationRecipients.push(
+            ...(await this.notifications.notifyRoleAssigned(manager, {
+              tripId: String(trip.id),
+              subjectUserId: targetUserId,
+              role,
+              recipientIds,
+            })),
+          );
+        }
+
+        for (const role of removed) {
+          notificationRecipients.push(
+            ...(await this.notifications.notifyRoleRemoved(manager, {
+              tripId: String(trip.id),
+              subjectUserId: targetUserId,
+              role,
+              recipientIds,
+            })),
+          );
+        }
+      }
+
+      return {
+        participant: TripParticipantDto.from(
+          participant,
+          savedRoles,
+          trip.organizerUserId,
+        ),
+        notificationRecipients,
+      };
     });
+
+    if (result.notificationRecipients.length > 0) {
+      this.notifications.emitChanged(result.notificationRecipients);
+    }
+
+    return result.participant;
   }
 
   /**
@@ -1685,7 +1783,7 @@ export class TripsService {
     id: number,
     dto: UpdateTripDto,
   ): Promise<TripResponseDto> {
-    const { response, gearChanged, depositChanged, datesChanged, financeRecipients } =
+    const { response, gearChanged, depositChanged, datesChanged, notificationRecipients } =
       await this.dataSource.transaction(async (manager) => {
         const trip = await this.findManagedTrip(manager, userId, id);
 
@@ -1709,6 +1807,8 @@ export class TripsService {
          * изменении, а не на каждый `PATCH`.
          */
         const previousDepositRub = trip.depositRub;
+        const previousGoalObjectId = trip.goalObjectId;
+        const previousRouteText = trip.routeText;
         const previousHasConcreteDate = await this.hasConcreteDate(
           manager,
           trip,
@@ -1744,10 +1844,11 @@ export class TripsService {
          * закладки подготовки, убрать его нельзя. Вернуться к «без числа»
          * значит вернуть поход в состояние, из которого он вышел.
          */
+        const storedVariants = await manager.find(TripDateVariant, {
+          where: { tripId: trip.id },
+        });
         const nextVariants =
-          dto.dateVariants !== undefined
-            ? dto.dateVariants
-            : await manager.find(TripDateVariant, { where: { tripId: trip.id } });
+          dto.dateVariants !== undefined ? dto.dateVariants : storedVariants;
         const willHaveConcreteDate =
           startsAt !== null ||
           nextVariants.some((variant) => variant.day != null);
@@ -1755,6 +1856,31 @@ export class TripsService {
         if (previousHasConcreteDate && !willHaveConcreteDate) {
           throw new BadRequestException(
             'Конкретное число у похода уже было — вернуться к «без числа» нельзя',
+          );
+        }
+
+        const datesChanged =
+          !sameInstant(previousStartsAt, startsAt) ||
+          !sameInstant(previousEndsAt, endsAt);
+        const variantsChanged =
+          dto.dateVariants !== undefined &&
+          !sameDateVariants(dto.dateVariants, storedVariants);
+
+        /**
+         * Даты и их варианты меняет только организатор (26.11.2026).
+         *
+         * Решение заказчика: это седьмое отличие соорганизатора
+         * (`lifecycle.md` §4.5). Сравниваем **итоговые** значения, а не
+         * наличие полей: форма правки присылает даты всегда, и `PATCH`
+         * с прежними датами не должен закрывать соорганизатору доступ
+         * ко всему остальному.
+         */
+        if (
+          (datesChanged || variantsChanged) &&
+          trip.organizerUserId !== userId
+        ) {
+          throw new ForbiddenException(
+            'Даты похода и их варианты меняет только организатор',
           );
         }
 
@@ -1813,6 +1939,66 @@ export class TripsService {
 
         const saved = await manager.save(trip);
 
+        const goalChanged = trip.goalObjectId !== previousGoalObjectId;
+        const routeChanged =
+          dto.routeText !== undefined &&
+          (saved.routeText ?? '') !== (previousRouteText ?? '') &&
+          (saved.routeText ?? '').trim().length > 0;
+
+        /**
+         * Получатели всех групповых карточек одной правки — активный состав
+         * (§4.1), автор действия и люди без аккаунта исключены. Считаем
+         * один раз на сохранение: у дат, цели, маршрута и залога правило
+         * одно, и четыре одинаковых запроса в базу ничего не уточнят.
+         */
+        const notificationRecipients: string[] = [];
+        let audience: string[] | null = null;
+        const tripAudience = async (): Promise<string[]> =>
+          (audience ??= await this.notifications.tripAudience(
+            manager,
+            String(saved.id),
+            { actorUserId: userId },
+          ));
+
+        /**
+         * Перенос дат — §3.2. Только если прежние даты **были**: первая
+         * установка числа после «Планирую» — не перенос, а обычное
+         * планирование. Прогноз (`date_variants`) сюда не входит.
+         */
+        if (datesChanged && previousStartsAt !== null) {
+          notificationRecipients.push(
+            ...(await this.notifications.notifyTripDates(manager, {
+              tripId: String(saved.id),
+              authorUserId: userId,
+              startsAt: saved.startsAt,
+              endsAt: saved.endsAt,
+              recipientIds: await tripAudience(),
+            })),
+          );
+        }
+
+        /** Смена цели — §3.4: текст-шутка заказчика, анонс — новая цель. */
+        if (goalChanged) {
+          notificationRecipients.push(
+            ...(await this.notifications.notifyTripGoal(manager, {
+              tripId: String(saved.id),
+              goalName: saved.goalObject?.name ?? 'новая цель',
+              recipientIds: await tripAudience(),
+            })),
+          );
+        }
+
+        /** Маршрут — §3.5: анонс и содержимое — новый текст маршрута. */
+        if (routeChanged) {
+          notificationRecipients.push(
+            ...(await this.notifications.notifyTripRoute(manager, {
+              tripId: String(saved.id),
+              routeText: saved.routeText ?? '',
+              recipientIds: await tripAudience(),
+            })),
+          );
+        }
+
         /**
          * Установка, изменение и снятие залога — общегрупповое уведомление
          * (26.11.2026, §3.7 `topics/notifications.md`).
@@ -1827,17 +2013,9 @@ export class TripsService {
          * установки залога карточку не создаём: она заводится здесь,
          * а не при вступлении в поход.
          */
-        const financeRecipients: string[] = [];
-
         if (previousDepositRub !== saved.depositRub) {
           if (saved.depositRub !== null && saved.depositRub > 0) {
-            // Активный состав похода (§4.1): `going`, `maybe`, `helping`,
-            // кроме автора действия и людей без аккаунта.
-            const recipientIds = await this.notifications.tripAudience(
-              manager,
-              String(saved.id),
-              { actorUserId: userId },
-            );
+            const recipientIds = await tripAudience();
 
             await this.notifications.notifyTripDeposit(manager, {
               tripId: String(saved.id),
@@ -1846,9 +2024,9 @@ export class TripsService {
               recipientIds,
             });
 
-            financeRecipients.push(...recipientIds);
+            notificationRecipients.push(...recipientIds);
           } else {
-            financeRecipients.push(
+            notificationRecipients.push(
               ...(await this.notifications.dropTripDeposit(
                 manager,
                 String(saved.id),
@@ -1915,9 +2093,6 @@ export class TripsService {
          */
         const becameDecided =
           previousStatus !== 'decided' && status === 'decided';
-        const datesChanged =
-          !sameInstant(previousStartsAt, startsAt) ||
-          !sameInstant(previousEndsAt, endsAt);
 
         // Дата ночи — производная от дат похода, а не вечная запись:
         // иначе таблица показывала бы старые числа после каждой правки.
@@ -1974,7 +2149,7 @@ export class TripsService {
           gearChanged: conflictText !== null,
           depositChanged: previousDepositRub !== saved.depositRub,
           datesChanged,
-          financeRecipients,
+          notificationRecipients,
         };
       },
     );
@@ -1988,12 +2163,11 @@ export class TripsService {
     // а не ждать перезагрузки.
     if (depositChanged) this.events.emitFinance(String(id), userId);
 
-    // Карточка «Установлен залог» появилась или исчезла — панель получателя
-    // перечитывает уведомления. Кадр уходит после COMMIT: до него открытая
-    // панель показала бы карточку, которой ещё нет.
-    for (const recipientId of new Set(financeRecipients)) {
-      this.notifications.emitChanged([recipientId]);
-    }
+    // Карточки правки (даты, цель, маршрут, залог) появились, обновились
+    // или исчезли — панель получателя перечитывает уведомления. Кадр уходит
+    // после COMMIT: до него открытая панель показала бы карточку, которой
+    // ещё нет.
+    this.notifications.emitChanged([...new Set(notificationRecipients)]);
 
     /**
      * Смена дат двигает плашки пустой таблицы «Ночёвок» (19.11.2026):
@@ -2307,6 +2481,13 @@ export class TripsService {
       // Сколько активных карточек снялось вместе с уходом из похода:
       // по ненулю после COMMIT уходит кадр «перечитай уведомления».
       let droppedNotifications = 0;
+      /**
+       * Кому разослать кадр «перечитай уведомления» после COMMIT.
+       *
+       * Карточка «Новый участник» / «Отказ от участия» создаётся в этой же
+       * транзакции, но сигнал должен уйти только по сохранённым строкам.
+       */
+      const notificationRecipients: string[] = [];
 
       const participant = await manager.findOne(TripParticipant, {
         where: { tripId: trip.id, userId },
@@ -2330,6 +2511,7 @@ export class TripsService {
        * не отменяет.
        */
       const statusChanged = participant.status !== status;
+      const previousStatus = participant.status;
       const dietChanged =
         eatsSeparately !== undefined &&
         participant.eatsSeparately !== eatsSeparately;
@@ -2383,6 +2565,43 @@ export class TripsService {
         }
 
         /**
+         * Состав изменился — карточка остальным (§3.8–§3.9).
+         *
+         * «Новый участник» — переход в `going` откуда угодно, кроме `going`
+         * (он и был идущим). «Отказ» — уход из `going` в `maybe`, `helping`
+         * или `declined`; уход из `maybe`/`helping` карточки не даёт, как
+         * и написано в §3.9. Автор действия и субъект — один человек,
+         * поэтому он исключён дважды, но это не мешает.
+         */
+        const becameGoingFromOther = previousStatus !== 'going' && status === 'going';
+        const leftGoing =
+          previousStatus === 'going' &&
+          (status === 'maybe' || status === 'helping' || status === 'declined');
+
+        if (becameGoingFromOther || leftGoing) {
+          const recipientIds = await this.notifications.tripAudience(
+            manager,
+            String(trip.id),
+            { actorUserId: userId },
+          );
+
+          notificationRecipients.push(
+            ...(becameGoingFromOther
+              ? await this.notifications.notifyParticipantJoined(manager, {
+                  tripId: String(trip.id),
+                  subjectUserId: userId,
+                  recipientIds,
+                })
+              : await this.notifications.notifyParticipantLeft(manager, {
+                  tripId: String(trip.id),
+                  subjectUserId: userId,
+                  status,
+                  recipientIds,
+                })),
+          );
+        }
+
+        /**
          * Вышел из похода — его снаряжение больше не за ним (20.11.2026).
          *
          * Уведомление при выходе обещает: «Твоё снаряжение будет исключено
@@ -2426,6 +2645,7 @@ export class TripsService {
         statusChanged,
         left: statusChanged && status === 'declined',
         droppedNotifications,
+        notificationRecipients,
       };
     });
 
@@ -2448,6 +2668,11 @@ export class TripsService {
       // Карточки исчезли из панели ушедшего: сам он их больше не увидит,
       // а открытая вкладка должна перечитать секции сразу.
       this.notifications.emitChanged([userId]);
+    }
+    if (result.notificationRecipients.length > 0) {
+      // «Новый участник» / «Отказ от участия» записаны в транзакции —
+      // сигнал уходит по COMMIT, чтобы панель прочитала уже сохранённое.
+      this.notifications.emitChanged(result.notificationRecipients);
     }
 
     return result.participant;
@@ -2522,11 +2747,32 @@ export class TripsService {
         `${displayNameOf(participant.user)}: ${statusText('going')}`,
       );
 
-      return TripParticipantDto.from(
-        participant,
-        await this.loadRoles(manager, trip.id, targetUserId),
-        trip.organizerUserId,
+      /**
+       * Перевод в «иду» — «Новый участник» остальным (§3.8).
+       *
+       * Автор действия (организатор или соорганизатор) и сам переведённый
+       * исключены: первый и так знает, второй — субъект карточки.
+       */
+      const recipientIds = await this.notifications.tripAudience(
+        manager,
+        String(trip.id),
+        { actorUserId: userId, exceptUserIds: [targetUserId] },
       );
+      const notificationRecipients =
+        await this.notifications.notifyParticipantJoined(manager, {
+          tripId: String(trip.id),
+          subjectUserId: targetUserId,
+          recipientIds,
+        });
+
+      return {
+        participant: TripParticipantDto.from(
+          participant,
+          await this.loadRoles(manager, trip.id, targetUserId),
+          trip.organizerUserId,
+        ),
+        notificationRecipients,
+      };
     });
 
     // Состав едоков и балансов меняется вместе с участием — обе вкладки
@@ -2534,7 +2780,11 @@ export class TripsService {
     this.events.emitMeals(String(id), userId);
     this.events.emitFinance(String(id), userId);
 
-    return result;
+    if (result.notificationRecipients.length > 0) {
+      this.notifications.emitChanged(result.notificationRecipients);
+    }
+
+    return result.participant;
   }
 
   /**
@@ -2826,7 +3076,7 @@ export class TripsService {
     id: number,
     dto: CreateVirtualUserDto,
   ): Promise<TripParticipantDto> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const trip = await this.findVisibleTrip(manager, userId, id);
       this.assertNotIdea(trip);
       await this.assertCanManageParticipants(manager, trip, userId);
@@ -2852,8 +3102,40 @@ export class TripsService {
         `${user.displayName} без аккаунта`,
       );
 
-      return TripParticipantDto.from(participant, [], trip.organizerUserId);
+      /**
+       * Человека без аккаунта добавили — «Новый участник» остальным (§3.8).
+       *
+       * Ведущий (автор действия) исключён; сам виртуальный в аудиторию
+       * не попадает, но его имя в тексте есть — по нему получатели и
+       * понимают, кого привели.
+       */
+      const recipientIds = await this.notifications.tripAudience(
+        manager,
+        String(trip.id),
+        { actorUserId: userId, exceptUserIds: [user.id] },
+      );
+      const notificationRecipients =
+        await this.notifications.notifyParticipantJoined(manager, {
+          tripId: String(trip.id),
+          subjectUserId: user.id,
+          recipientIds,
+        });
+
+      return {
+        participant: TripParticipantDto.from(
+          participant,
+          [],
+          trip.organizerUserId,
+        ),
+        notificationRecipients,
+      };
     });
+
+    if (result.notificationRecipients.length > 0) {
+      this.notifications.emitChanged(result.notificationRecipients);
+    }
+
+    return result.participant;
   }
 
   /**
@@ -2873,7 +3155,7 @@ export class TripsService {
     id: number,
     targetUserId: string,
   ): Promise<TripParticipantDto> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const trip = await this.findVisibleTrip(manager, userId, id);
       this.assertNotIdea(trip);
       await this.assertCanManageParticipants(manager, trip, userId);
@@ -2911,8 +3193,35 @@ export class TripsService {
         `${user.displayName} без аккаунта`,
       );
 
-      return TripParticipantDto.from(participant, [], trip.organizerUserId);
+      // Тот же «Новый участник», что и при заведении человека без
+      // аккаунта: для остальных состав пополнился одинаково.
+      const recipientIds = await this.notifications.tripAudience(
+        manager,
+        String(trip.id),
+        { actorUserId: userId, exceptUserIds: [user.id] },
+      );
+      const notificationRecipients =
+        await this.notifications.notifyParticipantJoined(manager, {
+          tripId: String(trip.id),
+          subjectUserId: user.id,
+          recipientIds,
+        });
+
+      return {
+        participant: TripParticipantDto.from(
+          participant,
+          [],
+          trip.organizerUserId,
+        ),
+        notificationRecipients,
+      };
     });
+
+    if (result.notificationRecipients.length > 0) {
+      this.notifications.emitChanged(result.notificationRecipients);
+    }
+
+    return result.participant;
   }
 
   /**
@@ -3322,7 +3631,7 @@ export class TripsService {
     targetUserId: string,
     status: ParticipantDecision,
   ): Promise<TripParticipantDto> {
-    return this.dataSource.transaction(async (manager) => {
+    const result = await this.dataSource.transaction(async (manager) => {
       const trip = await manager.findOne(Trip, { where: { id: String(id) } });
       if (!trip) {
         throw new NotFoundException('Поход не найден');
@@ -3371,6 +3680,7 @@ export class TripsService {
       const participant = await manager.findOne(TripParticipant, {
         where: { tripId: trip.id, userId: targetUserId },
       });
+      const previousStatus = participant?.status ?? null;
       if (participant) {
         participant.status = status;
         if (putOnRoute) markOnRoute(participant, presenceAuthor, now);
@@ -3402,12 +3712,43 @@ export class TripsService {
         relations: { user: true },
       });
 
-      return TripParticipantDto.from(
-        saved!,
-        await this.loadRoles(manager, trip.id, targetUserId),
-        trip.organizerUserId,
-      );
+      /**
+       * Одобрение заявки или принятое приглашение — «Новый участник»
+       * остальным (§3.8). Только переход в `going`: «пока не решил»
+       * новым участником не является. Автор действия и субъект исключены.
+       */
+      const notificationRecipients: string[] = [];
+      if (status === 'going' && previousStatus !== 'going') {
+        const recipientIds = await this.notifications.tripAudience(
+          manager,
+          String(trip.id),
+          { actorUserId: userId, exceptUserIds: [targetUserId] },
+        );
+
+        notificationRecipients.push(
+          ...(await this.notifications.notifyParticipantJoined(manager, {
+            tripId: String(trip.id),
+            subjectUserId: targetUserId,
+            recipientIds,
+          })),
+        );
+      }
+
+      return {
+        participant: TripParticipantDto.from(
+          saved!,
+          await this.loadRoles(manager, trip.id, targetUserId),
+          trip.organizerUserId,
+        ),
+        notificationRecipients,
+      };
     });
+
+    if (result.notificationRecipients.length > 0) {
+      this.notifications.emitChanged(result.notificationRecipients);
+    }
+
+    return result.participant;
   }
 
   /**

@@ -109,6 +109,15 @@ export class TripDiaryService {
      * дельнуть». Считаем по текущему состоянию строки и по присланному.
      */
     let almanacTouched = false;
+    /**
+     * В этой пачке кто-то **впервые** пометил запись «в альманах».
+     *
+     * `almanac_created` (§3.18) появляется только у первого содержимого
+     * организатора; отличать «пометку поставили» от «правку уже
+     * помеченной» нужно здесь, потому что `notifyAlmanacUpdated` видит
+     * только итоговое содержимое альманаха.
+     */
+    let almanacFirstShare = false;
 
     await this.dataSource.transaction(async (manager) => {
       const stored =
@@ -143,6 +152,9 @@ export class TripDiaryService {
           (flagChanged || bodyChanged || deletionChanged)
         ) {
           almanacTouched = true;
+          if (flagChanged && sharedAfter && !sharedBefore) {
+            almanacFirstShare = true;
+          }
         }
       }
     });
@@ -153,7 +165,13 @@ export class TripDiaryService {
     // `message` поэтому не нужен — сообщения нет; о карточке подписчиков
     // извещает сам `notifyAlmanacUpdated`.
     if (almanacTouched) {
-      await notifyAlmanacUpdated(this.dataSource, this.notifications, trip, userId);
+      await notifyAlmanacUpdated(
+        this.dataSource,
+        this.notifications,
+        trip,
+        userId,
+        { created: almanacFirstShare },
+      );
     }
 
     // Событие — после коммита: подписчик должен перечитать уже сохранённое.

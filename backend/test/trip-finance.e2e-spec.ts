@@ -2173,6 +2173,15 @@ describe('Бухгалтерия похода (e2e)', () => {
         [b.id, financeNotifyTrip],
       );
 
+      const [active] = (await dataSource.query(
+        `SELECT count(*)::int AS "n"
+           FROM "notifications"
+          WHERE "recipient_user_id" = $1 AND "trip_id" = $2
+            AND "archived_at" IS NULL
+            AND "kind" NOT IN ('money_transfer', 'payment_request')`,
+        [b.id, financeNotifyTrip],
+      )) as Array<{ n: number }>;
+
       const closed = await auth(
         request(app.getHttpServer()).post('/api/notifications/read-all'),
         b.token,
@@ -2180,13 +2189,26 @@ describe('Бухгалтерия похода (e2e)', () => {
         .send({ tripId: financeNotifyTrip })
         .expect(200);
 
-      // Альманах закрыт, запрос платежа остался: он — деньги к действию.
-      expect(closed.body).toEqual({ closed: 1, left: 1 });
+      // Закрыто всё, кроме запроса платежа: он — деньги к действию.
+      // С 26.11.2026 в секции есть и новые типы — «Новый участник»,
+      // «Общественный расход», — поэтому число не фиксируем, а сверяем
+      // с тем, что лежало до нажатия.
+      expect(closed.body).toEqual({ closed: active.n, left: 1 });
 
       const kinds = (await cardsOf('almanac_changed')).map(
         (card) => card.recipient_user_id,
       );
       expect(kinds).not.toContain(b.id);
+      expect(
+        (await cardsOf('trip_expense')).some(
+          (card) => card.recipient_user_id === b.id,
+        ),
+      ).toBe(false);
+      expect(
+        (await cardsOf('participant_joined')).some(
+          (card) => card.recipient_user_id === b.id,
+        ),
+      ).toBe(false);
       expect(
         (await cardsOf('payment_request')).some(
           (card) => card.recipient_user_id === b.id,
@@ -2917,6 +2939,415 @@ describe('Бухгалтерия похода (e2e)', () => {
           (expense: { id: string }) => expense.id === oldId,
         ),
       ).toBe(true);
+    });
+  });
+
+  /**
+   * Новые типы уведомлений (часть 3, 26.11.2026).
+   *
+   * Генераторы живут у владельцев событий (`TripsService`, `TripFinanceService`,
+   * `TripAlmanacService`), поэтому проверяются через настоящие ручки, а не
+   * вызовом сервиса: важно, что карточка появляется после COMMIT, получает
+   * правильный ключ дедупликации и не уходит автору действия.
+   */
+  describe('уведомления: новые типы походов', () => {
+    interface CardRow {
+      id: string;
+      recipient_user_id: string;
+      kind: string;
+      title: string;
+      announce: string;
+      body: string;
+      dedup_key: string;
+      trip_id: string;
+    }
+
+    let kindsTrip: string;
+    let almanacTrip: string;
+    let secondGoalId: string;
+    /** Виртуальный участник, заведённый в kindsTrip: убирается до владельца. */
+    let kindsVirtualId: string;
+    /** Имена из профиля: логин заводит их из адреса, а не «Анна». */
+    let aName: string;
+    let bName: string;
+
+    const DAY = 24 * 60 * 60 * 1000;
+
+    const cardsOf = async (
+      tripId: string,
+      kind: string,
+    ): Promise<CardRow[]> =>
+      (await dataSource.query(
+        `SELECT "id", "recipient_user_id", "kind", "title", "announce",
+                "body", "dedup_key", "trip_id"
+           FROM "notifications"
+          WHERE "trip_id" = $1 AND "kind" = $2
+          ORDER BY "recipient_user_id"`,
+        [tripId, kind],
+      )) as CardRow[];
+
+    const recipientsOf = (rows: CardRow[]): string[] =>
+      rows.map((row) => row.recipient_user_id).sort();
+
+    beforeAll(async () => {
+      // Имя «Анна» в тексте должно согласоваться с полом из профиля —
+      // иначе проверялся бы не §3.0, а значение по умолчанию `m`.
+      await auth(
+        request(app.getHttpServer()).patch('/api/users/me'),
+        a.token,
+      )
+        .send({ gender: 'f' })
+        .expect(200);
+
+      const [goal] = (await dataSource.query(
+        `INSERT INTO objects (name, type)
+         VALUES ('Вторая цель e2e', 'вершина') RETURNING id`,
+      )) as Array<{ id: string }>;
+      secondGoalId = goal.id;
+
+      const names = (await dataSource.query(
+        `SELECT "id", "display_name" AS "displayName"
+           FROM "users" WHERE "id" = ANY($1::uuid[])`,
+        [[a.id, b.id]],
+      )) as Array<{ id: string; displayName: string }>;
+      aName = names.find((row) => row.id === a.id)!.displayName;
+      bName = names.find((row) => row.id === b.id)!.displayName;
+
+      await dataSource.query(
+        `INSERT INTO roles (code, name)
+         VALUES ('doctor', 'Медик') ON CONFLICT (code) DO NOTHING`,
+      );
+      await dataSource.query(
+        `INSERT INTO roles (code, name)
+         VALUES ('coOrganizer', 'Соорганизатор') ON CONFLICT (code) DO NOTHING`,
+      );
+
+      kindsTrip = await createTrip('Уведомления: новые типы');
+      await addGoing(kindsTrip, b);
+      await addGoing(kindsTrip, c);
+    });
+
+    afterAll(async () => {
+      await dataSource.query(
+        'DELETE FROM trips WHERE id = ANY($1::bigint[])',
+        [[kindsTrip, almanacTrip].filter(Boolean)],
+      );
+      if (kindsVirtualId) {
+        await dataSource.query('DELETE FROM users WHERE id = $1', [
+          kindsVirtualId,
+        ]);
+      }
+      await dataSource.query('DELETE FROM objects WHERE id = $1', [
+        secondGoalId,
+      ]);
+    });
+
+    it('первая установка дат молчит, перенос — карточка составу', async () => {
+      const first = await auth(
+        request(app.getHttpServer()).patch(`/api/trips/${kindsTrip}`),
+        a.token,
+      )
+        .send({
+          startsAt: new Date(Date.now() + 10 * DAY).toISOString(),
+          endsAt: new Date(Date.now() + 15 * DAY).toISOString(),
+        })
+        .expect(200);
+
+      // Первая установка числа после «Планирую» — не перенос (§3.2).
+      expect(await cardsOf(kindsTrip, 'trip_dates')).toHaveLength(0);
+
+      await auth(
+        request(app.getHttpServer()).patch(`/api/trips/${kindsTrip}`),
+        a.token,
+      )
+        .send({
+          startsAt: new Date(Date.now() + 12 * DAY).toISOString(),
+          endsAt: new Date(Date.now() + 17 * DAY).toISOString(),
+        })
+        .expect(200);
+
+      const cards = await cardsOf(kindsTrip, 'trip_dates');
+
+      expect(recipientsOf(cards)).toEqual([b.id, c.id].sort());
+      expect(cards[0].dedup_key).toBe(`trip_dates:${kindsTrip}`);
+      expect(cards[0].announce).toContain('Новые даты:');
+      expect(cards[0].body).toContain(`${aName} изменила даты похода`);
+      expect(first.body.startsAt).toBeTruthy();
+
+      // Повторная отправка тех же дат — та же карточка, второй нет.
+      await auth(
+        request(app.getHttpServer()).patch(`/api/trips/${kindsTrip}`),
+        a.token,
+      )
+        .send({
+          startsAt: new Date(Date.now() + 12 * DAY).toISOString(),
+          endsAt: new Date(Date.now() + 17 * DAY).toISOString(),
+        })
+        .expect(200);
+
+      expect(await cardsOf(kindsTrip, 'trip_dates')).toHaveLength(2);
+    });
+
+    it('смена цели и маршрута: разные виды с серверным текстом', async () => {
+      await auth(
+        request(app.getHttpServer()).patch(`/api/trips/${kindsTrip}`),
+        a.token,
+      )
+        .send({
+          goalObjectId: Number(secondGoalId),
+          routeText: 'Тропа вдоль реки',
+        })
+        .expect(200);
+
+      const goals = await cardsOf(kindsTrip, 'trip_goal');
+      expect(recipientsOf(goals)).toEqual([b.id, c.id].sort());
+      expect(goals[0].title).toBe('Смена цели похода');
+      expect(goals[0].announce).toBe('Вторая цель e2e');
+      expect(goals[0].body).toContain('теперь это — Вторая цель e2e');
+
+      const routes = await cardsOf(kindsTrip, 'trip_route');
+      expect(recipientsOf(routes)).toEqual([b.id, c.id].sort());
+      expect(routes[0].announce).toBe('Тропа вдоль реки');
+      expect(routes[0].body).toBe('Тропа вдоль реки');
+    });
+
+    it('состав: отказ и возвращение — карточки остальным', async () => {
+      await auth(
+        request(app.getHttpServer()).patch(
+          `/api/trips/${kindsTrip}/participants/me`,
+        ),
+        b.token,
+      )
+        .send({ status: 'maybe' })
+        .expect(200);
+
+      const left = await cardsOf(kindsTrip, 'participant_left');
+      // Автор-субъект (Б) карточку о себе не получает; остаются А и В.
+      expect(recipientsOf(left)).toEqual([a.id, c.id].sort());
+      expect(left[0].body).toContain('не может принять участие в походе');
+
+      await auth(
+        request(app.getHttpServer()).patch(
+          `/api/trips/${kindsTrip}/participants/${b.id}/status`,
+        ),
+        a.token,
+      )
+        .send({ status: 'going' })
+        .expect(200);
+
+      const joined = (await cardsOf(kindsTrip, 'participant_joined')).filter(
+        (card) =>
+          card.dedup_key === `participant_joined:${kindsTrip}:${b.id}`,
+      );
+      // А — автор действия, Б — субъект: новую карточку получает только В.
+      // У А могла остаться карточка о первом вступлении Б (ключ тот же),
+      // поэтому проверяем адресата В и отсутствие карточки у самого Б.
+      expect(recipientsOf(joined)).toContain(c.id);
+      expect(recipientsOf(joined)).not.toContain(b.id);
+      expect(joined[0].body).toContain('готов участвовать');
+    });
+
+    it('роли: назначение и снятие видит состав, кроме человека и автора', async () => {
+      await auth(
+        request(app.getHttpServer()).put(
+          `/api/trips/${kindsTrip}/participants/${b.id}/roles`,
+        ),
+        a.token,
+      )
+        .send({ roleCodes: ['doctor'] })
+        .expect(200);
+
+      const assigned = await cardsOf(kindsTrip, 'role_assigned');
+      expect(recipientsOf(assigned)).toEqual([c.id]);
+      expect(assigned[0].title).toBe('Медик похода');
+      expect(assigned[0].body).toContain(
+        `${bName} назначен медиком похода`,
+      );
+      expect(assigned[0].dedup_key).toBe(
+        `role_assigned:${kindsTrip}:${b.id}:doctor`,
+      );
+
+      await auth(
+        request(app.getHttpServer()).put(
+          `/api/trips/${kindsTrip}/participants/${b.id}/roles`,
+        ),
+        a.token,
+      )
+        .send({ roleCodes: [] })
+        .expect(200);
+
+      const removed = await cardsOf(kindsTrip, 'role_removed');
+      expect(recipientsOf(removed)).toEqual([c.id]);
+      expect(removed[0].dedup_key).toBe(
+        `role_removed:${kindsTrip}:${b.id}:doctor`,
+      );
+    });
+
+    it('общественный расход: карточка всем, кроме плательщика', async () => {
+      const created = await addExpense(kindsTrip, a, {
+        amountRub: 300,
+        split: 'all',
+        description: 'Продукты',
+      });
+
+      const expenseId = created.body.expenses[0].id as string;
+      const cards = await cardsOf(kindsTrip, 'trip_expense');
+
+      expect(recipientsOf(cards)).toEqual([b.id, c.id].sort());
+      expect(cards[0].dedup_key).toBe(`trip_expense:${expenseId}`);
+      expect(cards[0].announce).toBe(`${aName} Продукты 300 руб.`);
+      expect(cards[0].body).toBe(`${aName} оплатила Продукты 300 руб.`);
+    });
+
+    it('GET /notifications отдаёт секцию похода с новыми видами', async () => {
+      const response = await auth(
+        request(app.getHttpServer()).get('/api/notifications'),
+        c.token,
+      ).expect(200);
+
+      const section = (
+        response.body.sections as Array<{
+          tripId: string;
+          tripName: string;
+          items: Array<{ kind: string; announce: string }>;
+        }>
+      ).find((item) => item.tripId === kindsTrip);
+
+      expect(section).toBeDefined();
+      const kinds = section!.items.map((item) => item.kind);
+      for (const kind of [
+        'trip_dates',
+        'trip_goal',
+        'trip_route',
+        'participant_joined',
+        'role_assigned',
+        'role_removed',
+        'trip_expense',
+      ]) {
+        expect(kinds).toContain(kind);
+      }
+      // У каждого нового вида анонс заполнен — свёрнутая карточка не пустая.
+      expect(section!.items.every((item) => item.announce.length > 0)).toBe(
+        true,
+      );
+    });
+
+    it('виртуального добавили — «Новый участник» остальным, ведущему-автору нет', async () => {
+      const created = await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${kindsTrip}/participants/virtual`,
+        ),
+        b.token,
+      )
+        .send({ displayName: 'Витя', gender: 'm' })
+        .expect(201);
+
+      kindsVirtualId = created.body.userId as string;
+
+      const joined = (await cardsOf(kindsTrip, 'participant_joined')).filter(
+        (card) =>
+          card.dedup_key ===
+          `participant_joined:${kindsTrip}:${kindsVirtualId}`,
+      );
+
+      // Ведущий Б — автор действия, сам виртуальный входа не имеет:
+      // карточку получают А и В.
+      expect(recipientsOf(joined)).toEqual([a.id, c.id].sort());
+      expect(joined[0].body).toContain('готов участвовать');
+    });
+
+    it('даты и их варианты меняет только организатор', async () => {
+      await auth(
+        request(app.getHttpServer()).put(
+          `/api/trips/${kindsTrip}/participants/${c.id}/roles`,
+        ),
+        a.token,
+      )
+        .send({ roleCodes: ['coOrganizer'] })
+        .expect(200);
+
+      // Соорганизатор равен организатору во всём, кроме семи отличий:
+      // даты и прогноз — седьмое (26.11.2026).
+      await auth(
+        request(app.getHttpServer()).patch(`/api/trips/${kindsTrip}`),
+        c.token,
+      )
+        .send({
+          startsAt: new Date(Date.now() + 20 * DAY).toISOString(),
+          endsAt: new Date(Date.now() + 25 * DAY).toISOString(),
+        })
+        .expect(403);
+
+      // Правка без дат по-прежнему доступна: ограничение только на даты.
+      await auth(
+        request(app.getHttpServer()).patch(`/api/trips/${kindsTrip}`),
+        c.token,
+      )
+        .send({ announcement: 'Соорганизатор правит шапку' })
+        .expect(200);
+    });
+
+    it('альманах: организатор первым — «создан», участник — «изменён»', async () => {
+      almanacTrip = await createTrip('Уведомления: альманах');
+      await addGoing(almanacTrip, b);
+
+      await auth(
+        request(app.getHttpServer()).patch(`/api/trips/${almanacTrip}`),
+        a.token,
+      )
+        .send({
+          startsAt: new Date(Date.now() - 5 * DAY).toISOString(),
+          endsAt: new Date(Date.now() - DAY).toISOString(),
+        })
+        .expect(200);
+
+      for (const person of [a, b]) {
+        await auth(
+          request(app.getHttpServer()).put(
+            `/api/trips/${almanacTrip}/presence/${person.id}`,
+          ),
+          person.token,
+        )
+          .send({ status: 'returned' })
+          .expect(200);
+      }
+
+      await auth(
+        request(app.getHttpServer()).post(`/api/trips/${almanacTrip}/complete`),
+        a.token,
+      ).expect(200);
+
+      await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${almanacTrip}/almanac/entries`,
+        ),
+        a.token,
+      )
+        .send({ placement: 'after', body: 'Спасибо всем — было здорово.' })
+        .expect(200);
+
+      const created = await cardsOf(almanacTrip, 'almanac_created');
+      expect(recipientsOf(created)).toEqual([b.id]);
+      expect(created[0].dedup_key).toBe(`almanac_created:${almanacTrip}`);
+      expect(created[0].title).toBe('Альманах');
+      expect(created[0].announce).toBe('создан альманах похода');
+
+      // Второе воспоминание — уже «изменён». У Б висит активное «создан»,
+      // поэтому карточку получает только А; вторая редакция не плодит
+      // «создан» заново.
+      await auth(
+        request(app.getHttpServer()).post(
+          `/api/trips/${almanacTrip}/almanac/entries`,
+        ),
+        b.token,
+      )
+        .send({ placement: 'before', body: 'Собирались у Анны.' })
+        .expect(200);
+
+      const changed = await cardsOf(almanacTrip, 'almanac_changed');
+      expect(recipientsOf(changed)).toEqual([a.id]);
+      expect(changed[0].body).toBe(`${bName} дополнил альманах похода`);
+      expect(await cardsOf(almanacTrip, 'almanac_created')).toHaveLength(1);
     });
   });
 });

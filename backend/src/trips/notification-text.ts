@@ -1,4 +1,6 @@
+import type { UserGender } from '../users/gender.types';
 import type { NotificationKind } from './entities/notification.entity';
+import { TRIP_TIME_ZONE } from './weekend';
 
 /**
  * Приоритеты и тексты уведомлений — одно место (26.11.2026).
@@ -55,8 +57,76 @@ export interface NotificationText {
 }
 
 /**
- * «Запрос платежа» — единственный существующий вид, чей текст меняется
- * в этой сессии (решение заказчика 26.11.2026, §3.6).
+ * Род человека для согласования глагола (§3.0).
+ *
+ * `null` возможен только у строки, вставленной в обход профиля: колонка
+ * `users.gender` объявлена `NOT NULL DEFAULT 'm'`. Но текст не должен
+ * падать из-за данных, поэтому неизвестный род даёт форму «сделал(а)».
+ */
+export type TextGender = UserGender | null | undefined;
+
+/** Согласовать глагол с полом: `agree(gender, 'назначен', 'назначена')`. */
+export function agree(gender: TextGender, male: string, female: string): string {
+  if (gender === 'f') return female;
+  if (gender === 'm') return male;
+
+  return `${male}(а)`;
+}
+
+/**
+ * Сумма в тексте — «руб.», как решил заказчик (§3.0).
+ *
+ * Старые денежные тексты (`₽`) не трогаем: они уже согласованы и живут
+ * своей жизнью. Здесь только новые виды, у которых «руб.» — часть решения.
+ */
+export function formatRub(amountRub: number): string {
+  return `${amountRub} руб.`;
+}
+
+/**
+ * Дата в тексте — `ДД.ММ.ГГГГ` в поясе проекта (§3.0).
+ *
+ * Это **снимок события**, а не пересчёт под смотрящего: человек в другом
+ * поясе увидит дату, которая была в Иркутске в момент переноса. Так решил
+ * заказчик, и это осознанное ограничение.
+ */
+export function formatTripDate(at: Date | null): string {
+  if (at === null) return '—';
+
+  const parts = new Intl.DateTimeFormat('ru-RU', {
+    timeZone: TRIP_TIME_ZONE,
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+  }).formatToParts(at);
+
+  const value = (type: string) =>
+    parts.find((part) => part.type === type)?.value ?? '';
+
+  return `${value('day')}.${value('month')}.${value('year')}`;
+}
+
+/**
+ * Диапазон дат для анонса: обычно «начало - конец».
+ *
+ * У «Планирую» бывает только начало или только конец, поэтому одна
+ * недостающая дата не превращает текст в «— - —»: пишем «с …» или «до …».
+ */
+export function formatTripDateRange(
+  startsAt: Date | null,
+  endsAt: Date | null,
+): string {
+  if (startsAt !== null && endsAt !== null) {
+    return `${formatTripDate(startsAt)} - ${formatTripDate(endsAt)}`;
+  }
+  if (startsAt !== null) return `с ${formatTripDate(startsAt)}`;
+  if (endsAt !== null) return `до ${formatTripDate(endsAt)}`;
+
+  return 'даты уточняются';
+}
+
+/**
+ * «Запрос платежа» — адресный текст по §3.6.
  *
  * Старое «Организатор запросил платёж по походу «…»» больше не подходит:
  * карточка снова адресная, а имя похода называет заголовок секции.
@@ -89,16 +159,176 @@ export function depositText(
   return { title: 'Установлен залог', announce: body, body };
 }
 
-/**
- * «Альманах изменён» — прежний `almanac`, вид `almanac_changed`.
- *
- * Текст прежний (п.8): меняется только код вида и ключ дедупликации.
- */
-export function almanacChangedText(tripName: string): NotificationText {
+/** Перенос дат — `trip_dates`, приоритет 9 (§3.2). */
+export function tripDatesText(
+  authorName: string,
+  authorGender: TextGender,
+  startsAt: Date | null,
+  endsAt: Date | null,
+): NotificationText {
   return {
-    title: `Альманах «${tripName}»`,
-    announce: `В походе «${tripName}» новая редакция альманаха`,
-    body: `В походе «${tripName}» новая редакция альманаха`,
+    title: 'Перенос похода',
+    announce: `Новые даты: ${formatTripDateRange(startsAt, endsAt)}`,
+    body:
+      `${authorName} ${agree(authorGender, 'изменил', 'изменила')} даты ` +
+      'похода. Нужно пересмотреть разделы Трансфер, Ночёвки, Питание.',
+  };
+}
+
+/** Смена цели — `trip_goal`, приоритет 9 (§3.4). */
+export function tripGoalText(goalName: string): NotificationText {
+  return {
+    title: 'Смена цели похода',
+    announce: goalName,
+    body:
+      'Нас невозможно сбить с пути, нам пофигу куда идти. Что-то ' +
+      `не сложилось, но мы не унываем и теперь это — ${goalName}`,
+  };
+}
+
+/** Изменение маршрута — `trip_route`, приоритет 8 (§3.5). */
+export function tripRouteText(routeText: string): NotificationText {
+  return {
+    title: 'Изменение маршрута похода',
+    // Анонс — тот же маршрут: до 75 символов его обрезает клиент.
+    announce: routeText,
+    body: routeText,
+  };
+}
+
+/** Новый участник — `participant_joined`, приоритет 6 (§3.8). */
+export function participantJoinedText(
+  name: string,
+  gender: TextGender,
+): NotificationText {
+  return {
+    title: 'Новый участник',
+    announce: name,
+    body: `${name} ${agree(gender, 'готов', 'готова')} участвовать`,
+  };
+}
+
+/**
+ * Отказ от участия — `participant_left`, приоритет 6 (§3.9).
+ *
+ * Про `declined` добавляется «и покинул(а) группу»: переход в `maybe` или
+ * `helping` — это не выход, а смена планов.
+ */
+export function participantLeftText(
+  name: string,
+  gender: TextGender,
+  status: string,
+): NotificationText {
+  const prefix = `${name} не может принять участие в походе`;
+  const body =
+    status === 'declined'
+      ? `${prefix} и ${agree(gender, 'покинул', 'покинула')} группу.`
+      : prefix;
+
+  return { title: 'Отказ от участия', announce: name, body };
+}
+
+/**
+ * Формы названий ролей для текстов (§3.15–§3.16).
+ *
+ * Справочник ролей — данные, а не код, поэтому падежи нельзя вывести
+ * алгоритмом. Заказчик зафиксировал шесть ролей 17.11.2026; для незнакомой
+ * роли остаётся название в нижнем регистре — лучше, чем «назначен (null)»,
+ * и повод дописать форму, когда роль появится.
+ */
+interface RoleForms {
+  instrumental: string;
+  genitive: string;
+}
+
+const ROLE_FORMS: Record<string, RoleForms> = {
+  organizer: { instrumental: 'организатором', genitive: 'организатора' },
+  coOrganizer: { instrumental: 'соорганизатором', genitive: 'соорганизатора' },
+  doctor: { instrumental: 'медиком', genitive: 'медика' },
+  photographer: { instrumental: 'фотографом', genitive: 'фотографа' },
+  quartermaster: { instrumental: 'завхозом', genitive: 'завхоза' },
+  repairman: { instrumental: 'реммастером', genitive: 'реммастера' },
+  technicalLeader: {
+    instrumental: 'техническим лидером',
+    genitive: 'технического лидера',
+  },
+};
+
+/** Падежи роли; незнакомая роль — её название в нижнем регистре. */
+export function roleForms(role: { code: string; name: string }): RoleForms {
+  return (
+    ROLE_FORMS[role.code] ?? {
+      instrumental: role.name.toLowerCase(),
+      genitive: role.name.toLowerCase(),
+    }
+  );
+}
+
+/** Роль назначена — `role_assigned`, приоритет 4 (§3.15). */
+export function roleAssignedText(
+  name: string,
+  gender: TextGender,
+  role: { code: string; name: string },
+): NotificationText {
+  const body =
+    `${name} ${agree(gender, 'назначен', 'назначена')} ` +
+    `${roleForms(role).instrumental} похода`;
+
+  return { title: `${role.name} похода`, announce: body, body };
+}
+
+/** Роль снята — `role_removed`, приоритет 4 (§3.16). */
+export function roleRemovedText(
+  name: string,
+  gender: TextGender,
+  role: { code: string; name: string },
+): NotificationText {
+  const body =
+    `${name} ${agree(gender, 'освобождён', 'освобождена')} от роли ` +
+    roleForms(role).genitive;
+
+  return { title: 'Снятие роли', announce: body, body };
+}
+
+/**
+ * Общественный расход — `trip_expense`, приоритет 5 (§3.17).
+ *
+ * Анонс без глагола («Анна Продукты 300 руб.»), содержимое с глаголом:
+ * в свёрнутой карточке важнее «кто и сколько», в раскрытой — что сделано.
+ */
+export function tripExpenseText(
+  payerName: string,
+  payerGender: TextGender,
+  description: string,
+  amountRub: number,
+): NotificationText {
+  const amount = formatRub(amountRub);
+
+  return {
+    title: 'Общественный расход',
+    announce: `${payerName} ${description} ${amount}`,
+    body: `${payerName} ${agree(payerGender, 'оплатил', 'оплатила')} ${description} ${amount}`,
+  };
+}
+
+/** Альманах создан — `almanac_created`, приоритет 3 (§3.18). */
+export function almanacCreatedText(): NotificationText {
+  return {
+    title: 'Альманах',
+    announce: 'создан альманах похода',
+    body: 'Организатор создал альманах похода из записей участников',
+  };
+}
+
+/** Альманах изменён — `almanac_changed`, приоритет 3 (§3.19). */
+export function almanacChangedText(
+  authorName: string,
+  authorGender: TextGender,
+): NotificationText {
+  return {
+    title: 'Альманах',
+    announce: 'Альманах похода изменён',
+    body: `${authorName} ${agree(authorGender, 'дополнил', 'дополнила')} альманах похода`,
   };
 }
 
