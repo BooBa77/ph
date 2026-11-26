@@ -115,6 +115,13 @@ describe('NotificationSection', () => {
     const button = closable.get('[data-test="rail-read-all-trip-810"]')
     expect(button.attributes('aria-label')).toContain('Прочитать все')
 
+    // Две галочки наложены друг на друга: обе абсолютные, вторая сдвинута.
+    const strokes = button.findAll('svg')
+    expect(strokes).toHaveLength(2)
+    expect(strokes[0]?.classes()).toContain('absolute')
+    expect(strokes[1]?.classes()).toContain('left-1.5')
+    expect(button.find('span.relative').exists()).toBe(true)
+
     await button.trigger('click')
     expect(closable.emitted('readAll')).toHaveLength(1)
   })

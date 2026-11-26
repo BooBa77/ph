@@ -83,17 +83,44 @@ const emit = defineEmits<{ toggle: []; expand: [id: string]; readAll: [] }>()
         Двойная зелёная галочка — «отметить все прочитанными» (§1.3).
         Не рисуется, если закрывать нечего: в секции только перевод или
         запрос платежа сервер их не тронет.
+
+        Две галочки наложены друг на друга, а не стоят рядом (замечание
+        заказчика 26.11.2026): вторая сдвинута вправо на четверть ширины,
+        поэтому знак читается как один двойной, а не как «✓✓».
       -->
       <button
         v-if="canReadAll"
         type="button"
-        class="shrink-0 cursor-pointer rounded-lg px-1.5 py-1 text-sm font-semibold text-green-600 hover:bg-bg"
+        class="flex shrink-0 cursor-pointer items-center justify-center rounded-lg px-1.5 py-1 text-green-600 hover:bg-bg"
         :aria-label="`Прочитать все: ${title}`"
         :title="`Прочитать все: ${title}`"
         :data-test="`${testPrefix}-read-all-${sectionKey}`"
         @click="emit('readAll')"
       >
-        ✓✓
+        <span class="relative block h-4 w-5" aria-hidden="true">
+          <svg
+            class="absolute top-0 left-0 h-4 w-4"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M2.5 8.5 6 12 13.5 3.5" />
+          </svg>
+          <svg
+            class="absolute top-0 left-1.5 h-4 w-4"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M2.5 8.5 6 12 13.5 3.5" />
+          </svg>
+        </span>
       </button>
     </div>
 
