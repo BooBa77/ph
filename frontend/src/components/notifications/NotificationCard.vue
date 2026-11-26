@@ -16,6 +16,9 @@ import {
   openAlmanacSection,
   plainText,
   previewLine,
+  shoppingRoute,
+  tripTabLabel,
+  tripTabOf,
 } from '@/utils/notifications'
 
 /**
@@ -59,15 +62,74 @@ const isChat = computed(() => isChatNotification(item.value))
 const isTransfer = computed(() => item.value.kind === 'money_transfer')
 const isPaymentRequest = computed(() => item.value.kind === 'payment_request')
 /**
- * 26.11.2026 сервер перешёл на новые коды: залог — `trip_deposit`,
- * альманах — `almanac_changed`. Панель переедет на новые виды в части 2;
- * до этого карточка рисует их как прежние `trip_finance` и `almanac` —
- * это единственная совместимость фронта в этой сессии.
+ * Залог — `trip_deposit` (миграция 103 перевела прежний `trip_finance`).
+ * Карточка ведёт в «Бухгалтерию» и закрывается «ОК» без архива.
  */
 const isTripFinance = computed(() => item.value.kind === 'trip_deposit')
-const isAlmanac = computed(() => item.value.kind === 'almanac_changed')
+/**
+ * Альманах — оба вида (26.11.2026): `almanac_created` появился в части 3,
+ * но ведёт себя так же, как `almanac_changed` — «Перейти» в гостевую
+ * с раскрытой секцией. Иначе первая же запись альманаха приходила бы
+ * карточкой без действий.
+ */
+const isAlmanac = computed(
+  () =>
+    item.value.kind === 'almanac_changed' ||
+    item.value.kind === 'almanac_created',
+)
 const isDirectChat = computed(() => item.value.kind === 'direct_chat')
 const unread = computed(() => chatUnreadOf(item.value))
+
+/**
+ * «Текущий список общих продуктов» — только у закупки (§3.14).
+ *
+ * Карточка закупки ведёт двумя путями: сразу в модалку закупки и просто
+ * в «Питание». Первый — основное действие, поэтому стоит первым.
+ */
+const isMealsPurchase = computed(() => item.value.kind === 'meals_purchase')
+
+/**
+ * Вкладка для остальных видов похода — одна таблица `tripTabOf` (§8).
+ *
+ * Деньги к действию (`money_transfer`), просьба о платеже, залог, альманах
+ * и чаты рисуют свои кнопки выше: у них не просто «перейти на вкладку».
+ * Остальные виды (трансфер, палатка, раскладка, участники, роли, расход)
+ * получают кнопку с названием вкладки — «Трансфер», «Ночёвки», «Питание»,
+ * «Участники», «Бухгалтерия».
+ */
+const genericTab = computed(() => {
+  const kind = item.value.kind
+
+  if (
+    kind === 'money_transfer' ||
+    kind === 'payment_request' ||
+    kind === 'trip_deposit' ||
+    kind === 'almanac_created' ||
+    kind === 'almanac_changed' ||
+    kind === 'direct_chat' ||
+    kind === 'trip_chat'
+  ) {
+    return null
+  }
+
+  return tripTabOf(kind)
+})
+
+/** Подпись кнопки перехода: «Трансфер», «Ночёвки», «Питание»… */
+const genericTabLabel = computed(() =>
+  genericTab.value === null ? '' : tripTabLabel(genericTab.value),
+)
+
+/**
+ * «ОК» есть у всего, что сервер закрывает.
+ *
+ * Исключения прежние: перевод закрывается только подтверждением (`400`),
+ * а у просьбы о платеже действие — «Перейти», кнопка «ОК» там не нужна.
+ * Остальные виды, включая все новые, закрываются удалением карточки.
+ */
+const canMarkOk = computed(
+  () => !isTransfer.value && !isPaymentRequest.value,
+)
 
 /**
  * Перевод человеку, который уже вышел из похода (25.11.2026).
@@ -218,6 +280,26 @@ function goFinance(): void {
   if (item.value.tripId === null) return
 
   void router.push({ path: `/trips/${item.value.tripId}`, query: { tab: 'finance' } })
+}
+
+/**
+ * Переход на вкладку похода для нового вида (§8).
+ *
+ * Вкладку выбирает `tripTabOf`, подпись — `tripTabLabel`. Так «Трансфер»,
+ * «Ночёвки» и «Питание» не требуют по ветке условий на вид в карточке.
+ */
+function goTab(): void {
+  const tab = genericTab.value
+  if (item.value.tripId === null || tab === null) return
+
+  void router.push({ path: `/trips/${item.value.tripId}`, query: { tab } })
+}
+
+/** «Текущий список общих продуктов» — «Питание» с открытой модалкой закупки. */
+function goShopping(): void {
+  if (item.value.tripId === null) return
+
+  void router.push(shoppingRoute(item.value.tripId))
 }
 
 /**
@@ -419,8 +501,38 @@ function openDirectChat(): void {
           Перейти
         </button>
 
+        <!--
+          «Текущий список общих продуктов» — основное действие закупки
+          (§3.14): сразу в модалку закупки, а не в общий экран «Питания».
+        -->
         <button
-          v-if="isChat || isAlmanac || isTripFinance"
+          v-if="isMealsPurchase"
+          type="button"
+          class="cursor-pointer rounded-lg bg-primary px-2 py-1 text-xs font-medium text-white"
+          :data-test="`${testPrefix}-go-shopping`"
+          @click="goShopping()"
+        >
+          Текущий список общих продуктов
+        </button>
+
+        <!--
+          Вкладка нового вида: «Трансфер», «Ночёвки», «Питание», «Участники»,
+          «Бухгалтерия». Таблица переходов — `tripTabOf` в
+          `utils/notifications.ts`, чтобы карточка и тесты не держали свои
+          копии названий.
+        -->
+        <button
+          v-if="genericTab !== null"
+          type="button"
+          class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text"
+          :data-test="`${testPrefix}-go-tab`"
+          @click="goTab()"
+        >
+          {{ genericTabLabel }}
+        </button>
+
+        <button
+          v-if="canMarkOk"
           type="button"
           class="cursor-pointer rounded-lg border border-border px-2 py-1 text-xs text-text disabled:cursor-not-allowed disabled:opacity-50"
           :disabled="isBusy"

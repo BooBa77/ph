@@ -14,6 +14,7 @@ import {
   shoppingRoute,
   tripSectionKey,
   tripSectionTitle,
+  tripTabLabel,
   tripTabOf,
   writeSectionOpen,
 } from '@/utils/notifications'
@@ -151,6 +152,20 @@ describe('переходы по вкладкам', () => {
       path: '/trips/810',
       query: { tab: 'meals', modal: 'shopping' },
     })
+  })
+
+  /**
+   * 26.11.2026: заказчик называет кнопку вкладкой, а не «Перейти» (§8).
+   * Подпись — одна таблица на карточку и тесты.
+   */
+  it('подпись кнопки — название вкладки, а не «Перейти»', () => {
+    expect(tripTabLabel('transfer')).toBe('Трансфер')
+    expect(tripTabLabel('route')).toBe('Ночёвки')
+    expect(tripTabLabel('meals')).toBe('Питание')
+    expect(tripTabLabel('members')).toBe('Участники')
+    expect(tripTabLabel('finance')).toBe('Бухгалтерия')
+    expect(tripTabLabel('guest')).toBe('Перейти')
+    expect(tripTabLabel('unknown')).toBe('Перейти')
   })
 
   it('чат похода ведёт на вкладку по виду диалога', () => {

@@ -8,11 +8,12 @@ import { createTripExpense } from '@/api/finance'
 import {
   fetchMealChecks,
   fetchMyMealChecks,
+  listParticipants,
   updateMealCheck,
   updateMyMealCheck,
 } from '@/api/trips'
 import { useAuthStore } from '@/stores/auth'
-import type { TripMealCheck } from '@/types/trips'
+import type { TripMealCheck, TripParticipant } from '@/types/trips'
 import { formatProductAmount } from '@/types/meals'
 import { parseRub } from '@/utils/money'
 
@@ -74,6 +75,46 @@ const title = props.personal ? 'Мой список покупок' : 'Спис�
 
 const checks = ref<TripMealCheck[] | null>(null)
 const error = ref<string | null>(null)
+
+const auth = useAuthStore()
+const meId = computed(() => auth.user?.id ?? '')
+
+// ───────────────────────────── покупатель ─────────────────────────────
+
+/**
+ * Кого записать покупателем (26.11.2026, §3.14 и §5.9 `meals.md`).
+ *
+ * Закупают всей группой, а отмечает один: «продукты купил Пётр, отметку
+ * поставила Анна» — обычное дело. По умолчанию выбран текущий аккаунт,
+ * список — весь состав похода, включая людей без аккаунта (их ведёт
+ * владелец). Права и проверку «это участник похода» держит сервер:
+ * экран только отправляет `boughtByUserId`.
+ *
+ * В личном списке выбора нет: там едок один, и покупатель — он сам.
+ */
+const participants = ref<TripParticipant[]>([])
+const buyerId = ref('')
+const buyerError = ref<string | null>(null)
+
+const buyerOptions = computed(() => participants.value)
+
+async function loadParticipants(): Promise<void> {
+  if (props.personal) return
+
+  try {
+    participants.value = await listParticipants(props.tripId)
+    buyerError.value = null
+
+    // По умолчанию — текущий аккаунт, если он в составе. Выбор не сбрасываем:
+    // человек мог уже выбрать другого покупателя до прихода списка.
+    if (buyerId.value === '') buyerId.value = meId.value
+  } catch (problem) {
+    buyerError.value =
+      problem instanceof ApiError
+        ? problem.message
+        : 'Не удалось загрузить состав похода'
+  }
+}
 
 // ───────────────────────────── чек ─────────────────────────────
 
@@ -168,8 +209,6 @@ async function load(): Promise<void> {
  */
 const LIVE_REFRESH_DELAY = 300
 
-const auth = useAuthStore()
-const meId = computed(() => auth.user?.id ?? '')
 let stopLiveEvents: (() => void) | null = null
 let refreshTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -186,7 +225,12 @@ function onLiveEvent(event: TripEvent): void {
 
 async function patchCheck(
   check: TripMealCheck,
-  patch: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
+  patch: {
+    isBought?: boolean
+    isHome?: boolean
+    boughtAmount?: number | null
+    boughtByUserId?: string
+  },
 ): Promise<void> {
   error.value = null
 
@@ -201,6 +245,20 @@ async function patchCheck(
 
 /** Отметки — любому участнику, права правки раскладки тут не нужны. */
 function toggleCheck(check: TripMealCheck, field: 'isBought' | 'isHome'): void {
+  /**
+   * Ставим «куплено» — сразу говорим, кого записать покупателем (§3.14).
+   * Выбор — один на модалку: в магазине отмечают серию строк подряд, и
+   * спрашивать покупателя на каждой было бы издевательством. Снятие
+   * отметки поле не шлёт: сервер и так знает, кто отметил.
+   */
+  if (field === 'isBought' && !check.isBought && !props.personal) {
+    void patchCheck(check, {
+      isBought: true,
+      ...(buyerId.value === '' ? {} : { boughtByUserId: buyerId.value }),
+    })
+    return
+  }
+
   void patchCheck(check, { [field]: !check[field] })
 }
 
@@ -239,6 +297,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKeydown)
   stopLiveEvents = subscribeTripEvents(props.tripId, onLiveEvent, 'meals')
   void load()
+  void loadParticipants()
 })
 
 onBeforeUnmount(() => {
@@ -278,6 +337,47 @@ onBeforeUnmount(() => {
       </div>
 
       <p v-if="error" class="text-sm text-red-600" data-test="checklist-error">{{ error }}</p>
+
+      <!--
+        Покупатель — общий на модалку (§3.14, 26.11.2026). Закупают группой,
+        а отмечает один: по умолчанию текущий аккаунт, можно любого участника,
+        включая человека без аккаунта. Сервер проверит, что он в составе.
+      -->
+      <div
+        v-if="!personal"
+        class="flex flex-col gap-1 rounded-xl border border-border bg-field px-2 py-1.5"
+        data-test="buyer-block"
+      >
+        <label class="flex flex-wrap items-center gap-2 text-xs text-muted">
+          Покупатель
+          <select
+            v-model="buyerId"
+            class="min-w-0 flex-1 rounded-lg border border-border bg-surface px-2 py-1 text-sm text-text focus:border-primary focus:outline-none"
+            data-test="buyer-select"
+          >
+            <option
+              v-if="buyerId !== '' && !buyerOptions.some((person) => person.userId === buyerId)"
+              :value="buyerId"
+            >
+              {{ auth.user?.displayName ?? 'Я' }}
+            </option>
+            <option
+              v-for="person in buyerOptions"
+              :key="person.userId"
+              :value="person.userId"
+            >
+              {{ person.displayName }}{{ person.isVirtual ? ' (без аккаунта)' : '' }}
+            </option>
+          </select>
+        </label>
+
+        <p v-if="buyerError" class="text-xs text-red-600" data-test="buyer-error">
+          {{ buyerError }}
+        </p>
+        <p v-else class="text-xs text-muted" data-test="buyer-hint">
+          Кого выбрал — тот и записан покупателем; снять «куплено» сможет он.
+        </p>
+      </div>
 
       <!--
         «Чек за продукты» — одна кнопка вместо блока с объяснением

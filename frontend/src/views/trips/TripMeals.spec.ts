@@ -42,6 +42,9 @@ const mocks = vi.hoisted(() => ({
   removeMyMealLine: vi.fn(),
   fetchMyMealChecks: vi.fn(),
   updateMyMealCheck: vi.fn(),
+  listParticipants: vi.fn(),
+  route: { query: {} as Record<string, string>, path: '/trips/7' },
+  replace: vi.fn(),
 }))
 
 vi.mock('@/api/trips', () => ({
@@ -71,11 +74,17 @@ vi.mock('@/api/trips', () => ({
   removeMyMealLine: mocks.removeMyMealLine,
   fetchMyMealChecks: mocks.fetchMyMealChecks,
   updateMyMealCheck: mocks.updateMyMealCheck,
+  listParticipants: mocks.listParticipants,
 }))
 
 vi.mock('@/api/meals', () => ({
   listDishes: mocks.listDishes,
   searchProducts: mocks.searchProducts,
+}))
+
+vi.mock('vue-router', () => ({
+  useRoute: () => mocks.route,
+  useRouter: () => ({ replace: mocks.replace }),
 }))
 
 const ORGANIZER = 'u-org'
@@ -385,6 +394,9 @@ describe('TripMeals', () => {
   beforeEach(() => {
     setActivePinia(createPinia())
     vi.clearAllMocks()
+    // Адрес вкладки: по умолчанию без модалки.
+    mocks.route.query = {}
+    mocks.route.path = '/trips/7'
     // Свёрнутость вкладки живёт в localStorage на поход: между тестами её
     // надо снимать, иначе один тест начнёт за другого.
     window.localStorage.clear()
@@ -393,6 +405,7 @@ describe('TripMeals', () => {
     const current = plan()
     currentPlan = current
     mocks.fetchMealPlan.mockResolvedValue(current)
+    mocks.listParticipants.mockResolvedValue([])
     mocks.addMealDish.mockResolvedValue(current)
     mocks.removeMealDish.mockResolvedValue(current)
     mocks.setMealForm.mockResolvedValue(current)
@@ -1353,7 +1366,7 @@ describe('TripMeals', () => {
     expect(wrapper.find('[data-test="checklist"]').exists()).toBe(false)
   })
 
-  it('отметка «куплено» ставится любым участником', async () => {
+  it('отметка «куплено» ставится любым участником и называет покупателя', async () => {
     const wrapper = await mountMeals()
 
     await wrapper.find('[data-test="checklist-toggle"]').trigger('click')
@@ -1364,7 +1377,29 @@ describe('TripMeals', () => {
     await box!.setValue(true)
     await flushPromises()
 
-    expect(mocks.updateMealCheck).toHaveBeenCalledWith('7', 1, { isBought: true })
+    // По умолчанию покупатель — текущий аккаунт (26.11.2026, §3.14).
+    expect(mocks.updateMealCheck).toHaveBeenCalledWith('7', 1, {
+      isBought: true,
+      boughtByUserId: ORGANIZER,
+    })
+  })
+
+  /**
+   * 26.11.2026: карточка «Закупка продуктов» ведёт на `?tab=meals&modal=shopping`.
+   * Адрес открывает модалку сам, и `modal` из него убирается — иначе закрытая
+   * модалка возвращалась бы при каждом перемонтировании вкладки.
+   */
+  it('?modal=shopping открывает список общих продуктов и чистит адрес', async () => {
+    mocks.route.query = { tab: 'meals', modal: 'shopping' }
+
+    const wrapper = await mountMeals()
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="checklist"]').attributes('role')).toBe('dialog')
+    expect(mocks.replace).toHaveBeenCalledWith({
+      path: '/trips/7',
+      query: { tab: 'meals' },
+    })
   })
 
   it('продукт, ушедший из плана, помечен', async () => {

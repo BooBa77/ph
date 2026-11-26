@@ -7,6 +7,13 @@ import type { AppNotification, NotificationKind } from '@/types/notifications'
  * монтирования — тот же порядок, что у `utils/conversations.ts` для прежней
  * ленты. Панель показывают двое — колонка и мобильная панель, поэтому
  * заголовки, ключи хранилища и переходы не должны разойтись.
+ *
+ * **Приоритеты видов здесь не живут.** Шкала §2.2 — серверная
+ * (`backend/src/trips/notification-text.ts`, `NOTIFICATION_PRIORITY`):
+ * у `transfer_seat`, `transfer_lost`, `tent_lost`, `meals_layout`
+ * и `meals_purchase` приоритет 5. Клиент получает секции и карточки уже
+ * в нужном порядке и не пересортировывает их: вторая шкала на одном экране
+ * разошлась бы с первой при первой правке (§1.1).
  */
 
 /** Заголовок секции личных диалогов. */
@@ -123,6 +130,27 @@ const TRIP_TAB_BY_KIND: Partial<Record<NotificationKind, string>> = {
 /** Вкладка похода для вида уведомления; `null` — вкладки нет. */
 export function tripTabOf(kind: NotificationKind): string | null {
   return TRIP_TAB_BY_KIND[kind] ?? null
+}
+
+/**
+ * Подпись кнопки перехода по вкладке (26.11.2026, §8).
+ *
+ * Заказчик называет кнопку вкладкой, а не «Перейти»: «Трансфер», «Ночёвки»,
+ * «Питание». Одна таблица на карточку и тесты: добавится вкладка — подпись
+ * появится вместе с ней, а не третьей копией в разметке.
+ */
+export const TRIP_TAB_LABELS: Record<string, string> = {
+  transfer: 'Трансфер',
+  route: 'Ночёвки',
+  meals: 'Питание',
+  members: 'Участники',
+  finance: 'Бухгалтерия',
+  guest: 'Перейти',
+}
+
+/** Подпись кнопки по коду вкладки; неизвестная вкладка — «Перейти». */
+export function tripTabLabel(tab: string): string {
+  return TRIP_TAB_LABELS[tab] ?? 'Перейти'
 }
 
 /**

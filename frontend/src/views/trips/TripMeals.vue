@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 
 import { ApiError } from '@/api/errors'
 import { listDishes } from '@/api/meals'
@@ -1498,8 +1499,34 @@ async function loadMyPlan(): Promise<void> {
  * «Список покупок» — модалка, а не раздел страницы: в него заглядывают,
  * чтобы сходить в магазин, и он не должен растягивать раскладку. Содержимое
  * грузит сама модалка при открытии — об этом знает `TripMealShoppingModal`.
+ *
+ * **`?tab=meals&modal=shopping`** (26.11.2026): карточка «Закупка продуктов»
+ * ведёт сразу в этот список (§3.14), поэтому модалка открывается из адреса.
+ * После открытия `modal` из адреса убирается: иначе закрытая модалка
+ * возвращалась бы при каждом переключении вкладок, ведь `TripView` держит
+ * вкладки через `v-if`, и «Питание» монтируется заново.
  */
+const route = useRoute()
+const router = useRouter()
 const shoppingOpen = ref(false)
+
+function openShoppingFromRoute(): void {
+  if (route.query.modal !== 'shopping') return
+
+  shoppingOpen.value = true
+
+  const query = { ...route.query }
+  delete query.modal
+  void router.replace({ path: route.path, query })
+}
+
+/**
+ * Слушаем адрес, а не только монтирование: карточка «Закупка продуктов»
+ * может быть нажата, когда «Питание» уже открыто. Тогда вкладка не
+ * перемонтируется, приходит только `modal=shopping` — и без `watch`
+ * модалка не открылась бы (проверено живьём 26.11.2026).
+ */
+watch(() => route.query.modal, openShoppingFromRoute, { immediate: true })
 
 onMounted(() => {
   void load()

@@ -109,6 +109,39 @@ describe('стор уведомлений', () => {
     expect(store.sections[0]?.items.map((item) => item.id)).toEqual(['1'])
   })
 
+  /**
+   * Приоритеты новых видов (26.11.2026, §2.2) — серверные: у `transfer_seat`,
+   * `transfer_lost`, `tent_lost`, `meals_layout` и `meals_purchase` там 5.
+   * Стор получает готовый порядок и не трогает его — даже если на глаз
+   * «деньги» кажутся важнее.
+   */
+  it('порядок новых видов остаётся серверным', async () => {
+    listNotifications.mockResolvedValue(
+      answer(
+        [
+          section('810', [
+            card({ id: 'a', kind: 'meals_purchase' }),
+            card({ id: 'b', kind: 'transfer_lost' }),
+            card({ id: 'c', kind: 'meals_layout' }),
+            card({ id: 'd', kind: 'transfer_seat' }),
+          ]),
+        ],
+        [],
+      ),
+    )
+
+    const store = useNotificationsStore()
+    await store.refresh()
+
+    expect(store.sections[0]?.items.map((item) => item.kind)).toEqual([
+      'meals_purchase',
+      'transfer_lost',
+      'meals_layout',
+      'transfer_seat',
+    ])
+    expect(store.tripCards).toBe(4)
+  })
+
   it('«прочитать все» закрывает секцию похода и перечитывает панель', async () => {
     listNotifications
       .mockResolvedValueOnce(

@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError } from '@/api/errors'
 import type { User } from '@/api/types'
 import { useAuthStore } from '@/stores/auth'
-import type { TripMealCheck } from '@/types/trips'
+import type { TripMealCheck, TripParticipant } from '@/types/trips'
 import TripMealShoppingModal from '@/views/trips/TripMealShoppingModal.vue'
 
 /**
@@ -25,6 +25,8 @@ import TripMealShoppingModal from '@/views/trips/TripMealShoppingModal.vue'
 const mocks = vi.hoisted(() => ({
   fetchMealChecks: vi.fn(),
   fetchMyMealChecks: vi.fn(),
+  listParticipants: vi.fn(),
+  updateMealCheck: vi.fn(),
   createTripExpense: vi.fn(),
   subscribeTripEvents: vi.fn(),
   stopLiveEvents: vi.fn(),
@@ -33,7 +35,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/api/trips', () => ({
   fetchMealChecks: mocks.fetchMealChecks,
   fetchMyMealChecks: mocks.fetchMyMealChecks,
-  updateMealCheck: vi.fn(),
+  listParticipants: mocks.listParticipants,
+  updateMealCheck: mocks.updateMealCheck,
   updateMyMealCheck: vi.fn(),
 }))
 
@@ -66,6 +69,20 @@ function check(overrides: Partial<TripMealCheck> = {}): TripMealCheck {
   }
 }
 
+function participant(
+  userId: string,
+  displayName: string,
+  isVirtual = false,
+): TripParticipant {
+  return { userId, displayName, isVirtual } as TripParticipant
+}
+
+const PARTICIPANTS = [
+  participant('me-1', 'Я'),
+  participant('friend', 'Борис'),
+  participant('virtual-1', 'Виктор', true),
+]
+
 function mountModal(props: { personal?: boolean; commonEaters?: number } = {}) {
   return mount(TripMealShoppingModal, {
     props: { tripId: '7', commonEaters: 6, ...props },
@@ -79,6 +96,7 @@ describe('чек из «Списка общих продуктов»', () => {
     useAuthStore().user = { id: 'me-1', displayName: 'Я' } as User
     mocks.fetchMealChecks.mockResolvedValue([check()])
     mocks.fetchMyMealChecks.mockResolvedValue([check()])
+    mocks.listParticipants.mockResolvedValue(PARTICIPANTS)
     mocks.createTripExpense.mockResolvedValue({})
     mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
   })
@@ -175,6 +193,7 @@ describe('живой список покупок (SSE)', () => {
     useAuthStore().user = { id: 'me-1', displayName: 'Я' } as User
     mocks.fetchMealChecks.mockResolvedValue([check()])
     mocks.fetchMyMealChecks.mockResolvedValue([check()])
+    mocks.listParticipants.mockResolvedValue(PARTICIPANTS)
     mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
   })
 
@@ -223,6 +242,70 @@ describe('живой список покупок (SSE)', () => {
   })
 })
 
+describe('выбор покупателя в «Списке общих продуктов» (26.11.2026)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    setActivePinia(createPinia())
+    useAuthStore().user = { id: 'me-1', displayName: 'Я' } as User
+    mocks.fetchMealChecks.mockResolvedValue([check()])
+    mocks.fetchMyMealChecks.mockResolvedValue([check()])
+    mocks.listParticipants.mockResolvedValue(PARTICIPANTS)
+    mocks.updateMealCheck.mockResolvedValue([
+      check({ isBought: true, boughtByUserId: 'virtual-1', boughtByName: 'Виктор' }),
+    ])
+    mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
+  })
+
+  it('по умолчанию выбран текущий аккаунт, в списке — все, включая виртуального', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+
+    const select = wrapper.get('[data-test="buyer-select"]')
+    expect((select.element as HTMLSelectElement).value).toBe('me-1')
+    expect(select.text()).toContain('Борис')
+    expect(select.text()).toContain('Виктор (без аккаунта)')
+    expect(wrapper.get('[data-test="buyer-hint"]').text()).toContain(
+      'снять «куплено» сможет он',
+    )
+  })
+
+  it('отметка «куплено» отправляет выбранного покупателя', async () => {
+    const wrapper = mountModal()
+    await flushPromises()
+
+    await wrapper.get('[data-test="buyer-select"]').setValue('virtual-1')
+    await wrapper.get('[data-test="check-bought"]').trigger('change')
+    await flushPromises()
+
+    expect(mocks.updateMealCheck).toHaveBeenCalledWith('7', 1, {
+      isBought: true,
+      boughtByUserId: 'virtual-1',
+    })
+  })
+
+  it('снятие отметки покупателя не шлёт', async () => {
+    mocks.fetchMealChecks.mockResolvedValue([
+      check({ isBought: true, boughtByUserId: 'me-1' }),
+    ])
+
+    const wrapper = mountModal()
+    await flushPromises()
+
+    await wrapper.get('[data-test="check-bought"]').trigger('change')
+    await flushPromises()
+
+    expect(mocks.updateMealCheck).toHaveBeenCalledWith('7', 1, { isBought: false })
+  })
+
+  it('в личном списке выбора покупателя нет, состав не запрашивается', async () => {
+    const wrapper = mountModal({ personal: true })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="buyer-block"]').exists()).toBe(false)
+    expect(mocks.listParticipants).not.toHaveBeenCalled()
+  })
+})
+
 describe('правила 13.11.2026: осиротевшая строка и чужое «куплено»', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -230,6 +313,7 @@ describe('правила 13.11.2026: осиротевшая строка и чу
     useAuthStore().user = { id: 'me-1', displayName: 'Я' } as User
     mocks.fetchMealChecks.mockResolvedValue([check()])
     mocks.fetchMyMealChecks.mockResolvedValue([check()])
+    mocks.listParticipants.mockResolvedValue(PARTICIPANTS)
     mocks.subscribeTripEvents.mockReturnValue(mocks.stopLiveEvents)
   })
 

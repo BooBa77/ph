@@ -649,7 +649,17 @@ export async function fetchMealChecks(tripId: string): Promise<TripMealCheck[]> 
 export async function updateMealCheck(
   tripId: string,
   productId: number,
-  patch: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
+  patch: {
+    isBought?: boolean
+    isHome?: boolean
+    boughtAmount?: number | null
+    /**
+     * Кто купил (26.11.2026, §5.9 `meals.md`): по умолчанию — текущий
+     * аккаунт. Модалка списка общих продуктов даёт выбрать любого участника
+     * похода, включая виртуального; сервер проверяет, что он в составе.
+     */
+    boughtByUserId?: string
+  },
 ): Promise<TripMealCheck[]> {
   const response = await apiFetch<{ checks: TripMealCheck[] }>(
     `/trips/${tripId}/meal-checks/${productId}`,

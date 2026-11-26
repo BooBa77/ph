@@ -171,6 +171,23 @@ describe('TripView и мобильное меню', () => {
     expect(tabs.length).toBe(ALL_TABS.length)
   })
 
+  /**
+   * 26.11.2026: карточка уведомления меняет только `query.tab`, а `params.id`
+   * остаётся прежним. До этого `watch` смотрел лишь на id, и кнопка
+   * «Трансфер» меняла адрес, но оставляла «Гостевую».
+   */
+  it('смена ?tab на уже открытом походе переключает вкладку', async () => {
+    const { wrapper, router } = await mountTrip('/trips/1')
+
+    expect(wrapper.find('[data-test="guest-stub"]').exists()).toBe(true)
+
+    await router.push('/trips/1?tab=transfer')
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="transfer-stub"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="guest-stub"]').exists()).toBe(false)
+  })
+
   it('отдаёт вкладки в мобильное меню', async () => {
     await mountTrip()
 

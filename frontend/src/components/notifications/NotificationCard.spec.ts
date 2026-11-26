@@ -395,6 +395,172 @@ describe('NotificationCard', () => {
     )
   })
 
+  /**
+   * 26.11.2026, часть 5: новые виды походов получают кнопки и переходы (§8).
+   *
+   * Переходы — те же, что у вкладок: «Трансфер», «Ночёвки», «Питание».
+   * Закупка ведёт ещё и прямо в модалку списка общих продуктов.
+   */
+  it('у трансфера — «Трансфер» и «ОК»', async () => {
+    for (const kind of ['transfer_seat', 'transfer_lost'] as const) {
+      const wrapper = mountCard(
+        notification({
+          id: `t-${kind}`,
+          kind,
+          title: kind === 'transfer_seat' ? 'Билет на проезд' : 'Проблемы с транспортом',
+          announce: 'водитель Сергей, Лада, А123ВС38',
+          body: 'Ты добавлен пассажиром в автомобиль, водитель Сергей',
+          conversationId: null,
+          compensationId: null,
+        }),
+      )
+
+      expect(wrapper.get('[data-test="rail-go-tab"]').text()).toBe('Трансфер')
+      expect(wrapper.find('[data-test="rail-ok"]').exists()).toBe(true)
+
+      await wrapper.get('[data-test="rail-go-tab"]').trigger('click')
+      expect(push).toHaveBeenCalledWith({
+        path: '/trips/193',
+        query: { tab: 'transfer' },
+      })
+    }
+  })
+
+  it('у потерянной палатки — «Ночёвки» и «ОК»', async () => {
+    const wrapper = mountCard(
+      notification({
+        id: 'tent',
+        kind: 'tent_lost',
+        title: 'Проблемы с палаткой',
+        announce: 'Ты остался без палатки',
+        body: 'Палатка, в которую тебя определили, стала недоступна',
+        conversationId: null,
+        compensationId: null,
+      }),
+    )
+
+    expect(wrapper.get('[data-test="rail-go-tab"]').text()).toBe('Ночёвки')
+    await wrapper.get('[data-test="rail-go-tab"]').trigger('click')
+    expect(push).toHaveBeenCalledWith({ path: '/trips/193', query: { tab: 'route' } })
+
+    await wrapper.get('[data-test="rail-ok"]').trigger('click')
+    await flushPromises()
+    expect(notificationsApi.closeNotification).toHaveBeenCalledWith('tent')
+  })
+
+  it('у раскладки — «Питание» и «ОК»', async () => {
+    const wrapper = mountCard(
+      notification({
+        id: 'layout',
+        kind: 'meals_layout',
+        title: 'Раскладка',
+        announce: 'Анна изменила раскладку',
+        body: 'Анна изменила раскладку',
+        conversationId: null,
+        compensationId: null,
+      }),
+    )
+
+    expect(wrapper.get('[data-test="rail-go-tab"]').text()).toBe('Питание')
+    await wrapper.get('[data-test="rail-go-tab"]').trigger('click')
+    expect(push).toHaveBeenCalledWith({ path: '/trips/193', query: { tab: 'meals' } })
+  })
+
+  it('у закупки — список продуктов, «Питание» и «ОК»', async () => {
+    const wrapper = mountCard(
+      notification({
+        id: 'purchase',
+        kind: 'meals_purchase',
+        title: 'Закупка продуктов',
+        announce: 'Борис',
+        body: 'Борис закупил общие продукты',
+        conversationId: null,
+        compensationId: null,
+      }),
+    )
+
+    // Свёрнутая карточка показывает announce, а не body.
+    const collapsed = mountCard(
+      notification({
+        id: 'purchase-collapsed',
+        kind: 'meals_purchase',
+        title: 'Закупка продуктов',
+        announce: 'Борис',
+        body: 'Борис закупил общие продукты',
+        conversationId: null,
+        compensationId: null,
+      }),
+      { expanded: false },
+    )
+    expect(collapsed.get('[data-test="rail-announce-purchase-collapsed"]').text()).toBe(
+      'Борис',
+    )
+    expect(collapsed.text()).not.toContain('закупил общие продукты')
+
+    await wrapper.get('[data-test="rail-go-shopping"]').trigger('click')
+    expect(push).toHaveBeenCalledWith({
+      path: '/trips/193',
+      query: { tab: 'meals', modal: 'shopping' },
+    })
+
+    expect(wrapper.get('[data-test="rail-go-tab"]').text()).toBe('Питание')
+    await wrapper.get('[data-test="rail-go-tab"]').trigger('click')
+    expect(push).toHaveBeenLastCalledWith({
+      path: '/trips/193',
+      query: { tab: 'meals' },
+    })
+
+    await wrapper.get('[data-test="rail-ok"]').trigger('click')
+    await flushPromises()
+    expect(notificationsApi.closeNotification).toHaveBeenCalledWith('purchase')
+  })
+
+  /**
+   * Виды части 3 (участники, роли, расход, маршрут) в этой сессии тоже
+   * получают действие: без него карточка была бы тупиком. Подпись — название
+   * вкладки, «ОК» закрывает.
+   */
+  it('остальные виды похода ведут на свою вкладку и закрываются «ОК»', async () => {
+    const cases = [
+      ['participant_joined', 'Участники', 'members'],
+      ['role_removed', 'Участники', 'members'],
+      ['trip_expense', 'Бухгалтерия', 'finance'],
+      ['trip_route', 'Ночёвки', 'route'],
+    ] as const
+
+    for (const [kind, label, tab] of cases) {
+      const wrapper = mountCard(
+        notification({
+          id: `g-${kind}`,
+          kind,
+          title: 'Заголовок',
+          conversationId: null,
+          compensationId: null,
+        }),
+      )
+
+      expect(wrapper.get('[data-test="rail-go-tab"]').text()).toBe(label)
+      await wrapper.get('[data-test="rail-go-tab"]').trigger('click')
+      expect(push).toHaveBeenLastCalledWith({ path: '/trips/193', query: { tab } })
+      expect(wrapper.find('[data-test="rail-ok"]').exists()).toBe(true)
+    }
+  })
+
+  it('у созданного альманаха те же действия, что у изменённого', async () => {
+    const wrapper = mountCard(
+      notification({
+        id: 'almanac-created',
+        kind: 'almanac_created',
+        title: 'Альманах',
+        conversationId: null,
+        compensationId: null,
+      }),
+    )
+
+    expect(wrapper.get('[data-test="rail-go-almanac"]').text()).toBe('Перейти')
+    expect(wrapper.find('[data-test="rail-ok"]').exists()).toBe(true)
+  })
+
   it('клик по заголовку просит родителя раскрыть карточку', async () => {
     const wrapper = mountCard(notification(), { expanded: false })
 
