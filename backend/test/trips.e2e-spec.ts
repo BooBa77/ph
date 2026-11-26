@@ -984,25 +984,64 @@ describe('Походы (e2e)', () => {
   });
 
   describe('отмена', () => {
-    it('идею отменить нельзя: у неё нет договорённостей', async () => {
+    /** Ввести человека в состав: карточка отмены адресуется активным. */
+    async function inviteGoing(
+      tripId: string,
+      targetId: string,
+      token: string,
+    ): Promise<void> {
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ direction: 'invite', userId: targetId })
+        .expect(201);
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/requests/${targetId}/accept`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ status: 'going' })
+        .expect(200);
+    }
+
+    /** Вкладки, которые человек вправе править. */
+    async function editableTabsOf(
+      tripId: string,
+      token = accessToken,
+    ): Promise<string[]> {
+      const response = await request(app.getHttpServer())
+        .get(`/api/trips/${tripId}/tabs`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      return (response.body.tabs as Array<{ code: string; canEdit: boolean }>)
+        .filter((tab) => tab.canEdit)
+        .map((tab) => tab.code)
+        .sort();
+    }
+
+    it('«Мечту» можно отменить: статус не затирается, даты не нужны', async () => {
       const created = await createTrip({
         announcement: 'Идея',
         status: 'idea',
       });
-      expect(created.body.status).toBe('idea');
+      const tripId = created.body.id as string;
 
-      await request(app.getHttpServer())
-        .post(`/api/trips/${created.body.id}/cancel`)
+      const cancelled = await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/cancel`)
         .set('Authorization', `Bearer ${accessToken}`)
-        .expect(400);
+        .expect(200);
+
+      expect(cancelled.body.cancelledAt).not.toBeNull();
+      expect(cancelled.body.status).toBe('idea');
     });
 
-    it('отмена не затирает статус, убирает поход из ленты и снимается обратно', async () => {
+    it('отмена замораживает поход, создаёт карточку и не возвращается', async () => {
       const created = await createTrip({
         announcement: 'Отменяемый',
         status: 'planning',
       });
       const tripId = created.body.id as string;
+      await inviteGoing(tripId, applicantId, applicantToken);
 
       const cancelled = await request(app.getHttpServer())
         .post(`/api/trips/${tripId}/cancel`)
@@ -1011,6 +1050,30 @@ describe('Походы (e2e)', () => {
       expect(cancelled.body.cancelledAt).not.toBeNull();
       expect(cancelled.body.status).toBe('planning');
 
+      /**
+       * Карточка `trip_cancelled` (§3.3) — активному составу без автора:
+       * приглашённому да, организатору нет. Тексты — слова заказчика.
+       */
+      const cards = (await dataSource.query(
+        `SELECT recipient_user_id, title, announce, body
+           FROM notifications
+          WHERE trip_id = $1 AND kind = 'trip_cancelled'`,
+        [tripId],
+      )) as Array<{
+        recipient_user_id: string;
+        title: string;
+        announce: string;
+        body: string;
+      }>;
+
+      expect(cards.map((card) => card.recipient_user_id)).toEqual([
+        applicantId,
+      ]);
+      expect(cards[0].title).toBe('Поход отменён');
+      expect(cards[0].announce).toBe('Увы и ах (((');
+      expect(cards[0].body).toContain('По объективным причинам');
+
+      // Отменённое в ленту не попадает — поход остаётся историей.
       const list = await request(app.getHttpServer())
         .get('/api/trips?mine=true&limit=50')
         .set('Authorization', `Bearer ${accessToken}`)
@@ -1021,11 +1084,45 @@ describe('Походы (e2e)', () => {
         ),
       ).not.toContain('Отменяемый');
 
-      const restored = await request(app.getHttpServer())
+      // Заморозка: правка шапки и повторная отмена — 409.
+      await request(app.getHttpServer())
+        .patch(`/api/trips/${tripId}`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ announcement: 'Захват' })
+        .expect(409);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/cancel`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .expect(409);
+
+      // Возврата в строй больше нет: ручки не существует.
+      await request(app.getHttpServer())
         .delete(`/api/trips/${tripId}/cancel`)
         .set('Authorization', `Bearer ${accessToken}`)
+        .expect(404);
+
+      // Открыты «Дневник», «Бухгалтерия» и альманах («Гостевая»).
+      expect(await editableTabsOf(tripId)).toEqual(['diary', 'finance', 'guest']);
+    });
+
+    it('соорганизатор отменить не может — это решение автора', async () => {
+      const created = await createTrip({
+        announcement: 'Чужое решение',
+        status: 'planning',
+      });
+      const tripId = created.body.id as string;
+      await inviteGoing(tripId, coorgId, coorgToken);
+
+      await request(app.getHttpServer())
+        .put(`/api/trips/${tripId}/participants/${coorgId}/roles`)
+        .set('Authorization', `Bearer ${accessToken}`)
+        .send({ roleCodes: [COORGANIZER_ROLE_CODE] })
         .expect(200);
-      expect(restored.body.cancelledAt).toBeNull();
+
+      await request(app.getHttpServer())
+        .post(`/api/trips/${tripId}/cancel`)
+        .set('Authorization', `Bearer ${coorgToken}`)
+        .expect(403);
     });
 
     it('посторонний не может отменить чужой поход — 403', async () => {

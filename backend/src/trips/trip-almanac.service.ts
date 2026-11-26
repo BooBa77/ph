@@ -70,9 +70,9 @@ export class TripAlmanacService {
     const manager = this.dataSource.manager;
     const trip = await this.trips.getVisibleTrip(userId, tripId);
 
-    if (trip.completedAt === null) {
+    if (trip.completedAt === null && trip.cancelledAt === null) {
       throw new ConflictException(
-        'Альманах собирается после завершения похода',
+        'Альманах собирается после завершения или отмены похода',
       );
     }
 
@@ -103,13 +103,21 @@ export class TripAlmanacService {
   ): Promise<TripAlmanacDto> {
     const trip = await this.trips.getVisibleTrip(userId, tripId);
 
-    if (trip.completedAt === null) {
+    if (trip.completedAt === null && trip.cancelledAt === null) {
       throw new ConflictException(
-        'Альманах собирается после завершения похода',
+        'Альманах собирается после завершения или отмены похода',
       );
     }
 
-    await this.assertParticipant(trip.id, userId);
+    /**
+     * Организатор пишет всегда, даже если не числится в составе: у отменённой
+     * «Мечты» состава нет вовсе (26.11.2026, §4.6), а альманах подготовки
+     * ей открыт — и первое слово там его. У обычного похода организатор
+     * и так участник, так что проверка ничего не ослабляет.
+     */
+    if (trip.organizerUserId !== userId) {
+      await this.assertParticipant(trip.id, userId);
+    }
 
     const body = dto.body.trim();
     if (body.length === 0) {
@@ -157,9 +165,9 @@ export class TripAlmanacService {
   ): Promise<TripAlmanacDto> {
     const trip = await this.trips.getVisibleTrip(userId, tripId);
 
-    if (trip.completedAt === null) {
+    if (trip.completedAt === null && trip.cancelledAt === null) {
       throw new ConflictException(
-        'Альманах собирается после завершения похода',
+        'Альманах собирается после завершения или отмены похода',
       );
     }
 

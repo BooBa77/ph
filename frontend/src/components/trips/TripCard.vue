@@ -3,8 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { RouterLink } from 'vue-router'
 
 import { listTripTypes } from '@/api/trips'
-import { TRIP_STATUS_LABELS, type Trip } from '@/types/trips'
-import { tripBadges, tripDatesText } from '@/utils/tripDisplay'
+import type { Trip } from '@/types/trips'
+import { tripBadges, tripDatesText, tripStateLabel } from '@/utils/tripDisplay'
 
 /**
  * Карточка похода в ленте.
@@ -68,7 +68,7 @@ onMounted(async () => {
     </p>
 
     <p class="text-sm text-muted" data-test="trip-card-when">
-      {{ TRIP_STATUS_LABELS[trip.status] }}
+      {{ tripStateLabel(trip) }}
       <template v-if="dates"> · {{ dates }}</template>
     </p>
 

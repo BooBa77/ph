@@ -292,7 +292,7 @@ describe('GuestTripView', () => {
     expect(second.get('[data-test="guest-chat-section"]').element.hasAttribute('open')).toBe(true)
   })
 
-  it('альманах — секция «Гостевой» и только у завершённого похода', async () => {
+  it('альманах — секция «Гостевой» у завершённого и отменённого похода', async () => {
     const planned = await mountView()
     expect(planned.find('[data-test="trip-almanac"]').exists()).toBe(false)
 
@@ -303,5 +303,14 @@ describe('GuestTripView', () => {
     const completed = await mountView()
     expect(completed.find('[data-test="trip-almanac"]').exists()).toBe(true)
     expect(mockedDiary.getTripAlmanac).toHaveBeenCalledWith('7')
+
+    // Отменённый поход открывает альманах с 26.11.2026 (§4.6): «альманах
+    // подготовки» без требования завершения.
+    mocked.fetchGuestTrip.mockResolvedValue(
+      makeGuest({ cancelledAt: '2026-11-26T10:00:00.000Z' }),
+    )
+
+    const cancelled = await mountView()
+    expect(cancelled.find('[data-test="trip-almanac"]').exists()).toBe(true)
   })
 })

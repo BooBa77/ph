@@ -448,6 +448,37 @@ describe('NotificationCard', () => {
     expect(notificationsApi.closeNotification).toHaveBeenCalledWith('tent')
   })
 
+  it('у отмены похода — только «ОК», без перехода', async () => {
+    const card = notification({
+      id: 'cancelled',
+      kind: 'trip_cancelled',
+      title: 'Поход отменён',
+      announce: 'Увы и ах (((',
+      body:
+        'По объективным причинам поход отменяется. Снаряжение ' +
+        'освобождается. Все понесённые расходы представлены к компенсации',
+      conversationId: null,
+      compensationId: null,
+    })
+
+    // Свёрнутая показывает анонс заказчика, раскрытая — содержимое и «ОК».
+    const collapsed = mountCard(card, { expanded: false })
+    expect(collapsed.get('[data-test="rail-announce-cancelled"]').text()).toBe(
+      'Увы и ах (((',
+    )
+
+    const wrapper = mountCard(card)
+
+    // Поход отменён: вести в правку или на вкладку некуда, действие одно.
+    expect(wrapper.find('[data-test="rail-go-tab"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="rail-reply-input"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('По объективным причинам')
+
+    await wrapper.get('[data-test="rail-ok"]').trigger('click')
+    await flushPromises()
+    expect(notificationsApi.closeNotification).toHaveBeenCalledWith('cancelled')
+  })
+
   it('у раскладки — «Питание» и «ОК»', async () => {
     const wrapper = mountCard(
       notification({

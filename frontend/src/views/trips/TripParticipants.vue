@@ -153,7 +153,7 @@ function isCoOrganizerOf(person: TripParticipant): boolean {
  * же; здесь проверка, чтобы не предлагать кнопку, которая получит 403.
  */
 function canRemovePerson(person: TripParticipant): boolean {
-  if (isCompleted.value || person.isOrganizer) return false
+  if (isFrozen.value || person.isOrganizer) return false
   if (!isOrganizer.value && !isCoOrganizer.value) return false
   if (isOrganizer.value) return true
   return !isCoOrganizerOf(person)
@@ -175,6 +175,17 @@ const canManagePeople = computed(() => isOrganizer.value || isCoOrganizer.value)
  * «Убрать», приглашение и людей без аккаунта.
  */
 const isCompleted = computed(() => Boolean(props.trip.completedAt))
+
+/**
+ * Отменённый поход заморожен так же, как завершённый (26.11.2026, §4.6):
+ * состав — история, статусы и приглашения закрыты, сервер ответит 409.
+ * Отметки присутствия остаются доступны, как и у завершённого: перекличка —
+ * не содержимое похода, и после отмены людям тоже важно отметиться дома.
+ */
+const isCancelled = computed(() => Boolean(props.trip.cancelledAt))
+
+/** Поход закрыт: завершён или отменён. */
+const isFrozen = computed(() => isCompleted.value || isCancelled.value)
 
 // ───────────────────────────── присутствие (17.11.2026) ─────────────────────────────
 
@@ -349,7 +360,7 @@ async function markPresence(
  */
 const canBringPeople = computed(
   () =>
-    !isCompleted.value &&
+    !isFrozen.value &&
     (canManagePeople.value ||
       (!hasStarted.value &&
         props.trip.openParticipation !== false &&
@@ -819,15 +830,23 @@ function invite(person: UserSearchResult) {
 
       <!--
         Завершённый поход: состав заморожен (20.11.2026). Кнопки статуса
-        не рисуем — сервер ответит 409, а поход это уже история. Отметки
-        присутствия ниже остаются: перекличку собирают и после возвращения.
+        не рисуем — сервер ответит 409, а поход это уже история. Отменённый
+        заморожен так же (26.11.2026, §4.6), только подпись другая: похода
+        не будет, и «состав больше не меняется» звучит странно.
       -->
       <p
-        v-if="isCompleted"
+        v-if="isFrozen"
         class="text-sm text-muted"
-        data-test="participants-completed"
+        :data-test="isCancelled ? 'participants-cancelled' : 'participants-completed'"
       >
-        Поход завершён — состав больше не меняется. Отметки присутствия по-прежнему доступны.
+        <template v-if="isCancelled">
+          Поход отменён — состав больше не меняется. Открыты «Бухгалтерия»,
+          «Дневник» и альманах.
+        </template>
+        <template v-else>
+          Поход завершён — состав больше не меняется. Отметки присутствия
+          по-прежнему доступны.
+        </template>
       </p>
 
       <!-- Мой статус. Приглашённому сначала нужно ответить на приглашение -->
@@ -1280,7 +1299,7 @@ function invite(person: UserSearchResult) {
                 v-if="
                   canManagePeople &&
                   hasStarted &&
-                  !isCompleted &&
+                  !isFrozen &&
                   !person.isOrganizer &&
                   person.status !== 'going' &&
                   person.status !== 'invited'

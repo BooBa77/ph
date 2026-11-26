@@ -173,6 +173,18 @@ export async function completeTrip(tripId: string): Promise<Trip> {
 }
 
 /**
+ * POST /api/trips/:id/cancel — отменить поход (26.11.2026, §4.6).
+ *
+ * Отменяет **только организатор**; отменить можно всё, кроме завершённого.
+ * Отмена необратима: ручки возврата в строй больше нет, поэтому ответ
+ * приходит походом с `cancelledAt`, а экран сразу перечитывает вкладки —
+ * правки закрылись, открыты «Дневник», «Бухгалтерия» и альманах.
+ */
+export async function cancelTrip(tripId: string): Promise<Trip> {
+  return apiFetch<Trip>(`/trips/${tripId}/cancel`, { method: 'POST' })
+}
+
+/**
  * GET /api/trips/:id/tabs — вкладки и права на правку.
  *
  * Права считает бэкенд по ролям и организатору: фронт не решает, кто завхоз.

@@ -107,7 +107,14 @@ const genericTab = computed(() => {
     kind === 'almanac_created' ||
     kind === 'almanac_changed' ||
     kind === 'direct_chat' ||
-    kind === 'trip_chat'
+    kind === 'trip_chat' ||
+    /**
+     * Отмена похода (26.11.2026, §3.3): у карточки только «ОК». Перехода
+     * нет намеренно — поход отменён, и вести человека в закрытую правку
+     * или в «Гостевую» с историей некуда. Деньги открыты, но это его
+     * решение, а не действие по карточке.
+     */
+    kind === 'trip_cancelled'
   ) {
     return null
   }

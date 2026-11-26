@@ -556,6 +556,24 @@ describe('TripView и мобильное меню', () => {
     expect(wrapper.find('[data-test="complete-trip"]').exists()).toBe(false)
   })
 
+  it('отменённый поход подписан и не предлагает правок', async () => {
+    mocks.getTrip.mockResolvedValue({
+      ...TRIP,
+      cancelledAt: daysFromNow(0),
+      canComplete: true,
+    })
+
+    const { wrapper } = await mountTrip()
+
+    expect(wrapper.get('[data-test="trip-cancelled"]').text()).toContain(
+      'Поход отменён',
+    )
+    // Закрыто всё, кроме дневника, денег и альманаха: кнопок правки нет.
+    expect(wrapper.find('[data-test="trip-edit-link"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="toggle-recruitment"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="completion-question"]').exists()).toBe(false)
+  })
+
   // ──────────────────── соорганизатор (20.11.2026) ────────────────────
 
   /**

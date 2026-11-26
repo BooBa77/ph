@@ -460,7 +460,7 @@ export async function removeConflictingGear(
  */
 export function conflictMessage(
   removals: GearRemoval[],
-  reason: 'decided' | 'dates' | 'restore',
+  reason: 'decided' | 'dates',
 ): string | null {
   if (removals.length === 0) return null;
 
@@ -470,13 +470,11 @@ export function conflictMessage(
       : `«${row.title}» — в походе «${row.busyTrip}»`,
   );
 
-  const heads: Record<'decided' | 'dates' | 'restore', string> = {
+  const heads: Record<'decided' | 'dates', string> = {
     decided:
       'Поход решён, но часть снаряжения на эти даты уже занята. Убрали из этого похода',
     dates:
       'Даты изменились, и часть снаряжения на них уже занята. Убрали из этого похода',
-    restore:
-      'Поход вернули в строй, но часть снаряжения на эти даты уже занята. Убрали из этого похода',
   };
 
   return `${heads[reason]}: ${parts.join('; ')}.`;

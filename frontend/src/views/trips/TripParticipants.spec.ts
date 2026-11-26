@@ -1033,4 +1033,33 @@ describe('TripParticipants', () => {
     // Перекличка остаётся: отметить присутствие можно и после завершения.
     expect(wrapper.find(`[data-test="presence-mark-${ORGANIZER}"]`).exists()).toBe(true)
   })
+
+  /**
+   * Отменённый поход (26.11.2026, §4.6): состав заморожен так же, как
+   * в завершённом, но подпись другая — похода не будет.
+   */
+  it('в отменённом походе состав не меняется', async () => {
+    signIn(ORGANIZER)
+
+    const cancelled = {
+      ...TRIP,
+      cancelledAt: '2026-11-26T00:00:00.000Z',
+    }
+
+    const wrapper = await open(
+      [
+        person({ userId: ORGANIZER, displayName: 'Орг', isOrganizer: true }),
+        person({ userId: 'u-2', displayName: 'Марина' }),
+      ],
+      [],
+      cancelled,
+      true,
+    )
+
+    expect(wrapper.find('[data-test="participants-cancelled"]').exists()).toBe(true)
+    expect(wrapper.find('[data-test="participants-completed"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="my-status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="remove-u-2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="invite-panel"]').exists()).toBe(false)
+  })
 })

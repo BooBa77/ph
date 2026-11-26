@@ -67,6 +67,7 @@ import { conflictMessage, removeConflictingGear } from '../gear/gear-uid';
 import { TripGear } from '../gear/entities/trip-gear.entity';
 import { extractObjectIds } from './route-links';
 import {
+  CANCELLED_EDITABLE_TABS,
   COMPLETED_EDITABLE_TABS,
   COORGANIZER_ROLE_CODE,
   MEMBERS_TAB,
@@ -225,6 +226,19 @@ function hasEnded(trip: Trip, now: Date = new Date()): boolean {
  * продолжал бы менять даты уже состоявшегося похода.
  */
 function assertTripOpen(trip: Trip): void {
+  /**
+   * Отменённый поход заморожен так же, как завершённый (26.11.2026,
+   * `lifecycle.md` §4.6). Правок нет ни в шапке, ни в составе, ни в
+   * снаряжении; открыты «Дневник», «Бухгалтерия» и альманах. Проверка
+   * стоит здесь же, а не в каждой ручке: cancel, complete, dates, состав и
+   * транспорт ходят через неё, и второй копии правила быть не должно.
+   */
+  if (trip.cancelledAt !== null) {
+    throw new ConflictException(
+      'Поход отменён: здесь уже ничего не меняется. Открыты «Дневник», «Бухгалтерия» и альманах',
+    );
+  }
+
   if (trip.completedAt === null) return;
 
   throw new ConflictException(
@@ -608,6 +622,32 @@ export class TripsService {
   async listTabs(userId: string, id: number): Promise<TripTabListDto> {
     const manager = this.dataSource.manager;
     const trip = await this.findVisibleTrip(manager, userId, id);
+
+    /**
+     * Отменённый поход показывает ровно то, что в нём открыто (26.11.2026,
+     * §4.6): «Гостевую» (альманах и чат), «Дневник» и «Бухгалтерию».
+     * Набор не зависит от готовности: отменили «Мечту» — у неё всё равно
+     * появляются дневник и деньги, потому что расходы уже могли быть.
+     * Гость по-прежнему видит только «Гостевую» без правки.
+     */
+    if (trip.cancelledAt !== null) {
+      const participant = await manager.findOne(TripParticipant, {
+        where: { tripId: trip.id, userId },
+      });
+
+      if (participant === null || participant.status === 'declined') {
+        return { tabs: [{ code: 'guest', canEdit: false }] };
+      }
+
+      const editable = await this.editableTabs(manager, trip, userId);
+
+      return {
+        tabs: CANCELLED_EDITABLE_TABS.map((code) => ({
+          code,
+          canEdit: editable.has(code),
+        })),
+      };
+    }
 
     // Мечта — вишлист: одна «Гостевая», одинаковая для владельца и гостей.
     // Правка — кнопкой «Редактировать» в шапке, отдельной вкладки «Инфо» нет.
@@ -1099,6 +1139,19 @@ export class TripsService {
       );
     }
 
+    /**
+     * Отменённый поход — тоже история (26.11.2026, §4.6), но с альманахом:
+     * «Дневник», «Бухгалтерия» и «Гостевая» (в ней альманах и открытый чат).
+     * Список отдельный, а не «завершённые плюс гостевая»: у завершённого
+     * альманах собирается по возвращении, у отменённого — по подготовке,
+     * и смешивать два правила в одном массиве значило бы потерять разницу.
+     */
+    if (trip.cancelledAt !== null) {
+      return new Set(
+        [...base].filter((tab) => CANCELLED_EDITABLE_TABS.includes(tab)),
+      );
+    }
+
     return base;
   }
 
@@ -1464,11 +1517,11 @@ export class TripsService {
    * 404**: скрывать нечего, поход и так открыт.
    *
    * **Кто сюда ходит (20.11.2026).** Только те действия, которые за
-   * соорганизатором не идут: завершение похода — решение автора
-   * ([lifecycle.md](../docs/ph/lifecycle.md) §4.4) и удаление похода, если
-   * оно появится. Всё остальное — правка шапки и дат, отмена, состав —
-   * ходит в `findManagedTrip`: соорганизатор равен организатору во всём,
-   * кроме пяти отличий (§4.5).
+   * соорганизатором не идут: завершение и **отмена** похода — решения автора
+   * ([lifecycle.md](../docs/ph/lifecycle.md) §4.4 и §4.6; отмена переведена
+   * сюда 26.11.2026) — и удаление похода, если оно появится. Всё остальное —
+   * правка шапки и дат, состав — ходит в `findManagedTrip`: соорганизатор
+   * равен организатору во всём, кроме отличий (§4.5, §4.6).
    */
   private async findOwnedTrip(
     manager: EntityManager,
@@ -1836,6 +1889,19 @@ export class TripsService {
         if (status === 'idea' && previousStatus !== 'idea') {
           throw new BadRequestException(
             'Поход уже запланирован, назад пути нет',
+          );
+        }
+
+        /**
+         * «Решено» → «Планирую» больше нет (26.11.2026, §§4.6). Заказчик:
+         * «Если даты сдвинулись — это перенос сроков, а не возврат
+         * в планирование». Прежняя развилка осталась в форме, и без этой
+         * проверки поход с составом и снаряжением возвращался бы в стадию
+         * прогноза — со снятием брони и чужими планами.
+         */
+        if (previousStatus === 'decided' && status !== 'decided') {
+          throw new BadRequestException(
+            'Решённый поход не возвращается в планирование: сдвинулись сроки — это перенос дат',
           );
         }
 
@@ -2241,94 +2307,65 @@ export class TripsService {
     return response;
   }
 
-  /** Отменить поход. Отмена — отдельная ось, статус она не затирает. */
-  async cancel(userId: string, id: number): Promise<TripResponseDto> {
-    return this.setCancelled(userId, id, true);
-  }
-
-  /** Вернуть отменённый поход в строй: «решили всё-таки идти». */
-  async restore(userId: string, id: number): Promise<TripResponseDto> {
-    return this.setCancelled(userId, id, false);
-  }
-
   /**
-   * Поставить или снять отметку отмены.
+   * Отменить поход — решение **только организатора** (26.11.2026, §4.6).
    *
-   * **Идею отменить нельзя.** У неё нет дат и обязательств, отменять нечего:
-   * «идея, которую передумали» — это просто идея, и она тихо живёт дальше
-   * или так же тихо забывается. Остальные статусы отменяются, потому что
-   * за ними стоят договорённости с людьми.
+   * Соорганизатор равен организатору во всём, кроме семи отличий, и это
+   * седьмое: отмена — судьба похода, а не текущая правка. Отмена необратима,
+   * поэтому `DELETE /trips/:id/cancel` (restore) удалён совсем: «активация
+   * отменённого — будущая фича», и держать ручку, которая возвращает поход
+   * в строй, значило бы обещать её сегодня.
    *
-   * Повторная отмена не ошибка: состояние уже такое, какое просили.
-   * Возвращать 409 значило бы заставлять клиента разбираться, кто первый.
+   * Отменить можно всё, кроме завершённого: «Мечту», «Планирую», «Решено».
+   * У «Мечты» нет дат и договорённостей, но есть люди, которые её ждут, —
+   * поэтому отмена у неё тоже осмысленна (прежний запрет снят).
+   *
+   * `assertTripOpen` заодно делает повторную отмену `409`: кнопки, которая
+   * отменяет дважды, на экране нет, а молчаливое «ладно» скрыло бы от
+   * человека, что поход уже отменён.
    */
-  private async setCancelled(
-    userId: string,
-    id: number,
-    cancelled: boolean,
-  ): Promise<TripResponseDto> {
-    const { response, gearChanged } = await this.dataSource.transaction(
+  async cancel(userId: string, id: number): Promise<TripResponseDto> {
+    const { response, notificationRecipients } = await this.dataSource.transaction(
       async (manager) => {
-        const trip = await this.findManagedTrip(manager, userId, id);
+        const trip = await this.findOwnedTrip(manager, userId, id);
 
-        // Отменять и возвращать завершённый поход нельзя: завершение
-        // необратимо (20.11.2026).
         assertTripOpen(trip);
 
-        // Типы заполняем один раз, до всех выходов: поле не персистентное,
-        // `save` его не тронет, поэтому и повторная отмена, и настоящая
-        // отмена отдают одинаково полный ответ.
+        // Типы — не персистентное поле: без этого ответ был бы беднее,
+        // чем `GET /trips/:id`, и шапка потеряла бы подписи до перезахода.
         await this.fillTypes(manager, [trip]);
 
-        if (cancelled && trip.status === 'idea') {
-          throw new BadRequestException(
-            'Идею не отменяют: у неё нет дат и договорённостей — её просто забывают',
-          );
-        }
-
-        if (cancelled === (trip.cancelledAt !== null)) {
-          return { response: TripResponseDto.from(trip), gearChanged: false };
-        }
-
-        trip.cancelledAt = cancelled ? new Date() : null;
+        trip.cancelledAt = new Date();
         const saved = await manager.save(trip);
 
         /**
-         * Возврат в строй (11.11.2026, шаг 2). Отменённый поход не занимает
-         * снаряжение, поэтому за время отмены вещь могли взять в другой
-         * решённый поход. Тогда строка этого похода снимается, как при смене
-         * дат: «сдвигаемый поход теряет вещь, второй сохраняет».
+         * Карточка `trip_cancelled` (§3.3) — активному составу без автора.
+         * Получателей считаем в транзакции: человек, вышедший из похода
+         * в этот же момент, карточку получать не должен.
          */
-        const conflictText = !cancelled
-          ? conflictMessage(
-              await removeConflictingGear(manager, saved),
-              'restore',
-            )
-          : null;
+        const notificationRecipients = await this.notifications.notifyTripCancelled(
+          manager,
+          {
+            tripId: String(saved.id),
+            recipientIds: await this.notifications.tripAudience(
+              manager,
+              String(saved.id),
+              { actorUserId: userId },
+            ),
+          },
+        );
 
-        if (conflictText !== null) {
-          await postTripSystemMessage(
-            manager,
-            saved.id,
-            'trip_route',
-            conflictText,
-          );
-          await postTripSystemMessage(
-            manager,
-            saved.id,
-            'trip_gear',
-            conflictText,
-          );
-        }
-
-        return {
-          response: TripResponseDto.from(saved),
-          gearChanged: conflictText !== null,
-        };
+        return { response: TripResponseDto.from(saved), notificationRecipients };
       },
     );
 
-    if (gearChanged) this.events.emitGear(String(id), userId);
+    // Шапка и меню вкладок на открытом экране перечитывают поход: правки
+    // закрылись, «Редактировать» и «Завершить» должны исчезнуть сразу.
+    this.events.emitTrip(String(id), userId);
+
+    // Кадр «перечитай уведомления» — после COMMIT: до него открытая панель
+    // показала бы карточку, которой ещё нет.
+    this.notifications.emitChanged([...new Set(notificationRecipients)]);
 
     return response;
   }

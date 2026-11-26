@@ -233,9 +233,20 @@ const canOrganize = computed(
  */
 const isCompleted = computed(() => Boolean(trip.value?.completedAt))
 
+/**
+ * Отменён ли поход (26.11.2026, §4.6). Отменённый фризится как завершённый:
+ * правки закрыты, вкладки и история видны, открыты «Дневник», «Бухгалтерия»
+ * и альманах. Отдельного флага от сервера не нужно — `cancelledAt` уже
+ * приходит в походе и означает ровно это.
+ */
+const isCancelled = computed(() => Boolean(trip.value?.cancelledAt))
+
+/** Поход закрыт: завершён или отменён — правок больше нет. */
+const isClosed = computed(() => isCompleted.value || isCancelled.value)
+
 /** Можно ли завершить поход — флаг считает сервер (только автор и условия). */
 const canComplete = computed(
-  () => trip.value?.canComplete === true && !isCompleted.value,
+  () => trip.value?.canComplete === true && !isClosed.value,
 )
 
 /**
@@ -772,7 +783,7 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
             </p>
           </div>
 
-          <div v-if="canOrganize && !isCompleted" class="flex flex-wrap items-center gap-2">
+          <div v-if="canOrganize && !isClosed" class="flex flex-wrap items-center gap-2">
             <RouterLink
               :to="{ name: 'trip-edit', params: { id: trip.id } }"
               class="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-text no-underline transition-colors hover:border-primary"
@@ -828,6 +839,19 @@ async function markMyPresence(action: PresenceAction): Promise<void> {
           data-test="trip-completed"
         >
           Поход завершён.
+        </p>
+
+        <!--
+          Поход отменён (26.11.2026, §4.6). Отдельная строка, а не «Поход
+          завершён»: человек должен видеть, что похода не будет, а не что он
+          состоялся. Правки закрыты, деньги и дневник открыты.
+        -->
+        <p
+          v-if="isCancelled"
+          class="rounded-2xl border border-border bg-surface px-3 py-2 text-sm text-text"
+          data-test="trip-cancelled"
+        >
+          Поход отменён. Открыты «Бухгалтерия», «Дневник» и альманах.
         </p>
 
         <!--

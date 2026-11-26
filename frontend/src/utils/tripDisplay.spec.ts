@@ -4,6 +4,7 @@ import {
   tripBadges,
   tripDatesText,
   tripFrameParts,
+  tripStateLabel,
   tripWhenText,
 } from '@/utils/tripDisplay'
 
@@ -23,10 +24,34 @@ const trip = (overrides: Record<string, unknown> = {}) => ({
   isOfficial: false,
   priceRub: null,
   hasGuitar: false,
+  completedAt: null,
+  cancelledAt: null,
   ...overrides,
 })
 
 describe('tripDisplay', () => {
+  it('пять состояний: три статуса плюс завершение и отмена', () => {
+    expect(tripStateLabel(trip())).toBe('Мечта')
+    expect(tripStateLabel(trip({ status: 'planning' }))).toBe('Планирую')
+    expect(tripStateLabel(trip({ status: 'decided' }))).toBe('Решено')
+    expect(
+      tripStateLabel(trip({ status: 'decided', completedAt: '2026-11-20T00:00:00.000Z' })),
+    ).toBe('Завершённый')
+    // Отмена сильнее статуса: «Решено» у отменённого похода — ложь.
+    expect(
+      tripStateLabel(trip({ status: 'decided', cancelledAt: '2026-11-26T00:00:00.000Z' })),
+    ).toBe('Отменённый')
+    expect(
+      tripStateLabel(
+        trip({
+          status: 'idea',
+          completedAt: '2026-11-20T00:00:00.000Z',
+          cancelledAt: '2026-11-26T00:00:00.000Z',
+        }),
+      ),
+    ).toBe('Отменённый')
+  })
+
   it('без дат показывает готовность', () => {
     expect(tripWhenText(trip())).toBe('Мечта')
     expect(tripWhenText(trip({ status: 'planning' }))).toBe('Планирую')

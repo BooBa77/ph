@@ -239,8 +239,11 @@ export class TripsController {
   }
 
   /**
-   * Отменить поход. Отмена — отдельная ось: статус подготовки она
-   * не затирает, поход остаётся в базе для истории.
+   * Отменить поход — решение только организатора (26.11.2026, §4.6).
+   *
+   * Отмена необратима и «фризит» поход как завершённый. Ручки возврата в
+   * строй (`DELETE /:id/cancel`) больше нет: активация отменённого — будущая
+   * фича, и оставлять половину её API значило бы обещать её сегодня.
    */
   @Post(':id/cancel')
   @HttpCode(HttpStatus.OK)
@@ -269,17 +272,6 @@ export class TripsController {
     @Param('id', ParseIntPipe) id: number,
   ): Promise<TripResponseDto> {
     return this.tripsService.complete(authUser.id, id);
-  }
-
-  /** Снять отмену: «решили всё-таки идти». */
-  @Delete(':id/cancel')
-  @ApiOperation({ summary: 'Вернуть отменённый поход' })
-  @ApiOkResponse({ type: TripResponseDto })
-  async restore(
-    @CurrentUser() authUser: AuthUser,
-    @Param('id', ParseIntPipe) id: number,
-  ): Promise<TripResponseDto> {
-    return this.tripsService.restore(authUser.id, id);
   }
 
   // ───────────────────────────── состав ─────────────────────────────

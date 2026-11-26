@@ -14,6 +14,27 @@ import { TRIP_STATUS_LABELS, type Trip } from '@/types/trips'
 
 type WhenTrip = Pick<Trip, 'startsAt' | 'endsAt' | 'status'>
 
+/**
+ * Пять состояний похода на экране (26.11.2026, `lifecycle.md` §4.6).
+ *
+ * В базе по-прежнему три `status` плюс две отметки — `completed_at` и
+ * `cancelled_at`. «Завершённый» и «Отменённый» не хранятся отдельными
+ * значениями: статус подготовки не затирается, поэтому пара «отменили
+ * решённый поход» и «отменили мечту» различима, а история не переписана.
+ *
+ * Порядок проверок важен: отмена и завершение взаимоисключающие, но если
+ * данные когда-нибудь разойдутся, отмена — более сильное слово: поход
+ * не состоится. Подпись «Решено» у отменённого похода была бы прямой ложью.
+ */
+export function tripStateLabel(
+  trip: Pick<Trip, 'status' | 'completedAt' | 'cancelledAt'>,
+): string {
+  if (trip.cancelledAt) return 'Отменённый'
+  if (trip.completedAt) return 'Завершённый'
+
+  return TRIP_STATUS_LABELS[trip.status]
+}
+
 /** Дата словами: «5 мая 2027 г.». */
 export function formatTripDate(iso: string): string {
   return new Date(iso).toLocaleDateString('ru-RU', {

@@ -11,11 +11,10 @@ import {
   type MentionLinks,
   type MentionNames,
 } from '@/utils/markdown'
-import { tripFrameParts, tripDatesText } from '@/utils/tripDisplay'
+import { tripFrameParts, tripDatesText, tripStateLabel } from '@/utils/tripDisplay'
 import {
   PARTICIPANT_STATUS_LABELS,
   PRESENCE_STATUS_LABELS,
-  TRIP_STATUS_LABELS,
   type GuestTrip,
   type PresenceStatus,
   type TripParticipant,
@@ -161,7 +160,7 @@ const datesText = computed(() => {
   return tripDatesText(trip.value) || 'не заданы'
 })
 
-const statusText = computed(() => (trip.value ? TRIP_STATUS_LABELS[trip.value.status] : ''))
+const statusText = computed(() => (trip.value ? tripStateLabel(trip.value) : ''))
 const frame = computed(() => (trip.value ? tripFrameParts(trip.value).join(' · ') : ''))
 
 const routeHtml = computed(() => markdownToHtml(trip.value?.routeText ?? '', names.value, links.value))
@@ -319,8 +318,11 @@ onMounted(load)
       <!--
         Альманах — тоже секция «Гостевой» (решение заказчика 22.11.2026).
         Появляется после завершения похода: до него собирать ещё нечего.
+        У отменённого он открыт с 26.11.2026 (§4.6): «альманах подготовки»
+        без требования завершения — иначе шаг отмены не дал бы того, что
+        заказчик назвал доступным.
       -->
-      <TripAlmanac v-if="trip.completedAt" :trip="trip" />
+      <TripAlmanac v-if="trip.completedAt || trip.cancelledAt" :trip="trip" />
     </template>
   </section>
 </template>

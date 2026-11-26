@@ -622,6 +622,7 @@ export class TripTransferService {
       trip,
       lost,
       userId,
+      mirror === null ? [leg.id] : [leg.id, mirror.id],
     );
 
     this.notifications.emitChanged([...new Set(recipients)]);
@@ -829,16 +830,25 @@ export class TripTransferService {
     await manager.delete(TripTransferPassenger, { id: row.id });
 
     // Ушёл из «туда» — уходит и из обратного. Обратное на исходное не влияет.
+    const mirror = await this.mirrorOf(manager, leg);
     await this.removeFromMirror(manager, leg, targetUserId);
 
     /**
      * Место потеряно, только если оно **было**: заявку (`requested`) сняли —
      * человек никуда не ехал, и «не на чем ехать» было бы неправдой (§3.11).
      * Сам ушёл — карточки нет: из получателей его исключает `actorUserId`.
+     * «Билет» снимается в любом случае (26.11.2026): место в этой машине
+     * больше не его, и держать карточку «твой билет» рядом с потерей нельзя.
      */
     const recipients =
       row.status === 'accepted'
-        ? await this.reportSeatsLost(manager, trip, [targetUserId], userId)
+        ? await this.reportSeatsLost(
+            manager,
+            trip,
+            [targetUserId],
+            userId,
+            mirror === null ? [leg.id] : [leg.id, mirror.id],
+          )
         : [];
 
     this.notifications.emitChanged([...new Set(recipients)]);
@@ -1934,16 +1944,33 @@ export class TripTransferService {
    * «Не на чем ехать» — правда только про последнее место: человек, которого
    * сняли с одной машины, но который сидит во второй, ничего не потерял.
    * Себя (`actorUserId`) не уведомляем — это общее правило §3.0.
+   *
+   * **«Билет» снимается всегда** (26.11.2026, решение заказчика): карточка
+   * `transfer_seat` выдана на конкретный рейс, и место в нём потеряно.
+   * `removedLegIds` — рейсы, в которых человек больше не едет (у пары
+   * «туда-обратно» их два). Убираем только эти билеты: остальные места
+   * человека остаются со своими карточками.
    */
   private async reportSeatsLost(
     manager: EntityManager,
     trip: Trip,
     lostUserIds: readonly string[],
     actorUserId: string,
+    removedLegIds: readonly string[],
   ): Promise<string[]> {
     const recipients: string[] = [];
 
     for (const lostUserId of new Set(lostUserIds)) {
+      for (const legId of removedLegIds) {
+        recipients.push(
+          ...(await this.notifications.dropTransferSeat(
+            manager,
+            legId,
+            lostUserId,
+          )),
+        );
+      }
+
       if (lostUserId === actorUserId) continue;
 
       if (await this.hasCarSeat(manager, String(trip.id), lostUserId)) {

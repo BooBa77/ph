@@ -919,6 +919,32 @@ describe('уведомления: генераторы новых типов', (
     expect(events.emitNotifications).not.toHaveBeenCalled();
   });
 
+  it('отмена похода: слова заказчика, одна карточка на поход', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyTripCancelled(manager, {
+      tripId: '193',
+      recipientIds: [BORIS, VERA, BORIS],
+    });
+
+    const rows = insets(query);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual([
+      BORIS,
+      'trip_cancelled',
+      'Поход отменён',
+      'Увы и ах (((',
+      'По объективным причинам поход отменяется. Снаряжение ' +
+        'освобождается. Все понесённые расходы представлены к компенсации',
+      'trip_cancelled:193',
+      null,
+      '193',
+      null,
+    ]);
+    expect(rows[1][0]).toBe(VERA);
+  });
+
   it('смена цели и маршрута: ключи по походу, анонс отдельно', async () => {
     const { manager, query } = eventManager();
     const service = new NotificationsService(asDataSource({}), eventBus());
@@ -1263,6 +1289,25 @@ describe('уведомления: трансфер, палатка и питан
     const [sql, params] = query.mock.calls[0];
     expect(String(sql)).toContain('DELETE FROM "notifications"');
     expect(params).toEqual(['transfer_lost', 'transfer_lost:193', [BORIS]]);
+  });
+
+  it('место потеряно: «билет» этого рейса снимается', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    query.mockResolvedValueOnce([{ recipient_user_id: BORIS }]);
+
+    const recipients = await service.dropTransferSeat(manager, '11', BORIS);
+
+    expect(recipients).toEqual([BORIS]);
+    const [sql, params] = query.mock.calls[0];
+    expect(String(sql)).toContain('DELETE FROM "notifications"');
+    // Ключ — рейс и человек: билет обратного рейса остаётся на месте.
+    expect(params).toEqual([
+      'transfer_seat',
+      `transfer_seat:11:${BORIS}`,
+      [BORIS],
+    ]);
   });
 
   it('палатка: пол в анонсе, ключ похода', async () => {

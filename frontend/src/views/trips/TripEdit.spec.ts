@@ -22,6 +22,7 @@ import TripEdit from '@/views/trips/TripEdit.vue'
 const mocks = vi.hoisted(() => ({
   getTrip: vi.fn(),
   updateTrip: vi.fn(),
+  cancelTrip: vi.fn(),
   listTripTypes: vi.fn(),
   fetchTripTransfer: vi.fn(),
 }))
@@ -29,6 +30,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('@/api/trips', () => ({
   getTrip: mocks.getTrip,
   updateTrip: mocks.updateTrip,
+  cancelTrip: mocks.cancelTrip,
   listTripTypes: mocks.listTripTypes,
   fetchTripTransfer: mocks.fetchTripTransfer,
 }))
@@ -61,6 +63,7 @@ const TRIP: Trip = {
   openParticipation: true,
   priceRub: null,
   priceNote: null,
+  completedAt: null,
   cancelledAt: null,
   createdAt: '2026-10-14T10:00:00.000Z',
   updatedAt: '2026-10-14T10:00:00.000Z',
@@ -87,6 +90,7 @@ async function open(userId = ORGANIZER, trip: Trip = TRIP) {
   signIn(userId)
   mocks.getTrip.mockResolvedValue(trip)
   mocks.updateTrip.mockResolvedValue(trip)
+  mocks.cancelTrip.mockResolvedValue({ ...trip, cancelledAt: '2026-11-26T10:00:00.000Z' })
   mocks.listTripTypes.mockResolvedValue({ types: TOURISM, defaultTypeId: 19 })
   mocks.fetchTripTransfer.mockResolvedValue({ canEdit: true, travelers: [], legs: [] })
 
@@ -281,5 +285,45 @@ describe('TripEdit', () => {
     await flushPromises()
 
     expect(mocks.fetchTripTransfer).not.toHaveBeenCalled()
+  })
+
+  // ─────────── отмена похода (26.11.2026, §4.6) ───────────
+
+  it('у решённого похода переключателя готовности нет', async () => {
+    const { wrapper } = await open()
+
+    expect(wrapper.find('[data-test="status"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="status-locked"]').text()).toBe('Решено')
+  })
+
+  it('отмена — только после подтверждения и с уходом в поход', async () => {
+    const { wrapper, router } = await open()
+
+    expect(wrapper.find('[data-test="trip-cancel-question"]').exists()).toBe(false)
+    await wrapper.find('[data-test="trip-cancel"]').trigger('click')
+    expect(wrapper.find('[data-test="trip-cancel-question"]').exists()).toBe(true)
+
+    // «Оставить как есть» ничего не отправляет и прячет вопрос.
+    await wrapper.find('[data-test="trip-cancel-dismiss"]').trigger('click')
+    expect(mocks.cancelTrip).not.toHaveBeenCalled()
+    expect(wrapper.find('[data-test="trip-cancel-question"]').exists()).toBe(false)
+
+    await wrapper.find('[data-test="trip-cancel"]').trigger('click')
+    await wrapper.find('[data-test="trip-cancel-confirm"]').trigger('click')
+    await flushPromises()
+
+    expect(mocks.cancelTrip).toHaveBeenCalledWith('7')
+    expect(router.currentRoute.value.name).toBe('trip')
+    expect(router.currentRoute.value.params.id).toBe('7')
+  })
+
+  it('у отменённого похода кнопки отмены нет', async () => {
+    const { wrapper } = await open(ORGANIZER, {
+      ...TRIP,
+      cancelledAt: '2026-11-26T10:00:00.000Z',
+    })
+
+    expect(wrapper.find('[data-test="trip-cancel"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="trip-cancel-section"]').exists()).toBe(false)
   })
 })

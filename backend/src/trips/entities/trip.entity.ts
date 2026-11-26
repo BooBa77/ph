@@ -105,10 +105,6 @@ import { GeoObject } from './geo-object.entity';
   `"starts_at" IS NULL OR "ends_at" IS NULL OR "ends_at" >= "starts_at"`,
 )
 @Check(
-  'chk_trips_idea_not_cancelled',
-  `"status" <> 'idea' OR "cancelled_at" IS NULL`,
-)
-@Check(
   'chk_trips_commercial_needs_price',
   `"is_commercial" = false OR "price_rub" IS NOT NULL`,
 )

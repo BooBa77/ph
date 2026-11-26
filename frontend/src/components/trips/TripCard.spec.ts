@@ -86,6 +86,23 @@ describe('TripCard', () => {
     expect(text).toContain('2027')
   })
 
+  it('отменённый и завершённый поход подписаны своими состояниями', () => {
+    const cancelled = mountCard(
+      trip({ cancelledAt: '2026-11-26T00:00:00.000Z' }),
+    )
+      .find('[data-test="trip-card-when"]')
+      .text()
+    expect(cancelled).toContain('Отменённый')
+    expect(cancelled).not.toContain('Решено')
+
+    const completed = mountCard(
+      trip({ completedAt: '2026-11-20T00:00:00.000Z' }),
+    )
+      .find('[data-test="trip-card-when"]')
+      .text()
+    expect(completed).toContain('Завершённый')
+  })
+
   it('коммерция и спортивность видны значками, цены в них нет', () => {
     const wrapper = mountCard(trip({ isCommercial: true, priceRub: 25000, isOfficial: true }))
     const badges = wrapper.findAll('[data-test="trip-card-badge"]').map((badge) => badge.text())

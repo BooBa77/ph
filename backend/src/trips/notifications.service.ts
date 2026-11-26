@@ -43,6 +43,7 @@ import {
   tentLostText,
   transferLostText,
   transferSeatText,
+  tripCancelledText,
   tripDatesText,
   tripExpenseText,
   tripGoalText,
@@ -667,6 +668,31 @@ export class NotificationsService {
     });
   }
 
+  /**
+   * Отмена похода — `trip_cancelled` (§3.3).
+   *
+   * Карточка одна на поход (`trip_cancelled:<поход>`): повторной отмены
+   * не бывает, а если бы ключ делился по получателю, при возврате похода
+   * в строй (будущая фича) у людей остались бы две разные строки.
+   * Получатели приходят готовыми — активный состав без автора; виртуальные
+   * и ушедшие исключены в `tripAudience`.
+   */
+  async notifyTripCancelled(
+    manager: EntityManager,
+    params: { tripId: string; recipientIds: readonly string[] },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'trip_cancelled',
+      ...tripCancelledText(),
+      dedupKey: `trip_cancelled:${params.tripId}`,
+      recipientIds: recipients,
+    });
+  }
+
   /** Смена цели — `trip_goal` (§3.4): одна карточка на поход. */
   async notifyTripGoal(
     manager: EntityManager,
@@ -951,6 +977,36 @@ export class NotificationsService {
     return this.dropCards(manager, 'transfer_lost', `transfer_lost:${tripId}`, [
       recipientId,
     ]);
+  }
+
+  /**
+   * Место в машине потеряно — «билет» больше недействителен (26.11.2026).
+   *
+   * Заказчик: держать рядом «Билет на проезд» и «Проблемы с транспортом»
+   * значит говорить человеку две противоположные вещи. Карточка `transfer_seat`
+   * личная и ключуется рейсом (`transfer_seat:<рейс>:<человек>`), поэтому
+   * удаляется точечно: остальные места (обратный рейс, вторая машина)
+   * остаются со своими билетами. Вернут место — карточка создастся заново
+   * тем же ключом.
+   */
+  async dropTransferSeat(
+    manager: EntityManager,
+    legId: string,
+    passengerUserId: string,
+  ): Promise<string[]> {
+    const recipientId = await this.personalRecipientUserId(
+      manager,
+      passengerUserId,
+    );
+
+    if (recipientId === null) return [];
+
+    return this.dropCards(
+      manager,
+      'transfer_seat',
+      `transfer_seat:${legId}:${passengerUserId}`,
+      [recipientId],
+    );
   }
 
   /**

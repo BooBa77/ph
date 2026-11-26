@@ -149,6 +149,17 @@ const status = ref<TripStatus>(initial?.status ?? 'idea')
 const visibility = ref<TripVisibility>(initial?.visibility ?? 'public')
 
 /**
+ * У решённого похода переключателя готовности нет (26.11.2026, §4.6).
+ *
+ * Заказчик: «Обратного хода „Решено“ → „Планирую“ больше нет. Если даты
+ * сдвинулись — это перенос сроков, а не возврат в планирование». У готового
+ * похода переключатель убирается совсем: показать его, а потом ответить 400,
+ * значит предложить действие, которого нет. Вперёд («Мечта» → «Планирую» →
+ * «Решено») выбор остаётся — у нового похода `initial` пуст.
+ */
+const isDecided = computed(() => initial?.status === 'decided')
+
+/**
  * Открытое участие: участники приглашают своих и заводят людей без аккаунта.
  * По умолчанию включено — до 13.11.2026 участник и так мог завести своего
  * человека без аккаунта, и молча отнять это значило бы сломать привычное.
@@ -563,7 +574,15 @@ defineExpose({ validationProblem })
 
     <!-- Готовность и видимость -->
     <div class="grid gap-4 md:grid-cols-2">
-      <label class="flex flex-col gap-2">
+      <div v-if="isDecided" class="flex flex-col gap-2">
+        <span class="text-sm text-muted">Готовность</span>
+        <span class="text-base text-text" data-test="status-locked">Решено</span>
+        <span class="text-xs text-muted">
+          Поход решён: сдвинулись сроки — это перенос дат, а не возврат в планирование.
+        </span>
+      </div>
+
+      <label v-else class="flex flex-col gap-2">
         <span class="text-sm text-muted">Готовность</span>
         <select
           v-model="status"

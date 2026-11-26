@@ -1971,6 +1971,10 @@ describe('Трансфер похода (e2e)', () => {
     it('убрали пассажира — «не на чем ехать», одна карточка на поход', async () => {
       await remove(carId, memberId, organizerToken);
 
+      // Место потеряно — «билет» на этот рейс тоже снимается (26.11.2026):
+      // две противоположные карточки рядом человеку ничего не объясняют.
+      expect(await cardsOf('transfer_seat')).toHaveLength(0);
+
       const first = await cardsOf('transfer_lost');
       expect(first).toHaveLength(1);
       expect(first[0].recipient_user_id).toBe(memberId);
@@ -2000,6 +2004,9 @@ describe('Трансфер похода (e2e)', () => {
     it('сам ушёл — карточки потери нет', async () => {
       await remove(carId, memberId, memberToken);
 
+      // Своё действие не уведомляется, но свой же «билет» со стола уходит:
+      // человек больше не едет в этой машине.
+      expect(await cardsOf('transfer_seat')).toHaveLength(0);
       expect(await cardsOf('transfer_lost')).toHaveLength(0);
     });
 
