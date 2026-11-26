@@ -1,43 +1,44 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 import NotificationSection from '@/components/notifications/NotificationSection.vue'
 import SidebarIcon from '@/components/ui/SidebarIcon.vue'
 import { useNotificationsStore } from '@/stores/notifications'
-import type { NotificationSection as Section } from '@/types/notifications'
 import {
+  PERSONAL_SECTION_KEY,
   PERSONAL_SECTION_TITLE,
-  SYSTEM_SECTION_TITLE,
+  canReadAllSection,
+  readSectionOpen,
+  tripSectionKey,
+  tripSectionTitle,
+  writeSectionOpen,
 } from '@/utils/notifications'
 
 /**
- * Мобильная панель уведомлений (24.11.2026; заменила панель диалогов
- * 23.11.2026).
+ * Мобильная панель уведомлений (24.11.2026; секции по походам — 26.11.2026).
  *
- * **Заказчик:** «Мобила до xl: две иконки в правом нижнем углу со
- * счётчиками (треугольник с „!“ — системные, конверт — личные); нет
- * уведомлений в секции — нет и её иконки. Иконка открывает панель на своей
- * секции» (§14.1).
+ * **Заказчик:** до `xl` — две иконки в правом нижнем углу со счётчиками
+ * (треугольник — походы, конверт — «Сообщения»). Счётчик треугольника —
+ * **сумма активных карточек по всем походам**, конверта — личные. Секции
+ * без карточек иконки не имеют. Иконка открывает панель; в панели — те же
+ * секции по походам с заголовками и сворачиванием, что в колонке.
  *
- * Отсюда два правила, которых не было у прежней кнопки:
+ * Отсюда правила:
  *
- * 1. **Иконка у секции своя.** Одна кнопка со счётчиком всего непрочитанного
+ * 1. **Иконка у раздела своя.** Одна кнопка со счётчиком всего непрочитанного
  *    не отвечала на вопрос «а что там»: человек не знал, деньги это или
- *    личное сообщение. Треугольник и конверт различают разделы, и счётчик
- *    у каждого свой.
- * 2. **Пустая секция иконки не имеет.** Счётчик 0 не показывается вовсе:
- *    кнопка, у которой всегда ноль, — это мусор в углу экрана.
+ *    личное сообщение.
+ * 2. **Пустой раздел иконки не имеет.** Кнопка, у которой всегда ноль, —
+ *    мусор в углу экрана.
+ * 3. **Панель закрывается сама, когда карточек не осталось** (§1.5):
+ *    последнюю закрыли «ОК», закрыли двойной галочкой или подтвердили
+ *    перевод — пустая панель на весь экран только мешала бы.
  *
  * **Развёрнутая панель — те же секции и те же карточки**, что в колонке:
  * разметка карточки и секции общая (`components/notifications/`), данные —
- * один стор. Копии правил нет: иначе «раскрыто одно уведомление» на мобиле
- * пришлось бы помнить отдельно.
- *
- * **Открытая секция одна.** Иконка открывает панель на своей секции; вторую
- * можно раскрыть кликом по её заголовку — тогда первая свернётся. Так же
- * ведёт себя колонка: раскрыто всегда одно уведомление и одна секция не
- * держит открытой вторую.
+ * один стор. Треугольник показывает все секции походов, конверт —
+ * «Сообщения»; сворачиваются они независимо, как в колонке.
  *
  * **Чего здесь нет намеренно.** Галочки «Уведомлять» и «Скрыть чат»:
  * первая живёт на экране диалога и под чатом похода, вторая — в колонке,
@@ -47,13 +48,13 @@ import {
 const notifications = useNotificationsStore()
 const route = useRoute()
 
-/** Панель открыта. */
-const isOpen = ref(false)
+/** Что открыто: секции походов, «Сообщения» или ничего (панель закрыта). */
+type PanelMode = 'trips' | 'personal'
+const panelMode = ref<PanelMode | null>(null)
 
-/** Какая секция раскрыта; `null` — обе свёрнуты. */
-const activeSection = ref<Section | null>(null)
+const isOpen = computed(() => panelMode.value !== null)
 
-/** Раскрытая карточка — одна на обе секции, как в колонке. */
+/** Раскрытая карточка — одна на всю панель, как в колонке. */
 const expandedId = ref<string | null>(null)
 
 /** Панель: нужен фокус после открытия. */
@@ -61,57 +62,80 @@ const panel = ref<HTMLElement | null>(null)
 
 /**
  * Экран диалога занимает весь экран, и кнопки в углу перекрывали бы поле
- * ввода. Там они не нужны: панель — это вход в диалог и в уведомления,
- * а мы уже в переписке.
+ * ввода. Там они не нужны: панель — это вход в уведомления, а мы уже
+ * в переписке.
  */
 const onDialogScreen = computed(() => route.name === 'messages')
 
-/** У системной секции есть что показать. */
-const hasSystem = computed(() => notifications.system.length > 0)
+/** У походов есть что показать. */
+const hasTrips = computed(() => notifications.tripCards > 0)
 
-/** У личной секции есть что показать. */
-const hasPersonal = computed(() => notifications.personal.length > 0)
-
-/** Всего активных карточек: по нему решается, закрывать ли пустую панель. */
-const total = computed(() => notifications.total)
-
-/** Шапка панели: заголовок и счётчик **своей** секции (25.11.2026). */
-const activeTitle = computed(() =>
-  activeSection.value === 'personal'
-    ? PERSONAL_SECTION_TITLE
-    : SYSTEM_SECTION_TITLE,
-)
-
-const activeCount = computed(() =>
-  activeSection.value === 'personal'
-    ? notifications.personalCount
-    : notifications.systemCount,
-)
+/** У «Сообщений» есть что показать. */
+const hasPersonal = computed(() => notifications.personalCount > 0)
 
 /** «99+» вместо четырёхзначного числа, которое на бейдже не читается. */
 function labelOf(count: number): string {
   return count > 99 ? '99+' : String(count)
 }
 
-const systemLabel = computed(() => labelOf(notifications.systemCount))
+const tripsLabel = computed(() => labelOf(notifications.tripCards))
 const personalLabel = computed(() => labelOf(notifications.personalCount))
 
+/** Шапка панели: какой раздел открыт. */
+const activeTitle = computed(() =>
+  panelMode.value === 'personal' ? PERSONAL_SECTION_TITLE : 'Уведомления',
+)
+
+/** Счётчик шапки — по открытому разделу. */
+const activeCount = computed(() =>
+  panelMode.value === 'personal'
+    ? notifications.personalCount
+    : notifications.tripCards,
+)
+
+/** Сколько карточек в открытом разделе: по нему панель закрывается сама. */
+const visibleCount = computed(() => {
+  if (panelMode.value === 'trips') return notifications.tripCards
+  if (panelMode.value === 'personal') return notifications.personalCount
+
+  return 0
+})
+
+/**
+ * Свёрнутость секций походов — своя у каждой, как в колонке.
+ *
+ * Ключи те же (`localStorage`), поэтому свернуть секцию на телефоне значит
+ * свернуть её же и в колонке: это одна секция, а не две копии состояния.
+ */
+const openState = reactive<Record<string, boolean>>({})
+
+function isOpenSection(sectionKey: string): boolean {
+  if (!(sectionKey in openState)) {
+    openState[sectionKey] = readSectionOpen(sectionKey)
+  }
+
+  return openState[sectionKey] ?? true
+}
+
+function toggleSection(sectionKey: string): void {
+  const next = !isOpenSection(sectionKey)
+  openState[sectionKey] = next
+  writeSectionOpen(sectionKey, next)
+}
+
+function readAll(tripId: string): void {
+  void notifications.readAll(tripId)
+}
+
 function close(): void {
-  isOpen.value = false
-  activeSection.value = null
+  panelMode.value = null
   expandedId.value = null
 }
 
-/** Иконка секции: панель открывается на ней, карточки свёрнуты. */
-function openSection(section: Section): void {
-  activeSection.value = section
+/** Иконка раздела: панель открывается на нём, карточки свёрнуты. */
+function openPanel(mode: PanelMode): void {
+  panelMode.value = mode
   expandedId.value = null
-  isOpen.value = true
-}
-
-/** Заголовок секции: раскрыть её, свёрнутую — свернуть. */
-function toggleSection(section: Section): void {
-  activeSection.value = activeSection.value === section ? null : section
 }
 
 /** Выбор карточки: раскрывается одна, прежняя сворачивается без действий. */
@@ -121,10 +145,9 @@ function expand(id: string): void {
 
 /**
  * Панель закрывается, когда показывать нечего: последнюю карточку закрыли
- * «ОК» или подтвердили перевод, и пустая панель на весь экран только
- * мешала бы.
+ * «ОК», сработала двойная галочка или подтвердили перевод.
  */
-watch(total, (value) => {
+watch(visibleCount, (value) => {
   if (isOpen.value && value === 0) close()
 })
 
@@ -180,29 +203,27 @@ onUnmounted(() => {
   -->
   <div v-if="!onDialogScreen" class="xl:hidden">
     <!--
-      Две иконки, а не одна: «треугольник с !» — системные уведомления,
-      конверт — личные. Счётчик у каждой свой; секция без карточек кнопки
-      не имеет вовсе.
-      25.11.2026, замечание заказчика: иконки стоят **вертикально** — друг
-      под другом. Горизонтальная пара отнимала ширину у контента и на узком
-      экране наезжала на карточки; столбик растёт вверх от нижнего края.
+      Две иконки, а не одна: крупный контурный треугольник — уведомления
+      походов (счётчик — сумма активных карточек по всем походам),
+      конверт — «Сообщения». Раздел без карточек кнопки не имеет вовсе.
+      Столбиком (25.11.2026, замечание заказчика): горизонтальная пара
+      отнимала ширину у контента и на узком экране наезжала на карточки.
     -->
     <div
       class="fixed right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] z-40 flex flex-col items-center gap-2"
     >
       <button
-        v-if="hasSystem"
+        v-if="hasTrips"
         type="button"
         class="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full border-2 border-primary bg-surface text-primary shadow-2xl transition-transform active:scale-95"
-        aria-label="Уведомления"
+        aria-label="Уведомления походов"
         data-test="mobile-notifications-system"
-        @click="openSection('system')"
+        @click="openPanel('trips')"
       >
         <!--
           Крупный контурный треугольник с «!», почти на весь круг
           (44 из 56 px): 25.11.2026 заказчик снял заливку кнопки и попросил
-          именно такой знак. Иконка масштабируется целиком — штрих толстеет
-          вместе с ней и остаётся читаемым.
+          именно такой знак.
         -->
         <span class="block h-11 w-11"><SidebarIcon name="alert" /></span>
 
@@ -210,7 +231,7 @@ onUnmounted(() => {
           class="absolute -top-1 -right-1 min-w-6 rounded-full border border-primary bg-white px-1.5 py-0.5 text-center text-xs font-semibold leading-none text-primary"
           data-test="mobile-notifications-system-badge"
         >
-          {{ systemLabel }}
+          {{ tripsLabel }}
         </span>
       </button>
 
@@ -220,9 +241,9 @@ onUnmounted(() => {
         class="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full border-2 border-primary bg-surface text-primary shadow-2xl transition-transform active:scale-95"
         aria-label="Сообщения"
         data-test="mobile-notifications-personal"
-        @click="openSection('personal')"
+        @click="openPanel('personal')"
       >
-        <!-- Конверт тоже без заливки; окончательный вид — позже (заказчик). -->
+        <!-- Конверт тоже без заливки. -->
         <span class="block h-6 w-6"><SidebarIcon name="mail" /></span>
 
         <span
@@ -255,8 +276,8 @@ onUnmounted(() => {
               {{ activeTitle }}
             </span>
 
-            <!-- Счётчик своей секции, а не сводный: третье число в шапке
-                 заставляло складывать в уме и расходилось с иконками. -->
+            <!-- Счётчик открытого раздела: треугольника — сумма карточек
+                 походов, конверта — личные. -->
             <span
               v-if="activeCount > 0"
               class="rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-white"
@@ -294,37 +315,41 @@ onUnmounted(() => {
             </p>
 
             <p
-              v-else-if="total === 0"
+              v-else-if="visibleCount === 0"
               class="p-2 text-sm text-muted"
               data-test="mobile-messages-empty"
             >
               Пока тихо.
             </p>
 
-            <template v-else>
+            <template v-else-if="panelMode === 'trips'">
               <NotificationSection
-                v-if="hasSystem"
-                section="system"
-                :title="SYSTEM_SECTION_TITLE"
-                :items="notifications.system"
-                :open="activeSection === 'system'"
+                v-for="section in notifications.sections"
+                :key="section.tripId"
+                :section-key="tripSectionKey(section.tripId)"
+                :title="tripSectionTitle(section.tripName)"
+                :items="section.items"
+                :open="isOpenSection(tripSectionKey(section.tripId))"
                 :expanded-id="expandedId"
-                :show-header="activeSection !== 'system'"
+                :can-read-all="canReadAllSection(section.items)"
                 test-prefix="mobile-messages"
-                @toggle="toggleSection('system')"
+                @toggle="toggleSection(tripSectionKey(section.tripId))"
                 @expand="expand"
+                @read-all="readAll(section.tripId)"
               />
+            </template>
 
+            <template v-else-if="panelMode === 'personal'">
+              <!-- Шапка панели уже говорит «Сообщения»: второй заголовок
+                   внутри был бы дублем. -->
               <NotificationSection
-                v-if="hasPersonal"
-                section="personal"
+                :section-key="PERSONAL_SECTION_KEY"
                 :title="PERSONAL_SECTION_TITLE"
                 :items="notifications.personal"
-                :open="activeSection === 'personal'"
+                :open="true"
                 :expanded-id="expandedId"
-                :show-header="activeSection !== 'personal'"
+                :show-header="false"
                 test-prefix="mobile-messages"
-                @toggle="toggleSection('personal')"
                 @expand="expand"
               />
             </template>

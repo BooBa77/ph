@@ -4,18 +4,15 @@ import { computed, ref } from 'vue'
 import { subscribeConversationEvents } from '@/api/events'
 import type { ConversationEvent } from '@/api/events'
 import { ApiError } from '@/api/errors'
-import { listNotifications } from '@/api/notifications'
-import type { AppNotification } from '@/types/notifications'
-import {
-  sortPersonalNotifications,
-  sortSystemNotifications,
-} from '@/utils/notifications'
+import { listNotifications, readAllNotifications } from '@/api/notifications'
+import type { AppNotification, NotificationSectionDto } from '@/types/notifications'
 
 /** Как часто перечитывать уведомления, пока панель открыта. */
 const REFRESH_MS = 60_000
 
 /**
- * Уведомления правой панели — один стор на приложение (24.11.2026).
+ * Уведомления правой панели — один стор на приложение (24.11.2026;
+ * секции по походам — 26.11.2026).
  *
  * **Почему стор, а не запрос в компоненте.** Панель показывают двое:
  * колонка от `xl` (`RightRail.vue`) и мобильная панель
@@ -24,12 +21,17 @@ const REFRESH_MS = 60_000
  * которые могут разойтись. Со стором обе поверхности видят один список
  * по построению.
  *
- * **Почему здесь нет `rows`/`visible`/`muted`.** Панель больше не лента
- * диалогов (§14.1): пустых строк чатов нет, заглушение осталось настройкой
- * диалога и на панель не влияет. Два списка приходят готовыми, а порядок
- * задаёт клиент: «Уведомления» — по шкале приоритета (`utils/notifications`),
- * «Сообщения» — непрочитанные, затем свежие. Сортировка живёт в сторе,
- * а не в каждой секции: список показывают и колонка, и мобильная панель.
+ * **Порядок не пересортировывается.** Сервер отдаёт секции уже в нужном
+ * порядке: идущие/предстоящие по возрастанию даты, прошедшие по убыванию,
+ * без дат по имени; внутри секции — по приоритету и свежести (§1.1).
+ * Прежняя клиентская шкала приоритетов удалена: два порядка на одном
+ * экране разошлись бы при первой правке серверных приоритетов.
+ *
+ * **Счётчики считаются по спискам, а не берутся из ответа.** После закрытия
+ * карточки список перечитывается, но счётчик — длина списка; одно правило
+ * в двух местах разошлось бы. `tripCount` — число секций (для отладки
+ * и заголовков), `tripCards` — сумма активных карточек по походам: именно
+ * её показывает треугольник на мобиле и двойная галочка.
  *
  * **Живость — тот же поток, что у переписки.** Отдельного соединения нет:
  * в `GET /api/conversations/events` приходит вид `notifications`, и по нему
@@ -37,24 +39,31 @@ const REFRESH_MS = 60_000
  * на уровне `api/events.ts`: два стора — одна подписка, а не две.
  */
 export const useNotificationsStore = defineStore('notifications', () => {
-  const system = ref<AppNotification[]>([])
+  const sections = ref<NotificationSectionDto[]>([])
   const personal = ref<AppNotification[]>([])
   const isLoading = ref(true)
   const error = ref<string | null>(null)
 
-  /** Счётчик секции: активные карточки, а не непрочитанные сообщения. */
-  const systemCount = computed(() => system.value.length)
+  /** Сколько секций походов с карточками. */
+  const tripCount = computed(() => sections.value.length)
+
+  /** Счётчик «Сообщений»: активные карточки личных диалогов. */
   const personalCount = computed(() => personal.value.length)
 
-  /** Всего активных: по нему решается, нужна ли мобильная иконка. */
-  const total = computed(() => system.value.length + personal.value.length)
+  /** Сумма активных карточек по всем походам — счётчик треугольника. */
+  const tripCards = computed(() =>
+    sections.value.reduce((sum, section) => sum + section.items.length, 0),
+  )
+
+  /** Всего активных: по нему решается, закрывать ли пустую мобильную панель. */
+  const total = computed(() => tripCards.value + personalCount.value)
 
   async function refresh(): Promise<void> {
     try {
       const data = await listNotifications()
 
-      system.value = sortSystemNotifications(data.system)
-      personal.value = sortPersonalNotifications(data.personal)
+      sections.value = data.sections
+      personal.value = data.personal
       error.value = null
     } catch (problem) {
       error.value =
@@ -65,7 +74,26 @@ export const useNotificationsStore = defineStore('notifications', () => {
   }
 
   /**
-   * Кадр `notifications` — перечитать обе секции целиком.
+   * Двойная зелёная галочка секции похода (§1.3).
+   *
+   * Сервер закрывает всё, кроме `money_transfer` и `payment_request`,
+   * и отвечает `{closed, left}`. Клиент не правит список локально:
+   * после действия он перечитывает панель целиком — так же, как после
+   * «ОК» у карточки, — иначе закрытые по одному месту карточки остались бы
+   * в другом.
+   */
+  async function readAll(tripId: string): Promise<void> {
+    try {
+      await readAllNotifications(tripId)
+      await refresh()
+    } catch (problem) {
+      error.value =
+        problem instanceof ApiError ? problem.message : 'Не удалось закрыть уведомления'
+    }
+  }
+
+  /**
+   * Кадр `notifications` — перечитать секции целиком.
    *
    * DTO в кадре нет намеренно (он зависит от смотрящего: `unreadCount`
    * и `preview`), а секции маленькие — один `GET /notifications` дешевле
@@ -134,14 +162,16 @@ export const useNotificationsStore = defineStore('notifications', () => {
   }
 
   return {
-    system,
+    sections,
     personal,
     isLoading,
     error,
-    systemCount,
+    tripCount,
+    tripCards,
     personalCount,
     total,
     refresh,
+    readAll,
     applyEvent,
     hold,
   }

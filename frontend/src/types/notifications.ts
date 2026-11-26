@@ -1,11 +1,16 @@
 /**
- * Уведомление правой панели (24.11.2026, §14 `topics/messages.md`).
+ * Уведомления правой панели (24.11.2026; секции по походам — 26.11.2026).
  *
  * **Уведомление — не сообщение.** Его заводит только система: у него есть
- * вид, заголовок, текст и свой набор кнопок. Личное сообщение уведомлением
- * не является, но новое сообщение в чате рождает карточку «об этом чате» —
- * поэтому у чатов в карточке есть `preview` и `unreadCount`, а у денег
- * и альманаха их нет.
+ * вид, заголовок, анонс, содержимое и свой набор кнопок. Личное сообщение
+ * уведомлением не является, но новое сообщение в чате рождает карточку
+ * «об этом чате» — поэтому у чатов в карточке есть `preview` и
+ * `unreadCount`, а у денег и альманаха их нет.
+ *
+ * **Секция больше не поле карточки.** С 26.11.2026 сервер отдаёт готовые
+ * `sections` по походам и `personal` отдельно; `section` у карточки удалён,
+ * а панель ничего не вычисляет по `kind`. Куда положить карточку, решает
+ * `tripId` и место в ответе.
  *
  * Имя `AppNotification`, а не `Notification`: в браузере `Notification` —
  * глобальный класс Web Notifications, и одноимённый импорт в компоненте
@@ -15,29 +20,35 @@
 /**
  * Виды, которые заводит сервер (§2.2 `topics/notifications.md`).
  *
- * 26.11.2026 сервер перешёл на новые коды: `almanac` стал
- * `almanac_changed`, `trip_finance` о залоге — `trip_deposit`. Панель
- * переедет на двадцать видов в части 2; пока здесь только те, что уже
- * приходят, — остальные появятся вместе с генераторами.
- *
- * `payment_request` остался прежним кодом вида, но с 26.11.2026 он снова
- * адресный: получатели — должники.
+ * Список совпадает с CHECK в базе (миграция 103): двадцать видов походов
+ * и личный диалог. Серверные генераторы новых типов появятся в частях 3–4,
+ * но тип известен уже сейчас — иначе следующая часть начиналась бы
+ * с правки этого объединения и всех `Record` по нему.
  */
 export type NotificationKind =
   | 'money_transfer'
+  | 'trip_dates'
+  | 'trip_cancelled'
+  | 'trip_goal'
+  | 'trip_route'
   | 'payment_request'
   | 'trip_deposit'
+  | 'participant_joined'
+  | 'participant_left'
+  | 'transfer_seat'
+  | 'transfer_lost'
+  | 'tent_lost'
+  | 'meals_layout'
+  | 'meals_purchase'
+  | 'role_assigned'
+  | 'role_removed'
+  | 'trip_expense'
+  | 'almanac_created'
   | 'almanac_changed'
   | 'trip_chat'
   | 'direct_chat'
 
-/**
- * Раздел панели. Считает сервер по `kind`, клиент не угадывает:
- * `direct_chat` — личные сообщения, всё остальное — системные.
- */
-export type NotificationSection = 'system' | 'personal'
-
-/** Одно сообщение в раскрытии карточки чата (1–3 штуки, до 300 символов). */
+/** Одно сообщение в раскрытии карточки чата (1–3 штуки). */
 export interface NotificationPreview {
   id: string
   body: string
@@ -50,12 +61,18 @@ export interface NotificationPreview {
 export interface AppNotification {
   id: string
   kind: NotificationKind
-  section: NotificationSection
   title: string
+  /**
+   * Анонс свёрнутой карточки (26.11.2026). Отдельный текст, а не начало
+   * `body`: у половины новых видов анонс формулируется иначе. Клиент режет
+   * его до 75 символов (`utils/notifications.ts`).
+   */
+  announce: string
+  /** Содержимое раскрытой карточки — полный текст типа. */
   body: string
   /** Диалог, если карточка про чат; по нему уходит быстрый ответ. */
   conversationId: string | null
-  /** Поход: «Перейти» в бухгалтерию, гостевую и подтверждение перевода. */
+  /** Поход: заголовок секции, «Перейти» и подтверждение перевода. */
   tripId: string | null
   /** Перевод, если карточка денежная: по нему подтверждение. */
   compensationId: string | null
@@ -74,15 +91,38 @@ export interface AppNotification {
 }
 
 /**
- * Оба раздела одним ответом.
+ * Секция похода (§1.1, §6).
  *
- * `systemCount`/`personalCount` сервер считает сам — это длины списков
- * активных карточек. Клиент после закрытия пересчитывает их по спискам:
- * одна и та же правка в двух местах разошлась бы.
+ * `tripName` — готовое имя от сервера (`tripNameOf`: цель, иначе «поход #N»);
+ * префикс «поход» клиент добавляет сам. Порядок секций и карточек задан
+ * сервером — клиент его **не пересортировывает**.
+ */
+export interface NotificationSectionDto {
+  tripId: string
+  tripName: string
+  startsAt: string | null
+  items: AppNotification[]
+}
+
+/**
+ * Ответ `GET /api/notifications`: секции походов, «Сообщения» и счётчики.
+ *
+ * `tripCount` — число секций, `personalCount` — личных карточек, `total` —
+ * все активные карточки. Счётчик секции — длина её `items`, а не
+ * непрочитанные сообщения: пять сообщений в чате остаются одной карточкой.
  */
 export interface NotificationList {
-  system: AppNotification[]
+  sections: NotificationSectionDto[]
   personal: AppNotification[]
-  systemCount: number
+  tripCount: number
   personalCount: number
+  total: number
+}
+
+/** Ответ `POST /api/notifications/read-all` (§5.3). */
+export interface ReadAllResult {
+  /** Сколько карточек закрыто. */
+  closed: number
+  /** Сколько активных карточек в походе осталось. */
+  left: number
 }

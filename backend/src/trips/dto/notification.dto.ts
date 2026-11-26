@@ -4,10 +4,8 @@ import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
 import {
   ARCHIVE_REASONS,
   NOTIFICATION_KINDS,
-  NOTIFICATION_SECTIONS,
   type ArchiveReason,
   type NotificationKind,
-  type NotificationSection,
 } from '../entities/notification.entity';
 
 /**
@@ -42,8 +40,9 @@ export class NotificationPreviewDto {
 /**
  * Уведомление наружу.
  *
- * `section` сервер считает по `kind`: клиент не должен угадывать, куда
- * карточку положить. `unreadCount` и `preview` заполняются только у чатов —
+ * Секцию карточки сервер больше не отдаёт (26.11.2026): карточка лежит
+ * в `sections` похода или в `personal`, и клиенту не нужно угадывать
+ * раздел по виду. `unreadCount` и `preview` заполняются только у чатов —
  * это то, чем карточка чата отличается от денежной и альманаха.
  */
 export class NotificationDto {
@@ -52,9 +51,6 @@ export class NotificationDto {
 
   @ApiProperty({ enum: NOTIFICATION_KINDS })
   kind: NotificationKind;
-
-  @ApiProperty({ enum: NOTIFICATION_SECTIONS })
-  section: NotificationSection;
 
   @ApiProperty({ description: 'Заголовок карточки', example: 'Денежный перевод' })
   title: string;
@@ -134,10 +130,9 @@ export class NotificationSectionDto {
  * две секции, а отдельные блоки по походам плюс «Сообщения» последней.
  * Порядок секций и карточек задаёт сервер, клиент его не пересортировывает.
  *
- * **Легаси `system` живёт до переезда фронта.** Панель части 2 переедет
- * на `sections`, а dev-панель этой сессии ещё читает плоский `system`
- * и поле `section` у карточки. Оба поля удаляются вместе с фронтом —
- * это осознанная временная совместимость, а не второй контракт.
+ * **Легаси `system` и `section` удалены** вместе с переездом фронта
+ * (26.11.2026, часть 2): панель читает `sections` и `personal`, а раздел
+ * карточки определяется её местом в ответе. Второго контракта нет.
  */
 export class NotificationListDto {
   @ApiProperty({ type: [NotificationSectionDto] })
@@ -154,17 +149,6 @@ export class NotificationListDto {
 
   @ApiProperty({ description: 'Активных карточек всего' })
   total: number;
-
-  @ApiProperty({
-    type: [NotificationDto],
-    description:
-      'Легаси плоский список системных карточек для старого фронта. ' +
-      'Удаляется вместе с полем `section` после переезда панели',
-  })
-  system: NotificationDto[];
-
-  @ApiProperty({ description: 'Легаси счётчик плоского списка' })
-  systemCount: number;
 }
 
 /** Тело `POST /api/notifications/read-all` — §5.3. */

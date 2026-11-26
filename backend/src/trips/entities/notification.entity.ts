@@ -56,11 +56,6 @@ export const NOTIFICATION_KINDS = [
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
-/** Разделы панели: системные уведомления и личные сообщения. */
-export const NOTIFICATION_SECTIONS = ['system', 'personal'] as const;
-
-export type NotificationSection = (typeof NOTIFICATION_SECTIONS)[number];
-
 /**
  * Почему денежное уведомление ушло в архив.
  *

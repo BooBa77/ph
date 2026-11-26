@@ -14,7 +14,6 @@ import {
   Notification,
   type ArchiveReason,
   type NotificationKind,
-  type NotificationSection,
 } from './entities/notification.entity';
 import { TripParticipant } from './entities/trip-participant.entity';
 import { Trip } from './entities/trip.entity';
@@ -95,11 +94,6 @@ const CHAT_TITLES: Record<string, string> = {
   trip_finance: 'Чат бухгалтерии',
 };
 
-/** Раздел панели по виду уведомления. */
-export function sectionOf(kind: NotificationKind): NotificationSection {
-  return kind === 'direct_chat' ? 'personal' : 'system';
-}
-
 /** Текст карточки чата: одна строка не длиннее 300 символов (§14.2). */
 export function previewText(body: string): string {
   const trimmed = body.trim();
@@ -177,8 +171,9 @@ export class NotificationsService {
    * без дат последними по имени. Карточки внутри — по шкале приоритета,
    * при равенстве свежие сверху. Клиент порядок не пересортировывает.
    *
-   * **Легаси `system` и `section`** остаются до переезда фронта: dev-панель
-   * этой сессии ещё читает плоский список и делит его по полю карточки.
+   * **`section` у карточки больше нет** (26.11.2026): место карточки в ответе
+   * и есть её раздел. «Сообщения» — личные диалоги (`direct_chat`),
+   * остальное — секции походов.
    */
   async listMine(userId: string): Promise<NotificationListDto> {
     const manager = this.dataSource.manager;
@@ -198,7 +193,7 @@ export class NotificationsService {
     }
 
     const personal = dtos
-      .filter((dto) => dto.section === 'personal')
+      .filter((dto) => dto.kind === 'direct_chat')
       .sort(
         (left, right) =>
           (right.unreadCount ?? 0) - (left.unreadCount ?? 0) ||
@@ -206,7 +201,7 @@ export class NotificationsService {
       );
 
     const system = dtos
-      .filter((dto) => dto.section === 'system')
+      .filter((dto) => dto.kind !== 'direct_chat')
       .sort(
         (left, right) =>
           notificationPriority(right.kind) - notificationPriority(left.kind) ||
@@ -221,8 +216,6 @@ export class NotificationsService {
       tripCount: sections.length,
       personalCount: personal.length,
       total: system.length + personal.length,
-      system,
-      systemCount: system.length,
     };
   }
 
@@ -231,7 +224,7 @@ export class NotificationsService {
    *
    * Карточки без `trip_id` в секции не попадают: у всех видов, кроме
    * `direct_chat`, поход обязателен (§2.1), а строка без него — легаси-
-   * аномалия. В плоском `system` она остаётся, чтобы старый фронт её видел.
+   * аномалия, которую показывать негде.
    */
   private async buildSections(
     manager: EntityManager,
@@ -875,7 +868,6 @@ export class NotificationsService {
     return {
       id: row.id,
       kind: row.kind,
-      section: sectionOf(row.kind),
       title: row.title,
       // Старое поле миграция заполняет из `body`; пустая строка возможна
       // только у строки, вставленной в обход миграции, — отдаём `body`.

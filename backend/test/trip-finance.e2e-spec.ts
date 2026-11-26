@@ -2122,15 +2122,22 @@ describe('Бухгалтерия похода (e2e)', () => {
       expect(await cardsOf('payment_request')).toHaveLength(3);
     });
 
-    it('GET /notifications отдаёт секции походов, анонс и легаси system', async () => {
+    it('GET /notifications отдаёт секции походов и анонс без легаси', async () => {
       const response = await auth(
         request(app.getHttpServer()).get('/api/notifications'),
         b.token,
       ).expect(200);
 
       expect(response.body.tripCount).toBeGreaterThanOrEqual(1);
+      // Секция — это и есть раздел: плоского `system` и поля `section`
+      // у карточки больше нет.
+      expect(response.body).not.toHaveProperty('system');
+      expect(response.body).not.toHaveProperty('systemCount');
       expect(response.body.total).toBe(
-        response.body.system.length + response.body.personal.length,
+        (response.body.sections as Array<{ items: unknown[] }>).reduce(
+          (sum, item) => sum + item.items.length,
+          0,
+        ) + (response.body.personal as unknown[]).length,
       );
 
       const section = (
@@ -2141,7 +2148,7 @@ describe('Бухгалтерия похода (e2e)', () => {
           items: Array<{
             kind: string;
             announce: string;
-            section: string;
+            section?: string;
           }>;
         }>
       ).find((item) => item.tripId === financeNotifyTrip);
@@ -2151,9 +2158,9 @@ describe('Бухгалтерия похода (e2e)', () => {
       expect(section!.items.map((item) => item.kind)).toContain(
         'payment_request',
       );
-      // Анонс — отдельное поле, старый фронт ещё делит по `section`.
+      // Анонс — отдельное поле, `section` у карточки удалён.
       expect(section!.items.every((item) => item.announce.length > 0)).toBe(true);
-      expect(section!.items[0].section).toBe('system');
+      expect(section!.items[0].section).toBeUndefined();
     });
 
     it('«прочитать все» закрывает всё, кроме запроса платежа', async () => {
@@ -2484,13 +2491,17 @@ describe('Бухгалтерия похода (e2e)', () => {
         d.token,
       ).expect(200);
       const card = (
-        cards.body.system as Array<{
-          kind: string;
-          compensationId: string | null;
-          conversationId: string | null;
-          viewerDeclined: boolean | null;
+        cards.body.sections as Array<{
+          items: Array<{
+            kind: string;
+            compensationId: string | null;
+            conversationId: string | null;
+            viewerDeclined: boolean | null;
+          }>;
         }>
-      ).find((row) => row.compensationId === String(pending.id));
+      )
+        .flatMap((section) => section.items)
+        .find((row) => row.compensationId === String(pending.id));
 
       expect(card).toMatchObject({
         kind: 'money_transfer',
@@ -2526,9 +2537,9 @@ describe('Бухгалтерия похода (e2e)', () => {
         d.token,
       ).expect(200);
       expect(
-        (after.body.system as Array<{ compensationId: string | null }>).some(
-          (row) => row.compensationId === String(pending.id),
-        ),
+        (after.body.sections as Array<{ items: Array<{ compensationId: string | null }> }>)
+          .flatMap((section) => section.items)
+          .some((row) => row.compensationId === String(pending.id)),
       ).toBe(false);
 
       const [archived] = (await dataSource.query(

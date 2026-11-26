@@ -1,53 +1,30 @@
-import type { AppNotification, NotificationKind, NotificationSection } from '@/types/notifications'
+import type { AppNotification, NotificationKind } from '@/types/notifications'
 
 /**
- * Правила панели уведомлений: подписи секций, приоритеты, превью и переходы.
+ * Правила панели уведомлений: заголовки секций, анонс, свёрнутость и переходы.
  *
  * Логика, которая не рисует, а решает, живёт здесь и проверяется без
- * монтирования — тот же порядок, что у `utils/conversations.ts` для
- * прежней ленты. Панель теперь одна (две независимые секции), но её
- * показывают двое — колонка и мобильная панель, поэтому заголовки
- * и переходы не должны разойтись.
+ * монтирования — тот же порядок, что у `utils/conversations.ts` для прежней
+ * ленты. Панель показывают двое — колонка и мобильная панель, поэтому
+ * заголовки, ключи хранилища и переходы не должны разойтись.
  */
 
-/** Заголовок первой секции: деньги, альманах и чаты похода (25.11.2026). */
-export const SYSTEM_SECTION_TITLE = 'Уведомления'
-
-/** Заголовок второй секции: личные диалоги. */
+/** Заголовок секции личных диалогов. */
 export const PERSONAL_SECTION_TITLE = 'Сообщения'
+
+/**
+ * Заголовок секции похода (§1.2): «поход {цель похода}».
+ *
+ * Сервер отдаёт `tripName` уже готовым (`tripNameOf`): цель похода, а для
+ * похода без цели — «поход #N». Второй префикс в этом случае не нужен,
+ * иначе получилось бы «поход поход #5».
+ */
+export function tripSectionTitle(tripName: string): string {
+  return tripName.startsWith('поход ') ? tripName : `поход ${tripName}`
+}
 
 /** Виды чатов: у них в карточке последние сообщения и поле быстрого ответа. */
 const CHAT_KINDS: readonly NotificationKind[] = ['trip_chat', 'direct_chat']
-
-/**
- * Шкала приоритета уведомлений (25.11.2026; новые коды — 26.11.2026).
- *
- * 10 — деньги и действие (перевод, залог, «запрос платежа»); 5 — альманах
- * и любые будущие «средние» виды; 1 — чат похода. Личные сообщения в этой
- * шкале не участвуют: у них своя секция и свой порядок («непрочитанные,
- * затем свежие»), смешивать их с уведомлениями заказчик запретил.
- *
- * `trip_deposit` и `almanac_changed` — новые коды прежних `trip_finance`
- * и `almanac`: до переезда панели в части 2 они стоят на тех же местах,
- * а карточка рисует их как прежние виды.
- *
- * Незнакомый вид не должен проваливаться в конец молча: для него
- * действует «средний» приоритет 5 — так новый вид сразу виден в середине,
- * а не после чатов.
- */
-export const NOTIFICATION_PRIORITY: Record<NotificationKind, number> = {
-  money_transfer: 10,
-  trip_deposit: 10,
-  payment_request: 10,
-  almanac_changed: 5,
-  trip_chat: 1,
-  direct_chat: 0,
-}
-
-/** Приоритет вида; незнакомый вид — 5 («средний»). */
-export function notificationPriority(kind: NotificationKind): number {
-  return NOTIFICATION_PRIORITY[kind] ?? 5
-}
 
 /** Чат ли это: карточка раскрывается в последние сообщения и ответ. */
 export function isChatNotification(notification: AppNotification): boolean {
@@ -66,17 +43,12 @@ export function chatUnreadOf(notification: AppNotification): number {
 }
 
 /**
- * Сколько символов текста видно в свёрнутой карточке (25.11.2026).
+ * Сколько символов анонса видно в свёрнутой карточке.
  *
- * Заказчик: «под заголовком — plain(text), обрезанный до 50 символов,
- * с „...“ в конце». Это подпись, а не текст: в раскрытии строки-превью нет
- * вовсе, поэтому дубля последнего сообщения не бывает.
- *
- * 25.11.2026, замечание после живого теста: «увеличим длину анонса
- * до 75 символов». 50 не хватало — текст про залог и расходы обрывался
- * на середине фразы. Одну строку по вёрстке не обещаем: ширина колонки
- * плавает (352 px, мобильная панель), а `line-clamp` заказчик уже отверг
- * — обрезка по символам предсказуема и проверяется без браузера.
+ * Заказчик поднял лимит с 50 до 75 (25.11.2026): текст про залог и расходы
+ * обрывался на середине фразы. Обрезка — по символам, а не `line-clamp`:
+ * ширина колонки плавает (352 px, мобильная панель), а посимвольная
+ * предсказуема и проверяется без браузера.
  */
 export const NOTIFICATION_PREVIEW_CHARS = 75
 
@@ -88,8 +60,6 @@ export function plainText(text: string): string {
 /**
  * Подпись под заголовком свёрнутой карточки.
  *
- * Режем **по символам**, а не `line-clamp`: заказчик просил именно
- * «обрезанный до 50 символов с „...“ в конце», затем поднял лимит до 75.
  * Текст длиннее 75 символов получает три точки, ровно 75 — обходится без них.
  */
 export function previewLine(text: string, limit = NOTIFICATION_PREVIEW_CHARS): string {
@@ -99,57 +69,94 @@ export function previewLine(text: string, limit = NOTIFICATION_PREVIEW_CHARS): s
 }
 
 /**
- * Что показать в подписи свёрнутой карточки.
+ * Анонс карточки — **отдельное поле `announce`** (26.11.2026, §1.4).
  *
- * У чата это последнее сообщение (в `preview` уже лежит обрезанное сервером
- * до 300 символов), у денег и альманаха — тело карточки. Пустой текст
- * превращается в пустую строку: подпись просто не рисуется.
+ * Раньше клиент обрезал `body`, и для видов, где содержимое начинается
+ * с «Увы и ах ((( / По объективным причинам…», анонс получался бессмысленным.
+ * Теперь сервер присылает готовый анонс; у чата в нём уже «автор: текст».
+ * Пустая строка (легаси-строка) откатывается на `body`, чтобы карточка
+ * не осталась без подписи.
  */
 export function notificationPreview(notification: AppNotification): string {
-  const source = isChatNotification(notification)
-    ? (notification.preview.at(-1)?.body ?? notification.body)
-    : notification.body
-
-  return previewLine(source)
+  return previewLine(notification.announce || notification.body)
 }
 
 /**
- * Порядок в «Уведомлениях»: приоритет, внутри — свежие сверху.
+ * Есть ли в секции что закрывать двойной галочкой (§1.3).
  *
- * Сервер отдаёт `updated_at DESC`; клиент переставляет по шкале, потому что
- * приоритет — правило интерфейса, а не запроса: один и тот же список
- * показывают колонка и мобильная панель.
+ * `money_transfer` и `payment_request` сервер не трогает, поэтому кнопка,
+ * которая не закроет ничего, не рисуется вовсе: в секции только перевод или
+ * запрос платежа — значит, нажимать нечего.
  */
-export function sortSystemNotifications(
-  list: readonly AppNotification[],
-): AppNotification[] {
-  return [...list].sort((left, right) => {
-    const byPriority =
-      notificationPriority(right.kind) - notificationPriority(left.kind)
-
-    if (byPriority !== 0) return byPriority
-
-    return Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
-  })
+export function canReadAllSection(items: readonly AppNotification[]): boolean {
+  return items.some(
+    (item) => item.kind !== 'money_transfer' && item.kind !== 'payment_request',
+  )
 }
 
 /**
- * Порядок в «Сообщениях»: сначала непрочитанные, затем по времени.
+ * Вкладка похода для вида уведомления (решение заказчика 26.11.2026, §8).
  *
- * Смешивать с «Уведомлениями» нельзя (заказчик): у личных сообщений своя
- * семантика — «ответили, а я не читал» важнее свежести прочитанного.
+ * Общая таблица вместо `if` в каждой карточке: новая карточка части 5
+ * получает переход отсюда, а не третью копию правил. Виды, которых здесь
+ * нет, ведут на саму страницу похода — без вкладки.
  */
-export function sortPersonalNotifications(
-  list: readonly AppNotification[],
-): AppNotification[] {
-  return [...list].sort((left, right) => {
-    const leftUnread = chatUnreadOf(left) > 0 ? 1 : 0
-    const rightUnread = chatUnreadOf(right) > 0 ? 1 : 0
+const TRIP_TAB_BY_KIND: Partial<Record<NotificationKind, string>> = {
+  money_transfer: 'finance',
+  payment_request: 'finance',
+  trip_deposit: 'finance',
+  trip_route: 'route',
+  tent_lost: 'route',
+  participant_joined: 'members',
+  participant_left: 'members',
+  role_assigned: 'members',
+  role_removed: 'members',
+  transfer_seat: 'transfer',
+  transfer_lost: 'transfer',
+  meals_layout: 'meals',
+  meals_purchase: 'meals',
+  trip_expense: 'finance',
+  almanac_created: 'guest',
+  almanac_changed: 'guest',
+}
 
-    if (leftUnread !== rightUnread) return rightUnread - leftUnread
+/** Вкладка похода для вида уведомления; `null` — вкладки нет. */
+export function tripTabOf(kind: NotificationKind): string | null {
+  return TRIP_TAB_BY_KIND[kind] ?? null
+}
 
-    return Date.parse(right.updatedAt) - Date.parse(left.updatedAt)
-  })
+/**
+ * «Текущий список общих продуктов» — «Питание» с открытым модальным окном
+ * закупки (решение заказчика, §8). Модалка живёт в адресе, поэтому переход
+ * не требует состояния между экранами.
+ */
+export function shoppingRoute(tripId: string): {
+  path: string
+  query: Record<string, string>
+} {
+  return { path: `/trips/${tripId}`, query: { tab: 'meals', modal: 'shopping' } }
+}
+
+/**
+ * Вкладка чата по виду диалога (решение заказчика, §8).
+ *
+ * `conversation.kind` — вид диалога, а не уведомления; карточка чата
+ * перейдёт по этой таблице, когда в DTO появится вид диалога (часть 5).
+ */
+const CHAT_TAB_BY_CONVERSATION_KIND: Record<string, string> = {
+  trip_guest: 'guest',
+  trip_members: 'members',
+  trip_meals: 'meals',
+  trip_transfer: 'transfer',
+  trip_route: 'route',
+  trip_gear: 'gear',
+  trip_first_aid: 'firstAid',
+  trip_finance: 'finance',
+}
+
+/** Вкладка чата по `conversation.kind`; `null` — неизвестный вид. */
+export function chatTabOf(conversationKind: string): string | null {
+  return CHAT_TAB_BY_CONVERSATION_KIND[conversationKind] ?? null
 }
 
 /**
@@ -188,39 +195,47 @@ export function openAlmanacSection(tripId: string): void {
 }
 
 /**
- * Свёрнутость секций правой колонки — **своя у каждой** (25.11.2026).
+ * Ключи свёрнутости секций панели (26.11.2026, §1.2).
  *
- * Заказчик: «у каждой секции свой заголовок, свой счётчик, свой chevron
- * и своё состояние свёрнутости в localStorage». Поэтому не один флаг
- * панели, а два ключа: свернуть «Уведомления» и оставить открытыми
- * «Сообщения» — нормальный сценарий.
+ * Своя свёрнутость у каждого похода и отдельная у «Сообщений»:
+ * `ph.notifications.trip.<tripId>.open` и
+ * `ph.notifications.section.personal.open`. Прежний общий ключ
+ * `ph.notifications.section.system.open` больше не читается и не пишется:
+ * секции «Уведомления» больше нет, а старый ключ оставил бы панель
+ * свёрнутой без всякой причины.
  *
- * По умолчанию секция развёрнута: карточек мало, прятать их за кликом
- * незачем. Ошибку хранилища (приватный режим, запрет) глотаем — это
- * удобство, а не данные.
+ * Ключ секции в панели — либо `trip-<id>`, либо `personal`. Он же попадает
+ * в `data-test` (`rail-toggle-trip-810`), поэтому хранилище и разметка
+ * называют секцию одинаково.
  */
-const RAIL_OPEN_STATE_PREFIX = 'ph.notifications.section'
+export const PERSONAL_SECTION_KEY = 'personal'
 
-function railOpenKey(section: NotificationSection): string {
-  return `${RAIL_OPEN_STATE_PREFIX}.${section}.open`
+/** Ключ секции похода: `trip-<id>`. */
+export function tripSectionKey(tripId: string): string {
+  return `trip-${tripId}`
+}
+
+function sectionStorageKey(sectionKey: string): string {
+  if (sectionKey === PERSONAL_SECTION_KEY) {
+    return 'ph.notifications.section.personal.open'
+  }
+
+  return `ph.notifications.trip.${sectionKey.slice('trip-'.length)}.open`
 }
 
 /** Секция развёрнута? Нет записи или хранилище недоступно — да. */
-export function readSectionOpen(section: NotificationSection): boolean {
+export function readSectionOpen(sectionKey: string): boolean {
   try {
-    return window.localStorage.getItem(railOpenKey(section)) !== '0'
+    return window.localStorage.getItem(sectionStorageKey(sectionKey)) !== '0'
   } catch {
     return true
   }
 }
 
 /** Запомнить свёрнутость секции. */
-export function writeSectionOpen(
-  section: NotificationSection,
-  open: boolean,
-): void {
+export function writeSectionOpen(sectionKey: string, open: boolean): void {
   try {
-    window.localStorage.setItem(railOpenKey(section), open ? '1' : '0')
+    window.localStorage.setItem(sectionStorageKey(sectionKey), open ? '1' : '0')
   } catch {
     // Хранилище недоступно — состояние проживёт до перезагрузки.
   }

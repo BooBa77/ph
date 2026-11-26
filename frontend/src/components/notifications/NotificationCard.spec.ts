@@ -24,8 +24,8 @@ function notification(overrides: Partial<AppNotification> = {}): AppNotification
   return {
     id: '1',
     kind: 'money_transfer',
-    section: 'system',
     title: 'Денежный перевод',
+    announce: 'Анна перевела тебе 1 000 ₽ за поход «Хамар-Дабан».',
     body: 'Анна перевела тебе 1 000 ₽ за поход «Хамар-Дабан».',
     conversationId: '1268',
     tripId: '193',
@@ -43,9 +43,9 @@ function chatNotification(overrides: Partial<AppNotification> = {}): AppNotifica
   return notification({
     id: '2',
     kind: 'direct_chat',
-    section: 'personal',
     title: 'Борис',
-    body: 'Привет',
+    announce: 'Борис: Собираемся в шесть',
+    body: 'Собираемся в шесть',
     conversationId: '1268',
     tripId: null,
     compensationId: null,
@@ -87,10 +87,11 @@ beforeEach(() => {
   vi.clearAllMocks()
   setActivePinia(createPinia())
   notificationsApi.listNotifications.mockResolvedValue({
-    system: [],
+    sections: [],
     personal: [],
-    systemCount: 0,
+    tripCount: 0,
     personalCount: 0,
+    total: 0,
   })
   notificationsApi.closeNotification.mockResolvedValue(undefined)
   conversationsApi.sendConversationMessage.mockResolvedValue({
@@ -111,7 +112,7 @@ describe('NotificationCard', () => {
     const wrapper = mountCard(notification(), { expanded: false })
 
     expect(wrapper.get('[data-test="rail-title-1"]').text()).toBe('Денежный перевод')
-    expect(wrapper.get('[data-test="rail-preview-1"]').text()).toBe(
+    expect(wrapper.get('[data-test="rail-announce-1"]').text()).toBe(
       'Анна перевела тебе 1 000 ₽ за поход «Хамар-Дабан».',
     )
     expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(false)
@@ -143,14 +144,14 @@ describe('NotificationCard', () => {
     }
   })
 
-  it('превью в свёрнутой карточке обрезано до 75 символов', () => {
+  it('анонс в свёрнутой карточке обрезан до 75 символов', () => {
     const long = 'а'.repeat(80)
     const wrapper = mountCard(
-      notification({ kind: 'almanac_changed', body: long, conversationId: null }),
+      notification({ kind: 'almanac_changed', announce: long, conversationId: null }),
       { expanded: false },
     )
 
-    expect(wrapper.get('[data-test="rail-preview-1"]').text()).toBe(
+    expect(wrapper.get('[data-test="rail-announce-1"]').text()).toBe(
       `${'а'.repeat(75)}...`,
     )
   })
@@ -168,7 +169,7 @@ describe('NotificationCard', () => {
       notification({ kind: 'trip_deposit', title: 'Компенсируйте расходы', body }),
     )
 
-    expect(wrapper.find('[data-test="rail-preview-1"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="rail-announce-1"]').exists()).toBe(false)
     expect(wrapper.text()).toContain(body)
   })
 
@@ -275,7 +276,7 @@ describe('NotificationCard', () => {
     expect(wrapper.get('[data-test="rail-unread-2"]').text()).toBe('2')
     expect(wrapper.find('[data-test="rail-confirm"]').exists()).toBe(false)
     // Последнее сообщение не повторяется подписью: в раскрытии её нет.
-    expect(wrapper.find('[data-test="rail-preview-2"]').exists()).toBe(false)
+    expect(wrapper.find('[data-test="rail-announce-2"]').exists()).toBe(false)
 
     await wrapper.get('[data-test="rail-reply-input"]').setValue('Буду')
     await wrapper.get('[data-test="rail-reply-send"]').trigger('click')
@@ -373,7 +374,6 @@ describe('NotificationCard', () => {
       chatNotification({
         id: '5',
         kind: 'trip_chat',
-        section: 'system',
         title: 'Гостевой чат «Хамар-Дабан»',
         tripId: '193',
       }),

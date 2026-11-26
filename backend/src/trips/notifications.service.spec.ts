@@ -12,7 +12,6 @@ import { User } from '../users/entities/user.entity';
 import {
   NotificationsService,
   previewText,
-  sectionOf,
   tripChatTitle,
 } from './notifications.service';
 import {
@@ -65,15 +64,6 @@ function notification(overrides: Partial<Notification>): Notification {
 }
 
 describe('уведомления: чистые правила', () => {
-  it('делит виды на системные и личные', () => {
-    expect(sectionOf('money_transfer')).toBe('system');
-    expect(sectionOf('payment_request')).toBe('system');
-    expect(sectionOf('trip_deposit')).toBe('system');
-    expect(sectionOf('almanac_changed')).toBe('system');
-    expect(sectionOf('trip_chat')).toBe('system');
-    expect(sectionOf('direct_chat')).toBe('personal');
-  });
-
   it('обрезает текст карточки чата до 300 символов', () => {
     expect(previewText('  привет  ')).toBe('привет');
     expect(previewText('а'.repeat(300))).toHaveLength(300);
@@ -202,11 +192,11 @@ describe('уведомления: секции походов', () => {
       'money',
       'almanac',
     ]);
-    // Легаси: плоский список и поле section у карточки.
-    expect(list.system).toHaveLength(3);
-    expect(list.systemCount).toBe(3);
-    expect(list.system[0].section).toBe('system');
-    expect(list.system[0].announce).toBe(list.system[0].body);
+    // Легаси удалён: плоского `system` и поля `section` у карточки нет.
+    expect(list).not.toHaveProperty('system');
+    expect(list).not.toHaveProperty('systemCount');
+    expect(list.sections[0].items[0]).not.toHaveProperty('section');
+    expect(list.sections[0].items[0].announce).toBe(list.sections[0].items[0].body);
   });
 
   it('походы без дат — последними, прошедшие — свежие первыми', async () => {

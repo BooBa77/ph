@@ -1,14 +1,14 @@
 import { apiFetch } from '@/api/client'
-import type { NotificationList } from '@/types/notifications'
+import type { NotificationList, ReadAllResult } from '@/types/notifications'
 
 /**
  * Уведомления правой панели — ручки `/api/notifications` (24.11.2026).
  *
  * **Почему клиент отдельный от `conversations`.** Диалог и уведомление —
- * разные сущности: панель больше не читает ленту чатов (§14.1), а список
- * уведомлений имеет свой контракт (`{system, personal, systemCount,
- * personalCount}`) и свои действия («ОК» без архива, архив денежных).
- * Общий клиент заставил бы каждого читателя знать оба набора полей.
+ * разные сущности: панель не читает ленту чатов (§14.1), а список
+ * уведомлений имеет свой контракт (`{sections, personal, tripCount,
+ * personalCount, total}`) и свои действия («ОК» без архива, «прочитать
+ * все» по секции, архив денежных).
  *
  * **Архивации здесь нет намеренно.** `POST /api/notifications/:id/archive`
  * в API есть, но экрана архива в этом шаге нет (§10 п.8 остаётся открытым):
@@ -17,7 +17,7 @@ import type { NotificationList } from '@/types/notifications'
  * держать в актуальном состоянии.
  */
 
-/** GET /api/notifications — две секции и счётчики. */
+/** GET /api/notifications — секции походов, «Сообщения» и счётчики. */
 export function listNotifications(): Promise<NotificationList> {
   return apiFetch<NotificationList>('/notifications')
 }
@@ -25,10 +25,24 @@ export function listNotifications(): Promise<NotificationList> {
 /**
  * POST /api/notifications/:id/close — «ОК»: убрать карточку без архива.
  *
- * Так закрываются чаты и альманах. Деньги сервер отвергнет (`400`): их
- * состояние меняет подтверждение или оплата, «убрать, чтобы не мешало»
- * оставило бы перевод висеть в расчёте без карточки.
+ * Так закрываются чаты и альманах. Перевод сервер отвергнет (`400`): его
+ * состояние меняет подтверждение, «убрать, чтобы не мешало» оставило бы
+ * перевод висеть в расчёте без карточки.
  */
 export function closeNotification(id: string): Promise<void> {
   return apiFetch<void>(`/notifications/${id}/close`, { method: 'POST' })
+}
+
+/**
+ * POST /api/notifications/read-all — двойная галочка секции похода (§1.3).
+ *
+ * Закрывает активные карточки похода, кроме `money_transfer`
+ * и `payment_request`. `left` — сколько осталось: по нему клиент решает,
+ * исчезла ли секция, и не считает второй раз на своей стороне.
+ */
+export function readAllNotifications(tripId: string): Promise<ReadAllResult> {
+  return apiFetch<ReadAllResult>('/notifications/read-all', {
+    method: 'POST',
+    body: JSON.stringify({ tripId }),
+  })
 }

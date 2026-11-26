@@ -1,30 +1,31 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from 'vue'
+import { computed, onUnmounted, reactive, ref } from 'vue'
 
 import NotificationSection from '@/components/notifications/NotificationSection.vue'
 import { useNotificationsStore } from '@/stores/notifications'
-import type { NotificationSection as Section } from '@/types/notifications'
 import {
+  PERSONAL_SECTION_KEY,
   PERSONAL_SECTION_TITLE,
-  SYSTEM_SECTION_TITLE,
+  canReadAllSection,
   readSectionOpen,
+  tripSectionKey,
+  tripSectionTitle,
   writeSectionOpen,
 } from '@/utils/notifications'
 
 /**
- * Правая колонка — две **независимые** секции уведомлений (25.11.2026).
+ * Правая колонка — самостоятельные секции по походам плюс «Сообщения»
+ * последней (26.11.2026, §1.1).
  *
- * Заказчик после живого теста: общий заголовок «Уведомления» со счётчиком
- * лишний, а секции должны жить сами по себе — «Уведомления» (деньги,
- * альманах, чаты похода) и «Сообщения» (личные диалоги). Каждая со своим
- * заголовком, счётчиком, chevron и **своим состоянием свёрнутости
- * в `localStorage`** (`utils/notifications.ts`). Свернуть «Уведомления»,
- * оставив «Сообщения» открытыми, — нормальный сценарий; прежний один флаг
- * этого не умел.
+ * Заказчик: не один общий блок с заголовком «Уведомления», а **свой блок
+ * у каждого похода** — своё название, свой счётчик, свой chevron и своя
+ * свёрнутость. «Сообщения» остаются отдельной секцией и стоят последними.
+ * Пустая секция не рисуется; если пусто везде — «Пока тихо».
  *
- * **Пустая секция не рисуется**, а если пусты обе — «Пока тихо». Общего
- * счётчика в шапке больше нет: два счётчика у заголовков давали третий,
- * сводный, ради которого человеку приходилось складывать в уме.
+ * **Порядок секций и карточек задаёт сервер**, клиент его не
+ * пересортировывает: идущие и предстоящие по возрастанию даты, прошедшие
+ * по убыванию, без дат по имени; внутри — по приоритету. Прежняя
+ * клиентская шкала приоритетов удалена вместе с этой правкой.
  *
  * **Ширина 352 px** (24.11.2026, было 288): заказчик просил увеличить
  * правую колонку за счёт левого сайдбара. Колонка меню в `App.vue` сузилась
@@ -43,27 +44,39 @@ import {
  */
 const notifications = useNotificationsStore()
 
-/** Раскрытая карточка — одна на обе секции. */
+/** Раскрытая карточка — одна на всю панель. */
 const expandedId = ref<string | null>(null)
 
 /**
  * Свёрнутость секций — своя у каждой и переживает перезагрузку.
  *
- * Состояние читается из `localStorage` при создании, а не при монтировании:
- * компонент живёт всё время, пока открыто приложение, и повторное чтение
- * при каждом заходе на страницу только путало бы.
+ * Состояние ленивое: секций столько, сколько походов с карточками, и читать
+ * все ключи при создании незачем. `localStorage` — источник истины при
+ * первом обращении, дальше живёт реактивная запись.
  */
-const systemOpen = ref(readSectionOpen('system'))
-const personalOpen = ref(readSectionOpen('personal'))
+const openState = reactive<Record<string, boolean>>({})
 
-function toggleSection(section: Section): void {
-  const target = section === 'system' ? systemOpen : personalOpen
-  target.value = !target.value
-  writeSectionOpen(section, target.value)
+function isOpen(sectionKey: string): boolean {
+  if (!(sectionKey in openState)) {
+    openState[sectionKey] = readSectionOpen(sectionKey)
+  }
+
+  return openState[sectionKey] ?? true
+}
+
+function toggleSection(sectionKey: string): void {
+  const next = !isOpen(sectionKey)
+  openState[sectionKey] = next
+  writeSectionOpen(sectionKey, next)
+}
+
+/** Двойная галочка: закрыть всё, кроме денег к действию. */
+function readAll(tripId: string): void {
+  void notifications.readAll(tripId)
 }
 
 const isEmpty = computed(
-  () => notifications.system.length === 0 && notifications.personal.length === 0,
+  () => notifications.tripCards === 0 && notifications.personalCount === 0,
 )
 
 /**
@@ -98,45 +111,60 @@ onUnmounted(() => {
     class="hidden xl:sticky xl:top-[100px] xl:block xl:w-88 xl:shrink-0 xl:self-start"
     data-test="right-rail"
   >
-    <div
-      class="flex max-h-[calc(100vh-7.5rem)] flex-col gap-2 overflow-y-auto rounded-xl border border-border bg-surface p-3"
-    >
-      <p v-if="notifications.isLoading" class="text-sm text-muted" data-test="rail-loading">
+    <div class="flex max-h-[calc(100vh-7.5rem)] flex-col gap-2 overflow-y-auto">
+      <p
+        v-if="notifications.isLoading"
+        class="rounded-xl border border-border bg-surface p-3 text-sm text-muted"
+        data-test="rail-loading"
+      >
         Загружаем…
       </p>
 
-      <p v-else-if="notifications.error" class="text-sm text-muted" data-test="rail-error">
+      <p
+        v-else-if="notifications.error"
+        class="rounded-xl border border-border bg-surface p-3 text-sm text-muted"
+        data-test="rail-error"
+      >
         {{ notifications.error }}
       </p>
 
-      <p v-else-if="isEmpty" class="text-sm text-muted" data-test="rail-empty">
+      <p
+        v-else-if="isEmpty"
+        class="rounded-xl border border-border bg-surface p-3 text-sm text-muted"
+        data-test="rail-empty"
+      >
         Пока тихо.
       </p>
 
       <template v-else>
         <!--
-          Секции независимы: каждая сама решает, рисоваться ли (пустая —
-          нет), и каждая помнит свою свёрнутость.
+          Секции походов идут в серверном порядке (§1.1); клиент его
+          не пересортировывает. У каждой — свой блок, счётчик и chevron.
         -->
         <NotificationSection
-          section="system"
-          :title="SYSTEM_SECTION_TITLE"
-          :items="notifications.system"
-          :open="systemOpen"
+          v-for="section in notifications.sections"
+          :key="section.tripId"
+          :section-key="tripSectionKey(section.tripId)"
+          :title="tripSectionTitle(section.tripName)"
+          :items="section.items"
+          :open="isOpen(tripSectionKey(section.tripId))"
           :expanded-id="expandedId"
+          :can-read-all="canReadAllSection(section.items)"
           test-prefix="rail"
-          @toggle="toggleSection('system')"
+          @toggle="toggleSection(tripSectionKey(section.tripId))"
           @expand="expand"
+          @read-all="readAll(section.tripId)"
         />
 
         <NotificationSection
-          section="personal"
+          v-if="notifications.personalCount > 0"
+          :section-key="PERSONAL_SECTION_KEY"
           :title="PERSONAL_SECTION_TITLE"
           :items="notifications.personal"
-          :open="personalOpen"
+          :open="isOpen(PERSONAL_SECTION_KEY)"
           :expanded-id="expandedId"
           test-prefix="rail"
-          @toggle="toggleSection('personal')"
+          @toggle="toggleSection(PERSONAL_SECTION_KEY)"
           @expand="expand"
         />
       </template>

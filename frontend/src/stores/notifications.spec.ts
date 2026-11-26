@@ -3,22 +3,28 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ConversationEvent } from '@/api/events'
 import { useNotificationsStore } from '@/stores/notifications'
-import type { AppNotification } from '@/types/notifications'
+import type { AppNotification, NotificationSectionDto } from '@/types/notifications'
 
-const { listNotifications, subscribeConversationEvents } = vi.hoisted(() => ({
-  listNotifications: vi.fn(),
-  subscribeConversationEvents: vi.fn(),
+const { listNotifications, readAllNotifications, subscribeConversationEvents } =
+  vi.hoisted(() => ({
+    listNotifications: vi.fn(),
+    readAllNotifications: vi.fn(),
+    subscribeConversationEvents: vi.fn(),
+  }))
+
+vi.mock('@/api/notifications', () => ({
+  listNotifications,
+  readAllNotifications,
+  closeNotification: vi.fn(),
 }))
-
-vi.mock('@/api/notifications', () => ({ listNotifications, closeNotification: vi.fn() }))
 vi.mock('@/api/events', () => ({ subscribeConversationEvents }))
 
 function card(overrides: Partial<AppNotification> = {}): AppNotification {
   return {
     id: '1',
     kind: 'money_transfer',
-    section: 'system',
     title: 'Денежный перевод',
+    announce: 'Анна перевела тебе 1 000 ₽',
     body: 'Анна перевела тебе 1 000 ₽',
     conversationId: '1268',
     tripId: '193',
@@ -29,6 +35,26 @@ function card(overrides: Partial<AppNotification> = {}): AppNotification {
     createdAt: '2026-11-24T10:00:00.000Z',
     updatedAt: '2026-11-24T10:00:00.000Z',
     ...overrides,
+  }
+}
+
+function section(tripId: string, items: AppNotification[]): NotificationSectionDto {
+  return {
+    tripId,
+    tripName: `Поход ${tripId}`,
+    startsAt: null,
+    items,
+  }
+}
+
+function answer(sections: NotificationSectionDto[], personal: AppNotification[]) {
+  return {
+    sections,
+    personal,
+    tripCount: sections.length,
+    personalCount: personal.length,
+    total:
+      sections.reduce((sum, item) => sum + item.items.length, 0) + personal.length,
   }
 }
 
@@ -44,67 +70,64 @@ function frame(kind: ConversationEvent['kind']): ConversationEvent {
 beforeEach(() => {
   vi.clearAllMocks()
   setActivePinia(createPinia())
-  listNotifications.mockResolvedValue({
-    system: [card()],
-    personal: [card({ id: '2', kind: 'direct_chat', section: 'personal', title: 'Борис' })],
-    systemCount: 1,
-    personalCount: 1,
-  })
+  listNotifications.mockResolvedValue(
+    answer(
+      [section('193', [card()]), section('810', [card({ id: '3', kind: 'trip_chat' })])],
+      [card({ id: '2', kind: 'direct_chat', title: 'Борис', tripId: null })],
+    ),
+  )
+  readAllNotifications.mockResolvedValue({ closed: 1, left: 1 })
   subscribeConversationEvents.mockReturnValue(() => undefined)
 })
 
 describe('стор уведомлений', () => {
-  it('загружает две секции и считает счётчики по их длине', async () => {
+  it('загружает секции и личные, считает счётчики по спискам', async () => {
     const store = useNotificationsStore()
     await store.refresh()
 
-    expect(store.system).toHaveLength(1)
+    expect(store.sections).toHaveLength(2)
     expect(store.personal).toHaveLength(1)
-    expect(store.systemCount).toBe(1)
+    expect(store.tripCount).toBe(2)
+    // Счётчик треугольника — карточки, а не секции.
+    expect(store.tripCards).toBe(2)
     expect(store.personalCount).toBe(1)
-    expect(store.total).toBe(2)
+    expect(store.total).toBe(3)
     expect(store.isLoading).toBe(false)
     expect(store.error).toBeNull()
   })
 
   /**
-   * Порядок — правило клиента (25.11.2026): сервер отдаёт «свежие сверху»,
-   * а панель ставит деньги выше альманаха, альманах выше чата; в личных
-   * сначала непрочитанные. Список показывают две поверхности — сортировка
-   * живёт в сторе, чтобы они не разошлись.
+   * Порядок секций и карточек — серверный (§1.1). Клиент его не трогает:
+   * прежняя клиентская шкала приоритетов удалена, иначе два порядка
+   * на одном экране разошлись бы при первой правке серверных приоритетов.
    */
-  it('сортирует «Уведомления» по приоритету, а «Сообщения» — непрочитанные вперёд', async () => {
-    listNotifications.mockResolvedValue({
-      system: [
-        card({ id: 'chat', kind: 'trip_chat' }),
-        card({ id: 'almanac', kind: 'almanac_changed' }),
-        card({ id: 'money' }),
-      ],
-      personal: [
-        card({
-          id: 'read',
-          kind: 'direct_chat',
-          section: 'personal',
-          unreadCount: 0,
-          updatedAt: '2026-11-25T12:00:00.000Z',
-        }),
-        card({
-          id: 'unread',
-          kind: 'direct_chat',
-          section: 'personal',
-          unreadCount: 1,
-          updatedAt: '2026-11-25T08:00:00.000Z',
-        }),
-      ],
-      systemCount: 3,
-      personalCount: 2,
-    })
-
+  it('не пересортировывает секции и карточки', async () => {
     const store = useNotificationsStore()
     await store.refresh()
 
-    expect(store.system.map((item) => item.id)).toEqual(['money', 'almanac', 'chat'])
-    expect(store.personal.map((item) => item.id)).toEqual(['unread', 'read'])
+    expect(store.sections.map((item) => item.tripId)).toEqual(['193', '810'])
+    expect(store.sections[0]?.items.map((item) => item.id)).toEqual(['1'])
+  })
+
+  it('«прочитать все» закрывает секцию похода и перечитывает панель', async () => {
+    listNotifications
+      .mockResolvedValueOnce(
+        answer(
+          [section('193', [card(), card({ id: '4', kind: 'almanac_changed' })])],
+          [],
+        ),
+      )
+      .mockResolvedValueOnce(answer([section('193', [card()])], []))
+
+    const store = useNotificationsStore()
+    await store.refresh()
+    expect(store.tripCards).toBe(2)
+
+    await store.readAll('193')
+
+    expect(readAllNotifications).toHaveBeenCalledWith('193')
+    // В секции остался только перевод — галочке больше нечего закрывать.
+    expect(store.tripCards).toBe(1)
   })
 
   it('ошибку загрузки показывает текстом, а не пустым списком', async () => {
@@ -121,12 +144,12 @@ describe('стор уведомлений', () => {
    * Кадр `notifications` — сигнал, а не данные: DTO зависит от смотрящего
    * (`unreadCount`, `preview`), поэтому панель перечитывает ответ целиком.
    */
-  it('кадр notifications перечитывает обе секции', async () => {
+  it('кадр notifications перечитывает секции', async () => {
     const store = useNotificationsStore()
     await store.applyEvent(frame('notifications'))
 
     expect(listNotifications).toHaveBeenCalledTimes(1)
-    expect(store.total).toBe(2)
+    expect(store.total).toBe(3)
   })
 
   it('кадры сообщений и прочтения панель не трогают', async () => {
