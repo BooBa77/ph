@@ -1969,16 +1969,17 @@ describe('Бухгалтерия похода (e2e)', () => {
   });
 
   /**
-   * Общегрупповые уведомления о деньгах (25.11.2026).
+   * Адресные уведомления о деньгах (26.11.2026).
    *
-   * Заказчик отказался от персональных «запросов платежа»: установка залога
-   * и распределение расходов — новость для всей группы, а участник сам
-   * решает в «Бухгалтерии», чем покрыть. Проверяем то, чего не видит юнит:
-   * кому реально достаётся карточка (автору — нет, виртуальным — нет,
-   * владельцу виртуального — как участнику), дедупликацию по ключу,
-   * обновление суммы, снятие залога и «ОК» без архива.
+   * Заказчик вернул «Запрос платежа» к адресной форме: карточку получает
+   * не вся группа, а должник — у кого остаток отрицательный или ровно ноль
+   * при установленном залоге. Залог остался общегрупповой новостью
+   * (`trip_deposit`). Проверяем то, чего не видит юнит: кому реально
+   * достаётся карточка (автору — нет, виртуальным — нет, ведущему
+   * виртуального-должника — да), дедупликацию по ключу, обновление суммы,
+   * снятие залога и «ОК» без архива.
    */
-  describe('общегрупповые уведомления о деньгах', () => {
+  describe('адресные уведомления о деньгах', () => {
     interface CardRow {
       id: string;
       recipient_user_id: string;
@@ -2039,15 +2040,15 @@ describe('Бухгалтерия похода (e2e)', () => {
       financeVirtualId = virtualViktorId;
     });
 
-    it('установка залога: карточка всем идущим, кроме автора и виртуальных', async () => {
+    it('установка залога: карточка активному составу, кроме автора и виртуальных', async () => {
       await patchTrip(a, { depositRub: 300 }).expect(200);
 
-      const cards = await cardsOf('trip_finance');
+      const cards = await cardsOf('trip_deposit');
 
       expect(recipientsOf(cards)).toEqual([b.id, c.id].sort());
       expect(cards[0]).toMatchObject({
         title: 'Установлен залог',
-        dedup_key: `trip_finance:${financeNotifyTrip}:deposit`,
+        dedup_key: `trip_deposit:${financeNotifyTrip}`,
         conversation_id: null,
         archived_at: null,
       });
@@ -2061,7 +2062,7 @@ describe('Бухгалтерия похода (e2e)', () => {
     it('повторное изменение суммы обновляет ту же карточку', async () => {
       await patchTrip(a, { depositRub: 350 }).expect(200);
 
-      const cards = await cardsOf('trip_finance');
+      const cards = await cardsOf('trip_deposit');
 
       expect(cards).toHaveLength(2);
       expect(cards.every((card) => card.body.includes('350 ₽'))).toBe(true);
@@ -2070,50 +2071,124 @@ describe('Бухгалтерия похода (e2e)', () => {
     it('новому участнику карточка не создаётся, пока залог не изменят', async () => {
       await addGoing(financeNotifyTrip, d);
 
-      expect(recipientsOf(await cardsOf('trip_finance'))).not.toContain(d.id);
+      expect(recipientsOf(await cardsOf('trip_deposit'))).not.toContain(d.id);
 
       // Повторное объявление суммы — и новый участник карточку получает.
       await patchTrip(a, { depositRub: 400 }).expect(200);
 
-      expect(recipientsOf(await cardsOf('trip_finance'))).toContain(d.id);
+      expect(recipientsOf(await cardsOf('trip_deposit'))).toContain(d.id);
     });
 
     it('снятие залога удаляет карточку', async () => {
       await patchTrip(a, { depositRub: null }).expect(200);
 
-      expect(await cardsOf('trip_finance')).toHaveLength(0);
+      expect(await cardsOf('trip_deposit')).toHaveLength(0);
     });
 
-    it('«Компенсируйте расходы» — группе, а не должникам', async () => {
+    it('«Запрос платежа» — адресно должникам, а не всей группе', async () => {
+      // Расход организатора на всех: он в плюсе на 240, остальные —
+      // по −60. Должники: Б, В и Г; виртуальный Виктор — тоже, его
+      // карточка уходит ведущему Б и совпадает с его собственной.
+      await addExpense(financeNotifyTrip, a, {
+        amountRub: 300,
+        split: 'all',
+        description: 'Продукты',
+      });
+
       const response = await askCompensation(a).expect(200);
 
       expect(response.body.notified).toBe(3);
       expect(response.body.recipients).toBe(3);
 
-      const cards = await cardsOf('trip_finance');
+      const cards = await cardsOf('payment_request');
 
-      // Все идущие, кроме автора: Б, В и Г. Виртуальный пропущен.
       expect(recipientsOf(cards)).toEqual([b.id, c.id, d.id].sort());
       expect(cards[0]).toMatchObject({
-        title: 'Компенсируйте расходы',
-        dedup_key: `trip_finance:${financeNotifyTrip}:expenses`,
+        title: 'Запрос платежа',
+        dedup_key: `payment_request:${financeNotifyTrip}:${cards[0].recipient_user_id}`,
         conversation_id: null,
       });
-      expect(cards[0].body).toContain('Расходы по походу');
-      expect(cards[0].body).toContain('Проверь свой баланс');
+      expect(cards[0].body).toContain('призывает участников компенсировать');
+      expect(cards[0].body).toContain('внести залог');
 
-      // Новых «Запросов платежа» больше не бывает.
-      expect(await cardsOf('payment_request')).toHaveLength(0);
+      // Автору карточки нет и группового «Компенсируйте расходы» тоже.
+      expect(recipientsOf(cards)).not.toContain(a.id);
+      expect(await cardsOf('trip_finance')).toHaveLength(0);
     });
 
-    it('повторное нажатие обновляет ту же карточку', async () => {
+    it('повторное нажатие обновляет те же карточки', async () => {
       await askCompensation(a).expect(200);
 
-      expect(await cardsOf('trip_finance')).toHaveLength(3);
+      expect(await cardsOf('payment_request')).toHaveLength(3);
     });
 
-    it('«ОК» закрывает карточку без архива', async () => {
-      const [mine] = (await cardsOf('trip_finance')).filter(
+    it('GET /notifications отдаёт секции походов, анонс и легаси system', async () => {
+      const response = await auth(
+        request(app.getHttpServer()).get('/api/notifications'),
+        b.token,
+      ).expect(200);
+
+      expect(response.body.tripCount).toBeGreaterThanOrEqual(1);
+      expect(response.body.total).toBe(
+        response.body.system.length + response.body.personal.length,
+      );
+
+      const section = (
+        response.body.sections as Array<{
+          tripId: string;
+          tripName: string;
+          startsAt: string | null;
+          items: Array<{
+            kind: string;
+            announce: string;
+            section: string;
+          }>;
+        }>
+      ).find((item) => item.tripId === financeNotifyTrip);
+
+      expect(section).toBeDefined();
+      expect(section!.tripName.length).toBeGreaterThan(0);
+      expect(section!.items.map((item) => item.kind)).toContain(
+        'payment_request',
+      );
+      // Анонс — отдельное поле, старый фронт ещё делит по `section`.
+      expect(section!.items.every((item) => item.announce.length > 0)).toBe(true);
+      expect(section!.items[0].section).toBe('system');
+    });
+
+    it('«прочитать все» закрывает всё, кроме запроса платежа', async () => {
+      await dataSource.query(
+        `INSERT INTO "notifications"
+           ("recipient_user_id", "kind", "title", "announce", "body",
+            "dedup_key", "trip_id")
+         VALUES ($1, 'almanac_changed', 'Альманах', 'анонс', 'тело',
+                 'almanac_changed:' || $2::bigint, $2::bigint)`,
+        [b.id, financeNotifyTrip],
+      );
+
+      const closed = await auth(
+        request(app.getHttpServer()).post('/api/notifications/read-all'),
+        b.token,
+      )
+        .send({ tripId: financeNotifyTrip })
+        .expect(200);
+
+      // Альманах закрыт, запрос платежа остался: он — деньги к действию.
+      expect(closed.body).toEqual({ closed: 1, left: 1 });
+
+      const kinds = (await cardsOf('almanac_changed')).map(
+        (card) => card.recipient_user_id,
+      );
+      expect(kinds).not.toContain(b.id);
+      expect(
+        (await cardsOf('payment_request')).some(
+          (card) => card.recipient_user_id === b.id,
+        ),
+      ).toBe(true);
+    });
+
+    it('«ОК» закрывает запрос платежа без архива', async () => {
+      const [mine] = (await cardsOf('payment_request')).filter(
         (card) => card.recipient_user_id === b.id,
       );
 
@@ -2124,7 +2199,7 @@ describe('Бухгалтерия похода (e2e)', () => {
         b.token,
       ).expect(204);
 
-      const left = (await cardsOf('trip_finance')).filter(
+      const left = (await cardsOf('payment_request')).filter(
         (card) => card.recipient_user_id === b.id,
       );
 

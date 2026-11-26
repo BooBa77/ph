@@ -1355,6 +1355,22 @@ describe('Походы (e2e)', () => {
         .send({ status: 'going' })
         .expect(200);
 
+      /**
+       * Уборка из состава чистит и уведомления (26.11.2026, §4.4):
+       * активные карточки похода удаляются, остаётся только перевод.
+       */
+      await dataSource.query(
+        `INSERT INTO "notifications"
+           ("recipient_user_id", "kind", "title", "announce", "body",
+            "dedup_key", "trip_id")
+         VALUES
+           ($1, 'almanac_changed', 'Альманах', 'анонс', 'тело',
+            'almanac_changed:' || $2::bigint, $2::bigint),
+           ($1, 'money_transfer', 'Денежный перевод', 'анонс', 'тело',
+            'money_transfer:test-' || $2::bigint, $2::bigint)`,
+        [applicantId, tripId],
+      );
+
       await request(app.getHttpServer())
         .delete(`/api/trips/${tripId}/participants/${applicantId}`)
         .set('Authorization', `Bearer ${strangerToken}`)
@@ -1369,6 +1385,14 @@ describe('Походы (e2e)', () => {
         .delete(`/api/trips/${tripId}/participants/${applicantId}`)
         .set('Authorization', `Bearer ${accessToken}`)
         .expect(204);
+
+      const leftCards = (await dataSource.query(
+        `SELECT "kind" FROM "notifications"
+          WHERE "recipient_user_id" = $1 AND "trip_id" = $2
+          ORDER BY "kind"`,
+        [applicantId, tripId],
+      )) as Array<{ kind: string }>;
+      expect(leftCards.map((row) => row.kind)).toEqual(['money_transfer']);
 
       const list = await participants(tripId);
       expect(list.some((item) => item.userId === applicantId)).toBe(false);
@@ -1410,6 +1434,18 @@ describe('Походы (e2e)', () => {
         .send({ status: 'going' })
         .expect(200);
 
+      await dataSource.query(
+        `INSERT INTO "notifications"
+           ("recipient_user_id", "kind", "title", "announce", "body",
+            "dedup_key", "trip_id")
+         VALUES
+           ($1, 'trip_deposit', 'Установлен залог', 'анонс', 'тело',
+            'trip_deposit:' || $2::bigint, $2::bigint),
+           ($1, 'money_transfer', 'Денежный перевод', 'анонс', 'тело',
+            'money_transfer:test-' || $2::bigint, $2::bigint)`,
+        [strangerId, tripId],
+      );
+
       const changed = await request(app.getHttpServer())
         .patch(`/api/trips/${tripId}/participants/me`)
         .set('Authorization', `Bearer ${strangerToken}`)
@@ -1418,6 +1454,19 @@ describe('Походы (e2e)', () => {
 
       expect(changed.body.status).toBe('declined');
       expect(changed.body.isOrganizer).toBe(false);
+
+      /**
+       * Ушёл из похода — его активные карточки этого похода удалены,
+       * остаётся только перевод (§4.4). Будущие события новых не создают:
+       * аудитории считают только активный состав.
+       */
+      const leftCards = (await dataSource.query(
+        `SELECT "kind" FROM "notifications"
+          WHERE "recipient_user_id" = $1 AND "trip_id" = $2
+          ORDER BY "kind"`,
+        [strangerId, tripId],
+      )) as Array<{ kind: string }>;
+      expect(leftCards.map((row) => row.kind)).toEqual(['money_transfer']);
     });
 
     it('состав приватного похода постороннему не виден — 404', async () => {

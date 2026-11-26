@@ -26,7 +26,7 @@ import {
 function card(overrides: Partial<AppNotification> = {}): AppNotification {
   return {
     id: '1',
-    kind: 'almanac',
+    kind: 'almanac_changed',
     section: 'system',
     title: 'Альманах «Пик Черского»',
     body: 'В походе «Пик Черского» новая редакция альманаха',
@@ -56,9 +56,9 @@ describe('заголовки секций', () => {
 describe('шкала приоритета', () => {
   it('деньги и действие — 10, альманах и незнакомые — 5, чат похода — 1', () => {
     expect(notificationPriority('money_transfer')).toBe(10)
-    expect(notificationPriority('trip_finance')).toBe(10)
+    expect(notificationPriority('trip_deposit')).toBe(10)
     expect(notificationPriority('payment_request')).toBe(10)
-    expect(notificationPriority('almanac')).toBe(5)
+    expect(notificationPriority('almanac_changed')).toBe(5)
     expect(notificationPriority('trip_chat')).toBe(1)
     // Новый вид по умолчанию «средний», а не проваливается в конец.
     expect(notificationPriority('future_kind' as never)).toBe(5)
@@ -70,7 +70,7 @@ describe('шкала приоритета', () => {
       card({ id: 'old-almanac', updatedAt: '2026-11-25T09:00:00.000Z' }),
       card({ id: 'money', kind: 'money_transfer', updatedAt: '2026-11-25T08:00:00.000Z' }),
       card({ id: 'new-almanac', updatedAt: '2026-11-25T11:00:00.000Z' }),
-      card({ id: 'finance', kind: 'trip_finance', updatedAt: '2026-11-25T10:00:00.000Z' }),
+      card({ id: 'finance', kind: 'trip_deposit', updatedAt: '2026-11-25T10:00:00.000Z' }),
     ]
 
     expect(sortSystemNotifications(list).map((item) => item.id)).toEqual([

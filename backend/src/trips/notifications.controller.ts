@@ -20,6 +20,8 @@ import type { AuthUser } from '../auth/decorators/current-user.decorator';
 import {
   ArchiveNotificationDto,
   NotificationListDto,
+  ReadAllNotificationsDto,
+  ReadAllNotificationsResultDto,
 } from './dto/notification.dto';
 import { NotificationsService } from './notifications.service';
 
@@ -50,6 +52,24 @@ export class NotificationsController {
   @ApiOkResponse({ type: NotificationListDto })
   async list(@CurrentUser() authUser: AuthUser): Promise<NotificationListDto> {
     return this.notificationsService.listMine(authUser.id);
+  }
+
+  /**
+   * Двойная зелёная галочка в заголовке секции похода (§1.3, §5.3).
+   *
+   * Закрывает всё, кроме `money_transfer` и `payment_request`; пустая
+   * секция после этого исчезает. `tripId` — в теле, а не в пути: это
+   * действие над секцией панели, а не над самой карточкой.
+   */
+  @Post('read-all')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Закрыть активные уведомления похода' })
+  @ApiOkResponse({ type: ReadAllNotificationsResultDto })
+  async readAll(
+    @CurrentUser() authUser: AuthUser,
+    @Body() dto: ReadAllNotificationsDto,
+  ): Promise<ReadAllNotificationsResultDto> {
+    return this.notificationsService.readAll(authUser.id, dto.tripId);
   }
 
   /**

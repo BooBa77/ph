@@ -57,8 +57,14 @@ const item = computed(() => props.notification)
 const isChat = computed(() => isChatNotification(item.value))
 const isTransfer = computed(() => item.value.kind === 'money_transfer')
 const isPaymentRequest = computed(() => item.value.kind === 'payment_request')
-const isTripFinance = computed(() => item.value.kind === 'trip_finance')
-const isAlmanac = computed(() => item.value.kind === 'almanac')
+/**
+ * 26.11.2026 сервер перешёл на новые коды: залог — `trip_deposit`,
+ * альманах — `almanac_changed`. Панель переедет на новые виды в части 2;
+ * до этого карточка рисует их как прежние `trip_finance` и `almanac` —
+ * это единственная совместимость фронта в этой сессии.
+ */
+const isTripFinance = computed(() => item.value.kind === 'trip_deposit')
+const isAlmanac = computed(() => item.value.kind === 'almanac_changed')
 const isDirectChat = computed(() => item.value.kind === 'direct_chat')
 const unread = computed(() => chatUnreadOf(item.value))
 

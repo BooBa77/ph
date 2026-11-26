@@ -69,6 +69,7 @@ import { NotificationsService } from './notifications.service';
 import { TripsService } from './trips.service';
 import { tripNameOf } from './trip-name';
 import { UsersService } from '../users/users.service';
+import { User } from '../users/entities/user.entity';
 
 /** Сегодняшняя дата строкой `ГГГГ-ММ-ДД` (сервер живёт в UTC). */
 function todayIso(): string {
@@ -903,26 +904,21 @@ export class TripFinanceService {
   }
 
   /**
-   * «Компенсируйте расходы» — общегрупповое уведомление (25.11.2026).
+   * «Запрос платежа» — снова адресный: только должникам (26.11.2026).
    *
-   * Заказчик пересмотрел прежнюю кнопку «Отправить уведомления
-   * о компенсации»: вместо персональных «Запрос платежа» должникам
-   * участники получают групповую карточку «Расходы по походу «…»
-   * распределены. Проверь свой баланс в „Бухгалтерии“ — там видно, кому
-   * и сколько перевести». Никаких «ты должен»: сколько и кому, человек
-   * решает сам во вкладке.
+   * Решение заказчика отменяет групповую карточку «Компенсируйте расходы»
+   * от 25.11.2026: организатор нажимает кнопку, и карточку получает
+   * **конкретный человек с долгом**, а не вся группа. Критерий прежний
+   * и считается существующей функцией: остаток отрицательный **или** ровно
+   * ноль при установленном залоге. Суммы и формулы не меняются.
    *
-   * **Кому.** Всем идущим, кроме автора действия и людей без аккаунта.
-   * Должники не считаются — иначе это был бы прежний персональный
-   * запрос платежа с другим заголовком.
-   *
-   * **Дедупликация.** `trip_finance:<поход>:expenses`: повторное нажатие
-   * обновляет ту же карточку. Новый участник получает её только при
-   * повторном нажатии — карточка заводится здесь, а не при вступлении.
+   * **Кому.** Идущим должникам; автор действия исключён. Человеку без
+   * аккаунта карточка уходит его ведущему (§4.2): запрос адресный,
+   * и владелец распоряжается деньгами участника. Если ведущий сам должник,
+   * карточка у него одна — ключ дедупликации считает получателя.
    *
    * **Права прежние:** организатор и соорганизатор, пока сам идёт.
-   * Карточка закрывается «ОК» без архива: это напоминание, а не долг,
-   * который надо «оплатить» в карточке.
+   * «ОК» у карточки разрешён, оплата долга уводит её в архив (`paid`).
    */
   async requestPayments(
     userId: string,
@@ -948,20 +944,34 @@ export class TripFinanceService {
         );
       }
 
-      const tripName = await tripNameOf(manager, trip);
-      const recipientIds = await this.notifications.tripFinanceRecipients(
-        manager,
-        String(trip.id),
-        userId,
-      );
+      const author = await manager.findOne(User, { where: { id: userId } });
+      const authorName = author?.displayName ?? 'Организатор';
 
-      await this.notifications.notifyTripFinanceExpenses(manager, {
-        tripId: String(trip.id),
-        tripName,
-        recipientIds,
-      });
+      const debtors = await this.paymentRequestRecipients(manager, trip);
+      const recipients = new Set<string>();
 
-      sent.push(...recipientIds);
+      for (const debtor of debtors) {
+        // Виртуальный должник — карточка его ведущему; без владельца
+        // класть её некуда.
+        const recipientId = await this.notifications.personalRecipientUserId(
+          manager,
+          debtor.userId,
+        );
+
+        if (recipientId === null || recipientId === userId) continue;
+
+        recipients.add(recipientId);
+      }
+
+      for (const recipientId of recipients) {
+        await this.notifications.notifyPaymentRequest(manager, {
+          recipientUserId: recipientId,
+          tripId: String(trip.id),
+          authorName,
+        });
+      }
+
+      sent.push(...recipients);
 
       return this.buildView(manager, trip, userId);
     });
@@ -973,6 +983,45 @@ export class TripFinanceService {
     }
 
     return { ...view, notified: sent.length, recipients: sent.length };
+  }
+
+  /**
+   * Кому просить платёж: отрицательный остаток, а при залоге — и ноль.
+   *
+   * Остаток — `remainingFromEntities`, та же функция, что считает «с учётом
+   * ожидающих» на вкладке: второго расчёта денег быть не должно. Критерий
+   * восстановлен из прежней адресной версии (до групповой карточки
+   * 25.11.2026) без изменения формул.
+   */
+  private async paymentRequestRecipients(
+    manager: EntityManager,
+    trip: Trip,
+  ): Promise<TripParticipant[]> {
+    const tripId = String(trip.id);
+    const { expenses, compensations } = await this.loadMoney(manager, tripId);
+    const participants = await this.goingParticipants(manager, tripId);
+    const memberIds = participants.map((item) => item.userId);
+
+    const adjustments = await manager.find(TripDepositAdjustment, {
+      where: { tripId },
+    });
+    const remaining = remainingFromEntities(
+      expenses,
+      compensations,
+      memberIds,
+      adjustments.map((row) => ({
+        userId: row.userId,
+        amountRub: row.amountRub,
+      })),
+    );
+
+    const hasDeposit = trip.depositRub !== null && trip.depositRub > 0;
+
+    return participants.filter((participant) => {
+      const rest = remaining.get(participant.userId) ?? 0;
+
+      return rest < 0 || (hasDeposit && rest === 0);
+    });
   }
 
   /**

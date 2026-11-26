@@ -1815,29 +1815,31 @@ export class TripsService {
 
         /**
          * Установка, изменение и снятие залога — общегрупповое уведомление
-         * (25.11.2026, §14 `messages.md`, §2.5 `finance.md`).
+         * (26.11.2026, §3.7 `topics/notifications.md`).
          *
          * Заказчик: залог — не персональный «ты должен», а новость для
          * группы: каждый сам решает в «Бухгалтерии», покрыть его расходами
-         * или переводом. Карточка одна на поход
-         * (`trip_finance:<поход>:deposit`): повторная правка суммы её
-         * обновляет, снятие залога — удаляет.
+         * или переводом. Карточка одна на поход (`trip_deposit:<поход>`):
+         * повторная правка суммы её обновляет, снятие залога — удаляет.
          *
-         * Автор действия карточку не получает, люди без аккаунта — тоже.
-         * Новым участникам после установки залога карточку не создаём:
-         * она заводится здесь, а не при вступлении в поход.
+         * Получатели — активный состав (`going`, `maybe`, `helping`), автор
+         * действия и люди без аккаунта исключены. Новым участникам после
+         * установки залога карточку не создаём: она заводится здесь,
+         * а не при вступлении в поход.
          */
         const financeRecipients: string[] = [];
 
         if (previousDepositRub !== saved.depositRub) {
           if (saved.depositRub !== null && saved.depositRub > 0) {
-            const recipientIds = await this.notifications.tripFinanceRecipients(
+            // Активный состав похода (§4.1): `going`, `maybe`, `helping`,
+            // кроме автора действия и людей без аккаунта.
+            const recipientIds = await this.notifications.tripAudience(
               manager,
               String(saved.id),
-              userId,
+              { actorUserId: userId },
             );
 
-            await this.notifications.notifyTripFinanceDeposit(manager, {
+            await this.notifications.notifyTripDeposit(manager, {
               tripId: String(saved.id),
               tripName: await tripNameOf(manager, saved),
               amountRub: saved.depositRub,
@@ -1847,7 +1849,7 @@ export class TripsService {
             financeRecipients.push(...recipientIds);
           } else {
             financeRecipients.push(
-              ...(await this.notifications.dropTripFinanceDeposit(
+              ...(await this.notifications.dropTripDeposit(
                 manager,
                 String(saved.id),
               )),
@@ -2302,6 +2304,10 @@ export class TripsService {
     const result = await this.dataSource.transaction(async (manager) => {
       const trip = await this.findVisibleTrip(manager, userId, id);
 
+      // Сколько активных карточек снялось вместе с уходом из похода:
+      // по ненулю после COMMIT уходит кадр «перечитай уведомления».
+      let droppedNotifications = 0;
+
       const participant = await manager.findOne(TripParticipant, {
         where: { tripId: trip.id, userId },
         relations: { user: true },
@@ -2394,6 +2400,19 @@ export class TripsService {
             tripId: trip.id,
             userId,
           });
+
+          /**
+           * Ушёл из похода — его активные уведомления этого похода
+           * удаляются, остаются только переводы (§4.4). Иначе человек,
+           * который уже не идёт, продолжал бы получать карточки чата,
+           * альманаха и залога; будущие события новых ему не создают —
+           * аудитории считают только активный состав.
+           */
+          droppedNotifications = await this.notifications.dropForTripUser(
+            manager,
+            String(trip.id),
+            userId,
+          );
         }
       }
 
@@ -2406,6 +2425,7 @@ export class TripsService {
         dietChanged,
         statusChanged,
         left: statusChanged && status === 'declined',
+        droppedNotifications,
       };
     });
 
@@ -2423,6 +2443,11 @@ export class TripsService {
       // данные заново, иначе список показывал бы человека, которого нет.
       this.events.emitGear(String(id), userId);
       this.events.emitRoute(String(id), userId);
+    }
+    if (result.droppedNotifications > 0) {
+      // Карточки исчезли из панели ушедшего: сам он их больше не увидит,
+      // а открытая вкладка должна перечитать секции сразу.
+      this.notifications.emitChanged([userId]);
     }
 
     return result.participant;
@@ -2722,6 +2747,8 @@ export class TripsService {
     id: number,
     targetUserId: string,
   ): Promise<void> {
+    let droppedNotifications = 0;
+
     await this.dataSource.transaction(async (manager) => {
       const trip = await this.findManagedTrip(manager, actorUserId, id);
 
@@ -2751,6 +2778,17 @@ export class TripsService {
       // Уборка — в общем помощнике (`trip-participant-detach.ts`): тем же
       // путём удаляют человека без аккаунта из «Контактов», и второй
       // экземпляр этой логики однажды разошёлся бы с первым.
+      //
+      // Уведомления чистятся до уборки: это то же правило, что у ухода
+      // в `declined` (§4.4), — остаются только переводы. В «Контактах»
+      // отдельная чистка не нужна: там удаляется сам пользователь,
+      // и карточки уходят каскадом `recipient_user_id`.
+      droppedNotifications = await this.notifications.dropForTripUser(
+        manager,
+        String(trip.id),
+        targetUserId,
+      );
+
       await detachTripParticipant(
         manager,
         trip.id,
@@ -2758,6 +2796,10 @@ export class TripsService {
         displayNameOf(participant.user),
       );
     });
+
+    if (droppedNotifications > 0) {
+      this.notifications.emitChanged([targetUserId]);
+    }
   }
 
   /**

@@ -16,26 +16,40 @@ import { TripCompensation } from './trip-compensation.entity';
 import { Trip } from './trip.entity';
 
 /**
- * Виды уведомлений (24.11.2026; `trip_finance` — 25.11.2026, §14 `messages.md`).
+ * Виды уведомлений (26.11.2026, §2.2 `topics/notifications.md`).
  *
- * Шесть штук: деньги, альманах, чаты похода, личные сообщения и
- * **общегрупповое уведомление о деньгах похода** (`trip_finance`).
- * `kind` без CHECK в базе? Нет — здесь CHECK есть: вид уведомления
- * определяет и раздел, и набор кнопок, и клиент не должен получать
- * незнакомый вид молча. Новый вид — строка в этом списке и миграция
- * на CHECK, это осознанный шаг.
+ * Двадцать видов походов плюс `direct_chat` — личная переписка, которая
+ * в секции похода не попадает. `kind` без CHECK в базе? Нет — здесь CHECK
+ * есть: вид уведомления определяет и секцию, и набор кнопок, и клиент
+ * не должен получать незнакомый вид молча. Новый вид — строка в этом
+ * списке и миграция на CHECK, это осознанный шаг.
  *
- * **`payment_request` остался только для старых данных.** С 25.11.2026
- * запрос платежа и уведомление о залоге — это `trip_finance`: не «ты
- * должен», а «загляни в „Бухгалтерию“ и реши сам». Новые карточки
- * `payment_request` не создаются (миграция 102 расширила CHECK, а не
- * заменила вид — легаси-строки должны остаться читаемыми).
+ * **Легаси переведён миграцией 103.** `almanac` стал `almanac_changed`,
+ * `trip_finance` о залоге — `trip_deposit`, старые групповые
+ * `trip_finance` о расходах удалены. `payment_request` остался тем же
+ * кодом, но с 26.11.2026 он снова **адресный**: получатели — должники,
+ * которым организатор напоминает об оплате.
  */
 export const NOTIFICATION_KINDS = [
   'money_transfer',
+  'trip_dates',
+  'trip_cancelled',
+  'trip_goal',
+  'trip_route',
   'payment_request',
-  'trip_finance',
-  'almanac',
+  'trip_deposit',
+  'participant_joined',
+  'participant_left',
+  'transfer_seat',
+  'transfer_lost',
+  'tent_lost',
+  'meals_layout',
+  'meals_purchase',
+  'role_assigned',
+  'role_removed',
+  'trip_expense',
+  'almanac_created',
+  'almanac_changed',
   'trip_chat',
   'direct_chat',
 ] as const;
@@ -75,9 +89,10 @@ export type ArchiveReason = (typeof ARCHIVE_REASONS)[number];
  * Поэтому `messages` не меняется вовсе (§14.1 п.6 решения заказчика).
  *
  * **Дедупликация — ключом.** Одно и то же — одна карточка: новое сообщение
- * обновляет существующую, второй не заводит. Ключи: `trip_chat:<диалог>`,
- * `direct_chat:<диалог>`, `almanac:<поход>`, `money_transfer:<перевод>`,
- * `payment_request:<поход>`. Уникальность — `(recipient_user_id, dedup_key)`:
+ * обновляет существующую, второй не заводит. Ключи — §2.3
+ * `topics/notifications.md`: `trip_chat:<диалог>`, `money_transfer:<перевод>`,
+ * `payment_request:<поход>:<человек>`, `trip_deposit:<поход>`,
+ * `almanac_changed:<поход>`. Уникальность — `(recipient_user_id, dedup_key)`:
  * у двух получателей один перевод — две карточки, и это правильно.
  *
  * **Закрытие и архив — разные вещи.** «ОК» у чата и альманаха удаляет
@@ -97,7 +112,12 @@ export type ArchiveReason = (typeof ARCHIVE_REASONS)[number];
 @Index('IDX_notifications_recipient_active', ['recipientUserId', 'archivedAt'])
 @Check(
   'chk_notifications_kind',
-  `"kind" IN ('money_transfer', 'payment_request', 'trip_finance', 'almanac', 'trip_chat', 'direct_chat')`,
+  `"kind" IN ('money_transfer', 'trip_dates', 'trip_cancelled', 'trip_goal',
+    'trip_route', 'payment_request', 'trip_deposit', 'participant_joined',
+    'participant_left', 'transfer_seat', 'transfer_lost', 'tent_lost',
+    'meals_layout', 'meals_purchase', 'role_assigned', 'role_removed',
+    'trip_expense', 'almanac_created', 'almanac_changed', 'trip_chat',
+    'direct_chat')`,
 )
 @Check(
   'chk_notifications_archive',
@@ -129,6 +149,17 @@ export class Notification {
   /** Текст карточки; у чатов — последнее сообщение, обрезанное до 300. */
   @Column({ type: 'text' })
   body: string;
+
+  /**
+   * Анонс свёрнутой карточки (26.11.2026, §1.4 `topics/notifications.md`).
+   *
+   * Отдельное поле, потому что для половины новых видов анонс — не начало
+   * содержимого: «Увы и ах (((» против «По объективным причинам поход
+   * отменяется…». У старых строк миграция заполняет его из `body`; там, где
+   * тексты совпадают, это нормально (решение заказчика).
+   */
+  @Column({ type: 'text', default: '' })
+  announce: string;
 
   /** Ключ дедупликации, см. описание класса. */
   @Column({ name: 'dedup_key', type: 'varchar', length: 120 })

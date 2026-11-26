@@ -125,7 +125,7 @@ describe('NotificationCard', () => {
    * такие карточки выглядели бледнее чатов.
    */
   it('заголовок жирный у любого вида, а не только у непрочитанного', () => {
-    for (const kind of ['money_transfer', 'trip_finance', 'almanac'] as const) {
+    for (const kind of ['money_transfer', 'trip_deposit', 'almanac_changed'] as const) {
       const wrapper = mountCard(
         notification({
           kind,
@@ -146,7 +146,7 @@ describe('NotificationCard', () => {
   it('превью в свёрнутой карточке обрезано до 75 символов', () => {
     const long = 'а'.repeat(80)
     const wrapper = mountCard(
-      notification({ kind: 'almanac', body: long, conversationId: null }),
+      notification({ kind: 'almanac_changed', body: long, conversationId: null }),
       { expanded: false },
     )
 
@@ -165,7 +165,7 @@ describe('NotificationCard', () => {
       'в «Бухгалтерии» — там видно, кому и сколько перевести.'
 
     const wrapper = mountCard(
-      notification({ kind: 'trip_finance', title: 'Компенсируйте расходы', body }),
+      notification({ kind: 'trip_deposit', title: 'Компенсируйте расходы', body }),
     )
 
     expect(wrapper.find('[data-test="rail-preview-1"]').exists()).toBe(false)
@@ -245,7 +245,7 @@ describe('NotificationCard', () => {
     const wrapper = mountCard(
       notification({
         id: '4',
-        kind: 'almanac',
+        kind: 'almanac_changed',
         title: 'Альманах «Хамар-Дабан»',
         body: 'В походе «Хамар-Дабан» новая редакция альманаха',
         conversationId: null,
@@ -294,7 +294,7 @@ describe('NotificationCard', () => {
     const wrapper = mountCard(
       notification({
         id: '6',
-        kind: 'trip_finance',
+        kind: 'trip_deposit',
         title: 'Установлен залог',
         body:
           'В походе «Пик Черского» установлен залог 300 ₽ с человека. ' +

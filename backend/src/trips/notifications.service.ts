@@ -3,7 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { DataSource, type EntityManager, In, IsNull, Not } from 'typeorm';
+import { DataSource, type EntityManager, In, IsNull } from 'typeorm';
 
 import { User } from '../users/entities/user.entity';
 import { ConversationEventsService } from './conversation-events.service';
@@ -24,29 +24,52 @@ import {
   type NotificationDto,
   type NotificationListDto,
   type NotificationPreviewDto,
+  type NotificationSectionDto,
+  type ReadAllNotificationsResultDto,
 } from './dto/notification.dto';
+import {
+  almanacChangedText,
+  chatAnnounce,
+  depositText,
+  notificationPriority,
+  paymentRequestText,
+} from './notification-text';
+import { type ParticipantStatus } from './trip.types';
 import { returningRows } from './query-rows';
 import { tripNameOf } from './trip-name';
 
-/** Денежные виды: только они уходят в архив и не закрываются «ОК». */
+/**
+ * Денежные виды: только они уходят в архив.
+ *
+ * «ОК» у `money_transfer` запрещён, у `payment_request` разрешён
+ * (26.11.2026, §2.4): перевод меняет состояние только подтверждением
+ * или автосогласием, а напоминание об оплате человек вправе закрыть сам.
+ */
 const MONEY_KINDS: NotificationKind[] = [
   'money_transfer',
   'payment_request',
 ];
 
 /**
- * Ключ карточки о залоге и о расходах.
+ * Что двойная галочка не трогает (§1.3): деньги к действию.
  *
- * Оба вида — одна карточка на поход и на событие: повторная правка суммы
- * залога или повторное «Отправить уведомления о компенсации» обновляют её,
- * а не заводят вторую. `deposit`/`expenses` — не часть ключа события,
- * а различитель двух денежных поводов внутри одного похода.
+ * `money_transfer` висит до подтверждения или 72 часов, `payment_request` —
+ * до оплаты или собственного «ОК». Остальное удаляется без архива.
  */
-function tripFinanceKey(
-  tripId: string,
-  kind: 'deposit' | 'expenses',
-): string {
-  return `trip_finance:${tripId}:${kind}`;
+const READ_ALL_KEEPS: NotificationKind[] = ['money_transfer', 'payment_request'];
+
+/**
+ * Активный состав (§4.1): `going`, `maybe`, `helping`.
+ *
+ * `invited` — ещё не участник, а приглашение, `declined` — уже не
+ * участник. Ни те, ни другие уведомлений похода не получают; ушедшему
+ * остаются только переводы (§4.4).
+ */
+const ACTIVE_STATUSES: ParticipantStatus[] = ['going', 'maybe', 'helping'];
+
+/** Ключ карточки о залоге: одна на поход (§2.3). */
+function tripDepositKey(tripId: string): string {
+  return `trip_deposit:${tripId}`;
 }
 
 /** Виды чатов: их карточки показывают последние сообщения и непрочитанное. */
@@ -95,6 +118,7 @@ interface NotificationInsert {
   recipientUserId: string;
   kind: NotificationKind;
   title: string;
+  announce: string;
   body: string;
   dedupKey: string;
   conversationId?: string | null;
@@ -105,13 +129,20 @@ interface NotificationInsert {
 /**
  * Уведомления правой панели (24.11.2026, §14 `topics/messages.md`).
  *
- * **Что здесь есть.** Шесть видов, два раздела, дедупликация ключом,
- * закрытие без архива и архив денежных. Создание разбросано по владельцам
- * событий (деньги — `TripFinanceService`, залог и расходы — он же и
- * `TripsService`, альманах — `trip-almanac-notify`, чаты —
+ * **Что здесь есть.** Двадцать видов походов и личный чат, секции по
+ * походам, дедупликация ключом, закрытие без архива и архив денежных.
+ * Создание разбросано по владельцам событий (деньги — `TripFinanceService`,
+ * залог — `TripsService`, альманах — `trip-almanac-notify`, чаты —
  * `ConversationsService` и `TripsService`), потому что только они
  * знают контекст: имя похода, собеседника, текст перевода. Собирает
  * строки и решает, кому их видно, — этот сервис.
+ *
+ * **Аудитории.** §4 `topics/notifications.md`: получатели групповых
+ * карточек — активный состав (`going`, `maybe`, `helping`) без людей без
+ * аккаунта; автор действия исключён всегда, виртуальный автор — вместе
+ * с ведущим; личное уведомление виртуальному уходит его ведущему.
+ * Правила живут в `tripAudience` и `personalRecipientUserId`, чтобы
+ * сервисы-владельцы не собирали состав каждый по-своему.
  *
  * **Почему создание принимает `EntityManager`.** Деньги и альманах пишут
  * уведомление в той же транзакции, что и само событие: карточка не должна
@@ -134,11 +165,20 @@ export class NotificationsService {
   ) {}
 
   /**
-   * Два раздела панели с счётчиками.
+   * Секции походов, «Сообщения» и счётчики (26.11.2026, §6).
    *
    * Отдаются только **активные** уведомления: архив в панель не попадает,
-   * экрана архива в этом шаге нет (§14.2). Счётчик — длина списка, а не
-   * непрочитанные сообщения: пять сообщений в чате — одна карточка.
+   * экрана архива в этом шаге нет (§2.4). Счётчик секции — число активных
+   * карточек, а не непрочитанные сообщения: пять сообщений в чате —
+   * одна карточка.
+   *
+   * **Порядок задаёт сервер.** Секции — по дате похода (§1.1): идущие
+   * и предстоящие по возрастанию начала, прошедшие по убыванию, походы
+   * без дат последними по имени. Карточки внутри — по шкале приоритета,
+   * при равенстве свежие сверху. Клиент порядок не пересортировывает.
+   *
+   * **Легаси `system` и `section`** остаются до переезда фронта: dev-панель
+   * этой сессии ещё читает плоский список и делит его по полю карточки.
    */
   async listMine(userId: string): Promise<NotificationListDto> {
     const manager = this.dataSource.manager;
@@ -157,24 +197,133 @@ export class NotificationsService {
       dtos.push(await this.toDto(manager, row, declinedTrips));
     }
 
-    const system = dtos.filter((dto) => dto.section === 'system');
-    const personal = dtos.filter((dto) => dto.section === 'personal');
+    const personal = dtos
+      .filter((dto) => dto.section === 'personal')
+      .sort(
+        (left, right) =>
+          (right.unreadCount ?? 0) - (left.unreadCount ?? 0) ||
+          Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      );
+
+    const system = dtos
+      .filter((dto) => dto.section === 'system')
+      .sort(
+        (left, right) =>
+          notificationPriority(right.kind) - notificationPriority(left.kind) ||
+          Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      );
+
+    const sections = await this.buildSections(manager, system);
 
     return {
-      system,
+      sections,
       personal,
-      systemCount: system.length,
+      tripCount: sections.length,
       personalCount: personal.length,
+      total: system.length + personal.length,
+      system,
+      systemCount: system.length,
     };
+  }
+
+  /**
+   * Группировка системных карточек по походам и порядок секций (§1.1).
+   *
+   * Карточки без `trip_id` в секции не попадают: у всех видов, кроме
+   * `direct_chat`, поход обязателен (§2.1), а строка без него — легаси-
+   * аномалия. В плоском `system` она остаётся, чтобы старый фронт её видел.
+   */
+  private async buildSections(
+    manager: EntityManager,
+    system: readonly NotificationDto[],
+  ): Promise<NotificationSectionDto[]> {
+    const byTrip = new Map<string, NotificationDto[]>();
+
+    for (const dto of system) {
+      if (dto.tripId === null) continue;
+
+      const items = byTrip.get(dto.tripId) ?? [];
+      items.push(dto);
+      byTrip.set(dto.tripId, items);
+    }
+
+    if (byTrip.size === 0) return [];
+
+    const trips = await manager.find(Trip, {
+      where: { id: In([...byTrip.keys()]) },
+      relations: { goalObject: true },
+    });
+    const tripById = new Map(trips.map((trip) => [String(trip.id), trip]));
+
+    const now = Date.now();
+    const sections: Array<{
+      trip: Trip;
+      tripName: string;
+      section: NotificationSectionDto;
+      bucket: number;
+      startsAtMs: number | null;
+    }> = [];
+
+    for (const [tripId, items] of byTrip) {
+      const trip = tripById.get(tripId);
+      // Поход удалён, а карточка осталась? FK `ON DELETE CASCADE` этого
+      // не допускает, но секция без даты и имени всё равно читаемее 500-й.
+      if (!trip) continue;
+
+      const tripName = await tripNameOf(manager, trip);
+      const startsAtMs = trip.startsAt ? trip.startsAt.getTime() : null;
+      const past =
+        trip.completedAt !== null ||
+        (trip.endsAt !== null && trip.endsAt.getTime() < now);
+
+      items.sort(
+        (left, right) =>
+          notificationPriority(right.kind) - notificationPriority(left.kind) ||
+          Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+      );
+
+      sections.push({
+        trip,
+        tripName,
+        bucket: startsAtMs === null ? 2 : past ? 1 : 0,
+        startsAtMs,
+        section: {
+          tripId,
+          tripName,
+          startsAt: trip.startsAt ? trip.startsAt.toISOString() : null,
+          items,
+        },
+      });
+    }
+
+    sections.sort((left, right) => {
+      if (left.bucket !== right.bucket) return left.bucket - right.bucket;
+
+      // Предстоящие — ближайшие первыми; прошедшие — свежие первыми.
+      if (left.startsAtMs !== null && right.startsAtMs !== null) {
+        const byDate =
+          left.bucket === 1
+            ? right.startsAtMs - left.startsAtMs
+            : left.startsAtMs - right.startsAtMs;
+
+        if (byDate !== 0) return byDate;
+      }
+
+      // Без дат — по имени; при равенстве id, чтобы порядок не прыгал.
+      const byName = left.tripName.localeCompare(right.tripName, 'ru');
+      return byName !== 0 ? byName : left.section.tripId.localeCompare(right.section.tripId);
+    });
+
+    return sections.map((item) => item.section);
   }
 
   /**
    * «ОК» — убрать карточку без архива.
    *
-   * Только у чатов и альманаха. Деньги так закрывать нельзя: заказчик
-   * подтвердил, что состояние перевода меняется подтверждением или
-   * оплатой, а «убрать, чтобы не мешало» оставило бы деньги висеть
-   * в расчёте без карточки.
+   * Нельзя только у перевода: его состояние меняется подтверждением или
+   * автосогласием, а «убрать, чтобы не мешало» оставило бы деньги висеть
+   * в расчёте без карточки. Запрос платежа закрывается «ОК» (26.11.2026,
+   * §2.4): это напоминание, а не обязательство подтвердить получение.
    */
   async close(userId: string, id: string): Promise<void> {
     const manager = this.dataSource.manager;
@@ -184,14 +333,83 @@ export class NotificationsService {
 
     if (!row) throw new NotFoundException('Уведомление не найдено');
 
-    if (MONEY_KINDS.includes(row.kind)) {
+    if (row.kind === 'money_transfer') {
       throw new BadRequestException(
-        'Денежное уведомление закрывается подтверждением или оплатой',
+        'Перевод закрывается подтверждением или истечением 72 часов',
       );
     }
 
     await manager.delete(Notification, { id: row.id });
     this.events.emitNotifications([userId]);
+  }
+
+  /**
+   * «прочитать все» в секции похода — двойная зелёная галочка (§1.3, §5.3).
+   *
+   * Удаляет активные карточки смотрящего по этому походу, **кроме денег
+   * к действию**: `money_transfer` ждёт подтверждения, `payment_request` —
+   * оплаты или собственного «ОК». Всё остальное удаляется без архива —
+   * это и есть «прочитано»; следующее событие заведёт карточку заново.
+   *
+   * `left` — сколько активных карточек в секции осталось. По нему клиент
+   * решает, исчезает ли секция, и не считает второй раз на своей стороне.
+   */
+  async readAll(
+    userId: string,
+    tripId: string,
+  ): Promise<ReadAllNotificationsResultDto> {
+    const manager = this.dataSource.manager;
+
+    const closed = returningRows<{ id: string }>(
+      await manager.query(
+        `DELETE FROM "notifications"
+          WHERE "recipient_user_id" = $1
+            AND "trip_id" = $2
+            AND "archived_at" IS NULL
+            AND "kind" NOT IN ($3, $4)
+        RETURNING "id"`,
+        [userId, String(tripId), READ_ALL_KEEPS[0], READ_ALL_KEEPS[1]],
+      ),
+    );
+
+    const left = await manager.count(Notification, {
+      where: {
+        recipientUserId: userId,
+        tripId: String(tripId),
+        archivedAt: IsNull(),
+      },
+    });
+
+    if (closed.length > 0) this.events.emitNotifications([userId]);
+
+    return { closed: closed.length, left };
+  }
+
+  /**
+   * Ушёл из похода — убрать его активные карточки этого похода (§4.4).
+   *
+   * Остаётся только `money_transfer`: для покинувших поход это единственный
+   * тип, а перевод, который уже висит, подтверждается из карточки.
+   * Возвращает число удалённых строк — вызывающий по нему решает, слать ли
+   * кадр «перечитай уведомления» после COMMIT.
+   */
+  async dropForTripUser(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+  ): Promise<number> {
+    const closed = returningRows<{ id: string }>(
+      await manager.query(
+        `DELETE FROM "notifications"
+          WHERE "recipient_user_id" = $1
+            AND "trip_id" = $2
+            AND "kind" <> 'money_transfer'
+        RETURNING "id"`,
+        [userId, String(tripId)],
+      ),
+    );
+
+    return closed.length;
   }
 
   /**
@@ -266,10 +484,10 @@ export class NotificationsService {
     if (recipients.length === 0) return;
 
     const isDirect = conversation.kind === 'direct';
+    const sender = await manager.findOne(User, { where: { id: senderId } });
     let title: string;
 
     if (isDirect) {
-      const sender = await manager.findOne(User, { where: { id: senderId } });
       title = sender?.displayName ?? 'Личное сообщение';
     } else {
       const trip = conversation.tripId
@@ -285,13 +503,17 @@ export class NotificationsService {
     }
 
     const kind: NotificationKind = isDirect ? 'direct_chat' : 'trip_chat';
+    const shortBody = previewText(body);
 
     for (const recipientId of recipients) {
       await this.upsert(manager, {
         recipientUserId: recipientId,
         kind,
         title,
-        body: previewText(body),
+        // Анонс свёрнутой карточки — «автор: текст» (§3.20); содержимое
+        // по-прежнему только текст, его рисует старый фронт.
+        announce: chatAnnounce(sender?.displayName ?? null, shortBody),
+        body: shortBody,
         dedupKey: `${kind}:${conversation.id}`,
         conversationId: conversation.id,
         tripId: conversation.tripId,
@@ -327,6 +549,9 @@ export class NotificationsService {
       recipientUserId: params.recipientUserId,
       kind: 'money_transfer',
       title: 'Денежный перевод',
+      // Текст перевода не меняется (п.8 решения заказчика): анонс и
+      // содержимое совпадают, для этого вида так и должно быть.
+      announce: params.body,
       body: params.body,
       dedupKey: `money_transfer:${params.compensationId}`,
       conversationId: params.conversationId,
@@ -336,18 +561,17 @@ export class NotificationsService {
   }
 
   /**
-   * «Установлен залог» — всем идущим (25.11.2026).
+   * «Установлен залог» — активному составу (26.11.2026, §3.7).
    *
-   * Заказчик: «установили залог — карточка всем идущим, кроме автора
-   * действия и виртуальных». Это **не** персональное «ты должен»:
-   * участник сам решает в «Бухгалтерии», покрыть залог расходами или
-   * переводом. Поэтому нет ни должников, ни суммы к оплате — только
-   * сумма залога и переход во вкладку.
+   * Это **не** персональное «ты должен»: участник сам решает
+   * в «Бухгалтерии», покрыть залог расходами или переводом. Получатели —
+   * `going`, `maybe`, `helping` (§4.1), кроме автора действия; людям без
+   * аккаунта карточка не нужна — войти в приложение им нечем.
    *
-   * Ключ `trip_finance:<поход>:deposit`: повторное изменение суммы
-   * обновляет ту же карточку. Снятие залога удаляет её — `dropDeposit`.
+   * Ключ `trip_deposit:<поход>`: повторное изменение суммы обновляет ту же
+   * карточку. Снятие залога удаляет её — `dropTripDeposit`.
    */
-  async notifyTripFinanceDeposit(
+  async notifyTripDeposit(
     manager: EntityManager,
     params: {
       tripId: string;
@@ -356,16 +580,14 @@ export class NotificationsService {
       recipientIds: readonly string[];
     },
   ): Promise<void> {
+    const text = depositText(params.tripName, params.amountRub);
+
     for (const recipientId of params.recipientIds) {
       await this.upsert(manager, {
         recipientUserId: recipientId,
-        kind: 'trip_finance',
-        title: 'Установлен залог',
-        body:
-          `В походе «${params.tripName}» установлен залог ` +
-          `${params.amountRub} ₽ с человека. Залог можно покрыть расходами ` +
-          'или переводом — подробности в «Бухгалтерии».',
-        dedupKey: tripFinanceKey(params.tripId, 'deposit'),
+        kind: 'trip_deposit',
+        ...text,
+        dedupKey: tripDepositKey(params.tripId),
         tripId: params.tripId,
       });
     }
@@ -378,16 +600,17 @@ export class NotificationsService {
    * сигнал «перечитай уведомления»: удаление строки само по себе кадр
    * не порождает.
    */
-  async dropTripFinanceDeposit(
+  async dropTripDeposit(
     manager: EntityManager,
     tripId: string,
   ): Promise<string[]> {
     const rows = returningRows<{ recipient_user_id: string }>(
       await manager.query(
         `DELETE FROM "notifications"
-          WHERE "dedup_key" = $1
+          WHERE "kind" = 'trip_deposit'
+            AND "dedup_key" = $1
         RETURNING "recipient_user_id"`,
-        [tripFinanceKey(tripId, 'deposit')],
+        [tripDepositKey(tripId)],
       ),
     );
 
@@ -395,88 +618,125 @@ export class NotificationsService {
   }
 
   /**
-   * «Компенсируйте расходы» — всем идущим (25.11.2026).
+   * «Запрос платежа» — снова адресный: только должникам (§3.6).
    *
-   * Заказчик: «Расходы по походу распределены. Проверь свой баланс
-   * в „Бухгалтерии“ — там видно, кому и сколько перевести». Получатели —
-   * **все идущие**, а не только должники: групповое уведомление не считает
-   * долги и не выбирает, кому интересно. Повторное нажатие обновляет
-   * карточку; новый участник получает её только при повторном нажатии,
-   * потому что карточка заводится здесь, а не при вступлении.
+   * Решение 26.11.2026 отменяет групповое «всем идущим» 25.11.2026.
+   * Карточку получает конкретный человек с отрицательным балансом (или
+   * с нулём при установленном залоге); сумму и формулу считает
+   * `TripFinanceService`, здесь только текст.
+   *
+   * Одна карточка на пару «поход + человек»: повторное нажатие обновляет
+   * её. Ключ содержит id получателя, а не похода, — иначе второй должник
+   * не смог бы получить свою.
    */
-  async notifyTripFinanceExpenses(
+  async notifyPaymentRequest(
     manager: EntityManager,
     params: {
+      recipientUserId: string;
       tripId: string;
-      tripName: string;
-      recipientIds: readonly string[];
+      authorName: string;
     },
   ): Promise<void> {
-    for (const recipientId of params.recipientIds) {
-      await this.upsert(manager, {
-        recipientUserId: recipientId,
-        kind: 'trip_finance',
-        title: 'Компенсируйте расходы',
-        body:
-          `Расходы по походу «${params.tripName}» распределены. ` +
-          'Проверь свой баланс в «Бухгалтерии» — там видно, кому и сколько ' +
-          'перевести.',
-        dedupKey: tripFinanceKey(params.tripId, 'expenses'),
-        tripId: params.tripId,
-      });
-    }
+    await this.upsert(manager, {
+      recipientUserId: params.recipientUserId,
+      kind: 'payment_request',
+      ...paymentRequestText(params.authorName),
+      dedupKey: `payment_request:${params.tripId}:${params.recipientUserId}`,
+      tripId: params.tripId,
+    });
   }
 
   /**
-   * Кому адресованы общегрупповые денежные уведомления.
+   * Аудитория групповой карточки — активный состав похода (§4.1).
    *
-   * Все, кто **идёт** на этот момент, кроме автора действия и людей без
-   * аккаунта. Владелец виртуального получает карточку как обычный
-   * участник — если сам идёт; самому виртуальному карточка не нужна:
-   * войти в приложение ему нечем (та же логика, что у чатов).
+   * `going`, `maybe`, `helping`; `invited` — ещё приглашение, `declined` —
+   * уже не участник. Виртуальные исключаются: у них нет входа, а их
+   * ведущий получает карточку как обычный участник, только если сам идёт.
    *
-   * Должники здесь **не считаются** (решение 25.11.2026): это не
-   * персональный запрос платежа, а сообщение группе о том, что деньги
-   * похода распределены.
+   * Автор действия исключается **всегда**, а если автор — виртуальный,
+   * то и его ведущий: действие совершил он, уведомлять его же о своём
+   * действии незачем (§4.2).
+   *
+   * `exceptUserIds` — субъект уведомления («новый участник», назначенная
+   * роль) и любые дополнительные исключения конкретного вида.
    */
-  async tripFinanceRecipients(
+  async tripAudience(
     manager: EntityManager,
     tripId: string,
-    exceptUserId: string,
+    options: {
+      actorUserId?: string | null;
+      exceptUserIds?: readonly string[];
+    } = {},
   ): Promise<string[]> {
     const participants = await manager.find(TripParticipant, {
-      where: { tripId, status: 'going', userId: Not(exceptUserId) },
+      where: { tripId, status: In(ACTIVE_STATUSES) },
       relations: { user: true },
       order: { createdAt: 'ASC', userId: 'ASC' },
     });
 
+    const except = new Set(options.exceptUserIds ?? []);
+
+    if (options.actorUserId) {
+      except.add(options.actorUserId);
+
+      const actor = await manager.findOne(User, {
+        where: { id: options.actorUserId },
+      });
+
+      if (actor?.isVirtual && actor.virtualOwnerUserId) {
+        except.add(actor.virtualOwnerUserId);
+      }
+    }
+
     return [
       ...new Set(
         participants
-          .filter((row) => row.user?.isVirtual !== true)
+          .filter(
+            (row) => row.user?.isVirtual !== true && !except.has(row.userId),
+          )
           .map((row) => row.userId),
       ),
     ];
   }
 
   /**
+   * Кому лично адресована карточка (§4.2): виртуальному — его ведущему.
+   *
+   * У человека без аккаунта входа нет. Если владельца нет (так не должно
+   * быть, но данные могли остаться от удалённого пользователя), карточку
+   * класть некуда — `null`, и вызывающий её не создаёт.
+   */
+  async personalRecipientUserId(
+    manager: EntityManager,
+    userId: string,
+  ): Promise<string | null> {
+    const user = await manager.findOne(User, { where: { id: userId } });
+    if (!user) return null;
+    if (user.isVirtual) return user.virtualOwnerUserId ?? null;
+
+    return user.id;
+  }
+
+  /**
    * Новая редакция альманаха — уведомления участникам (в их транзакции).
    *
-   * Альманах закрывается «ОК» с удалением, поэтому каждая новая редакция
-   * после закрытия создаёт карточку заново, а до закрытия — обновляет
-   * существующую: ключ `almanac:<поход>`.
+   * Вид `almanac_changed` (миграция 103), ключ `almanac_changed:<поход>`:
+   * «ОК» удаляет карточку, следующая редакция заводит её заново, а до
+   * закрытия — обновляет существующую. Текст прежний (п.8 решения
+   * заказчика): меняется только код вида.
    */
   async upsertAlmanac(
     manager: EntityManager,
     params: { tripId: string; tripName: string; recipientIds: string[] },
   ): Promise<void> {
+    const text = almanacChangedText(params.tripName);
+
     for (const recipientId of params.recipientIds) {
       await this.upsert(manager, {
         recipientUserId: recipientId,
-        kind: 'almanac',
-        title: `Альманах «${params.tripName}»`,
-        body: `В походе «${params.tripName}» новая редакция альманаха`,
-        dedupKey: `almanac:${params.tripId}`,
+        kind: 'almanac_changed',
+        ...text,
+        dedupKey: `almanac_changed:${params.tripId}`,
         tripId: params.tripId,
       });
     }
@@ -617,6 +877,9 @@ export class NotificationsService {
       kind: row.kind,
       section: sectionOf(row.kind),
       title: row.title,
+      // Старое поле миграция заполняет из `body`; пустая строка возможна
+      // только у строки, вставленной в обход миграции, — отдаём `body`.
+      announce: row.announce || row.body,
       body: row.body,
       conversationId: row.conversationId,
       tripId: row.tripId,
@@ -689,18 +952,11 @@ export class NotificationsService {
     } else {
       if (!conversation.tripId) return [];
 
-      const participants = await manager.find(TripParticipant, {
-        where: {
-          tripId: conversation.tripId,
-          status: Not('declined'),
-          userId: Not(senderId),
-        },
-        relations: { user: true },
+      // Активный состав без автора и виртуальных (§4.1): `invited` ещё
+      // не участник, `declined` уже нет.
+      candidates = await this.tripAudience(manager, conversation.tripId, {
+        actorUserId: senderId,
       });
-
-      candidates = participants
-        .filter((row) => row.user?.isVirtual !== true)
-        .map((row) => row.userId);
     }
 
     if (candidates.length === 0) return [];
@@ -733,12 +989,13 @@ export class NotificationsService {
   ): Promise<void> {
     await manager.query(
       `INSERT INTO "notifications" (
-         "recipient_user_id", "kind", "title", "body", "dedup_key",
+         "recipient_user_id", "kind", "title", "announce", "body", "dedup_key",
          "conversation_id", "trip_id", "compensation_id"
        )
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT ("recipient_user_id", "dedup_key") DO UPDATE
          SET "title" = EXCLUDED."title",
+             "announce" = EXCLUDED."announce",
              "body" = EXCLUDED."body",
              "conversation_id" = EXCLUDED."conversation_id",
              "trip_id" = EXCLUDED."trip_id",
@@ -750,6 +1007,7 @@ export class NotificationsService {
         insert.recipientUserId,
         insert.kind,
         insert.title,
+        insert.announce,
         insert.body,
         insert.dedupKey,
         insert.conversationId ?? null,

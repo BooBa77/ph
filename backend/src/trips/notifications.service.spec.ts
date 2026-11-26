@@ -15,19 +15,25 @@ import {
   sectionOf,
   tripChatTitle,
 } from './notifications.service';
+import {
+  almanacChangedText,
+  depositText,
+  paymentRequestText,
+} from './notification-text';
 
 /**
- * Уведомления правой панели (24.11.2026, §14 `topics/messages.md`).
+ * Уведомления правой панели (26.11.2026, §2–§6 `topics/notifications.md`).
  *
- * Здесь — то, что не требует базы: разделы и заголовки, дедупликация
- * ключом, кому карточка достаётся (автору — нет, заглушённому — нет,
- * «виртуальному» — нет), закрытие и архив с правами получателя.
- * Живую дедупликацию на настоящих параллельных запросах проверяет e2e.
+ * Здесь — то, что не требует базы: секции и их порядок, аудитории, тексты,
+ * дедупликация ключом, закрытие и архив с правами получателя, «прочитать
+ * все» и чистка при уходе. Живую дедупликацию на настоящих параллельных
+ * запросах и реальные получатели проверяют e2e.
  */
 
 const ANNA = '9bd2e553-4321-4877-a6ab-71b991d942b1';
 const BORIS = '4c644442-9738-4fed-8a82-393bcce699da';
-const VIRTUAL = '0d0f2b7e-0000-4000-8000-000000000001';
+const VIKTOR = '0d0f2b7e-0000-4000-8000-000000000001';
+const OWNER = '53a1b2c3-0000-4000-8000-000000000002';
 
 function eventBus() {
   return { emitNotifications: vi.fn() } as unknown as ConversationEventsService;
@@ -42,10 +48,11 @@ function notification(overrides: Partial<Notification>): Notification {
   return {
     id: '1',
     recipientUserId: BORIS,
-    kind: 'almanac',
+    kind: 'almanac_changed',
     title: 'Альманах «Хамар-Дабан»',
+    announce: 'В походе «Хамар-Дабан» новая редакция альманаха',
     body: 'В походе «Хамар-Дабан» новая редакция альманаха',
-    dedupKey: 'almanac:193',
+    dedupKey: 'almanac_changed:193',
     conversationId: null,
     tripId: '193',
     compensationId: null,
@@ -61,8 +68,8 @@ describe('уведомления: чистые правила', () => {
   it('делит виды на системные и личные', () => {
     expect(sectionOf('money_transfer')).toBe('system');
     expect(sectionOf('payment_request')).toBe('system');
-    expect(sectionOf('trip_finance')).toBe('system');
-    expect(sectionOf('almanac')).toBe('system');
+    expect(sectionOf('trip_deposit')).toBe('system');
+    expect(sectionOf('almanac_changed')).toBe('system');
     expect(sectionOf('trip_chat')).toBe('system');
     expect(sectionOf('direct_chat')).toBe('personal');
   });
@@ -70,7 +77,6 @@ describe('уведомления: чистые правила', () => {
   it('обрезает текст карточки чата до 300 символов', () => {
     expect(previewText('  привет  ')).toBe('привет');
     expect(previewText('а'.repeat(300))).toHaveLength(300);
-    // Многоточие добавляется только при реальной обрезке.
     expect(previewText('а'.repeat(301))).toHaveLength(301);
     expect(previewText('а'.repeat(301))?.endsWith('…')).toBe(true);
   });
@@ -82,100 +88,180 @@ describe('уведомления: чистые правила', () => {
     expect(tripChatTitle('trip_gear', 'Хамар-Дабан')).toBe(
       'Чат снаряжения «Хамар-Дабан»',
     );
-    // Незнакомый вид чата не должен давать пустой заголовок.
     expect(tripChatTitle('trip_new', 'Хамар-Дабан')).toBe(
       'Чат похода «Хамар-Дабан»',
     );
   });
+
+  it('«Запрос платежа» — адресный текст по §3.6', () => {
+    expect(paymentRequestText('Анна')).toEqual({
+      title: 'Запрос платежа',
+      announce: 'Организатор призывает к оплате',
+      body:
+        'Анна призывает участников компенсировать расходы, внести залог.',
+    });
+  });
+
+  it('тексты залога и альманаха не меняются, но получают анонс', () => {
+    expect(depositText('Пик Черского', 300)).toEqual({
+      title: 'Установлен залог',
+      announce:
+        'В походе «Пик Черского» установлен залог 300 ₽ с человека. ' +
+        'Залог можно покрыть расходами или переводом — подробности ' +
+        'в «Бухгалтерии».',
+      body:
+        'В походе «Пик Черского» установлен залог 300 ₽ с человека. ' +
+        'Залог можно покрыть расходами или переводом — подробности ' +
+        'в «Бухгалтерии».',
+    });
+    expect(almanacChangedText('Пик Черского').body).toBe(
+      'В походе «Пик Черского» новая редакция альманаха',
+    );
+  });
 });
 
-describe('уведомления: список для панели', () => {
-  it('раскладывает активные карточки по секциям и считает их', async () => {
+describe('уведомления: секции походов', () => {
+  it('группирует по походам, сортирует секции и карточки, оставляет легаси system', async () => {
+    const rows = [
+      notification({
+        id: 'chat',
+        kind: 'trip_chat',
+        title: 'Чат табора «Старый»',
+        conversationId: '10',
+        tripId: '20',
+        dedupKey: 'trip_chat:10',
+        updatedAt: new Date('2026-11-24T09:00:00Z'),
+      }),
+      notification({
+        id: 'almanac',
+        kind: 'almanac_changed',
+        tripId: '10',
+        updatedAt: new Date('2026-11-24T10:00:00Z'),
+      }),
+      notification({
+        id: 'money',
+        kind: 'money_transfer',
+        title: 'Денежный перевод',
+        tripId: '10',
+        compensationId: '55',
+        updatedAt: new Date('2026-11-24T08:00:00Z'),
+      }),
+      notification({
+        id: 'personal',
+        kind: 'direct_chat',
+        title: 'Анна',
+        conversationId: '11',
+        tripId: null,
+        dedupKey: 'direct_chat:11',
+        updatedAt: new Date('2026-11-24T11:00:00Z'),
+      }),
+    ];
+
     const manager = {
-      find: vi.fn(async (entity: unknown) =>
-        entity === TripParticipant
-          ? []
-          : [
-              notification({ id: '1', kind: 'money_transfer', title: 'Денежный перевод' }),
-              notification({
-                id: '2',
-                kind: 'direct_chat',
-                title: 'Анна',
-                conversationId: '10',
-                dedupKey: 'direct_chat:10',
-              }),
-            ],
-      ),
-      query: vi.fn(async (sql: string) => {
-        if (sql.includes('count(*)')) return [{ count: 2 }];
-        if (sql.includes('FROM "messages" m')) {
+      find: vi.fn(async (entity: unknown) => {
+        if (entity === Notification) return rows;
+        if (entity === TripParticipant) return [];
+        if (entity === Trip) {
           return [
             {
-              id: '7',
-              body: 'а'.repeat(350),
-              sender_id: ANNA,
-              created_at: '2026-11-24T10:00:00Z',
-              display_name: 'Анна',
+              id: '10',
+              startsAt: new Date('2026-12-01T00:00:00Z'),
+              endsAt: new Date('2026-12-05T00:00:00Z'),
+              completedAt: null,
+              goalObject: { name: 'Будущий' },
+            },
+            {
+              id: '20',
+              startsAt: new Date('2026-11-01T00:00:00Z'),
+              endsAt: new Date('2026-11-05T00:00:00Z'),
+              completedAt: null,
+              goalObject: { name: 'Прошедший' },
             },
           ];
         }
         return [];
       }),
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('count(*)')) return [{ count: 0 }];
+        if (sql.includes('FROM "messages" m')) return [];
+        return [];
+      }),
     };
 
-    const service = new NotificationsService(
-      asDataSource(manager),
-      eventBus(),
-    );
-
+    const service = new NotificationsService(asDataSource(manager), eventBus());
     const list = await service.listMine(BORIS);
 
-    expect(list.systemCount).toBe(1);
+    expect(list.tripCount).toBe(2);
     expect(list.personalCount).toBe(1);
-    expect(list.system[0].kind).toBe('money_transfer');
-    expect(list.personal[0].section).toBe('personal');
-    // Непрочитанное и последнее сообщение — только у карточки чата.
-    expect(list.system[0].unreadCount).toBeNull();
-    expect(list.personal[0].unreadCount).toBe(2);
-    expect(list.personal[0].preview).toHaveLength(1);
-    expect(list.personal[0].preview[0].body).toHaveLength(301);
-    // Признак «вышел из похода» — только у перевода.
-    expect(list.system[0].viewerDeclined).toBe(false);
-    expect(list.personal[0].viewerDeclined).toBeNull();
+    expect(list.total).toBe(4);
+    expect(list.sections.map((section) => section.tripId)).toEqual(['10', '20']);
+    expect(list.sections[0].tripName).toBe('Будущий');
+    expect(list.sections[0].startsAt).toBe('2026-12-01T00:00:00.000Z');
+    // Внутри секции — по приоритету: перевод выше альманаха.
+    expect(list.sections[0].items.map((item) => item.id)).toEqual([
+      'money',
+      'almanac',
+    ]);
+    // Легаси: плоский список и поле section у карточки.
+    expect(list.system).toHaveLength(3);
+    expect(list.systemCount).toBe(3);
+    expect(list.system[0].section).toBe('system');
+    expect(list.system[0].announce).toBe(list.system[0].body);
   });
 
-  /**
-   * 25.11.2026: «Бухгалтерия» ушедшему закрыта, но подтвердить перевод он
-   * может прямо в карточке. Клиенту нужен признак, чтобы объяснить это
-   * словами, — сервер считает его по составу похода.
-   */
-  it('помечает перевод человеку, вышедшему из похода', async () => {
+  it('походы без дат — последними, прошедшие — свежие первыми', async () => {
+    const rows = [
+      notification({ id: 'nodate', kind: 'trip_deposit', tripId: '30' }),
+      notification({ id: 'old', kind: 'trip_deposit', tripId: '20' }),
+      notification({ id: 'new', kind: 'trip_deposit', tripId: '21' }),
+    ];
+
     const manager = {
-      find: vi.fn(async (entity: unknown) =>
-        entity === TripParticipant
-          ? [{ userId: BORIS, tripId: '193', status: 'declined' }]
-          : [
-              notification({
-                id: '1',
-                kind: 'money_transfer',
-                tripId: '193',
-                compensationId: '55',
-              }),
-            ],
-      ),
+      find: vi.fn(async (entity: unknown) => {
+        if (entity === Notification) return rows;
+        if (entity === TripParticipant) return [];
+        if (entity === Trip) {
+          return [
+            {
+              id: '30',
+              startsAt: null,
+              endsAt: null,
+              completedAt: null,
+              goalObject: { name: 'Без дат' },
+            },
+            {
+              id: '20',
+              startsAt: new Date('2026-10-01T00:00:00Z'),
+              endsAt: new Date('2026-10-05T00:00:00Z'),
+              completedAt: null,
+              goalObject: { name: 'Старый' },
+            },
+            {
+              id: '21',
+              startsAt: new Date('2026-11-01T00:00:00Z'),
+              endsAt: new Date('2026-11-05T00:00:00Z'),
+              completedAt: null,
+              goalObject: { name: 'Новее' },
+            },
+          ];
+        }
+        return [];
+      }),
       query: vi.fn(async () => []),
     };
 
     const service = new NotificationsService(asDataSource(manager), eventBus());
     const list = await service.listMine(BORIS);
 
-    expect(list.system[0].viewerDeclined).toBe(true);
-    // Запрос состава — один на список, а не на каждую карточку.
-    expect(manager.find).toHaveBeenCalledTimes(2);
+    expect(list.sections.map((section) => section.tripId)).toEqual([
+      '21',
+      '20',
+      '30',
+    ]);
   });
 });
 
-describe('уведомления: закрытие и архив', () => {
+describe('уведомления: закрытие, архив и «прочитать все»', () => {
   it('чужое уведомление — 404', async () => {
     const manager = { findOne: vi.fn(async () => null) };
     const service = new NotificationsService(asDataSource(manager), eventBus());
@@ -188,7 +274,7 @@ describe('уведомления: закрытие и архив', () => {
     );
   });
 
-  it('деньги нельзя закрыть «ОК» — только архивировать', async () => {
+  it('перевод нельзя закрыть «ОК» — только архивировать', async () => {
     const manager = {
       findOne: vi.fn(async () =>
         notification({ kind: 'money_transfer', compensationId: '55' }),
@@ -201,11 +287,28 @@ describe('уведомления: закрытие и архив', () => {
     );
   });
 
-  it('«ОК» удаляет карточку чата и шлёт сигнал в поток', async () => {
+  it('«ОК» закрывает запрос платежа без архива', async () => {
     const manager = {
       findOne: vi.fn(async () =>
-        notification({ kind: 'trip_chat', conversationId: '10' }),
+        notification({
+          kind: 'payment_request',
+          dedupKey: `payment_request:193:${BORIS}`,
+        }),
       ),
+      delete: vi.fn(async () => undefined),
+    };
+    const events = eventBus();
+    const service = new NotificationsService(asDataSource(manager), events);
+
+    await service.close(BORIS, '1');
+
+    expect(manager.delete).toHaveBeenCalledWith(Notification, { id: '1' });
+    expect(events.emitNotifications).toHaveBeenCalledWith([BORIS]);
+  });
+
+  it('«ОК» удаляет карточку альманаха и шлёт сигнал в поток', async () => {
+    const manager = {
+      findOne: vi.fn(async () => notification({ kind: 'almanac_changed' })),
       delete: vi.fn(async () => undefined),
     };
     const events = eventBus();
@@ -240,7 +343,10 @@ describe('уведомления: закрытие и архив', () => {
   it('архивирует запрос платежа по причине «оплачено»', async () => {
     const manager = {
       findOne: vi.fn(async () =>
-        notification({ kind: 'payment_request', dedupKey: 'payment_request:193' }),
+        notification({
+          kind: 'payment_request',
+          dedupKey: `payment_request:193:${BORIS}`,
+        }),
       ),
       update: vi.fn(async () => undefined),
     };
@@ -257,7 +363,7 @@ describe('уведомления: закрытие и архив', () => {
 
   it('альманах в архив не уходит — он закрывается «ОК»', async () => {
     const manager = {
-      findOne: vi.fn(async () => notification({ kind: 'almanac' })),
+      findOne: vi.fn(async () => notification({ kind: 'almanac_changed' })),
     };
     const service = new NotificationsService(asDataSource(manager), eventBus());
 
@@ -265,10 +371,138 @@ describe('уведомления: закрытие и архив', () => {
       BadRequestException,
     );
   });
+
+  it('«прочитать все» удаляет всё, кроме переводов и запросов платежа', async () => {
+    const query = vi.fn(async () => [{ id: '1' }, { id: '2' }]);
+    const manager = {
+      query,
+      count: vi.fn(async () => 1),
+    };
+    const events = eventBus();
+    const service = new NotificationsService(asDataSource(manager), events);
+
+    const result = await service.readAll(BORIS, '810');
+
+    expect(result).toEqual({ closed: 2, left: 1 });
+    expect(query.mock.calls[0][0]).toContain('DELETE FROM "notifications"');
+    expect(query.mock.calls[0][1]).toEqual([
+      BORIS,
+      '810',
+      'money_transfer',
+      'payment_request',
+    ]);
+    expect(events.emitNotifications).toHaveBeenCalledWith([BORIS]);
+  });
+
+  it('«прочитать все» без удалений не шлёт кадр', async () => {
+    const events = eventBus();
+    const manager = {
+      query: vi.fn(async () => []),
+      count: vi.fn(async () => 2),
+    };
+    const service = new NotificationsService(asDataSource(manager), events);
+
+    expect(await service.readAll(BORIS, '810')).toEqual({ closed: 0, left: 2 });
+    expect(events.emitNotifications).not.toHaveBeenCalled();
+  });
+
+  it('чистка при уходе удаляет всё, кроме переводов', async () => {
+    const query = vi.fn(async () => [{ id: '1' }]);
+    const manager = { query } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    expect(await service.dropForTripUser(manager, '810', BORIS)).toBe(1);
+    expect(query.mock.calls[0][0]).toContain('"kind" <> \'money_transfer\'');
+    expect(query.mock.calls[0][1]).toEqual([BORIS, '810']);
+  });
+});
+
+describe('уведомления: аудитории', () => {
+  it('групповая карточка — активному составу без виртуальных и автора', async () => {
+    const find = vi.fn(async () => [
+      { userId: BORIS, user: { isVirtual: false } },
+      { userId: ANNA, user: { isVirtual: false } },
+      { userId: VIKTOR, user: { isVirtual: true } },
+      { userId: OWNER, user: { isVirtual: false } },
+    ]);
+    const findOne = vi.fn(async () => ({ id: ANNA, isVirtual: false }));
+    const manager = { find, findOne } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    const recipients = await service.tripAudience(manager, '810', {
+      actorUserId: ANNA,
+    });
+
+    expect(recipients).toEqual([BORIS, OWNER]);
+    // Отбираем именно активный состав, а не «всех, кроме declined».
+    const where = (find.mock.calls[0][1] as { where: { status: unknown } }).where;
+    expect(where.status).toBeDefined();
+  });
+
+  it('виртуальный автор исключает и своего ведущего', async () => {
+    const find = vi.fn(async () => [
+      { userId: BORIS, user: { isVirtual: false } },
+      { userId: OWNER, user: { isVirtual: false } },
+    ]);
+    const findOne = vi.fn(async () => ({
+      id: VIKTOR,
+      isVirtual: true,
+      virtualOwnerUserId: OWNER,
+    }));
+    const manager = { find, findOne } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    expect(
+      await service.tripAudience(manager, '810', { actorUserId: VIKTOR }),
+    ).toEqual([BORIS]);
+  });
+
+  it('субъект уведомления исключается вместе с автором', async () => {
+    const find = vi.fn(async () => [
+      { userId: BORIS, user: { isVirtual: false } },
+      { userId: ANNA, user: { isVirtual: false } },
+    ]);
+    const findOne = vi.fn(async () => ({ id: BORIS, isVirtual: false }));
+    const manager = { find, findOne } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    expect(
+      await service.tripAudience(manager, '810', {
+        actorUserId: BORIS,
+        exceptUserIds: [ANNA],
+      }),
+    ).toEqual([]);
+  });
+
+  it('личное уведомление виртуальному уходит ведущему', async () => {
+    const manager = {
+      findOne: vi.fn(async () => ({
+        id: VIKTOR,
+        isVirtual: true,
+        virtualOwnerUserId: OWNER,
+      })),
+    } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    expect(await service.personalRecipientUserId(manager, VIKTOR)).toBe(OWNER);
+  });
+
+  it('виртуальный без ведущего — карточку класть некуда', async () => {
+    const manager = {
+      findOne: vi.fn(async () => ({
+        id: VIKTOR,
+        isVirtual: true,
+        virtualOwnerUserId: null,
+      })),
+    } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    expect(await service.personalRecipientUserId(manager, VIKTOR)).toBeNull();
+  });
 });
 
 describe('уведомления: карточка нового сообщения', () => {
-  it('личный диалог — второму человеку, заголовок — имя автора', async () => {
+  it('личный диалог — второму человеку, заголовок и анонс', async () => {
     const manager = {
       findOne: vi.fn(async (entity: unknown) => {
         if (entity === Conversation) {
@@ -294,6 +528,7 @@ describe('уведомления: карточка нового сообщени
       BORIS,
       'direct_chat',
       'Анна',
+      'Анна: привет',
       'привет',
       'direct_chat:10',
       '10',
@@ -329,7 +564,7 @@ describe('уведомления: карточка нового сообщени
     expect(events.emitNotifications).not.toHaveBeenCalled();
   });
 
-  it('чат похода — составу без виртуальных, автору и заглушённым', async () => {
+  it('чат похода — активному составу без виртуальных, автора и заглушённых', async () => {
     const manager = {
       findOne: vi.fn(async (entity: unknown) => {
         if (entity === Conversation) {
@@ -338,13 +573,14 @@ describe('уведомления: карточка нового сообщени
         if (entity === Trip) {
           return { id: '5', goalObject: { name: 'Хамар-Дабан' } };
         }
+        if (entity === User) return { id: ANNA, displayName: 'Анна' };
         return null;
       }),
       find: vi.fn(async (entity: unknown) => {
         if (entity === TripParticipant) {
           return [
             { userId: BORIS, user: { isVirtual: false } },
-            { userId: VIRTUAL, user: { isVirtual: true } },
+            { userId: VIKTOR, user: { isVirtual: true } },
           ];
         }
         return [];
@@ -361,6 +597,7 @@ describe('уведомления: карточка нового сообщени
       BORIS,
       'trip_chat',
       'Чат снаряжения «Хамар-Дабан»',
+      'Анна: сбор в 8',
       'сбор в 8',
       'trip_chat:10',
       '10',
@@ -371,9 +608,9 @@ describe('уведомления: карточка нового сообщени
   });
 });
 
-/** Менеджер транзакции: уведомление о переводе пишется тем же путём. */
+/** Менеджер транзакции: уведомление пишется тем же путём. */
 describe('уведомления: денежные карточки', () => {
-  it('перевод — ключ по компенсации, ссылки на диалог и поход', async () => {
+  it('перевод — ключ по компенсации, анонс равен содержимому', async () => {
     const query = vi.fn(async () => []);
     const manager = { query } as unknown as EntityManager;
     const service = new NotificationsService(asDataSource({}), eventBus());
@@ -391,6 +628,7 @@ describe('уведомления: денежные карточки', () => {
       'money_transfer',
       'Денежный перевод',
       'Анна перевела тебе 1000 ₽ за поход «Хамар-Дабан»',
+      'Анна перевела тебе 1000 ₽ за поход «Хамар-Дабан»',
       'money_transfer:55',
       '1268',
       '193',
@@ -398,72 +636,36 @@ describe('уведомления: денежные карточки', () => {
     ]);
   });
 
-  it('запрос платежа — одна карточка на поход', async () => {
+  it('запрос платежа — адресный, ключ с получателем', async () => {
     const query = vi.fn(async () => []);
     const manager = { query } as unknown as EntityManager;
     const service = new NotificationsService(asDataSource({}), eventBus());
 
-    await service.notifyTripFinanceExpenses(manager, {
+    await service.notifyPaymentRequest(manager, {
+      recipientUserId: BORIS,
       tripId: '193',
-      tripName: 'Хамар-Дабан',
-      recipientIds: [BORIS],
+      authorName: 'Анна',
     });
 
     expect(query.mock.calls[0][1]).toEqual([
       BORIS,
-      'trip_finance',
-      'Компенсируйте расходы',
-      'Расходы по походу «Хамар-Дабан» распределены. Проверь свой баланс ' +
-        'в «Бухгалтерии» — там видно, кому и сколько перевести.',
-      'trip_finance:193:expenses',
+      'payment_request',
+      'Запрос платежа',
+      'Организатор призывает к оплате',
+      'Анна призывает участников компенсировать расходы, внести залог.',
+      `payment_request:193:${BORIS}`,
       null,
       '193',
       null,
     ]);
   });
-});
 
-/**
- * Общегрупповые уведомления о деньгах (25.11.2026).
- *
- * Заказчик отказался от персональных «запросов платежа»: залог и
- * распределение расходов — новость для всей группы, участник сам решает
- * в «Бухгалтерии», чем покрыть. Здесь — получатели, тексты и то, что
- * такие карточки закрываются «ОК» без архива.
- */
-describe('уведомления: общегрупповые деньги', () => {
-  it('рассылает карточку всем идущим, кроме автора и виртуальных', async () => {
-    const find = vi.fn(async () => [
-      { userId: BORIS, user: { isVirtual: false } },
-      { userId: VIRTUAL, user: { isVirtual: true } },
-    ]);
-    const manager = { find } as unknown as EntityManager;
-    const service = new NotificationsService(asDataSource({}), eventBus());
-
-    const recipients = await service.tripFinanceRecipients(
-      manager,
-      '193',
-      ANNA,
-    );
-
-    expect(recipients).toEqual([BORIS]);
-
-    // Автор исключён на уровне запроса: уведомление о своём действии
-    // человеку не нужно.
-    const options = find.mock.calls[0][1] as {
-      where: { tripId: string; status: string; userId: unknown };
-    };
-    expect(options.where.tripId).toBe('193');
-    expect(options.where.status).toBe('going');
-    expect(options.where.userId).toBeDefined();
-  });
-
-  it('карточка залога: заголовок, сумма и ключ похода', async () => {
+  it('карточка залога: вид trip_deposit и ключ похода', async () => {
     const query = vi.fn(async () => []);
     const manager = { query } as unknown as EntityManager;
     const service = new NotificationsService(asDataSource({}), eventBus());
 
-    await service.notifyTripFinanceDeposit(manager, {
+    await service.notifyTripDeposit(manager, {
       tripId: '810',
       tripName: 'Пик Черского',
       amountRub: 300,
@@ -472,12 +674,15 @@ describe('уведомления: общегрупповые деньги', () =
 
     expect(query.mock.calls[0][1]).toEqual([
       BORIS,
-      'trip_finance',
+      'trip_deposit',
       'Установлен залог',
       'В походе «Пик Черского» установлен залог 300 ₽ с человека. ' +
         'Залог можно покрыть расходами или переводом — подробности ' +
         'в «Бухгалтерии».',
-      'trip_finance:810:deposit',
+      'В походе «Пик Черского» установлен залог 300 ₽ с человека. ' +
+        'Залог можно покрыть расходами или переводом — подробности ' +
+        'в «Бухгалтерии».',
+      'trip_deposit:810',
       null,
       '810',
       null,
@@ -492,43 +697,34 @@ describe('уведомления: общегрупповые деньги', () =
     const manager = { query } as unknown as EntityManager;
     const service = new NotificationsService(asDataSource({}), eventBus());
 
-    const recipients = await service.dropTripFinanceDeposit(manager, '810');
+    const recipients = await service.dropTripDeposit(manager, '810');
 
     expect(recipients).toEqual([BORIS, ANNA]);
     expect(query.mock.calls[0][0]).toContain('DELETE FROM "notifications"');
-    expect(query.mock.calls[0][1]).toEqual(['trip_finance:810:deposit']);
+    expect(query.mock.calls[0][1]).toEqual(['trip_deposit:810']);
   });
 
-  it('«ОК» закрывает общегрупповую карточку без архива', async () => {
-    const manager = {
-      findOne: vi.fn(async () =>
-        notification({
-          kind: 'trip_finance',
-          title: 'Компенсируйте расходы',
-          dedupKey: 'trip_finance:810:expenses',
-        }),
-      ),
-      delete: vi.fn(async () => undefined),
-    };
-    const events = eventBus();
-    const service = new NotificationsService(asDataSource(manager), events);
+  it('альманах — вид almanac_changed и ключ похода', async () => {
+    const query = vi.fn(async () => []);
+    const manager = { query } as unknown as EntityManager;
+    const service = new NotificationsService(asDataSource({}), eventBus());
 
-    await service.close(BORIS, '1');
+    await service.upsertAlmanac(manager, {
+      tripId: '810',
+      tripName: 'Пик Черского',
+      recipientIds: [BORIS],
+    });
 
-    expect(manager.delete).toHaveBeenCalledWith(Notification, { id: '1' });
-    expect(events.emitNotifications).toHaveBeenCalledWith([BORIS]);
-  });
-
-  it('в архив общегрупповая карточка не уходит', async () => {
-    const manager = {
-      findOne: vi.fn(async () =>
-        notification({ kind: 'trip_finance', dedupKey: 'trip_finance:810:deposit' }),
-      ),
-    };
-    const service = new NotificationsService(asDataSource(manager), eventBus());
-
-    await expect(service.archive(BORIS, '1')).rejects.toBeInstanceOf(
-      BadRequestException,
-    );
+    expect(query.mock.calls[0][1]).toEqual([
+      BORIS,
+      'almanac_changed',
+      'Альманах «Пик Черского»',
+      'В походе «Пик Черского» новая редакция альманаха',
+      'В походе «Пик Черского» новая редакция альманаха',
+      'almanac_changed:810',
+      null,
+      '810',
+      null,
+    ]);
   });
 });

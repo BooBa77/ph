@@ -153,7 +153,7 @@ describe('Дневник похода (e2e)', () => {
     const rows = (await dataSource.query(
       `SELECT count(*)::int AS "n" FROM "notifications"
         WHERE "recipient_user_id" = $1 AND "trip_id" = $2
-          AND "kind" = 'almanac' AND "archived_at" IS NULL`,
+          AND "kind" = 'almanac_changed' AND "archived_at" IS NULL`,
       [userId, almanacTripId],
     )) as Array<{ n: number }>;
 
@@ -815,7 +815,7 @@ describe('Дневник похода (e2e)', () => {
     const cards = (await dataSource.query(
       `SELECT "title" FROM "notifications"
         WHERE "recipient_user_id" = $1 AND "trip_id" = $2
-          AND "kind" = 'almanac' AND "archived_at" IS NULL`,
+          AND "kind" = 'almanac_changed' AND "archived_at" IS NULL`,
       [watcher.id, almanacTripId],
     )) as Array<{ title: string }>;
     expect(cards).toHaveLength(1);
@@ -847,7 +847,7 @@ describe('Дневник похода (e2e)', () => {
     const cards = (await dataSource.query(
       `SELECT "id" FROM "notifications"
         WHERE "recipient_user_id" = $1 AND "trip_id" = $2
-          AND "kind" = 'almanac' AND "archived_at" IS NULL`,
+          AND "kind" = 'almanac_changed' AND "archived_at" IS NULL`,
       [parallel.id, almanacTripId],
     )) as Array<{ id: string }>;
 

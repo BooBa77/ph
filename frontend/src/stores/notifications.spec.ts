@@ -77,7 +77,7 @@ describe('стор уведомлений', () => {
     listNotifications.mockResolvedValue({
       system: [
         card({ id: 'chat', kind: 'trip_chat' }),
-        card({ id: 'almanac', kind: 'almanac' }),
+        card({ id: 'almanac', kind: 'almanac_changed' }),
         card({ id: 'money' }),
       ],
       personal: [

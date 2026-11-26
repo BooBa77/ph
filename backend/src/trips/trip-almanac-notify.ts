@@ -1,6 +1,5 @@
 import { DataSource } from 'typeorm';
 
-import { TripParticipant } from './entities/trip-participant.entity';
 import type { Trip } from './entities/trip.entity';
 import type { NotificationsService } from './notifications.service';
 import { tripNameOf } from './trip-name';
@@ -44,13 +43,17 @@ export async function notifyAlmanacUpdated(
 ): Promise<void> {
   const manager = dataSource.manager;
 
-  const participants = await manager.find(TripParticipant, {
-    where: { tripId: trip.id },
-  });
-
-  const recipients = participants
-    .filter((person) => person.userId !== authorId && person.status !== 'declined')
-    .map((person) => person.userId);
+  /**
+   * Получатели — активный состав (§4.1): `going`, `maybe`, `helping`,
+   * без автора правки и людей без аккаунта. До 26.11.2026 здесь брали
+   * всех, кроме `declined`, — приглашённый и виртуальный получали
+   * карточку, хотя первый ещё не участник, а второй не может войти.
+   */
+  const recipients = await notifications.tripAudience(
+    manager,
+    String(trip.id),
+    { actorUserId: authorId },
+  );
 
   if (recipients.length === 0) return;
 

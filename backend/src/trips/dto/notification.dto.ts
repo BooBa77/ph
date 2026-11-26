@@ -1,5 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
-import { IsIn, IsOptional } from 'class-validator';
+import { IsIn, IsOptional, IsString, Matches } from 'class-validator';
 
 import {
   ARCHIVE_REASONS,
@@ -59,7 +59,14 @@ export class NotificationDto {
   @ApiProperty({ description: 'Заголовок карточки', example: 'Денежный перевод' })
   title: string;
 
-  @ApiProperty({ description: 'Текст карточки' })
+  @ApiProperty({
+    description:
+      'Анонс свёрнутой карточки (26.11.2026). Отдельное поле: у половины ' +
+      'видов анонс — не начало содержимого; клиент обрезает до 75 символов',
+  })
+  announce: string;
+
+  @ApiProperty({ description: 'Содержимое раскрытой карточки' })
   body: string;
 
   @ApiProperty({ description: 'Диалог, если уведомление про чат', nullable: true })
@@ -100,23 +107,87 @@ export class NotificationDto {
 }
 
 /**
- * Два раздела панели одним ответом.
+ * Секция похода: заголовок, дата и карточки одного похода (§6).
  *
- * Счётчики — длины самих списков: они считают **активные уведомления**,
- * а не непрочитанные сообщения, и второй раз клиенту считать нечего.
+ * `tripName` — уже готовое имя (`tripNameOf`: цель, иначе «поход #N»);
+ * префикс «поход» клиент добавляет сам. `startsAt` нужен мобильной панели
+ * и сортировке, хотя порядок секций уже задан сервером.
+ */
+export class NotificationSectionDto {
+  @ApiProperty({ description: 'Поход секции' })
+  tripId: string;
+
+  @ApiProperty({ description: 'Имя похода: цель, иначе «поход #N»' })
+  tripName: string;
+
+  @ApiProperty({ description: 'Дата начала похода', nullable: true })
+  startsAt: string | null;
+
+  @ApiProperty({ type: [NotificationDto] })
+  items: NotificationDto[];
+}
+
+/**
+ * Ответ панели: секции походов, «Сообщения» и счётчики (26.11.2026).
+ *
+ * **Почему `sections` вместо `system`.** Спецификация §1.1: панель — не
+ * две секции, а отдельные блоки по походам плюс «Сообщения» последней.
+ * Порядок секций и карточек задаёт сервер, клиент его не пересортировывает.
+ *
+ * **Легаси `system` живёт до переезда фронта.** Панель части 2 переедет
+ * на `sections`, а dev-панель этой сессии ещё читает плоский `system`
+ * и поле `section` у карточки. Оба поля удаляются вместе с фронтом —
+ * это осознанная временная совместимость, а не второй контракт.
  */
 export class NotificationListDto {
-  @ApiProperty({ type: [NotificationDto] })
-  system: NotificationDto[];
+  @ApiProperty({ type: [NotificationSectionDto] })
+  sections: NotificationSectionDto[];
 
   @ApiProperty({ type: [NotificationDto] })
   personal: NotificationDto[];
 
-  @ApiProperty({ description: 'Счётчик системных уведомлений' })
-  systemCount: number;
+  @ApiProperty({ description: 'Сколько секций походов с карточками' })
+  tripCount: number;
 
   @ApiProperty({ description: 'Счётчик личных уведомлений' })
   personalCount: number;
+
+  @ApiProperty({ description: 'Активных карточек всего' })
+  total: number;
+
+  @ApiProperty({
+    type: [NotificationDto],
+    description:
+      'Легаси плоский список системных карточек для старого фронта. ' +
+      'Удаляется вместе с полем `section` после переезда панели',
+  })
+  system: NotificationDto[];
+
+  @ApiProperty({ description: 'Легаси счётчик плоского списка' })
+  systemCount: number;
+}
+
+/** Тело `POST /api/notifications/read-all` — §5.3. */
+export class ReadAllNotificationsDto {
+  @ApiProperty({
+    description:
+      'Поход, в котором закрыть активные карточки, кроме money_transfer ' +
+      'и payment_request',
+  })
+  @IsString()
+  @Matches(/^\d+$/, { message: 'Поход должен быть числовым идентификатором' })
+  tripId: string;
+}
+
+/** Ответ «прочитать все»: сколько закрыто и сколько осталось активным. */
+export class ReadAllNotificationsResultDto {
+  @ApiProperty({ description: 'Сколько карточек удалено' })
+  closed: number;
+
+  @ApiProperty({
+    description: 'Сколько активных карточек в этом походе осталось',
+  })
+  left: number;
 }
 
 /** Тело `POST /api/notifications/:id/archive`. */
