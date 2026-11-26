@@ -18,11 +18,17 @@ import {
   almanacChangedText,
   almanacCreatedText,
   depositText,
+  mealsLayoutText,
+  mealsPurchaseMessage,
+  mealsPurchaseText,
   participantJoinedText,
   participantLeftText,
   paymentRequestText,
   roleAssignedText,
   roleRemovedText,
+  tentLostText,
+  transferLostText,
+  transferSeatText,
   tripDatesText,
   tripExpenseText,
   tripGoalText,
@@ -93,8 +99,45 @@ describe('уведомления: чистые правила', () => {
     );
   });
 
-  it('«Запрос платежа» — адресный текст по §3.6', () => {
-    expect(paymentRequestText('Анна')).toEqual({
+  it('тексты трансфера, палатки и питания — по §3.10–§3.14', () => {
+    expect(transferSeatText('Анна', 'Нива', 'А123ВС38')).toEqual({
+      title: 'Билет на проезд',
+      announce: 'водитель Анна, Нива, А123ВС38',
+      body: 'Ты добавлен пассажиром в автомобиль, водитель Анна',
+    });
+    expect(transferSeatText('Анна', null, null)).toEqual({
+      title: 'Билет на проезд',
+      announce: 'водитель Анна',
+      body: 'Ты добавлен пассажиром в автомобиль, водитель Анна',
+    });
+    expect(transferLostText()).toEqual({
+      title: 'Проблемы с транспортом',
+      announce: 'Тебе не на чем ехать в поход',
+      body: 'Автомобиль, пассажиром которого ты являлся, стал недоступен',
+    });
+    expect(tentLostText('f')).toEqual({
+      title: 'Проблемы с палаткой',
+      announce: 'Ты осталась без палатки',
+      body: 'Палатка, в которую тебя определили, стала недоступна',
+    });
+    expect(tentLostText('m').announce).toBe('Ты остался без палатки');
+    // Рода нет — форма «остался(а)», как у остальных текстов §3.0.
+    expect(tentLostText(null).announce).toBe('Ты остался(а) без палатки');
+    expect(mealsLayoutText('Анна', 'f')).toEqual({
+      title: 'Раскладка',
+      announce: 'Анна изменила раскладку',
+      body: 'Анна изменила раскладку',
+    });
+    expect(mealsPurchaseText('Борис', 'm')).toEqual({
+      title: 'Закупка продуктов',
+      announce: 'Борис',
+      body: 'Борис закупил общие продукты',
+    });
+    // Строка в чат питания — та же фраза без «общие» (§3.14).
+    expect(mealsPurchaseMessage('Борис', 'm')).toBe('Борис закупил продукты');
+  });
+
+  it('«Запрос платежа» — адресный текст по §3.6', () => {    expect(paymentRequestText('Анна')).toEqual({
       title: 'Запрос платежа',
       announce: 'Организатор призывает к оплате',
       body:
@@ -1036,5 +1079,277 @@ describe('уведомления: генераторы новых типов', (
     ).toEqual([]);
     expect(query).not.toHaveBeenCalled();
     expect(events.emitNotifications).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Трансфер, палатка и питание (часть 4, 26.11.2026).
+ *
+ * Тексты и правила адресации: `transfer_seat` и `tent_lost` — личные
+ * карточки, `transfer_lost` — одна на поход, `meals_layout` и
+ * `meals_purchase` — групповые. Снятие карточки проверяется отдельно: у
+ * «место нашлось» и «палаток больше нет» нет действия человека, и строка
+ * удаляется, а не уходит в архив.
+ */
+describe('уведомления: трансфер, палатка и питание', () => {
+  const USERS: Record<
+    string,
+    { displayName: string; gender: 'm' | 'f'; isVirtual?: boolean; owner?: string }
+  > = {
+    [ANNA]: { displayName: 'Анна', gender: 'f' },
+    [BORIS]: { displayName: 'Борис', gender: 'm' },
+    [VERA]: { displayName: 'Вера', gender: 'f' },
+    [VIKTOR]: {
+      displayName: 'Виктор',
+      gender: 'm',
+      isVirtual: true,
+      owner: OWNER,
+    },
+  };
+
+  function eventManager() {
+    const query = vi.fn(async () => []);
+    const findOne = vi.fn(
+      async (entity: unknown, options?: { where?: { id?: string } }) => {
+        if (entity !== User) return null;
+        const person = USERS[options?.where?.id ?? ''];
+        if (!person) return null;
+
+        return {
+          id: options?.where?.id,
+          displayName: person.displayName,
+          gender: person.gender,
+          isVirtual: person.isVirtual === true,
+          virtualOwnerUserId: person.owner ?? null,
+        };
+      },
+    );
+    const manager = { query, findOne } as unknown as EntityManager;
+
+    return { manager, query, findOne };
+  }
+
+  const insets = (query: ReturnType<typeof vi.fn>) =>
+    query.mock.calls
+      .filter((call) => String(call[0]).includes('INSERT INTO "notifications"'))
+      .map((call) => call[1] as unknown[]);
+
+  it('билет на проезд: машина в анонсе, ключ по рейсу и человеку', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    const recipients = await service.notifyTransferSeat(manager, {
+      tripId: '193',
+      legId: '11',
+      passengerUserId: BORIS,
+      actorUserId: ANNA,
+      driverName: 'Анна',
+      vehicleTitle: 'Нива',
+      vehiclePlate: 'А123ВС38',
+    });
+
+    expect(recipients).toEqual([BORIS]);
+    expect(insets(query)[0]).toEqual([
+      BORIS,
+      'transfer_seat',
+      'Билет на проезд',
+      'водитель Анна, Нива, А123ВС38',
+      'Ты добавлен пассажиром в автомобиль, водитель Анна',
+      `transfer_seat:11:${BORIS}`,
+      null,
+      '193',
+      null,
+    ]);
+  });
+
+  it('билет на проезд: без марки и номера в анонсе только водитель', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyTransferSeat(manager, {
+      tripId: '193',
+      legId: '11',
+      passengerUserId: BORIS,
+      actorUserId: ANNA,
+      driverName: 'Анна',
+      vehicleTitle: 'Нива',
+      vehiclePlate: null,
+    });
+
+    expect(insets(query)[0][3]).toBe('водитель Анна');
+  });
+
+  it('билет на проезд: виртуальному — ведущему, автору — ничего', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    const recipients = await service.notifyTransferSeat(manager, {
+      tripId: '193',
+      legId: '11',
+      passengerUserId: VIKTOR,
+      actorUserId: ANNA,
+      driverName: 'Анна',
+      vehicleTitle: null,
+      vehiclePlate: null,
+    });
+
+    // У человека без аккаунта входа нет: карточка уходит его ведущему (§4.2).
+    expect(recipients).toEqual([OWNER]);
+    expect(insets(query)[0][0]).toBe(OWNER);
+    // Ключ при этом называет пассажира, а не получателя.
+    expect(insets(query)[0][5]).toBe(`transfer_seat:11:${VIKTOR}`);
+
+    // Владелец виртуального посадил его сам — своё действие не уведомляем.
+    expect(
+      await service.notifyTransferSeat(manager, {
+        tripId: '193',
+        legId: '12',
+        passengerUserId: VIKTOR,
+        actorUserId: OWNER,
+        driverName: 'Пётр',
+        vehicleTitle: null,
+        vehiclePlate: null,
+      }),
+    ).toEqual([]);
+    expect(insets(query)).toHaveLength(1);
+  });
+
+  it('потеря места: одна карточка на поход, без имени машины', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyTransferLost(manager, {
+      tripId: '193',
+      passengerUserId: VERA,
+      actorUserId: ANNA,
+    });
+
+    expect(insets(query)[0]).toEqual([
+      VERA,
+      'transfer_lost',
+      'Проблемы с транспортом',
+      'Тебе не на чем ехать в поход',
+      'Автомобиль, пассажиром которого ты являлся, стал недоступен',
+      'transfer_lost:193',
+      null,
+      '193',
+      null,
+    ]);
+  });
+
+  it('потеря места: своё действие карточки не даёт', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    expect(
+      await service.notifyTransferLost(manager, {
+        tripId: '193',
+        passengerUserId: BORIS,
+        actorUserId: BORIS,
+      }),
+    ).toEqual([]);
+    expect(query).not.toHaveBeenCalled();
+  });
+
+  it('место нашлось: карточка потери удаляется у этого человека', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    query.mockResolvedValueOnce([{ recipient_user_id: BORIS }]);
+
+    const recipients = await service.dropTransferLost(manager, '193', BORIS);
+
+    expect(recipients).toEqual([BORIS]);
+    const [sql, params] = query.mock.calls[0];
+    expect(String(sql)).toContain('DELETE FROM "notifications"');
+    expect(params).toEqual(['transfer_lost', 'transfer_lost:193', [BORIS]]);
+  });
+
+  it('палатка: пол в анонсе, ключ похода', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyTentLost(manager, {
+      tripId: '193',
+      lostUserId: VERA,
+      actorUserId: ANNA,
+    });
+    await service.notifyTentLost(manager, {
+      tripId: '193',
+      lostUserId: BORIS,
+      actorUserId: ANNA,
+    });
+
+    expect(insets(query)[0][3]).toBe('Ты осталась без палатки');
+    expect(insets(query)[0][4]).toBe(
+      'Палатка, в которую тебя определили, стала недоступна',
+    );
+    expect(insets(query)[0][5]).toBe('tent_lost:193');
+    expect(insets(query)[1][3]).toBe('Ты остался без палатки');
+  });
+
+  it('все ночи перестали быть палатками — карточки похода уходят целиком', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    query.mockResolvedValueOnce([
+      { recipient_user_id: BORIS },
+      { recipient_user_id: VERA },
+    ]);
+
+    const recipients = await service.dropTentLostForTrip(manager, '193');
+
+    expect(recipients).toEqual([BORIS, VERA]);
+    const [sql, params] = query.mock.calls[0];
+    expect(String(sql)).toContain('DELETE FROM "notifications"');
+    expect(params).toEqual(['tent_lost', 'tent_lost:193']);
+  });
+
+  it('раскладка: ключ похода и автор в тексте', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyMealsLayout(manager, {
+      tripId: '193',
+      authorUserId: ANNA,
+      recipientIds: [BORIS, VERA, BORIS],
+    });
+
+    // Один человек — одна карточка, даже если в списке он дважды.
+    expect(insets(query)).toHaveLength(2);
+    expect(insets(query)[0]).toEqual([
+      BORIS,
+      'meals_layout',
+      'Раскладка',
+      'Анна изменила раскладку',
+      'Анна изменила раскладку',
+      'meals_layout:193',
+      null,
+      '193',
+      null,
+    ]);
+  });
+
+  it('закупка: ключ с покупателем, имя покупателя в тексте', async () => {
+    const { manager, query } = eventManager();
+    const service = new NotificationsService(asDataSource({}), eventBus());
+
+    await service.notifyMealsPurchase(manager, {
+      tripId: '193',
+      buyerUserId: ANNA,
+      recipientIds: [BORIS],
+    });
+
+    expect(insets(query)[0]).toEqual([
+      BORIS,
+      'meals_purchase',
+      'Закупка продуктов',
+      'Анна',
+      'Анна закупила общие продукты',
+      `meals_purchase:193:${ANNA}`,
+      null,
+      '193',
+      null,
+    ]);
   });
 });

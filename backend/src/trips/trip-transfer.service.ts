@@ -21,6 +21,8 @@ import { TripTransferPassenger } from './entities/trip-transfer-passenger.entity
 import { TripParticipant } from './entities/trip-participant.entity';
 import { Vehicle } from './entities/vehicle.entity';
 import { Trip } from './entities/trip.entity';
+import { NotificationsService } from './notifications.service';
+import { User } from '../users/entities/user.entity';
 import {
   TRANSFER_PERSONAL_MODES,
   TRANSFER_PUBLIC_MODES,
@@ -94,6 +96,13 @@ export class TripTransferService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
+    /**
+     * Карточки «Трансфера» (26.11.2026, §3.10–§3.11 `topics/notifications.md`).
+     * Генераторы — здесь, потому что только этот сервис знает, кого посадили
+     * и у кого освободилось место; собирает строки и решает, кому их видно,
+     * `NotificationsService`.
+     */
+    private readonly notifications: NotificationsService,
   ) {}
 
   // ───────────────────────────── чтение ─────────────────────────────
@@ -238,6 +247,20 @@ export class TripTransferService {
         userId: ownerUserId,
         status: 'accepted',
       });
+
+      /**
+       * Владелец сел в свою машину — прежняя «не на чем ехать» больше не
+       * правда (§3.11). Бывает это не только когда он заводит авто сам:
+       * организатор мог завести карточку на него, и карточка потери
+       * снимается у того, кому место и досталось.
+       */
+      this.notifications.emitChanged(
+        await this.notifications.dropTransferLost(
+          manager,
+          String(trip.id),
+          ownerUserId,
+        ),
+      );
     }
 
     /**
@@ -581,7 +604,27 @@ export class TripTransferService {
     const leg = await this.legOrFail(manager, trip.id, legId);
     await this.assertCanManageLeg(trip, userId, leg);
 
+    /**
+     * Кого эта машина везла — **до** удаления: пассажиры уходят каскадом
+     * вместе с рейсом, и после удаления спросить уже некого (§3.11).
+     * Пара «туда-обратно» удаляется целиком, поэтому её состав тоже в счёте.
+     */
+    const mirror = await this.mirrorOf(manager, leg);
+    const lost = await this.seatHolders(
+      manager,
+      mirror === null ? [leg] : [leg, mirror],
+    );
+
     await manager.delete(TripTransferLeg, { id: leg.id });
+
+    const recipients = await this.reportSeatsLost(
+      manager,
+      trip,
+      lost,
+      userId,
+    );
+
+    this.notifications.emitChanged([...new Set(recipients)]);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -635,6 +678,13 @@ export class TripTransferService {
 
     await this.syncToMirror(manager, trip.id, leg, userId, status);
 
+    const seated =
+      status === 'accepted'
+        ? await this.reportSeatFound(manager, trip.id, leg, userId, userId)
+        : [];
+
+    this.notifications.emitChanged([...new Set(seated)]);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -679,6 +729,19 @@ export class TripTransferService {
 
     await this.syncToMirror(manager, trip.id, leg, dto.userId, status);
 
+    const seated =
+      status === 'accepted'
+        ? await this.reportSeatFound(
+            manager,
+            trip.id,
+            leg,
+            dto.userId,
+            userId,
+          )
+        : [];
+
+    this.notifications.emitChanged([...new Set(seated)]);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -719,6 +782,16 @@ export class TripTransferService {
 
     await this.syncToMirror(manager, trip.id, leg, targetUserId, 'accepted');
 
+    const seated = await this.reportSeatFound(
+      manager,
+      trip.id,
+      leg,
+      targetUserId,
+      userId,
+    );
+
+    this.notifications.emitChanged([...new Set(seated)]);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -757,6 +830,18 @@ export class TripTransferService {
 
     // Ушёл из «туда» — уходит и из обратного. Обратное на исходное не влияет.
     await this.removeFromMirror(manager, leg, targetUserId);
+
+    /**
+     * Место потеряно, только если оно **было**: заявку (`requested`) сняли —
+     * человек никуда не ехал, и «не на чем ехать» было бы неправдой (§3.11).
+     * Сам ушёл — карточки нет: из получателей его исключает `actorUserId`.
+     */
+    const recipients =
+      row.status === 'accepted'
+        ? await this.reportSeatsLost(manager, trip, [targetUserId], userId)
+        : [];
+
+    this.notifications.emitChanged([...new Set(recipients)]);
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -1729,6 +1814,161 @@ export class TripTransferService {
       userId,
       status,
     });
+  }
+
+  // ───────────────────────── уведомления о месте ─────────────────────────
+
+  /**
+   * Личный автомобиль с водителем — на нём и распределяют места (§3.10).
+   *
+   * Автобус, поезд, корабль и вертолёт в счёт не идут: там место даёт билет.
+   * Машина без водителя (карточка без флага «наше ТС») тоже не считается —
+   * «билет» некому подписать, а имя водителя в тексте обязательно.
+   */
+  private isDriverCar(leg: TripTransferLeg): boolean {
+    return (
+      leg.isOwnVehicle &&
+      leg.ownerUserId !== null &&
+      !this.isPublicMode(leg.mode)
+    );
+  }
+
+  /**
+   * Кто едет в этих карточках принятым пассажиром.
+   *
+   * Возвращаются все, включая водителя: он пассажир своего же ТС, и решает,
+   * получит ли он карточку, `actorUserId` в `notifyTransferLost`. Водители
+   * рейсов без распределения мест (автобус) в список не попадают.
+   */
+  private async seatHolders(
+    manager: EntityManager,
+    legs: readonly TripTransferLeg[],
+  ): Promise<string[]> {
+    const cars = legs.filter((leg) => this.isDriverCar(leg));
+    if (cars.length === 0) return [];
+
+    const rows = await manager.find(TripTransferPassenger, {
+      where: { legId: In(cars.map((leg) => leg.id)), status: 'accepted' },
+    });
+
+    return [...new Set(rows.map((row) => row.userId))];
+  }
+
+  /**
+   * Есть ли у человека принятое место в личной машине этого похода.
+   *
+   * Спрашивается **после** удаления: ушёл из «туда» — обратное могло
+   * остаться, и тогда «не на чем ехать» будет ложью.
+   */
+  private async hasCarSeat(
+    manager: EntityManager,
+    tripId: string,
+    userId: string,
+  ): Promise<boolean> {
+    const rows = (await manager.query(
+      `SELECT 1 AS "found"
+         FROM "trip_transfer_passengers" p
+         JOIN "trip_transfer_legs" l ON l."id" = p."leg_id"
+        WHERE p."trip_id" = $1
+          AND p."user_id" = $2
+          AND p."status" = 'accepted'
+          AND l."is_own_vehicle"
+          AND l."owner_user_id" IS NOT NULL
+          AND l."mode" <> ALL($3::text[])
+        LIMIT 1`,
+      [tripId, userId, [...TRANSFER_PUBLIC_MODES]],
+    )) as Array<{ found: number }>;
+
+    return rows.length > 0;
+  }
+
+  /**
+   * Место появилось: снять «не на чем ехать» и выдать «билет».
+   *
+   * Снятие идёт при любом принятом месте, включая автобус: карточка говорит
+   * «тебе не на чем ехать», а купленный билет делает это неправдой. Сама
+   * карточка «билет» — только у личного автомобиля (§3.10).
+   */
+  private async reportSeatFound(
+    manager: EntityManager,
+    tripId: string,
+    leg: TripTransferLeg,
+    passengerUserId: string,
+    actorUserId: string,
+  ): Promise<string[]> {
+    const recipients = await this.notifications.dropTransferLost(
+      manager,
+      tripId,
+      passengerUserId,
+    );
+
+    if (!this.isDriverCar(leg)) return recipients;
+
+    const driver =
+      leg.ownerUserId === null
+        ? null
+        : await manager.findOne(User, { where: { id: leg.ownerUserId } });
+    const vehicle =
+      leg.vehicleId === null
+        ? null
+        : await manager.findOne(Vehicle, { where: { id: leg.vehicleId } });
+
+    recipients.push(
+      ...(await this.notifications.notifyTransferSeat(manager, {
+        tripId,
+        legId: leg.id,
+        passengerUserId,
+        actorUserId,
+        driverName: driver?.displayName ?? 'Участник',
+        vehicleTitle: vehicle?.brand ?? null,
+        vehiclePlate: vehicle?.plate ?? null,
+      })),
+    );
+
+    return recipients;
+  }
+
+  /**
+   * Место потеряно: карточка каждому, у кого не осталось другой машины.
+   *
+   * «Не на чем ехать» — правда только про последнее место: человек, которого
+   * сняли с одной машины, но который сидит во второй, ничего не потерял.
+   * Себя (`actorUserId`) не уведомляем — это общее правило §3.0.
+   */
+  private async reportSeatsLost(
+    manager: EntityManager,
+    trip: Trip,
+    lostUserIds: readonly string[],
+    actorUserId: string,
+  ): Promise<string[]> {
+    const recipients: string[] = [];
+
+    for (const lostUserId of new Set(lostUserIds)) {
+      if (lostUserId === actorUserId) continue;
+
+      if (await this.hasCarSeat(manager, String(trip.id), lostUserId)) {
+        // Другая машина на месте — старая карточка о потере снимается.
+        recipients.push(
+          ...(await this.notifications.dropTransferLost(
+            manager,
+            String(trip.id),
+            lostUserId,
+          )),
+        );
+
+        continue;
+      }
+
+      recipients.push(
+        ...(await this.notifications.notifyTransferLost(manager, {
+          tripId: String(trip.id),
+          passengerUserId: lostUserId,
+          actorUserId,
+        })),
+      );
+    }
+
+    return recipients;
   }
 
   private async legOrFail(

@@ -32,12 +32,17 @@ import {
   almanacCreatedText,
   chatAnnounce,
   depositText,
+  mealsLayoutText,
+  mealsPurchaseText,
   notificationPriority,
   participantJoinedText,
   participantLeftText,
   paymentRequestText,
   roleAssignedText,
   roleRemovedText,
+  tentLostText,
+  transferLostText,
+  transferSeatText,
   tripDatesText,
   tripExpenseText,
   tripGoalText,
@@ -843,6 +848,232 @@ export class NotificationsService {
   }
 
   /**
+   * «Билет на проезд» — лично принятому пассажиру (§3.10).
+   *
+   * Карточка адресная, получатель считается здесь: у человека без аккаунта
+   * входа нет, и место «выдали» его ведущему (§4.2). Автор действия карточку
+   * не получает — это и есть «водителя не уведомляем о его же машине»:
+   * владелец едет в своём ТС пассажиром, но действие совершил он.
+   *
+   * Ключ `transfer_seat:<рейс>:<человек>`: «туда» и «обратно» — разные
+   * машины, поэтому две карточки; повторная посадка того же человека на тот
+   * же рейс только обновляет первую.
+   */
+  async notifyTransferSeat(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      legId: string;
+      passengerUserId: string;
+      actorUserId: string;
+      driverName: string;
+      vehicleTitle: string | null;
+      vehiclePlate: string | null;
+    },
+  ): Promise<string[]> {
+    const recipientId = await this.personalRecipientUserId(
+      manager,
+      params.passengerUserId,
+    );
+
+    if (recipientId === null || recipientId === params.actorUserId) return [];
+
+    await this.upsert(manager, {
+      recipientUserId: recipientId,
+      kind: 'transfer_seat',
+      ...transferSeatText(
+        params.driverName,
+        params.vehicleTitle,
+        params.vehiclePlate,
+      ),
+      dedupKey: `transfer_seat:${params.legId}:${params.passengerUserId}`,
+      tripId: params.tripId,
+    });
+
+    return [recipientId];
+  }
+
+  /**
+   * «Проблемы с транспортом» — лично потерявшему место (§3.11).
+   *
+   * Ключ `transfer_lost:<поход>`: карточка одна на поход, а не на машину —
+   * человеку важно «ехать не на чем», а не в какой машине освободилось
+   * место. Второй потерянный рейс её обновляет.
+   *
+   * Своё действие не уведомляется: ушёл сам или убрал свою машину — карточки
+   * нет (в тексте «тебе», адресат — сам потерпевший).
+   */
+  async notifyTransferLost(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      passengerUserId: string;
+      actorUserId: string;
+    },
+  ): Promise<string[]> {
+    const recipientId = await this.personalRecipientUserId(
+      manager,
+      params.passengerUserId,
+    );
+
+    if (recipientId === null || recipientId === params.actorUserId) return [];
+
+    await this.upsert(manager, {
+      recipientUserId: recipientId,
+      kind: 'transfer_lost',
+      ...transferLostText(),
+      dedupKey: `transfer_lost:${params.tripId}`,
+      tripId: params.tripId,
+    });
+
+    return [recipientId];
+  }
+
+  /**
+   * Место нашлось — «проблемы с транспортом» больше нет (§3.11).
+   *
+   * Удаление, а не архив: потеряет снова — карточка создастся заново, и это
+   * ровно тот цикл, который описал заказчик. Возвращаются получатели, чтобы
+   * вызывающий после COMMIT разослал кадр «перечитай уведомления».
+   */
+  async dropTransferLost(
+    manager: EntityManager,
+    tripId: string,
+    passengerUserId: string,
+  ): Promise<string[]> {
+    const recipientId = await this.personalRecipientUserId(
+      manager,
+      passengerUserId,
+    );
+
+    if (recipientId === null) return [];
+
+    return this.dropCards(manager, 'transfer_lost', `transfer_lost:${tripId}`, [
+      recipientId,
+    ]);
+  }
+
+  /**
+   * «Проблемы с палаткой» — лично потерявшему место (§3.12).
+   *
+   * Пол берётся у потерявшего: «остался» / «осталась» (§3.0). Ключ
+   * `tent_lost:<поход>` — одна карточка на поход: распределение по палаткам
+   * одно на весь поход, а не по ночам.
+   */
+  async notifyTentLost(
+    manager: EntityManager,
+    params: { tripId: string; lostUserId: string; actorUserId: string },
+  ): Promise<string[]> {
+    const recipientId = await this.personalRecipientUserId(
+      manager,
+      params.lostUserId,
+    );
+
+    if (recipientId === null || recipientId === params.actorUserId) return [];
+
+    const person = await this.userSummary(manager, params.lostUserId);
+
+    await this.upsert(manager, {
+      recipientUserId: recipientId,
+      kind: 'tent_lost',
+      ...tentLostText(person.gender),
+      dedupKey: `tent_lost:${params.tripId}`,
+      tripId: params.tripId,
+    });
+
+    return [recipientId];
+  }
+
+  /** Место в палатке нашлось — карточка `tent_lost` удаляется (§3.12). */
+  async dropTentLost(
+    manager: EntityManager,
+    tripId: string,
+    lostUserId: string,
+  ): Promise<string[]> {
+    const recipientId = await this.personalRecipientUserId(
+      manager,
+      lostUserId,
+    );
+
+    if (recipientId === null) return [];
+
+    return this.dropCards(manager, 'tent_lost', `tent_lost:${tripId}`, [
+      recipientId,
+    ]);
+  }
+
+  /**
+   * Все ночи перестали быть палатками — карточки `tent_lost` похода уходят
+   * целиком (§3.12): «проблемы с палаткой» больше нет ни у кого.
+   */
+  async dropTentLostForTrip(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<string[]> {
+    return this.dropCards(manager, 'tent_lost', `tent_lost:${tripId}`);
+  }
+
+  /**
+   * Правка общей раскладки — `meals_layout` (§3.13).
+   *
+   * Ключ `meals_layout:<поход>`: повторная правка обновляет карточку, а не
+   * заводит вторую — раскладку правят по нескольку раз за вечер. Личный
+   * список, отметки «куплено» и чеки сюда не доходят: их генераторы живут
+   * в других местах `TripMealsService`.
+   */
+  async notifyMealsLayout(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      authorUserId: string;
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    const author = await this.userSummary(manager, params.authorUserId);
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'meals_layout',
+      ...mealsLayoutText(author.displayName, author.gender),
+      dedupKey: `meals_layout:${params.tripId}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /**
+   * Закупка продуктов — `meals_purchase` (§3.14).
+   *
+   * Ключ `meals_purchase:<поход>:<покупатель>`: у каждого покупателя своя
+   * карточка, а серия его отметок подряд обновляет одну. Имя и пол — того,
+   * кого указали покупателем, а не того, кто поставил галочку: закупает один,
+   * отмечать может другой.
+   */
+  async notifyMealsPurchase(
+    manager: EntityManager,
+    params: {
+      tripId: string;
+      buyerUserId: string;
+      recipientIds: readonly string[];
+    },
+  ): Promise<string[]> {
+    const recipients = uniqueIds(params.recipientIds);
+    if (recipients.length === 0) return [];
+
+    const buyer = await this.userSummary(manager, params.buyerUserId);
+
+    return this.notifyTripCards(manager, {
+      tripId: params.tripId,
+      kind: 'meals_purchase',
+      ...mealsPurchaseText(buyer.displayName, buyer.gender),
+      dedupKey: `meals_purchase:${params.tripId}:${params.buyerUserId}`,
+      recipientIds: recipients,
+    });
+  }
+
+  /**
    * «Запрос платежа» — снова адресный: только должникам (§3.6).
    *
    * Решение 26.11.2026 отменяет групповое «всем идущим» 25.11.2026.
@@ -1124,6 +1355,40 @@ export class NotificationsService {
   }
 
   // ─────────────────────────────── внутреннее ───────────────────────────────
+
+  /**
+   * Удалить карточки вида по ключу — всем или только перечисленным.
+   *
+   * Удаление, а не архив: «место нашлось» и «проблема исчезла» — это не
+   * закрытие человеком, и след в архиве им не нужен (§2.4). Возвращаются
+   * получатели, чьи строки реально ушли, — по ним вызывающий шлёт кадр
+   * после COMMIT.
+   */
+  private async dropCards(
+    manager: EntityManager,
+    kind: NotificationKind,
+    dedupKey: string,
+    recipientIds?: readonly string[],
+  ): Promise<string[]> {
+    const only = recipientIds === undefined ? null : uniqueIds(recipientIds);
+
+    if (only !== null && only.length === 0) return [];
+
+    const rows = returningRows<{ recipient_user_id: string }>(
+      await manager.query(
+        `DELETE FROM "notifications"
+          WHERE "kind" = $1
+            AND "dedup_key" = $2
+            ${only === null ? '' : 'AND "recipient_user_id" = ANY($3::uuid[])'}
+        RETURNING "recipient_user_id"`,
+        only === null
+          ? [kind, dedupKey]
+          : [kind, dedupKey, only],
+      ),
+    );
+
+    return rows.map((row) => row.recipient_user_id);
+  }
 
   /**
    * Записать одну и ту же карточку списку получателей.

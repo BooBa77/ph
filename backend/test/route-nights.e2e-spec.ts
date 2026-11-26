@@ -760,4 +760,180 @@ describe('Ночёвки похода (e2e)', () => {
       ),
     ).toBe(false);
   });
+
+  /**
+   * «Проблемы с палаткой» (часть 4, 26.11.2026, §3.12).
+   *
+   * Свой поход: в общем таблицу ночей переписывают соседние проверки, и
+   * «все ночи перестали быть палатками» сломало бы их ожидания. Здесь важны
+   * не ночи, а карточка: `tent_lost` — одна на поход, лично потерявшему
+   * место, и снимается, когда место нашлось или палаток в походе не осталось.
+   */
+  describe('уведомления: проблемы с палаткой', () => {
+    interface CardRow {
+      id: string;
+      recipient_user_id: string;
+      announce: string;
+      dedup_key: string;
+    }
+
+    let notifyTripId: string;
+    let notifyTentId: string;
+
+    const cardsOf = async (): Promise<CardRow[]> =>
+      (await dataSource.query(
+        `SELECT "id", "recipient_user_id", "announce", "dedup_key"
+           FROM "notifications"
+          WHERE "trip_id" = $1 AND "kind" = 'tent_lost'
+          ORDER BY "recipient_user_id"`,
+        [notifyTripId],
+      )) as CardRow[];
+
+    const lodge = (targetId: string, token: string, tentGearId: string) =>
+      request(app.getHttpServer())
+        .put(`/api/trips/${notifyTripId}/route/lodgers/${targetId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .send({ tentGearId })
+        .expect(200);
+
+    const release = (targetId: string, token: string) =>
+      request(app.getHttpServer())
+        .delete(`/api/trips/${notifyTripId}/route/lodgers/${targetId}`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+    beforeAll(async () => {
+      notifyTripId = (
+        await dataSource.query(
+          `INSERT INTO trips (organizer_user_id, goal_object_id, starts_at, ends_at)
+           VALUES ($1, $2, '2026-11-07T00:00:00Z', '2026-11-09T00:00:00Z')
+           RETURNING id`,
+          [organizerId, objectId],
+        )
+      )[0].id as string;
+
+      await dataSource.query(
+        `INSERT INTO trip_participants (trip_id, user_id, status)
+         VALUES ($1, $2, 'going'), ($1, $3, 'going'), ($1, $4, 'going')`,
+        [notifyTripId, organizerId, annaId, memberId],
+      );
+
+      // Палатка Анны в снаряжении этого похода.
+      const itemId = await addCatalogGear(
+        annaId,
+        tentTypeId,
+        'Палатка для уведомлений',
+        2000,
+      );
+      notifyTentId = (
+        await dataSource.query(
+          `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id, status)
+           VALUES ($1, $2, $3, 'approved') RETURNING id`,
+          [notifyTripId, itemId, annaId],
+        )
+      )[0].id as string;
+
+      // Ночь в палатке: без неё «проблемы с палаткой» не создаются.
+      await dataSource.query(
+        `INSERT INTO trip_route_nights (trip_id, position, place, night_date, kind, cooking)
+         VALUES ($1, 1, 'Ольхон', '2026-11-07', 'tent', 'fire')`,
+        [notifyTripId],
+      );
+    });
+
+    afterAll(async () => {
+      if (notifyTripId) {
+        await dataSource.query('DELETE FROM trips WHERE id = $1', [
+          notifyTripId,
+        ]);
+      }
+    });
+
+    it('убрали из палатки — карточка лично, пол в анонсе', async () => {
+      await lodge(memberId, memberToken, notifyTentId);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${notifyTripId}/route/lodgers/${memberId}/accept`)
+        .set('Authorization', `Bearer ${annaToken}`)
+        .expect(200);
+
+      await release(memberId, annaToken);
+
+      const cards = await cardsOf();
+      expect(cards).toHaveLength(1);
+      expect(cards[0].recipient_user_id).toBe(memberId);
+      expect(cards[0].dedup_key).toBe(`tent_lost:${notifyTripId}`);
+      expect(cards[0].announce).toBe('Ты остался без палатки');
+    });
+
+    it('место нашлось — карточка удаляется', async () => {
+      await lodge(memberId, memberToken, notifyTentId);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${notifyTripId}/route/lodgers/${memberId}/accept`)
+        .set('Authorization', `Bearer ${annaToken}`)
+        .expect(200);
+
+      expect(await cardsOf()).toHaveLength(0);
+    });
+
+    it('сам ушёл — карточки нет', async () => {
+      await release(memberId, memberToken);
+
+      expect(await cardsOf()).toHaveLength(0);
+    });
+
+    it('палатку убрали из снаряжения — карточка жильцу', async () => {
+      await lodge(memberId, memberToken, notifyTentId);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${notifyTripId}/route/lodgers/${memberId}/accept`)
+        .set('Authorization', `Bearer ${annaToken}`)
+        .expect(200);
+
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${notifyTripId}/gear/${notifyTentId}`)
+        .set('Authorization', `Bearer ${annaToken}`)
+        .expect(204);
+
+      const cards = await cardsOf();
+      expect(cards).toHaveLength(1);
+      expect(cards[0].recipient_user_id).toBe(memberId);
+    });
+
+    it('все ночи перестали быть палатками — карточка уходит', async () => {
+      // Возвращаем палатку и место: иначе проверялось бы снятие «пустого».
+      const itemId = await addCatalogGear(
+        annaId,
+        tentTypeId,
+        'Палатка для уведомлений 2',
+        2000,
+      );
+      notifyTentId = (
+        await dataSource.query(
+          `INSERT INTO trip_gear (trip_id, gear_item_id, owner_user_id, status)
+           VALUES ($1, $2, $3, 'approved') RETURNING id`,
+          [notifyTripId, itemId, annaId],
+        )
+      )[0].id as string;
+
+      await lodge(memberId, memberToken, notifyTentId);
+      await request(app.getHttpServer())
+        .post(`/api/trips/${notifyTripId}/route/lodgers/${memberId}/accept`)
+        .set('Authorization', `Bearer ${annaToken}`)
+        .expect(200);
+
+      await release(memberId, annaToken);
+      expect(await cardsOf()).toHaveLength(1);
+
+      await request(app.getHttpServer())
+        .put(`/api/trips/${notifyTripId}/route/nights`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({
+          nights: [
+            { position: 1, date: '2026-11-07', place: 'Ольхон', kind: 'hotel' },
+          ],
+        })
+        .expect(200);
+
+      expect(await cardsOf()).toHaveLength(0);
+    });
+  });
 });

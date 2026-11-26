@@ -32,6 +32,7 @@ import {
   type RouteLodgerStatus,
 } from './trip-route.types';
 import type { TripTab } from './trip-tabs';
+import { NotificationsService } from './notifications.service';
 import { TripEventsService } from './trip-events.service';
 import { TripsService } from './trips.service';
 
@@ -100,6 +101,12 @@ export class TripRouteService {
      * об этом только после перезахода.
      */
     private readonly events: TripEventsService,
+    /**
+     * Карточка «проблемы с палаткой» (26.11.2026, §3.12
+     * `topics/notifications.md`). Генератор живёт здесь, потому что только
+     * «Ночёвки» знают, есть ли в походе ночь в палатке и кто в ней жил.
+     */
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Вкладка целиком. Видят участники похода. */
@@ -155,6 +162,21 @@ export class TripRouteService {
     // перечитывает вещи, а черновики ночей от чужого события намеренно
     // не трогаются, поэтому правку соседа по вкладке видно только так.
     this.events.emitRoute(String(trip.id), userId);
+
+    /**
+     * Палаток в походе больше нет — «проблемы с палаткой» снимаются у всех
+     * (§3.12): спать в палатке больше негде, и карточка врала бы. Появление
+     * ночи `tent` обратно карточку **не** создаёт: смена вида ночи — не
+     * потерянное место, и это записано в §10 как осознанный край.
+     */
+    if (!(await this.hasTentNight(manager, String(trip.id)))) {
+      const recipients = await this.notifications.dropTentLostForTrip(
+        manager,
+        String(trip.id),
+      );
+
+      if (recipients.length > 0) this.notifications.emitChanged(recipients);
+    }
 
     return this.buildPlan(manager, trip, userId);
   }
@@ -325,6 +347,19 @@ export class TripRouteService {
     // (19.11.2026): событие зовёт соседнюю вкладку перечитать данные.
     this.events.emitRoute(String(trip.id), userId);
 
+    /**
+     * Место в палатке появилось — «проблемы с палаткой» больше нет (§3.12).
+     * Проверяется и заявка, и посадка сразу: обе означают «человек при
+     * палатке», а карточка говорила обратное.
+     */
+    const recipients = await this.notifications.dropTentLost(
+      manager,
+      String(trip.id),
+      targetUserId,
+    );
+
+    if (recipients.length > 0) this.notifications.emitChanged(recipients);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -370,6 +405,15 @@ export class TripRouteService {
 
     this.events.emitRoute(String(trip.id), userId);
 
+    // Заявку приняли — место есть, карточка о потере снимается (§3.12).
+    const accepted = await this.notifications.dropTentLost(
+      manager,
+      String(trip.id),
+      targetUserId,
+    );
+
+    if (accepted.length > 0) this.notifications.emitChanged(accepted);
+
     return this.buildPlan(manager, trip, userId);
   }
 
@@ -406,11 +450,103 @@ export class TripRouteService {
       }
 
       await manager.delete(TripRouteLodger, { id: lodger.id });
+
+      /**
+       * Место потеряно: человек жил (`accepted`), убрал его кто-то другой
+       * и в походе есть ночь в палатке (§3.12). Своё действие карточки
+       * не даёт — «ушёл сам» и «хозяин убрал свою палатку» попадают сюда
+       * через `actorUserId`.
+       */
+      if (
+        lodger.status === 'accepted' &&
+        targetUserId !== userId &&
+        (await this.hasTentNight(manager, String(trip.id)))
+      ) {
+        const lost = await this.notifications.notifyTentLost(manager, {
+          tripId: String(trip.id),
+          lostUserId: targetUserId,
+          actorUserId: userId,
+        });
+
+        if (lost.length > 0) this.notifications.emitChanged(lost);
+      }
     }
 
     this.events.emitRoute(String(trip.id), userId);
 
     return this.buildPlan(manager, trip, userId);
+  }
+
+  // ───────────────────────── уведомления о палатке ─────────────────────────
+
+  /**
+   * Есть ли в походе хотя бы одна ночь в палатке (§3.12).
+   *
+   * Распределение по палаткам одно на весь поход, поэтому и проверка одна
+   * на поход, а не на ночь: пока палаточная ночь есть, потеря места — беда.
+   */
+  private async hasTentNight(
+    manager: EntityManager,
+    tripId: string,
+  ): Promise<boolean> {
+    return manager.exists(TripRouteNight, {
+      where: { tripId, kind: 'tent' },
+    });
+  }
+
+  /**
+   * Кого оставит без места удаление палатки — **до** удаления вещи (§3.12).
+   *
+   * Вызывается «Снаряжением»: строки ночлежников уходят каскадом вместе
+   * с палаткой, и после удаления спросить уже некого. Права проверяет
+   * вызывающий — сюда приходит уже разрешённое действие.
+   */
+  async tentLossCandidates(
+    tripId: string,
+    tentGearId: string,
+    actorUserId: string,
+  ): Promise<string[]> {
+    const manager = this.dataSource.manager;
+
+    if (!(await this.hasTentNight(manager, tripId))) return [];
+
+    const rows = await manager.find(TripRouteLodger, {
+      where: { tripId, tentGearId, status: 'accepted' },
+    });
+
+    return rows
+      .map((row) => row.userId)
+      .filter((userId) => userId !== actorUserId);
+  }
+
+  /**
+   * Палатку убрали — карточки тем, кто жил в ней (§3.12).
+   *
+   * Вещь уже удалена (событие совершилось), поэтому вызывается после
+   * COMMIT. Хозяин палатки карточку не получает: он и есть автор действия,
+   * его отсекает `actorUserId` в `notifyTentLost`.
+   */
+  async notifyTentLoss(
+    tripId: string,
+    lostUserIds: readonly string[],
+    actorUserId: string,
+  ): Promise<void> {
+    const manager = this.dataSource.manager;
+    if (!(await this.hasTentNight(manager, tripId))) return;
+
+    const recipients: string[] = [];
+
+    for (const lostUserId of new Set(lostUserIds)) {
+      recipients.push(
+        ...(await this.notifications.notifyTentLost(manager, {
+          tripId,
+          lostUserId,
+          actorUserId,
+        })),
+      );
+    }
+
+    if (recipients.length > 0) this.notifications.emitChanged(recipients);
   }
 
   /** Собрать вкладку: ночи, личные вещи, места жительства и кого можно сажать. */

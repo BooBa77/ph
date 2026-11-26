@@ -1395,4 +1395,220 @@ describe('Питание похода (e2e)', () => {
       ]);
     }
   });
+
+  /**
+   * Уведомления «Питания» (часть 4, 26.11.2026).
+   *
+   * Свой поход: у основного другие проверки считают едоков и веса, и третий
+   * идущий участник сломал бы их ожидания. Здесь проверяется не раскладка,
+   * а то, что она порождает: `meals_layout` (§3.13), `meals_purchase` (§3.14),
+   * выбор покупателя и системная строка в чате питания.
+   */
+  describe('уведомления: раскладка и закупка', () => {
+    interface CardRow {
+      id: string;
+      recipient_user_id: string;
+      kind: string;
+      title: string;
+      announce: string;
+      body: string;
+      dedup_key: string;
+      updated_at: Date;
+    }
+
+    let notifyTripId: string;
+    let buyerName: string;
+    let purchaseProductId: number;
+
+    const cardsOf = async (kind: string): Promise<CardRow[]> =>
+      (await dataSource.query(
+        `SELECT "id", "recipient_user_id", "kind", "title", "announce",
+                "body", "dedup_key", "updated_at"
+           FROM "notifications"
+          WHERE "trip_id" = $1 AND "kind" = $2
+          ORDER BY "recipient_user_id"`,
+        [notifyTripId, kind],
+      )) as CardRow[];
+
+    const recipientsOf = (rows: CardRow[]): string[] =>
+      rows.map((row) => row.recipient_user_id).sort();
+
+    const mealChat = async (): Promise<
+      Array<{ body: string; sender_id: string | null }>
+    > =>
+      (await dataSource.query(
+        `SELECT m."body", m."sender_id"
+           FROM "messages" m
+           JOIN "conversations" c ON c."id" = m."conversation_id"
+          WHERE c."trip_id" = $1 AND c."kind" = 'trip_meals'
+          ORDER BY m."id" ASC`,
+        [notifyTripId],
+      )) as Array<{ body: string; sender_id: string | null }>;
+
+    beforeAll(async () => {
+      const trip = await call('post', '/api/trips', organizerToken)
+        .send({
+          goalObjectId: Number(objectId),
+          status: 'decided',
+          startsAt: new Date(Date.now() + 20 * 86_400_000).toISOString(),
+          endsAt: new Date(Date.now() + 24 * 86_400_000).toISOString(),
+        })
+        .expect(201);
+      notifyTripId = trip.body.id as string;
+
+      // Состав — напрямую: приглашения проверены в `trips.e2e-spec.ts`.
+      // Организатора сервер посадил сам при создании похода.
+      await dataSource.query(
+        `INSERT INTO trip_participants (trip_id, user_id, status)
+         VALUES ($1, $2, 'going'), ($1, $3, 'going')`,
+        [notifyTripId, memberId, strangerId],
+      );
+
+      // Имя покупателя в текстах — из профиля, а не из адреса почты.
+      const names = (await dataSource.query(
+        `SELECT "id", "display_name" AS "name" FROM "users"
+          WHERE "id" = ANY($1::uuid[])`,
+        [[organizerId, memberId, strangerId]],
+      )) as Array<{ id: string; name: string }>;
+      buyerName = names.find((row) => row.id === memberId)!.name;
+
+      // Строка в приём — она же первая правка раскладки (`mutate`).
+      await call(
+        'post',
+        `/api/trips/${notifyTripId}/meals/1/breakfast/lines`,
+        organizerToken,
+      )
+        .send({ name: `e2e-закупка-${Date.now()}`, amount: 100 })
+        .expect(200);
+
+      const checks = await call(
+        'get',
+        `/api/trips/${notifyTripId}/meal-checks`,
+        organizerToken,
+      ).expect(200);
+      purchaseProductId = (
+        checks.body.checks as Array<{ productId: number; name: string }>
+      ).find((row) => row.name.startsWith('e2e-закупка-'))!.productId;
+    });
+
+    afterAll(async () => {
+      if (notifyTripId) {
+        await dataSource.query('DELETE FROM trips WHERE id = $1', [
+          notifyTripId,
+        ]);
+      }
+    });
+
+    it('правка раскладки — карточка составу без автора, одна на поход', async () => {
+      const first = await cardsOf('meals_layout');
+
+      expect(recipientsOf(first)).toEqual([memberId, strangerId].sort());
+      expect(first[0].dedup_key).toBe(`meals_layout:${notifyTripId}`);
+      expect(first[0].title).toBe('Раскладка');
+      expect(first[0].body).toContain('раскладку');
+
+      const before = first[0].updated_at;
+      const beforeId = first[0].id;
+
+      // Вторая правка того же вечера обновляет карточку, а не заводит новую.
+      await call(
+        'post',
+        `/api/trips/${notifyTripId}/meals/1/lunch/lines`,
+        organizerToken,
+      )
+        .send({ name: `e2e-закупка-2-${Date.now()}`, amount: 50 })
+        .expect(200);
+
+      const second = await cardsOf('meals_layout');
+      expect(second).toHaveLength(2);
+      expect(second[0].id).toBe(beforeId);
+      expect(new Date(second[0].updated_at).getTime()).toBeGreaterThan(
+        new Date(before).getTime(),
+      );
+    });
+
+    it('личный список карточку раскладки не даёт', async () => {
+      const before = await cardsOf('meals_layout');
+
+      await call(
+        'post',
+        `/api/trips/${notifyTripId}/my-meals/1/breakfast/lines`,
+        memberToken,
+      )
+        .send({ name: `e2e-личное-${Date.now()}`, amount: 30 })
+        .expect(200);
+
+      const after = await cardsOf('meals_layout');
+      expect(after).toHaveLength(before.length);
+      expect(after[0].updated_at).toEqual(before[0].updated_at);
+    });
+
+    it('отметка «куплено» — карточка, выбор покупателя и строка в чате', async () => {
+      const mark = (buyerUserId: string) =>
+        call(
+          'put',
+          `/api/trips/${notifyTripId}/meal-checks/${purchaseProductId}`,
+          organizerToken,
+        ).send({ isBought: true, boughtByUserId: buyerUserId });
+
+      // Покупателя выбирают: галочку ставит организатор, купил — участник.
+      const marked = await mark(memberId).expect(200);
+      const row = (
+        marked.body.checks as Array<{
+          productId: number;
+          boughtByUserId: string | null;
+          boughtByName: string | null;
+        }>
+      ).find((check) => check.productId === purchaseProductId)!;
+
+      expect(row.boughtByUserId).toBe(memberId);
+      expect(row.boughtByName).toBe(buyerName);
+
+      /**
+       * Получатели: состав без покупателя и без автора отметки. Здесь это
+       * один третий участник — ни организатор, ни покупатель карточку
+       * не получают (§3.14, §4.3).
+       */
+      const cards = await cardsOf('meals_purchase');
+      expect(recipientsOf(cards)).toEqual([strangerId]);
+      expect(cards[0].dedup_key).toBe(
+        `meals_purchase:${notifyTripId}:${memberId}`,
+      );
+      expect(cards[0].announce).toBe(buyerName);
+      // Пол покупателя — из профиля (у участника в этом наборе женский).
+      expect(cards[0].body).toBe(`${buyerName} закупила общие продукты`);
+
+      // В чат питания — системная строка от имени покупателя.
+      const chat = await mealChat();
+      expect(chat).toHaveLength(1);
+      expect(chat[0].sender_id).toBeNull();
+      expect(chat[0].body).toBe(`${buyerName} закупила продукты`);
+
+      // Повторная отметка того же покупателя не плодит ни карточек, ни строк.
+      await mark(memberId).expect(200);
+      expect(await cardsOf('meals_purchase')).toHaveLength(1);
+      expect(await mealChat()).toHaveLength(1);
+    });
+
+    it('покупателем можно указать только участника похода', async () => {
+      const outsider = (
+        await dataSource.query(
+          `INSERT INTO users (display_name) VALUES ('Посторонний t4')
+           RETURNING id`,
+        )
+      )[0].id as string;
+
+      try {
+        await call(
+          'put',
+          `/api/trips/${notifyTripId}/meal-checks/${purchaseProductId}`,
+          organizerToken,
+        )
+          .send({ isBought: true, boughtByUserId: outsider })
+          .expect(400);
+      } finally {
+        await dataSource.query('DELETE FROM users WHERE id = $1', [outsider]);
+      }
+    });
+  });
 });

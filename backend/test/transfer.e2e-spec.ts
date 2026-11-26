@@ -1806,4 +1806,273 @@ describe('Трансфер похода (e2e)', () => {
       .set('Authorization', `Bearer ${strangerToken}`)
       .expect(403);
   });
+
+  /**
+   * Уведомления о месте и потере места (часть 4, 26.11.2026).
+   *
+   * Свой поход: в общем составе люди уже сидят в карточках, и правило «один
+   * рейс туда» мешало бы соседним проверкам. Здесь важно не место в машине,
+   * а карточки: `transfer_seat` (§3.10) — лично принятому пассажиру,
+   * `transfer_lost` (§3.11) — одна на поход и снимается, когда место нашлось.
+   */
+  describe('уведомления о месте и потере места', () => {
+    interface CardRow {
+      id: string;
+      recipient_user_id: string;
+      kind: string;
+      title: string;
+      announce: string;
+      body: string;
+      dedup_key: string;
+    }
+
+    let notifyTripId: string;
+    let carId: string;
+    let busId: string;
+
+    const cardsOf = async (kind: string): Promise<CardRow[]> =>
+      (await dataSource.query(
+        `SELECT "id", "recipient_user_id", "kind", "title", "announce",
+                "body", "dedup_key"
+           FROM "notifications"
+          WHERE "trip_id" = $1 AND "kind" = $2
+          ORDER BY "recipient_user_id"`,
+        [notifyTripId, kind],
+      )) as CardRow[];
+
+    const planOfNotify = async (token: string): Promise<TripTransferDto> => {
+      const response = await request(app.getHttpServer())
+        .get(`/api/trips/${notifyTripId}/transfer`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+      return response.body as TripTransferDto;
+    };
+
+    const join = (legId: string, token: string) =>
+      request(app.getHttpServer())
+        .post(`/api/trips/${notifyTripId}/transfer/legs/${legId}/join`)
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+    const accept = (legId: string, userId: string, token: string) =>
+      request(app.getHttpServer())
+        .post(
+          `/api/trips/${notifyTripId}/transfer/legs/${legId}/passengers/${userId}/accept`,
+        )
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+    const remove = (legId: string, userId: string, token: string) =>
+      request(app.getHttpServer())
+        .delete(
+          `/api/trips/${notifyTripId}/transfer/legs/${legId}/passengers/${userId}`,
+        )
+        .set('Authorization', `Bearer ${token}`)
+        .expect(200);
+
+    beforeAll(async () => {
+      notifyTripId = (
+        await dataSource.query(
+          `INSERT INTO trips (organizer_user_id, goal_object_id)
+           VALUES ($1, $2) RETURNING id`,
+          [organizerId, objectId],
+        )
+      )[0].id as string;
+
+      await dataSource.query(
+        `INSERT INTO trip_participants (trip_id, user_id, status)
+         VALUES ($1, $2, 'going'), ($1, $3, 'going'), ($1, $4, 'going')`,
+        [notifyTripId, organizerId, driverId, memberId],
+      );
+
+      // Машина водителя: организатор сажает его владельцем (право вкладки).
+      const body = await request(app.getHttpServer())
+        .post(`/api/trips/${notifyTripId}/transfer/legs`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({
+          direction: 'there',
+          mode: 'car',
+          departsAt: DEPARTS,
+          fromPlace: 'Иркутск',
+          toPlace: 'Витязь',
+          compensation: 'free',
+          isOwnVehicle: true,
+          ownerUserId: driverId,
+          seats: 3,
+        })
+        .expect(200);
+
+      carId = (body.body as TripTransferDto).legs[0].id;
+
+      const bus = await request(app.getHttpServer())
+        .post(`/api/trips/${notifyTripId}/transfer/legs`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .send({
+          direction: 'back',
+          mode: 'bus',
+          departsAt: DEPARTS,
+          fromPlace: 'Витязь',
+          toPlace: 'Иркутск',
+          compensation: 'ticket',
+          compensationAmountRub: 800,
+        })
+        .expect(200);
+
+      busId = (bus.body as TripTransferDto).legs.find(
+        (leg) => leg.mode === 'bus',
+      )!.id;
+    });
+
+    afterAll(async () => {
+      if (notifyTripId) {
+        await dataSource.query('DELETE FROM trips WHERE id = $1', [
+          notifyTripId,
+        ]);
+      }
+    });
+
+    it('заявка молчит, принятие даёт «билет», водителю — нет', async () => {
+      await join(carId, memberToken);
+
+      // Заявка — не место: «Тебя добавят» и «водитель» здесь преждевременны.
+      expect(await cardsOf('transfer_seat')).toHaveLength(0);
+
+      await accept(carId, memberId, driverToken);
+
+      const cards = await cardsOf('transfer_seat');
+      expect(cards).toHaveLength(1);
+      expect(cards[0].recipient_user_id).toBe(memberId);
+      expect(cards[0].dedup_key).toBe(`transfer_seat:${carId}:${memberId}`);
+      expect(cards[0].title).toBe('Билет на проезд');
+      expect(cards[0].body).toContain('Ты добавлен пассажиром в автомобиль');
+      // Водитель едет в своей машине, но действие совершил он — карточки нет.
+      expect(await cardsOf('transfer_seat')).not.toContainEqual(
+        expect.objectContaining({ recipient_user_id: driverId }),
+      );
+    });
+
+    it('общественный транспорт места не распределяет — карточки нет', async () => {
+      await join(busId, organizerToken);
+
+      const plan = await planOfNotify(organizerToken);
+      expect(
+        plan.legs.find((leg) => leg.id === busId)?.passengers,
+      ).toContainEqual(expect.objectContaining({ userId: organizerId }));
+
+      // У автобуса мест не распределяют: «билет» — про личный автомобиль.
+      expect(
+        (await cardsOf('transfer_seat')).filter(
+          (card) => card.dedup_key === `transfer_seat:${busId}:${organizerId}`,
+        ),
+      ).toHaveLength(0);
+    });
+
+    it('убрали пассажира — «не на чем ехать», одна карточка на поход', async () => {
+      await remove(carId, memberId, organizerToken);
+
+      const first = await cardsOf('transfer_lost');
+      expect(first).toHaveLength(1);
+      expect(first[0].recipient_user_id).toBe(memberId);
+      expect(first[0].dedup_key).toBe(`transfer_lost:${notifyTripId}`);
+      expect(first[0].announce).toBe('Тебе не на чем ехать в поход');
+
+      // Вернулся и потерял снова — строка одна: потеря «создаётся заново»,
+      // но ключ тот же (одна карточка на поход, §3.11).
+      await join(carId, memberToken);
+      await accept(carId, memberId, organizerToken);
+      await remove(carId, memberId, organizerToken);
+
+      const again = await cardsOf('transfer_lost');
+      expect(again).toHaveLength(1);
+      expect(again[0].dedup_key).toBe(first[0].dedup_key);
+    });
+
+    it('место нашлось — карточка потери удаляется', async () => {
+      expect(await cardsOf('transfer_lost')).toHaveLength(1);
+
+      await join(carId, memberToken);
+      await accept(carId, memberId, organizerToken);
+
+      expect(await cardsOf('transfer_lost')).toHaveLength(0);
+    });
+
+    it('сам ушёл — карточки потери нет', async () => {
+      await remove(carId, memberId, memberToken);
+
+      expect(await cardsOf('transfer_lost')).toHaveLength(0);
+    });
+
+    it('машину убрали — пассажирам карточка, убравшему владельцу — нет', async () => {
+      // Вернули место и убрали машину руками организатора: владелец
+      // (водитель) место потерял не сам, поэтому карточку получает.
+      await join(carId, memberToken);
+      await accept(carId, memberId, organizerToken);
+
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${notifyTripId}/transfer/legs/${carId}`)
+        .set('Authorization', `Bearer ${organizerToken}`)
+        .expect(200);
+
+      const lost = await cardsOf('transfer_lost');
+      expect(lost.map((card) => card.recipient_user_id).sort()).toEqual(
+        [driverId, memberId].sort(),
+      );
+
+      // Вторая машина — своя у водителя: убрал сам, карточки себе не ждёт.
+      // Флаг «наше ТС» участнику ставить не нужно — личный транспорт
+      // получает его от сервера вместе с владельцем.
+      const own = await request(app.getHttpServer())
+        .post(`/api/trips/${notifyTripId}/transfer/legs`)
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({
+          direction: 'there',
+          mode: 'suv',
+          departsAt: DEPARTS,
+          fromPlace: 'Иркутск',
+          toPlace: 'Витязь',
+          compensation: 'free',
+          seats: 3,
+        })
+        .expect(200);
+
+      const ownId = (own.body as TripTransferDto).legs.find(
+        (leg) => leg.mode === 'suv',
+      )!.id;
+
+      const seated = await request(app.getHttpServer())
+        .post(`/api/trips/${notifyTripId}/transfer/legs/${ownId}/passengers`)
+        .set('Authorization', `Bearer ${driverToken}`)
+        .send({ userId: memberId })
+        .expect(200);
+
+      expect(
+        (seated.body as TripTransferDto).legs
+          .find((leg) => leg.id === ownId)
+          ?.passengers.find((person) => person.userId === memberId)?.status,
+      ).toBe('accepted');
+
+      // Место снова есть — карточки потери у пассажира больше нет.
+      expect(
+        (await cardsOf('transfer_lost')).filter(
+          (card) => card.recipient_user_id === memberId,
+        ),
+      ).toHaveLength(0);
+
+      await request(app.getHttpServer())
+        .delete(`/api/trips/${notifyTripId}/transfer/legs/${ownId}`)
+        .set('Authorization', `Bearer ${driverToken}`)
+        .expect(200);
+
+      const after = await cardsOf('transfer_lost');
+      // Пассажир потерял место — карточка у него есть; убравший владелец
+      // карточку не получает (он в курсе, это его машина).
+      expect(
+        after.filter((card) => card.recipient_user_id === memberId),
+      ).toHaveLength(1);
+      expect(
+        after.filter((card) => card.recipient_user_id === driverId),
+      ).toHaveLength(0);
+    });
+  });
 });

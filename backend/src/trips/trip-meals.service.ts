@@ -59,6 +59,10 @@ import {
 } from './trip.types';
 import { TripEventsService } from './trip-events.service';
 import { TripsService } from './trips.service';
+import { NotificationsService } from './notifications.service';
+import { mealsPurchaseMessage } from './notification-text';
+import { postTripSystemMessage } from './trip-participant-detach';
+import { User } from '../users/entities/user.entity';
 
 const DAY_MS = 86_400_000;
 
@@ -106,6 +110,13 @@ export class TripMealsService {
     private readonly dataSource: DataSource,
     private readonly trips: TripsService,
     private readonly events: TripEventsService,
+    /**
+     * Карточки «Питания» (26.11.2026, §3.13–§3.14
+     * `topics/notifications.md`): раскладка и закупка. Генераторы живут
+     * здесь, потому что только этот сервис знает, что именно изменилось —
+     * общий план, пакеты, порции или отметка «куплено».
+     */
+    private readonly notifications: NotificationsService,
   ) {}
 
   /** Раскладка и фасовка целиком. */
@@ -1415,7 +1426,12 @@ export class TripMealsService {
     id: number,
     owner: MealOwner = null,
     productId: number,
-    dto: { isBought?: boolean; isHome?: boolean; boughtAmount?: number | null },
+    dto: {
+      isBought?: boolean;
+      isHome?: boolean;
+      boughtAmount?: number | null;
+      boughtByUserId?: string;
+    },
   ): Promise<TripMealCheckListDto> {
     const plan = await this.getPlan(userId, id, owner);
     const inPlan = plan.meals.some((meal) =>
@@ -1447,6 +1463,23 @@ export class TripMealsService {
       this.assertCanUnsetBought(existing, userId);
     }
 
+    /**
+     * Кого записать покупателем (§5.9 `meals.md`, 26.11.2026). По умолчанию
+     * текущий аккаунт; модалка «Список общих продуктов» позволяет выбрать
+     * другого участника, в том числе виртуального — «продукты купил Пётр,
+     * отметку поставила Анна» бывает сплошь и рядом.
+     *
+     * Личный список выбора не знает: там едок один, и покупатель — он сам.
+     */
+    const buyerUserId =
+      dto.isBought === true && owner === null
+        ? (dto.boughtByUserId ?? userId)
+        : null;
+
+    if (buyerUserId !== null && buyerUserId !== userId) {
+      await this.assertBuyer(manager, tripId, buyerUserId);
+    }
+
     let row = existing;
     if (!row) {
       row = manager.create(TripMealCheck, {
@@ -1458,7 +1491,7 @@ export class TripMealsService {
 
     if (dto.isBought !== undefined) {
       row.isBought = dto.isBought;
-      row.boughtBy = dto.isBought ? userId : null;
+      row.boughtBy = dto.isBought ? (buyerUserId ?? userId) : null;
       row.boughtAt = dto.isBought ? new Date() : null;
     }
     if (dto.isHome !== undefined) {
@@ -1475,7 +1508,115 @@ export class TripMealsService {
     // магазине — повод перечитать строки (12.11.2026).
     this.events.emitMeals(String(id), userId);
 
+    /**
+     * Отметка «куплено» в общем списке — карточка «Закупка продуктов» и
+     * строка в чате питания (§3.14). Снятие отметки карточку не трогает:
+     * она говорит «продукты куплены» и остаётся правдой — снимают галочку
+     * обычно из-за ошибки, а не потому, что продукты вернули на полку.
+     */
+    if (dto.isBought === true && owner === null && row.boughtBy !== null) {
+      await this.notifyPurchase(tripId, row.boughtBy, userId);
+    }
+
     return this.getChecklist(userId, id, owner);
+  }
+
+  /**
+   * «Закупка продуктов» — составу без покупателя и без его ведущего (§3.14).
+   *
+   * Субъект уведомления исключается вместе с ведущим виртуального: карточка
+   * «{имя} закупил продукты» тому, кто это и сделал, не нужна. Автор отметки
+   * исключается общим правилом §4.3 — он тоже знает.
+   *
+   * Чат питания получает системную строку «{имя} закупил(а) продукты».
+   * Уведомление о сообщении чата **не** создаётся (`notifyChatMessage` здесь
+   * не зовётся): о закупке уже есть карточка, и вторая была бы дублем.
+   */
+  private async notifyPurchase(
+    tripId: string,
+    buyerUserId: string,
+    actorUserId: string,
+  ): Promise<void> {
+    const manager = this.dataSource.manager;
+
+    const except = [buyerUserId];
+    const buyerRecipient = await this.notifications.personalRecipientUserId(
+      manager,
+      buyerUserId,
+    );
+    if (buyerRecipient !== null) except.push(buyerRecipient);
+
+    const recipients = await this.notifications.tripAudience(manager, tripId, {
+      actorUserId,
+      exceptUserIds: except,
+    });
+
+    const written = await this.notifications.notifyMealsPurchase(manager, {
+      tripId,
+      buyerUserId,
+      recipientIds: recipients,
+    });
+
+    await this.postPurchaseMessage(manager, tripId, buyerUserId);
+
+    if (written.length > 0) this.notifications.emitChanged(written);
+  }
+
+  /**
+   * Системное сообщение о закупке в чат питания (§3.14).
+   *
+   * Серия отметок одного покупателя не плодит строки: если последнее
+   * сообщение чата — та же системная фраза о том же человеке, второй раз
+   * не пишем. Появилось любое другое сообщение — фраза повторяется, и чат
+   * показывает, что закупка продолжилась.
+   */
+  private async postPurchaseMessage(
+    manager: EntityManager,
+    tripId: string,
+    buyerUserId: string,
+  ): Promise<void> {
+    const buyer = await manager.findOne(User, { where: { id: buyerUserId } });
+    const text = mealsPurchaseMessage(
+      buyer?.displayName ?? 'Участник',
+      buyer?.gender ?? null,
+    );
+
+    const rows = (await manager.query(
+      `SELECT m."body" AS "body", (m."sender_id" IS NULL) AS "system"
+         FROM "messages" m
+         JOIN "conversations" c ON c."id" = m."conversation_id"
+        WHERE c."trip_id" = $1 AND c."kind" = 'trip_meals'
+        ORDER BY m."id" DESC
+        LIMIT 1`,
+      [tripId],
+    )) as Array<{ body: string; system: boolean }>;
+
+    if (rows[0]?.system === true && rows[0].body === text) return;
+
+    await postTripSystemMessage(manager, tripId, 'trip_meals', text);
+  }
+
+  /**
+   * Покупатель — участник этого похода (§5.9).
+   *
+   * Проверяется отдельно, потому что виртуального человека в списке состава
+   * видно, а чужого — нет: `bought_by` без такой проверки стал бы ссылкой
+   * на постороннего.
+   */
+  private async assertBuyer(
+    manager: EntityManager,
+    tripId: string,
+    buyerUserId: string,
+  ): Promise<void> {
+    const exists = await manager.exists(TripParticipant, {
+      where: { tripId, userId: buyerUserId },
+    });
+
+    if (!exists) {
+      throw new BadRequestException(
+        'Покупателем можно указать только участника этого похода',
+      );
+    }
   }
 
   /**
@@ -1614,6 +1755,42 @@ export class TripMealsService {
      * (личный слой виден только владельцу), поэтому перечитывает клиент.
      */
     this.events.emitMeals(String(id), userId);
+
+    /**
+     * Общая раскладка изменилась — карточка «Раскладка» (§3.13). Личный
+     * слой её не даёт: чужая личная еда никому не видна, и новостью для
+     * группы она быть не может. Отметки «куплено» и чеки сюда не доходят —
+     * у них свои генераторы (`updateCheck`, «Бухгалтерия»).
+     */
+    if (owner === null) await this.notifyLayoutChanged(trip, userId);
+  }
+
+  /**
+   * «Раскладка» — активному составу без автора правки (§3.13).
+   *
+   * Ключ `meals_layout:<поход>`: правка за вечер бывает не одна, и каждая
+   * обновляет ту же карточку, а не заводит новую. Кадр «перечитай
+   * уведомления» уходит после записи.
+   */
+  private async notifyLayoutChanged(
+    trip: Trip,
+    authorUserId: string,
+  ): Promise<void> {
+    const manager = this.dataSource.manager;
+    const tripId = String(trip.id);
+
+    const recipients = await this.notifications.tripAudience(manager, tripId, {
+      actorUserId: authorUserId,
+    });
+    if (recipients.length === 0) return;
+
+    const written = await this.notifications.notifyMealsLayout(manager, {
+      tripId,
+      authorUserId,
+      recipientIds: recipients,
+    });
+
+    if (written.length > 0) this.notifications.emitChanged(written);
   }
 
   // ─────────────────────────── слои еды ───────────────────────────

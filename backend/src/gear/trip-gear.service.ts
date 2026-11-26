@@ -14,6 +14,7 @@ import { TripMealPackage } from '../trips/entities/trip-meal-package.entity';
 import { Trip } from '../trips/entities/trip.entity';
 import { TripEventsService } from '../trips/trip-events.service';
 import { TripMealsService } from '../trips/trip-meals.service';
+import { TripRouteService } from '../trips/trip-route.service';
 import type { TripTab } from '../trips/trip-tabs';
 import { SLEEPING_NIGHT_KINDS } from '../trips/trip-route.types';
 import { TripsService } from '../trips/trips.service';
@@ -200,6 +201,13 @@ export class TripGearService {
      * держать две формулы одного числа.
      */
     private readonly tripMeals: TripMealsService,
+    /**
+     * «Ночёвки» — владелец палаток и ночлежников (26.11.2026, §3.12
+     * `topics/notifications.md`). Убрали палатку из вещей похода — карточки
+     * её жильцам пишет владелец подсистемы, а не «Снаряжение»: только там
+     * знают про ночь в палатке и про то, кто где живёт.
+     */
+    private readonly route: TripRouteService,
   ) {}
 
   /**
@@ -778,6 +786,18 @@ export class TripGearService {
       }
     }
 
+    /**
+     * Палатка уходит — её жильцы остаются без места (26.11.2026, §3.12).
+     * Список берём **до** удаления: строки `trip_route_lodgers` уходят
+     * каскадом вместе с вещью. Отдельной проверки «это палатка?» нет —
+     * жильцы бывают только у палатки, и пустой список сам это говорит.
+     */
+    const tentLost = await this.route.tentLossCandidates(
+      String(trip.id),
+      row.id,
+      userId,
+    );
+
     await this.dataSource.transaction(async (tx) => {
       await tx.delete(TripGear, { id: row.id });
 
@@ -791,6 +811,12 @@ export class TripGearService {
     });
 
     this.events.emitGear(trip.id, userId);
+
+    // Карточки — после COMMIT: до него «проблемы с палаткой» указывали бы
+    // на вещь, которая ещё лежит в походе.
+    if (tentLost.length > 0) {
+      await this.route.notifyTentLoss(String(trip.id), tentLost, userId);
+    }
   }
 
   // ───────────────────────── личные вещи «Взял» (06.11.2026) ─────────────────────────
